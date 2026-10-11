@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Button, Notice, Spinner } from "../components/ui";
-import { api, roleSummary, type Role } from "../lib/api";
+import { api, ApiError, roleSummary, type Role } from "../lib/api";
 import { keys, useAction, useMe, useMeta } from "../lib/queries";
 import { AuthForm, AuthFrame } from "./Login";
 
@@ -19,16 +19,35 @@ export function Invite() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [mode, setMode] = useState<"register" | "signin">("register");
-  const invite = useQuery({ queryKey: ["invite", token], queryFn: () => api.get<InvitePreview>(`/invites/${token}`), retry: false });
+  const invite = useQuery({ queryKey: ["invite", token], queryFn: () => api.get<InvitePreview>(`/invites/${token}`) });
   const accept = useAction(() => api.post<{ slug: string }>(`/invites/${token}/accept`));
 
   if (invite.isPending || me.isPending || meta.isPending) return <div className="flex h-dvh items-center justify-center"><Spinner /></div>;
-  if (!invite.data || !invite.data.usable || !meta.data) {
+  // Only the panel saying so makes an invite invalid. A request that never
+  // got an answer is a connection problem, and says nothing about the invite.
+  const gone = invite.data ? !invite.data.usable : invite.error instanceof ApiError && invite.error.status === 404;
+  if (gone) {
     return (
       <AuthFrame title="This invite is no longer valid" subtitle="It may have expired, been used up, or been revoked. Ask whoever sent it for a new one.">
         <Link to="/" className="text-[13px] text-accent hover:underline">
           Go to avSYS
         </Link>
+      </AuthFrame>
+    );
+  }
+  if (!invite.data || !meta.data) {
+    return (
+      <AuthFrame title="Could not load this invite" subtitle="The panel did not answer. The invite itself may be fine; check your connection and try again.">
+        <Button
+          className="h-9"
+          loading={invite.isFetching || meta.isFetching}
+          onClick={() => {
+            if (!invite.data) invite.refetch();
+            if (!meta.data) meta.refetch();
+          }}
+        >
+          Try again
+        </Button>
       </AuthFrame>
     );
   }

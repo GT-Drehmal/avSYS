@@ -11,7 +11,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import type { Phase } from "../lib/api";
-import { dismiss, useToasts } from "../lib/toast";
+import { dismiss, toast, useToasts } from "../lib/toast";
 
 export const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" ");
 
@@ -170,6 +170,27 @@ export const Loading = () => (
   </div>
 );
 
+/**
+ * Puts text on the clipboard. navigator.clipboard only exists on https and
+ * localhost, and a panel on a home network is often plain http, so there the
+ * text goes through a hidden field next to `near` (inside any open dialog,
+ * which would otherwise take the focus back).
+ */
+async function copyToClipboard(value: string, near: HTMLElement) {
+  if (window.isSecureContext && navigator.clipboard) return navigator.clipboard.writeText(value);
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.readOnly = true;
+  field.style.cssText = "position:fixed;top:0;left:0;opacity:0;font-size:16px";
+  (near.parentElement ?? document.body).appendChild(field);
+  field.select();
+  field.setSelectionRange(0, value.length);
+  const ok = document.execCommand("copy");
+  field.remove();
+  near.focus();
+  if (!ok) throw new Error("copy was refused");
+}
+
 /** Text that copies itself when clicked: addresses, commands, tokens. */
 export function CopyText({ value, display, className, wrap }: { value: string; display?: ReactNode; className?: string; wrap?: boolean }) {
   const [copied, setCopied] = useState(false);
@@ -180,10 +201,13 @@ export function CopyText({ value, display, className, wrap }: { value: string; d
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        navigator.clipboard.writeText(value).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
-        });
+        copyToClipboard(value, e.currentTarget).then(
+          () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          },
+          () => toast.error("Could not copy. Select the text and copy it by hand."),
+        );
       }}
       className={cx("group inline-flex max-w-full items-center gap-1.5 rounded-sm text-left font-mono text-[13px] text-fg hover:text-accent", className)}
     >
