@@ -14,6 +14,14 @@ const (
 	// AnnotationAsleep is set on a MinecraftServer that was scaled down for being idle.
 	// Removing it wakes the server.
 	AnnotationAsleep = "avsys.dev/asleep"
+	// AnnotationNode records the node chosen for a server when it was first
+	// placed. Its volume lives there, so it keeps running there.
+	AnnotationNode = "avsys.dev/node"
+	// LabelNodeScore is set on nodes to their relative single-core speed.
+	// New servers go to the highest-scoring node that has room.
+	LabelNodeScore = "avsys.dev/score"
+	// LabelNodeHosts set to "false" on a node keeps game servers off it.
+	LabelNodeHosts = "avsys.dev/game-servers"
 	// AnnotationRestart is copied to the pod template; changing it rolls the pod.
 	AnnotationRestart = "avsys.dev/restarted-at"
 )
@@ -226,6 +234,8 @@ type MinecraftServerStatus struct {
 	// Version is the game version the running server reports.
 	Version string         `json:"version,omitempty"`
 	Players *PlayersStatus `json:"players,omitempty"`
+	// Node is the cluster node the server runs on.
+	Node string `json:"node,omitempty"`
 	// LastActive is the last time a player was seen online, or the server became ready.
 	LastActive *metav1.Time `json:"lastActive,omitempty"`
 	Restarts   int32        `json:"restarts,omitempty"`

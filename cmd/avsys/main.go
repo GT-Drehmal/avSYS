@@ -218,6 +218,7 @@ func run(opts options, log *slog.Logger) error {
 	}
 	if err := (&controller.Reconciler{
 		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
 		Scheme: scheme,
 		Config: controller.Config{
 			WorkspaceImage:           opts.workspaceImage,

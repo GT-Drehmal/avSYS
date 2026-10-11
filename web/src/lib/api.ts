@@ -161,6 +161,8 @@ export interface ServerStatus {
   lastActive?: string;
   restarts?: number;
   pendingRestart?: boolean;
+  /** The cluster node the server runs on. */
+  node?: string;
 }
 
 export interface Server {

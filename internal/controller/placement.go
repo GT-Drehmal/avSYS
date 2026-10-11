@@ -1,0 +1,179 @@
+package controller
+
+import (
+	"context"
+	"sort"
+	"strconv"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+)
+
+// Placement is decided once, by avSYS rather than by the scheduler's scoring.
+// A game server's speed is mostly the speed of one CPU core, which Kubernetes
+// does not know, and with node-local storage the first choice is permanent.
+// So nodes carry a measured score, and a new server goes to the best-scoring
+// node that still has the memory for it, falling down the ranking only when
+// the better nodes are full.
+
+// workspaceMemory is what the workspace container requests, on top of the game.
+var workspaceMemory = resource.MustParse("32Mi")
+
+// nodeUsable reports whether game servers may be placed on a node at all.
+func nodeUsable(n *corev1.Node) bool {
+	if n.Spec.Unschedulable || n.Labels[avsysv1.LabelNodeHosts] == "false" {
+		return false
+	}
+	// Servers carry no tolerations, so any taint that repels pods rules the
+	// node out. This is also what an unreachable node looks like.
+	for _, t := range n.Spec.Taints {
+		if t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute {
+			return false
+		}
+	}
+	for _, c := range n.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func nodeScore(n *corev1.Node) float64 {
+	score, err := strconv.ParseFloat(n.Labels[avsysv1.LabelNodeScore], 64)
+	if err != nil || score < 0 {
+		// Unmeasured nodes can host, after every measured one.
+		return 0
+	}
+	return score
+}
+
+// pickNode returns the best node with at least need bytes of memory not yet
+// promised to other pods, or "" if none has. reserved is the memory requested
+// by the pods already on each node.
+func pickNode(nodes []corev1.Node, reserved map[string]int64, need int64) string {
+	type candidate struct {
+		name  string
+		score float64
+		free  int64
+	}
+	var fits []candidate
+	for i := range nodes {
+		n := &nodes[i]
+		if !nodeUsable(n) {
+			continue
+		}
+		free := n.Status.Allocatable.Memory().Value() - reserved[n.Name]
+		if free >= need {
+			fits = append(fits, candidate{n.Name, nodeScore(n), free})
+		}
+	}
+	sort.Slice(fits, func(i, j int) bool {
+		a, b := fits[i], fits[j]
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		if a.free != b.free {
+			return a.free > b.free
+		}
+		return a.name < b.name
+	})
+	if len(fits) == 0 {
+		return ""
+	}
+	return fits[0].name
+}
+
+// nodeOfVolume returns the node a server's existing volume is tied to, if it
+// is tied to one, as node-local storage is.
+func (r *Reconciler) nodeOfVolume(ctx context.Context, mc *avsysv1.MinecraftServer) (string, error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := r.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: DataPVCName(mc.Name)}, pvc)
+	if apierrors.IsNotFound(err) || (err == nil && pvc.Spec.VolumeName == "") {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	pv := &corev1.PersistentVolume{}
+	if err := r.Reader.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv); err != nil {
+		return "", client.IgnoreNotFound(err)
+	}
+	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+		return "", nil
+	}
+	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+		for _, expr := range term.MatchExpressions {
+			if expr.Key == corev1.LabelHostname && expr.Operator == corev1.NodeSelectorOpIn && len(expr.Values) == 1 {
+				return expr.Values[0], nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// ensurePlacement records the node a server lives on, choosing one for a new
+// server. Servers that select nodes themselves are left to the scheduler.
+func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftServer) error {
+	if len(mc.Spec.NodeSelector) > 0 || mc.Annotations[avsysv1.AnnotationNode] != "" {
+		return nil
+	}
+
+	// A server that already has a home keeps it: one that predates this
+	// record, or whose record was removed.
+	node, err := r.nodeOfVolume(ctx, mc)
+	if err != nil {
+		return err
+	}
+	if node == "" {
+		pod := &corev1.Pod{}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(mc), pod); err == nil {
+			node = pod.Spec.NodeName
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	if node == "" {
+		var nodes corev1.NodeList
+		if err := r.Reader.List(ctx, &nodes); err != nil {
+			return err
+		}
+		var pods corev1.PodList
+		if err := r.Reader.List(ctx, &pods); err != nil {
+			return err
+		}
+		reserved := map[string]int64{}
+		for i := range pods.Items {
+			p := &pods.Items[i]
+			if p.Spec.NodeName == "" || p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
+				continue
+			}
+			for _, c := range p.Spec.Containers {
+				reserved[p.Spec.NodeName] += c.Resources.Requests.Memory().Value()
+			}
+		}
+		need := mc.Spec.Resources.Memory.Value() + workspaceMemory.Value()
+		node = pickNode(nodes.Items, reserved, need)
+		if node == "" {
+			// Nothing fits. Leave the pod unpinned so the scheduler reports
+			// why, and so it starts as soon as room appears anywhere.
+			log.FromContext(ctx).Info("no node has room for the server", "memory", mc.Spec.Resources.Memory.String())
+			return nil
+		}
+		log.FromContext(ctx).Info("placed server", "node", node)
+	}
+
+	orig := mc.DeepCopy()
+	if mc.Annotations == nil {
+		mc.Annotations = map[string]string{}
+	}
+	mc.Annotations[avsysv1.AnnotationNode] = node
+	return r.Patch(ctx, mc, client.MergeFrom(orig))
+}

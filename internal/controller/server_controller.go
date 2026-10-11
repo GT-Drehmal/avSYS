@@ -36,6 +36,9 @@ type Config struct {
 
 type Reconciler struct {
 	client.Client
+	// Reader reads straight from the API server, for the occasional look at
+	// things that are not worth caching (every pod on every node).
+	Reader client.Reader
 	Scheme *runtime.Scheme
 	Config Config
 }
@@ -70,6 +73,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	svc, err := r.ensureService(ctx, mc)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("service: %w", err)
+	}
+	if err := r.ensurePlacement(ctx, mc); err != nil {
+		return ctrl.Result{}, fmt.Errorf("placement: %w", err)
 	}
 	pod, pending, err := r.ensurePod(ctx, mc)
 	if err != nil {
@@ -256,6 +262,10 @@ func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServ
 	st.PendingRestart = pending
 	st.ObservedGeneration = mc.Generation
 	st.Restarts = 0
+	st.Node = mc.Annotations[avsysv1.AnnotationNode]
+	if pod != nil && pod.Spec.NodeName != "" {
+		st.Node = pod.Spec.NodeName
+	}
 	if pod != nil {
 		if cs := containerStatus(pod, MinecraftContainer); cs != nil {
 			st.Restarts = cs.RestartCount

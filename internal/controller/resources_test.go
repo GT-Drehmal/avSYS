@@ -170,6 +170,24 @@ func TestPodKeepsWorkspaceWhenGameIsOff(t *testing.T) {
 	}
 }
 
+func TestPodFollowsRecordedNode(t *testing.T) {
+	placed := server(func(mc *avsysv1.MinecraftServer) { mc.Annotations = map[string]string{avsysv1.AnnotationNode: "pc"} })
+	if got := buildPod(placed, Config{}).Spec.NodeSelector; got[corev1.LabelHostname] != "pc" {
+		t.Errorf("recorded node not used: %v", got)
+	}
+	own := server(func(mc *avsysv1.MinecraftServer) {
+		mc.Annotations = map[string]string{avsysv1.AnnotationNode: "pc"}
+		mc.Spec.NodeSelector = map[string]string{"disk": "fast"}
+	})
+	if got := buildPod(own, Config{}).Spec.NodeSelector; len(got) != 1 || got["disk"] != "fast" {
+		t.Errorf("a server's own selector should win: %v", got)
+	}
+	// Recording the node must not look like a settings change.
+	if buildPod(server(nil), Config{}).Annotations[annotationSpecHash] != buildPod(placed, Config{}).Annotations[annotationSpecHash] {
+		t.Error("placement changed the spec hash")
+	}
+}
+
 // A spec change that only matters to the game must not disturb a pod that is
 // not running the game.
 func TestPodHashIgnoresGameSettingsWhileStopped(t *testing.T) {

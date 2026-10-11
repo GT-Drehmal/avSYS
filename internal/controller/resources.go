@@ -373,7 +373,7 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 		Containers:                    containers,
 		EnableServiceLinks:            &serviceLinks,
 		TerminationGracePeriodSeconds: &grace,
-		NodeSelector:                  mc.Spec.NodeSelector,
+
 		SecurityContext: &corev1.PodSecurityContext{
 			RunAsUser: &id, RunAsGroup: &id, FSGroup: &id,
 			RunAsNonRoot:        &nonRoot,
@@ -389,7 +389,13 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 		},
 	}
 
+	// Hashed before the node is filled in: where a server runs is not a
+	// setting whose change should ask for a restart.
 	annotations := map[string]string{annotationSpecHash: hashOf(spec)}
+	spec.NodeSelector = mc.Spec.NodeSelector
+	if node := mc.Annotations[avsysv1.AnnotationNode]; len(spec.NodeSelector) == 0 && node != "" {
+		spec.NodeSelector = map[string]string{corev1.LabelHostname: node}
+	}
 	if v := mc.Annotations[avsysv1.AnnotationRestart]; v != "" {
 		annotations[avsysv1.AnnotationRestart] = v
 	}

@@ -67,8 +67,35 @@ Every flag can also be set as an environment variable: `--public-url` is `AVSYS_
 | `AVSYS_SSH_PUBLIC_HOST`, `AVSYS_SSH_PUBLIC_PORT` | Where the SSH gateway is reachable, if not the panel's host and port 2222. |
 | `AVSYS_ROUTER_DOMAIN` | A domain with a wildcard DNS record pointing at the router. New servers default to `<server>.<org>.<domain>`. |
 | `AVSYS_GITHUB_CLIENT_ID`, `AVSYS_GITHUB_CLIENT_SECRET` | Enable GitHub sign-in. Likewise `DISCORD` and `GOOGLE`. The callback URL to register is `<public-url>/api/v1/auth/<provider>/callback`. |
+| `AVSYS_ROUTER_PUBLIC_PORT` | The port players reach the router on, if not 25565. Shown in server addresses. |
 | `AVSYS_CURSEFORGE_API_KEY` | Passed to servers for CurseForge downloads. |
 | `AVSYS_ALLOW_SIGNUPS` | `true` lets anyone create an account. |
+
+### Which node a server runs on
+
+A game server's speed is mostly the speed of one CPU core, which Kubernetes does not know. So avSYS places servers itself: a new server goes to the **highest-scoring node that has enough unreserved memory**, and falls down the ranking only when the better nodes are full. The choice is recorded, shown on the server page, and permanent on node-local storage, where the world lives on that node's disk.
+
+```sh
+./hack/rank-nodes.sh       # measures every node and sets the avsys.dev/score label
+kubectl label node pi4-1 avsys.dev/game-servers=false   # optional: never host here
+```
+
+Nodes without a score can still host, after every node that has one. "Room" means memory not yet requested by other pods; a server reserves its whole limit while it runs and releases it while stopped or asleep. A server with its own `nodeSelector` is left to the scheduler.
+
+### Clusters without a load balancer
+
+The manifest exposes the panel with a `LoadBalancer` service. If your cluster has none (k3s started with ServiceLB disabled and no MetalLB, for example), that service never gets an address. Pin the panel to one node and publish its ports on that node instead: add a `nodeSelector` and a `hostPort` beside each `containerPort` in the Deployment, and change the Service to `type: ClusterIP`.
+
+```yaml
+      nodeSelector:
+        kubernetes.io/hostname: my-node
+      containers:
+        - name: avsys
+          ports:
+            - { name: http, containerPort: 8080, hostPort: 8080 }
+            - { name: ssh, containerPort: 2222, hostPort: 2222 }
+            - { name: minecraft, containerPort: 25565, hostPort: 25565 }
+```
 
 ### Addresses
 

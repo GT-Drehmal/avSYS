@@ -155,7 +155,10 @@ export function ServerPage() {
             <span className="text-faint">–</span>
           )}
         </Fact>
-        <Fact label="Memory">{quantity(spec.resources.memory)}</Fact>
+        <Fact label="Memory">
+          {quantity(spec.resources.memory)}
+          {status.node && <span className="ml-2 text-muted">on {status.node}</span>}
+        </Fact>
       </dl>
 
       <div className="mt-3 flex flex-col gap-2 empty:hidden">

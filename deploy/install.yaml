@@ -40,6 +40,11 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "create", "patch"]
+  # Choosing a node for a new server: node speed scores and free memory,
+  # and which node an existing volume is tied to.
+  - apiGroups: [""]
+    resources: ["nodes", "persistentvolumes"]
+    verbs: ["get", "list"]
   # RCON passwords and the workspace key. Read one at a time, never listed.
   - apiGroups: [""]
     resources: ["secrets"]
