@@ -1,0 +1,504 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: minecraftservers.avsys.dev
+spec:
+  group: avsys.dev
+  names:
+    kind: MinecraftServer
+    listKind: MinecraftServerList
+    plural: minecraftservers
+    shortNames:
+    - mcs
+    singular: minecraftserver
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .spec.loader
+      name: Loader
+      type: string
+    - jsonPath: .status.players.online
+      name: Players
+      type: integer
+    - jsonPath: .status.address
+      name: Address
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              displayName:
+                type: string
+              env:
+                description: |-
+                  Env is passed to the server container after everything avSYS sets, for
+                  itzg/minecraft-server options that have no field here.
+                items:
+                  description: EnvVar represents an environment variable present in
+                    a Container.
+                  properties:
+                    name:
+                      description: |-
+                        Name of the environment variable.
+                        May consist of any printable ASCII characters except '='.
+                      type: string
+                    value:
+                      description: |-
+                        Variable references $(VAR_NAME) are expanded
+                        using the previously defined environment variables in the container and
+                        any service environment variables. If a variable cannot be resolved,
+                        the reference in the input string will be unchanged. Double $$ are reduced
+                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                        Escaped references will never be expanded, regardless of whether the variable
+                        exists or not.
+                        Defaults to "".
+                      type: string
+                    valueFrom:
+                      description: Source for the environment variable's value. Cannot
+                        be used if value is not empty.
+                      properties:
+                        configMapKeyRef:
+                          description: Selects a key of a ConfigMap.
+                          properties:
+                            key:
+                              description: |-
+                                The key to select from the ConfigMap's Data field.
+                                Keys in the BinaryData field are not currently propagated to container env vars.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the ConfigMap or its key
+                                must be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fieldRef:
+                          description: |-
+                            Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                            spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                          properties:
+                            apiVersion:
+                              description: Version of the schema the FieldPath is
+                                written in terms of, defaults to "v1".
+                              type: string
+                            fieldPath:
+                              description: Path of the field to select in the specified
+                                API version.
+                              type: string
+                          required:
+                          - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fileKeyRef:
+                          description: |-
+                            FileKeyRef selects a key of the env file.
+                            Requires the EnvFiles feature gate to be enabled.
+                          properties:
+                            key:
+                              description: |-
+                                The key within the env file. An invalid key will prevent the pod from starting.
+                                The keys defined within a source may consist of any printable ASCII characters except '='.
+                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                              type: string
+                            optional:
+                              default: false
+                              description: |-
+                                Specify whether the file or its key must be defined. If the file or key
+                                does not exist, then the env var is not published.
+                                If optional is set to true and the specified key does not exist,
+                                the environment variable will not be set in the Pod's containers.
+
+                                If optional is set to false and the specified key does not exist,
+                                an error will be returned during Pod creation.
+                              type: boolean
+                            path:
+                              description: |-
+                                The path within the volume from which to select the file.
+                                Must be relative and may not contain the '..' path or start with '..'.
+                              type: string
+                            volumeName:
+                              description: The name of the volume mount containing
+                                the env file.
+                              type: string
+                          required:
+                          - key
+                          - path
+                          - volumeName
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        resourceFieldRef:
+                          description: |-
+                            Selects a resource of the container: only resources limits and requests
+                            (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                          properties:
+                            containerName:
+                              description: 'Container name: required for volumes,
+                                optional for env vars'
+                              type: string
+                            divisor:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Specifies the output format of the exposed
+                                resources, defaults to "1"
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            resource:
+                              description: 'Required: resource to select'
+                              type: string
+                          required:
+                          - resource
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        secretKeyRef:
+                          description: Selects a key of a secret in the pod's namespace
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+              eula:
+                description: 'EULA must be true: https://aka.ms/MinecraftEULA'
+                type: boolean
+              expose:
+                properties:
+                  hostname:
+                    description: Hostname players connect to, e.g. play.example.org.
+                      Required for Router.
+                    type: string
+                  loadBalancerIP:
+                    description: LoadBalancerIP requests a specific address (MetalLB,
+                      kube-vip, ...).
+                    type: string
+                  nodePort:
+                    description: NodePort requests a specific port for type NodePort.
+                    format: int32
+                    type: integer
+                  serviceAnnotations:
+                    additionalProperties:
+                      type: string
+                    description: ServiceAnnotations are added to the player-facing
+                      Service.
+                    type: object
+                  type:
+                    default: Router
+                    enum:
+                    - Router
+                    - LoadBalancer
+                    - NodePort
+                    - None
+                    type: string
+                type: object
+              image:
+                description: |-
+                  Image overrides the server image. By default a tag of itzg/minecraft-server
+                  with the right Java for the game version is chosen.
+                type: string
+              loader:
+                default: vanilla
+                enum:
+                - vanilla
+                - paper
+                - purpur
+                - folia
+                - fabric
+                - quilt
+                - forge
+                - neoforge
+                type: string
+              loaderVersion:
+                type: string
+              modpack:
+                description: ModpackSpec installs a whole modpack. The pack decides
+                  the loader and game version.
+                properties:
+                  gameVersion:
+                    description: |-
+                      GameVersion and Loader are what the pinned pack version is built for,
+                      recorded by the panel. They decide the Java the server runs on and
+                      which extra mods fit.
+                    type: string
+                  iconUrl:
+                    type: string
+                  loader:
+                    type: string
+                  project:
+                    type: string
+                  source:
+                    description: ContentSource is where a mod, modpack or resource
+                      pack comes from.
+                    enum:
+                    - modrinth
+                    - curseforge
+                    type: string
+                  title:
+                    type: string
+                  version:
+                    description: Version pins a Modrinth version ID or CurseForge
+                      file ID.
+                    type: string
+                  versionName:
+                    type: string
+                required:
+                - project
+                - source
+                type: object
+              mods:
+                items:
+                  description: ContentRef is one installed mod, plugin or datapack.
+                  properties:
+                    iconUrl:
+                      type: string
+                    java:
+                      description: |-
+                        Java is the Java release the pinned file was compiled for, as read from
+                        it by the panel. The server runs on at least this.
+                      format: int32
+                      type: integer
+                    kind:
+                      default: mod
+                      enum:
+                      - mod
+                      - plugin
+                      - datapack
+                      type: string
+                    project:
+                      description: |-
+                        Project is the Modrinth/CurseForge slug or ID, the download URL for
+                        source "url", or the file name for source "upload".
+                      type: string
+                    source:
+                      description: ContentSource is where a mod, modpack or resource
+                        pack comes from.
+                      enum:
+                      - modrinth
+                      - curseforge
+                      - url
+                      - upload
+                      type: string
+                    title:
+                      description: Title and VersionName are display metadata recorded
+                        when the entry was added.
+                      type: string
+                    version:
+                      description: |-
+                        Version pins a Modrinth version ID or CurseForge file ID. The panel
+                        fills it in when an entry is added, so restarts do not change what is
+                        installed. Empty (only possible for resources created outside the
+                        panel) tracks the newest release compatible with the server.
+                      type: string
+                    versionName:
+                      type: string
+                  required:
+                  - project
+                  - source
+                  type: object
+                type: array
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: NodeSelector constrains which nodes the server may run
+                  on.
+                type: object
+              ops:
+                items:
+                  type: string
+                type: array
+              properties:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Properties are server.properties entries managed by avSYS. Keys not listed
+                  here are left as they are in the file, so hand edits survive.
+                type: object
+              resourcePack:
+                description: ResourcePackSpec is the server resource pack offered
+                  to joining players.
+                properties:
+                  enforce:
+                    type: boolean
+                  prompt:
+                    type: string
+                  sha1:
+                    description: SHA1 of the pack. The panel fills this in when it
+                      can fetch the URL.
+                    type: string
+                  url:
+                    type: string
+                required:
+                - url
+                type: object
+              resources:
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is an optional CPU limit.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    default: 4Gi
+                    description: |-
+                      Memory is the container memory limit. The JVM heap is sized below it,
+                      leaving room for the memory Java uses outside the heap.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+              sleep:
+                description: |-
+                  SleepSpec scales the server to zero while nobody is online. Waking on connect
+                  needs the router, so it only applies to expose type Router.
+                properties:
+                  enabled:
+                    type: boolean
+                  idleMinutes:
+                    default: 15
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
+              state:
+                default: Running
+                enum:
+                - Running
+                - Stopped
+                type: string
+              storage:
+                properties:
+                  size:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    default: 10Gi
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storageClassName:
+                    type: string
+                type: object
+              version:
+                default: LATEST
+                description: Version is the Minecraft version, or LATEST. Ignored
+                  when a modpack is set.
+                type: string
+              whitelist:
+                items:
+                  type: string
+                type: array
+            required:
+            - eula
+            type: object
+          status:
+            properties:
+              address:
+                description: Address is what players type into the multiplayer screen.
+                type: string
+              lastActive:
+                description: LastActive is the last time a player was seen online,
+                  or the server became ready.
+                format: date-time
+                type: string
+              message:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              pendingRestart:
+                description: |-
+                  PendingRestart is true when the running server was started from an older
+                  spec; the changes apply on the next restart.
+                type: boolean
+              phase:
+                type: string
+              players:
+                properties:
+                  max:
+                    format: int32
+                    type: integer
+                  names:
+                    items:
+                      type: string
+                    type: array
+                  online:
+                    format: int32
+                    type: integer
+                required:
+                - max
+                - online
+                type: object
+              restarts:
+                format: int32
+                type: integer
+              version:
+                description: Version is the game version the running server reports.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

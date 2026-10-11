@@ -1,0 +1,152 @@
+# Installs avSYS into the `avsys` namespace.
+#
+#   kubectl apply -f deploy/install.yaml
+#
+# Before applying, set AVSYS_PUBLIC_URL below to the address you will open the
+# panel at, and pick how the three ports are exposed (see the Service at the
+# bottom). The MinecraftServer CRD is installed by the panel itself on startup.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: avsys
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: avsys
+  namespace: avsys
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: avsys
+rules:
+  # The panel's own resource.
+  - apiGroups: ["avsys.dev"]
+    resources: ["minecraftservers", "minecraftservers/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Installing and upgrading the CRD on startup.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "create", "patch"]
+  # One namespace per organization.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "create", "delete"]
+  # What each server is made of.
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "create", "patch"]
+  # RCON passwords and the workspace key. Read one at a time, never listed.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update"]
+  # Console output, and reaching pods when the panel runs outside the cluster.
+  - apiGroups: [""]
+    resources: ["pods/log", "pods/portforward"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: avsys
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: avsys
+subjects:
+  - kind: ServiceAccount
+    name: avsys
+    namespace: avsys
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: avsys-data
+  namespace: avsys
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: avsys
+  namespace: avsys
+spec:
+  replicas: 1
+  # The database is a single file on a ReadWriteOnce volume, so the old pod
+  # must be gone before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: avsys
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: avsys
+    spec:
+      serviceAccountName: avsys
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: avsys
+          image: ghcr.io/gt-drehmal/avsys:latest
+          env:
+            - name: AVSYS_PUBLIC_URL
+              value: https://panel.example.com
+            # Hostname shown in SSH instructions, if it differs from the panel's.
+            # - name: AVSYS_SSH_PUBLIC_HOST
+            #   value: ssh.example.com
+            # A domain with a wildcard DNS record pointing at the router: new
+            # servers then default to <server>.<org>.<domain>.
+            # - name: AVSYS_ROUTER_DOMAIN
+            #   value: mc.example.com
+            # Sign-in providers: add the client ID and secret of each you want.
+            # - name: AVSYS_GITHUB_CLIENT_ID
+            # - name: AVSYS_GITHUB_CLIENT_SECRET
+            # - name: AVSYS_DISCORD_CLIENT_ID
+            # - name: AVSYS_DISCORD_CLIENT_SECRET
+            # - name: AVSYS_GOOGLE_CLIENT_ID
+            # - name: AVSYS_GOOGLE_CLIENT_SECRET
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: ssh, containerPort: 2222 }
+            - { name: minecraft, containerPort: 25565 }
+          readinessProbe:
+            httpGet: { path: /api/v1/meta, port: http }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: avsys-data
+---
+# Players and SSH need plain TCP, so this is a LoadBalancer (k3s ServiceLB and
+# MetalLB both work). Put the panel's HTTP port behind your ingress for TLS if
+# you prefer; it is included here so a fresh install is reachable.
+apiVersion: v1
+kind: Service
+metadata:
+  name: avsys
+  namespace: avsys
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: avsys
+  ports:
+    - { name: http, port: 80, targetPort: http }
+    - { name: ssh, port: 2222, targetPort: ssh }
+    - { name: minecraft, port: 25565, targetPort: minecraft }

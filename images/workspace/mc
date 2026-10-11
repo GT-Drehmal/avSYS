@@ -1,0 +1,24 @@
+#!/bin/bash
+# mc — talk to the Minecraft server this workspace belongs to.
+. /tmp/avsys/env 2>/dev/null
+
+usage() {
+  cat <<'USAGE'
+usage: mc <command>
+
+  mc console         interactive server console (RCON)
+  mc run <command>   run one server command, e.g. mc run list
+  mc logs            follow the server log
+  mc restart         save and restart the server process
+
+Starting, stopping and changing versions or mods is done from the avSYS panel.
+USAGE
+}
+
+case "${1:-}" in
+  console) exec rcon-cli ;;
+  run)     shift; exec rcon-cli "$@" ;;
+  logs)    exec tail -n 200 -F /data/logs/latest.log ;;
+  restart) rcon-cli stop && echo "Server stopped; it starts again on its own." ;;
+  *)       usage ;;
+esac

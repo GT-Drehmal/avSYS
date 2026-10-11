@@ -1,0 +1,101 @@
+@import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Surfaces, darkest first. A faint green-blue cast, like lit stone. */
+  --color-bg: #0a0d0e;
+  --color-surface: #0f1314;
+  --color-raised: #151a1c;
+  --color-hover: #1a2123;
+  --color-line: #1e2629;
+  --color-line-strong: #2c373b;
+
+  --color-fg: #e3e9e9;
+  --color-muted: #8d989b;
+  --color-faint: #5c676a;
+
+  /* The one accent: Avsohmic teal. Used for what is live or primary. */
+  --color-accent: #5fe0c6;
+  --color-accent-strong: #8cf0dc;
+  --color-accent-ink: #04201b;
+  --color-accent-wash: #12302c;
+
+  --color-warn: #e3b55a;
+  --color-warn-wash: #2e2512;
+  --color-danger: #f0707a;
+  --color-danger-wash: #331a1d;
+  --color-dormant: #98a2f5;
+  --color-dormant-wash: #1c2040;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
+  --animate-rise: rise 140ms ease-out;
+
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(4px) scale(0.99); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    min-height: 100dvh;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  button, [role="button"], a, summary, select, label[for] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  /* Thin, quiet scrollbars that match the surfaces. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+}
+
+@utility label-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,22 @@
+# sshd runs as the unprivileged mc user, so it can only ever log that user in.
+Port 2222
+HostKey /tmp/avsys/ssh_host_ed25519_key
+PidFile /tmp/avsys/sshd.pid
+
+# Only the avSYS gateway holds the matching key. It authenticates people
+# against their own keys and roles before connecting here.
+AuthorizedKeysFile /etc/avsys/keys/authorized_keys
+StrictModes no
+UsePAM no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AllowUsers mc
+
+AllowTcpForwarding yes
+X11Forwarding no
+PrintMotd no
+PrintLastLog no
+AcceptEnv AVSYS_USER LANG LC_* COLORTERM
+# sftp, and so scp, start in the server directory.
+Subsystem sftp internal-sftp -d /data
+ClientAliveInterval 30

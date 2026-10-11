@@ -1,0 +1,269 @@
+// Package controller reconciles MinecraftServer resources into the pod,
+// volume, service and secrets that run them.
+package controller
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+)
+
+type Config struct {
+	// WorkspaceImage is the SSH sidecar that runs next to every server.
+	WorkspaceImage           string
+	WorkspaceImagePullPolicy corev1.PullPolicy
+	// WorkspaceAuthorizedKeys is the authorized_keys content workspaces trust:
+	// the gateway's own public key.
+	WorkspaceAuthorizedKeys string
+	// RouterPublicPort is the port players reach the router on, when not 25565.
+	RouterPublicPort int
+	CurseForgeAPIKey string
+}
+
+type Reconciler struct {
+	client.Client
+	Scheme *runtime.Scheme
+	Config Config
+}
+
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&avsysv1.MinecraftServer{}).
+		Owns(&corev1.Pod{}).
+		Owns(&corev1.Service{}).
+		Complete(r)
+}
+
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	mc := &avsysv1.MinecraftServer{}
+	if err := r.Get(ctx, req.NamespacedName, mc); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !mc.DeletionTimestamp.IsZero() {
+		// Everything is owned by the server and garbage collected with it.
+		return ctrl.Result{}, nil
+	}
+
+	if err := r.ensureWorkspaceSecret(ctx, mc.Namespace); err != nil {
+		return ctrl.Result{}, fmt.Errorf("workspace secret: %w", err)
+	}
+	if err := r.ensureRCONSecret(ctx, mc); err != nil {
+		return ctrl.Result{}, fmt.Errorf("rcon secret: %w", err)
+	}
+	if err := r.ensurePVC(ctx, mc); err != nil {
+		return ctrl.Result{}, fmt.Errorf("volume: %w", err)
+	}
+	svc, err := r.ensureService(ctx, mc)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("service: %w", err)
+	}
+	pod, pending, err := r.ensurePod(ctx, mc)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("pod: %w", err)
+	}
+	return ctrl.Result{}, r.updateStatus(ctx, mc, pod, svc, pending)
+}
+
+func (r *Reconciler) ensureWorkspaceSecret(ctx context.Context, namespace string) error {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: WorkspaceSecret, Namespace: namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Data = map[string][]byte{"authorized_keys": []byte(r.Config.WorkspaceAuthorizedKeys)}
+		return nil
+	})
+	return err
+}
+
+func (r *Reconciler) ensureRCONSecret(ctx context.Context, mc *avsysv1.MinecraftServer) error {
+	key := types.NamespacedName{Namespace: mc.Namespace, Name: RCONSecretName(mc.Name)}
+	if err := r.Get(ctx, key, &corev1.Secret{}); !apierrors.IsNotFound(err) {
+		return err
+	}
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return err
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: labelsFor(mc)},
+		StringData: map[string]string{"password": hex.EncodeToString(buf)},
+	}
+	if err := controllerutil.SetControllerReference(mc, secret, r.Scheme); err != nil {
+		return err
+	}
+	return r.Create(ctx, secret)
+}
+
+func (r *Reconciler) ensurePVC(ctx context.Context, mc *avsysv1.MinecraftServer) error {
+	existing := &corev1.PersistentVolumeClaim{}
+	err := r.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: DataPVCName(mc.Name)}, existing)
+	if apierrors.IsNotFound(err) {
+		pvc := buildPVC(mc)
+		if err := controllerutil.SetControllerReference(mc, pvc, r.Scheme); err != nil {
+			return err
+		}
+		return r.Create(ctx, pvc)
+	}
+	if err != nil {
+		return err
+	}
+	// Volumes can grow but never shrink. Whether growing works is up to the
+	// storage class, so a refusal is logged rather than failing the reconcile.
+	want := mc.Spec.Storage.Size
+	if have := existing.Spec.Resources.Requests[corev1.ResourceStorage]; want.Cmp(have) > 0 {
+		orig := existing.DeepCopy()
+		existing.Spec.Resources.Requests[corev1.ResourceStorage] = want
+		if err := r.Patch(ctx, existing, client.MergeFrom(orig)); err != nil {
+			log.FromContext(ctx).Info("volume could not be expanded", "error", err.Error())
+		}
+	}
+	return nil
+}
+
+func (r *Reconciler) ensureService(ctx context.Context, mc *avsysv1.MinecraftServer) (*corev1.Service, error) {
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: mc.Name, Namespace: mc.Namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
+		applyService(svc, mc)
+		return controllerutil.SetControllerReference(mc, svc, r.Scheme)
+	})
+	return svc, err
+}
+
+// ensurePod creates the server's pod, or replaces it when it no longer matches
+// what is wanted. A healthy running game is never restarted just because the
+// spec changed: that is reported as pending and applied on the next restart.
+func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer) (pod *corev1.Pod, pending bool, err error) {
+	desired := buildPod(mc, r.Config)
+	existing := &corev1.Pod{}
+	err = r.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: mc.Name}, existing)
+	if apierrors.IsNotFound(err) {
+		if err := controllerutil.SetControllerReference(mc, desired, r.Scheme); err != nil {
+			return nil, false, err
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			return nil, false, err
+		}
+		return desired, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !existing.DeletionTimestamp.IsZero() {
+		// Its removal triggers another reconcile, which creates the replacement.
+		return existing, false, nil
+	}
+
+	finished := existing.Status.Phase == corev1.PodFailed || existing.Status.Phase == corev1.PodSucceeded
+	stateChanged := hasContainer(existing, MinecraftContainer) != wantsMinecraft(mc)
+	restartAsked := existing.Annotations[avsysv1.AnnotationRestart] != desired.Annotations[avsysv1.AnnotationRestart]
+	specChanged := existing.Annotations[annotationSpecHash] != desired.Annotations[annotationSpecHash]
+	serving := hasContainer(existing, MinecraftContainer) && containerReady(existing, MinecraftContainer)
+
+	if finished || stateChanged || restartAsked || (specChanged && !serving) {
+		if err := r.Delete(ctx, existing); client.IgnoreNotFound(err) != nil {
+			return nil, false, err
+		}
+		now := metav1.Now()
+		existing.DeletionTimestamp = &now
+		return existing, false, nil
+	}
+	return existing, specChanged, nil
+}
+
+func containerStatus(pod *corev1.Pod, name string) *corev1.ContainerStatus {
+	for i := range pod.Status.ContainerStatuses {
+		if pod.Status.ContainerStatuses[i].Name == name {
+			return &pod.Status.ContainerStatuses[i]
+		}
+	}
+	return nil
+}
+
+func containerReady(pod *corev1.Pod, name string) bool {
+	cs := containerStatus(pod, name)
+	return cs != nil && cs.Ready
+}
+
+// phaseOf derives the user-facing phase from what is wanted and what the pod is doing.
+func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, string) {
+	gameInPod := pod != nil && hasContainer(pod, MinecraftContainer)
+	if !wantsMinecraft(mc) {
+		switch {
+		case gameInPod:
+			return avsysv1.PhaseStopping, ""
+		case mc.Spec.State == avsysv1.StateStopped:
+			return avsysv1.PhaseStopped, ""
+		default:
+			return avsysv1.PhaseSleeping, ""
+		}
+	}
+	if !gameInPod || !pod.DeletionTimestamp.IsZero() {
+		return avsysv1.PhaseStarting, ""
+	}
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse {
+			return avsysv1.PhaseStarting, c.Message
+		}
+	}
+	cs := containerStatus(pod, MinecraftContainer)
+	switch {
+	case cs == nil:
+		return avsysv1.PhaseStarting, ""
+	case cs.Ready:
+		return avsysv1.PhaseRunning, ""
+	case cs.State.Waiting != nil:
+		switch w := cs.State.Waiting; w.Reason {
+		case "ContainerCreating", "PodInitializing":
+			return avsysv1.PhaseStarting, ""
+		case "CrashLoopBackOff":
+			return avsysv1.PhaseError, fmt.Sprintf("The server keeps crashing (%d restarts). Check the console for the cause.", cs.RestartCount)
+		default:
+			return avsysv1.PhaseError, fmt.Sprintf("%s: %s", w.Reason, w.Message)
+		}
+	case cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0:
+		return avsysv1.PhaseError, fmt.Sprintf("The server exited with code %d.", cs.State.Terminated.ExitCode)
+	}
+	return avsysv1.PhaseStarting, ""
+}
+
+func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServer, pod *corev1.Pod, svc *corev1.Service, pending bool) error {
+	orig := mc.DeepCopy()
+	st := &mc.Status
+
+	phase, message := phaseOf(mc, pod)
+	if phase == avsysv1.PhaseRunning && st.Phase != avsysv1.PhaseRunning {
+		// The idle clock starts when the server becomes joinable.
+		now := metav1.Now()
+		st.LastActive = &now
+	}
+	if phase != avsysv1.PhaseRunning {
+		st.Players = nil
+	}
+	st.Phase, st.Message = phase, message
+	st.Address = addressFor(mc, svc, r.Config)
+	st.PendingRestart = pending
+	st.ObservedGeneration = mc.Generation
+	st.Restarts = 0
+	if pod != nil {
+		if cs := containerStatus(pod, MinecraftContainer); cs != nil {
+			st.Restarts = cs.RestartCount
+		}
+	}
+
+	if equality.Semantic.DeepEqual(orig.Status, mc.Status) {
+		return nil
+	}
+	return r.Status().Patch(ctx, mc, client.MergeFrom(orig))
+}

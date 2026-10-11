@@ -1,0 +1,99 @@
+#!/bin/sh
+# End-to-end check against a running panel and its cluster: creates a throwaway
+# organization and a Paper server with plugins, then exercises the paths that
+# only a real server can prove, and cleans up after itself.
+#
+#   AVSYS_URL=http://localhost:8080 AVSYS_TOKEN=avsys_... ./hack/e2e.sh
+#
+# The token must belong to an instance admin (it creates an organization).
+# Optional: AVSYS_SSH_PORT (2222), AVSYS_ROUTER_HOST (127.0.0.1), AVSYS_ROUTER_PORT (25565).
+set -eu
+
+: "${AVSYS_URL:?set AVSYS_URL to the panel address}"
+: "${AVSYS_TOKEN:?set AVSYS_TOKEN to an instance admin API token}"
+SSH_PORT=${AVSYS_SSH_PORT:-2222}
+ROUTER_HOST=${AVSYS_ROUTER_HOST:-127.0.0.1}
+ROUTER_PORT=${AVSYS_ROUTER_PORT:-25565}
+HERE=$(cd "$(dirname "$0")" && pwd)
+
+API=$AVSYS_URL/api/v1
+ORG=e2e-$(date +%s)
+SRV=$API/orgs/$ORG/servers/probe
+HOST=probe.$ORG.test
+WORK=$(mktemp -d)
+
+call() { curl -sS -H "Authorization: Bearer $AVSYS_TOKEN" "$@"; }
+field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1], {'d': d}))" "$1"; }
+step() { printf '\n== %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+expect() { case "$2" in *"$3"*) printf 'ok: %s\n' "$1" ;; *) fail "$1: expected to find '$3' in: $2" ;; esac; }
+
+cleanup() {
+  status=$?
+  step "cleaning up"
+  call -X DELETE "$SRV" >/dev/null 2>&1 || true
+  # The organization can only go once its server is gone.
+  for _ in $(seq 1 30); do
+    [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)' 2>/dev/null)" = 0 ] && break
+    sleep 2
+  done
+  call -X DELETE "$API/orgs/$ORG" >/dev/null 2>&1 || true
+  [ -n "${KEY_ID:-}" ] && call -X DELETE "$API/me/ssh-keys/$KEY_ID" >/dev/null 2>&1 || true
+  rm -rf "$WORK"
+  [ $status -eq 0 ] && echo "PASS" || echo "FAILED (exit $status)"
+}
+trap cleanup EXIT
+
+wait_phase() {
+  for _ in $(seq 1 120); do
+    phase=$(call "$SRV" | field "d['status'].get('phase')")
+    [ "$phase" = "$1" ] && return 0
+    [ "$phase" = Error ] && fail "server went to Error: $(call "$SRV" | field "d['status'].get('message')")"
+    sleep 3
+  done
+  fail "timed out waiting for $1 (last phase: $phase)"
+}
+
+step "organization and server"
+call -d "{\"name\":\"E2E $ORG\",\"slug\":\"$ORG\"}" "$API/orgs" >/dev/null
+# WorldEdit is here on purpose: its newest builds need a newer Java than this
+# game version ships with, so it proves a version that actually loads is chosen.
+created=$(call -d "{\"name\":\"probe\",\"spec\":{\"eula\":true,\"loader\":\"paper\",\"version\":\"1.21.4\",
+  \"resources\":{\"memory\":\"2Gi\"},\"storage\":{\"size\":\"2Gi\"},\"expose\":{\"hostname\":\"$HOST\"},
+  \"properties\":{\"motd\":\"e2e probe\"},
+  \"mods\":[{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"luckperms\"},{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"worldedit\"}]}}" "$API/orgs/$ORG/servers")
+expect "content is pinned when added" "$(echo "$created" | field "all(m.get('version') for m in d['spec']['mods'])")" True
+expect "content fits the game's Java" "$(echo "$created" | field "d['java']['effective'] == d['java']['game'] == 21")" True
+wait_phase Running
+echo "ok: server reached Running"
+
+step "console"
+plugins=$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")
+expect "LuckPerms is loaded" "$plugins" LuckPerms
+expect "WorldEdit is loaded" "$plugins" WorldEdit
+expect "log is streamed" "$(call -N --max-time 4 "$SRV/console" 2>/dev/null || true)" "Done ("
+
+step "files"
+echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
+expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
+expect "managed server.properties" "$(call "$SRV/files/content?path=/server.properties")" "motd=e2e probe"
+
+step "ssh"
+ssh-keygen -q -t ed25519 -N '' -f "$WORK/key" -C avsys-e2e
+KEY_ID=$(call -d "{\"name\":\"e2e\",\"publicKey\":\"$(cat "$WORK/key.pub")\"}" "$API/me/ssh-keys" | field "d['id']")
+ssh_host=$(echo "$AVSYS_URL" | sed -E 's#^[a-z]+://##; s#[:/].*$##')
+out=$(ssh -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'pwd; cat /data/e2e.txt; mc run list')
+expect "shell lands in the server directory" "$out" /data
+expect "shell sees the same files" "$out" "written by e2e"
+expect "mc helper reaches the game" "$out" "players online"
+
+step "router"
+expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
+expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"
+
+step "stop keeps the workspace"
+call -X POST "$SRV/stop" >/dev/null
+wait_phase Stopped
+expect "files reachable while stopped" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
+expect "router says offline" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "Offline"
