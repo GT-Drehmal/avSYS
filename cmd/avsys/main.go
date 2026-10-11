@@ -337,8 +337,37 @@ func installCRDs(ctx context.Context, cfg *rest.Config) error {
 		if err := c.Patch(ctx, obj, client.Apply, client.FieldOwner("avsys"), client.ForceOwnership); err != nil {
 			return fmt.Errorf("%s: %w", entry.Name(), err)
 		}
+		if err := waitEstablished(ctx, c, obj.GetName()); err != nil {
+			return fmt.Errorf("%s: %w", entry.Name(), err)
+		}
 	}
 	return nil
+}
+
+// waitEstablished blocks until the API server serves a newly created CRD. On
+// a fresh cluster that takes a moment, and starting the controller before
+// then fails with "no matches for kind".
+func waitEstablished(ctx context.Context, c client.Client, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	for {
+		crd := &unstructured.Unstructured{}
+		crd.SetAPIVersion("apiextensions.k8s.io/v1")
+		crd.SetKind("CustomResourceDefinition")
+		if err := c.Get(ctx, client.ObjectKey{Name: name}, crd); err == nil {
+			conditions, _, _ := unstructured.NestedSlice(crd.Object, "status", "conditions")
+			for _, raw := range conditions {
+				if cond, ok := raw.(map[string]any); ok && cond["type"] == "Established" && cond["status"] == "True" {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("CRD %s was not served within a minute", name)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 // listener adapts a Serve(ctx, net.Listener) function to a manager runnable.
