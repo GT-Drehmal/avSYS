@@ -55,6 +55,9 @@ type Server struct {
 
 	catalog    *catalog
 	workspaces *workspacePool
+	// routes lists what Handler registered, as "METHOD /path". Tests use it
+	// to check that no route is left without a decision on who may call it.
+	routes []string
 }
 
 // Namespace returns the namespace that holds an organization's servers.
@@ -238,6 +241,7 @@ func (s *Server) Handler() http.Handler {
 	api := func(pattern string, h http.Handler) {
 		method, path, _ := strings.Cut(pattern, " ")
 		mux.Handle(method+" /api/v1"+path, h)
+		s.routes = append(s.routes, pattern)
 	}
 
 	api("GET /meta", s.public(s.getMeta))
