@@ -100,7 +100,10 @@ spec:
         fsGroup: 65532
       containers:
         - name: avsys
-          image: ghcr.io/gt-drehmal/avsys:latest
+          # :edge follows the main branch. For a fixed version use a release
+          # tag such as :v0.1.0 and drop imagePullPolicy.
+          image: ghcr.io/gt-drehmal/avsys:edge
+          imagePullPolicy: Always
           env:
             - name: AVSYS_PUBLIC_URL
               value: https://panel.example.com

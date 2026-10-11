@@ -3,6 +3,9 @@
 # to the sshd in here.
 FROM debian:bookworm-slim
 
+LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
+      org.opencontainers.image.description="avSYS workspace: the SSH sidecar next to each Minecraft server"
+
 ARG TARGETARCH
 ARG RCON_CLI_VERSION=1.7.7
 

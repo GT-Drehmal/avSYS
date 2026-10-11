@@ -1,22 +1,28 @@
 # The avSYS panel: controller, API, web UI, SSH gateway and router in one binary.
+#
+# Both build stages run on the machine doing the build and cross-compile for
+# the target, so a multi-architecture build does not emulate the compilers.
 
-FROM oven/bun:1 AS web
+FROM --platform=$BUILDPLATFORM oven/bun:1 AS web
 WORKDIR /src/web
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY web/ ./
 RUN bun run build
 
-FROM golang:1.27 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -tags embedweb -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /avsys ./cmd/avsys
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags embedweb -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /avsys ./cmd/avsys
 
 FROM gcr.io/distroless/static-debian12:nonroot
+LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
+      org.opencontainers.image.description="avSYS: a Kubernetes-native Minecraft server panel"
 COPY --from=build /avsys /avsys
 # The database lives here; mount a volume.
 VOLUME /data

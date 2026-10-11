@@ -53,6 +53,8 @@ kubectl apply -f deploy/install.yaml
 
 Edit `AVSYS_PUBLIC_URL` in that file first. It creates the `avsys` namespace, a service account with the permissions the panel needs, a 1Gi volume for the database, and a LoadBalancer service for the three ports. The panel installs and upgrades the `MinecraftServer` CRD itself.
 
+Images are published to `ghcr.io/gt-drehmal/avsys` for amd64 and arm64. `:edge` follows the main branch; releases are `:v1.2.3`, with `:latest` on the newest. The panel starts the workspace image of its own version, so there is only the one image to choose.
+
 The first account you create becomes the instance administrator. After that, accounts are created through invite links unless `AVSYS_ALLOW_SIGNUPS=true`.
 
 ### Configuration
@@ -127,6 +129,8 @@ make generate   # after changing api/
 ```
 
 `make e2e` needs `AVSYS_URL` and `AVSYS_TOKEN` (an instance admin's API token). It makes a throwaway organization and a Paper server with plugins, checks the console, files, SSH and the router against it, and deletes both. Unit tests cover the logic that needs no cluster; this covers what only a running server can show.
+
+To cut a release, push a version tag: `git tag v0.1.0 && git push origin v0.1.0`. CI tests it and publishes both images under that tag.
 
 `make dev` runs the panel on your machine against the current kubectl context, reaching pods through the API server, and keeps its database in `.dev/`. For UI work, also run `bun run dev` in `web/` and open the address Vite prints; it proxies API calls to the panel.
 
