@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button, Confirm, Field, Input, Notice, Section, Select, Textarea, Toggle } from "../../components/ui";
 import { api, serverPath, type ExposeType, type Loader, type ServerSpec, type SpecPatch } from "../../lib/api";
+import { difficulties, gameModes, parseProperties, worldKeys } from "../../lib/properties";
 import { useAction, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
 import { toast } from "../../lib/toast";
@@ -92,10 +93,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     "white-list": d.whitelistOn,
   };
   for (const [k, v] of Object.entries(typed)) if (v !== "") properties[k] = v;
-  for (const line of lines(d.otherProperties)) {
-    const i = line.indexOf("=");
-    if (i > 0) properties[line.slice(0, i).trim()] = line.slice(i + 1);
-  }
+  Object.assign(properties, parseProperties(d.otherProperties));
   return {
     displayName: d.displayName,
     version: d.version,
@@ -163,6 +161,8 @@ export function Settings() {
   };
 
   const usesRouter = draft.exposeType === "Router";
+  const otherKeys = parseProperties(draft.otherProperties);
+  const worldSet = worldKeys.filter((k) => k in otherKeys);
   return (
     <>
     <form onSubmit={save} className="pb-20">
@@ -211,10 +211,11 @@ export function Settings() {
             {(id) => (
               <Select id={id} {...text("difficulty")}>
                 <option value="">Server default</option>
-                <option value="peaceful">Peaceful</option>
-                <option value="easy">Easy</option>
-                <option value="normal">Normal</option>
-                <option value="hard">Hard</option>
+                {difficulties.map(([v, label]) => (
+                  <option key={v} value={v}>
+                    {label}
+                  </option>
+                ))}
               </Select>
             )}
           </Field>
@@ -222,10 +223,11 @@ export function Settings() {
             {(id) => (
               <Select id={id} {...text("gamemode")}>
                 <option value="">Server default</option>
-                <option value="survival">Survival</option>
-                <option value="creative">Creative</option>
-                <option value="adventure">Adventure</option>
-                <option value="spectator">Spectator</option>
+                {gameModes.map(([v, label]) => (
+                  <option key={v} value={v}>
+                    {label}
+                  </option>
+                ))}
               </Select>
             )}
           </Field>
@@ -238,7 +240,12 @@ export function Settings() {
             )}
           </Field>
         </div>
-        <Field label="Other properties" hint="One key=value per line, for anything else in server.properties.">
+        <Field
+          label="Other properties"
+          hint={`One key=value per line, for anything else in server.properties.${
+            worldSet.length > 0 ? ` ${worldSet.join(", ")} ${worldSet.length === 1 ? "is" : "are"} only read while a world is generated; a change does not alter an existing world.` : ""
+          }`}
+        >
           {(id) => <Textarea id={id} rows={3} {...text("otherProperties")} placeholder={"view-distance=12\nspawn-protection=0"} className="font-mono" spellCheck={false} />}
         </Field>
       </Section>

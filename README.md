@@ -4,7 +4,7 @@ A Minecraft server panel that is native to Kubernetes. Built for GT Drehmal; not
 
 Each server is a `MinecraftServer` resource. avSYS turns it into a pod running [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server) with its own volume, and gives you a web UI, an API and SSH on top.
 
-- **Servers in a minute.** Pick a game version and loader (Vanilla, Paper, Fabric, Forge, NeoForge, Purpur, Quilt, Folia) or a Modrinth modpack. Add mods, plugins and datapacks from Modrinth, a URL, or a file on your computer.
+- **Servers in a minute.** Pick a game version and loader (Vanilla, Paper, Fabric, Forge, NeoForge, Purpur, Quilt, Folia) or a Modrinth modpack. Set the game mode, difficulty, world type and seed before the world is generated. Add mods, plugins and datapacks from Modrinth, a URL, or a file on your computer.
 - **Your own tools.** `ssh <server>.<org>@panel` drops you in the server directory, authenticated by the SSH keys on your account. scp, sftp, rsync and VS Code Remote SSH work. There is also a terminal and a simple file editor in the browser.
 - **Organizations.** Each has its own members, roles, servers and namespace. People can belong to several. Sign in with a password, GitHub, Discord or Google; join by invite link.
 - **One address, many servers.** The built-in router sends players to the right server by the hostname they connect with, and can put idle servers to sleep and wake them when someone joins.

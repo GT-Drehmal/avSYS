@@ -142,6 +142,27 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if rp := spec.ResourcePack; rp != nil && rp.URL != "" && !strings.HasPrefix(rp.URL, "http://") && !strings.HasPrefix(rp.URL, "https://") {
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
+	return validateProperties(spec.Properties)
+}
+
+var propertyNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateProperties keeps every entry to one line. They reach the server as
+// name=value lines, so a line break in one would add an entry of its own.
+func validateProperties(properties map[string]string) error {
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !propertyNamePattern.MatchString(name) {
+			return errBadRequest("%q is not a server.properties name.", name)
+		}
+		if strings.ContainsAny(properties[name], "\r\n") {
+			return errBadRequest("The value of %s must be a single line.", name)
+		}
+	}
 	return nil
 }
 
