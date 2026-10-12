@@ -215,6 +215,11 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET /orgs/{org}/backup-policy", "", "", store.RoleViewer, 200},
 		{"PUT /orgs/{org}/backup-policy", "", `{"enabled":true,"minute":540,"keep":{"daily":7,"weekly":4,"monthly":12,"yearly":2}}`, store.RoleAdmin, 200},
 		{"POST /orgs/{org}/backup-policy/run", "", "", store.RoleAdmin, 503},
+		{"GET /orgs/{org}/offsite", "", "", store.RoleViewer, 200},
+		{"POST /orgs/{org}/offsite/run", "", "", store.RoleAdmin, 503},
+		// The two below are in rootOnly.
+		{"GET /orgs/{org}/offsite/snapshots", "", "", store.RoleViewer, 503},
+		{"POST /orgs/{org}/offsite/fetch", "", "", store.RoleViewer, 503},
 		{"GET /orgs/{org}/snapshots", "", "", store.RoleViewer, 200},
 		// 503 below: allowed, and then told that this panel has no restic.
 		{"GET /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},
@@ -246,6 +251,11 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST " + server + "/files/rename", "", `{"to":"/b"}`, store.RoleOperator, 0},
 	}
 
+	// rootOnly are for those who run the install: members get 403 whatever
+	// their role. What is offsite under an organization's name may be a
+	// deleted organization's, so it is not its members' to list or take.
+	rootOnly := map[string]bool{"GET /orgs/{org}/offsite/snapshots": true, "POST /orgs/{org}/offsite/fetch": true}
+
 	p := newPanel(t)
 	for _, who := range everyone {
 		if who != "" {
@@ -268,7 +278,7 @@ func TestOrganizationRoutes(t *testing.T) {
 				want = http.StatusUnauthorized
 			case who == "outsider":
 				want = http.StatusNotFound
-			case who != "root" && !store.Role(who).AtLeast(route.min):
+			case who != "root" && (rootOnly[route.route] || !store.Role(who).AtLeast(route.min)):
 				want = http.StatusForbidden
 			}
 			if want == 0 {

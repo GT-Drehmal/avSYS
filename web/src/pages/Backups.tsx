@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router";
 import { useOrg } from "../components/Shell";
 import { BackupSchedule } from "../components/BackupSchedule";
+import { OffsiteCopy } from "../components/OffsiteCopy";
 import { OperationRow, SnapshotRows } from "../components/Snapshots";
 import { Chip, Empty, Loading, Notice, PageHeader } from "../components/ui";
 import { atLeast, type Snapshot } from "../lib/api";
@@ -49,7 +50,7 @@ export function Backups() {
               ? "No snapshots yet."
               : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"} of ${groups.size} server${groups.size === 1 ? "" : "s"}, using ${bytes(usage?.bytes ?? 0)}.`}
           </p>
-          <Notice tone="info">Snapshots are kept on this cluster only. If its storage is lost, they are lost with it.</Notice>
+          <OffsiteCopy org={org} canAdmin={canAdmin} empty={snapshots.length === 0 && operations.length === 0} />
         </div>
         <BackupSchedule org={org} canAdmin={canAdmin} />
         {operations.map((op) => (

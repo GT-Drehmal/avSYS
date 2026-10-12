@@ -61,6 +61,7 @@ type Server struct {
 	workspaces *workspacePool
 	ops        operations
 	schedule   schedule
+	offsite    offsite
 	// consoles holds one lock per server, taken to type at its console.
 	consoles sync.Map
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
@@ -243,6 +244,7 @@ func (s *Server) audit(ctx context.Context, u *store.User, org *store.Org, actio
 // Handler builds the HTTP handler for the whole panel.
 func (s *Server) Handler() http.Handler {
 	s.catalog = newCatalog(s.Config.Version)
+	s.offsite.since()
 	s.workspaces = newWorkspacePool(s.Gateway)
 
 	mux := http.NewServeMux()
@@ -288,6 +290,10 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/backup-policy", s.authed(s.getBackupPolicy))
 	api("PUT /orgs/{org}/backup-policy", s.authed(s.putBackupPolicy))
 	api("POST /orgs/{org}/backup-policy/run", s.authed(s.runBackupPolicy))
+	api("GET /orgs/{org}/offsite", s.authed(s.getOffsite))
+	api("POST /orgs/{org}/offsite/run", s.authed(s.runOffsite))
+	api("GET /orgs/{org}/offsite/snapshots", s.authed(s.offsiteSnapshots))
+	api("POST /orgs/{org}/offsite/fetch", s.authed(s.fetchOffsite))
 	api("GET /orgs/{org}/snapshots", s.authed(s.listOrgSnapshots))
 	api("GET /orgs/{org}/snapshots/{id}", s.authed(s.getSnapshot))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))

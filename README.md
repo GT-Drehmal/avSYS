@@ -58,6 +58,7 @@ A snapshot is the server's whole directory, minus the workspace's own files and 
 - **Restore.** Restoring puts a server back to one of its own snapshots: its world, configuration, game version and mods. The server is stopped while the files are put back, and what was there is snapshotted first, so a restore can be undone. Memory, storage, address and sleep settings are left as they are.
 - **New server from a snapshot.** Any snapshot can be made into a new server, from the **Backups** page or with the API. It gets the snapshot's files along with the game version, loader, mods and game settings they were made with, and its own name, address, memory and storage. Made from a snapshot of a server that was deleted, under the same name, it is that server back with its history. Made from one of a server that still exists, it is a copy, and the original is not touched. Until its files are all in, the new server cannot be started or changed; deleting it calls the copy off.
 - **Deleting a server.** A last snapshot is taken first, so a deleted server can be brought back exactly as it was. The delete dialog has a switch for it, and the API takes `?snapshot=false`. If that snapshot cannot be taken, the server is not deleted.
+- **Offsite copy.** Give the panel a second place and every organization's snapshots are copied there, a couple of minutes after they change and once after each start. It takes any [restic repository location](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html) that needs no ssh: S3 and what speaks it (Backblaze B2, Cloudflare R2, Wasabi), Azure, Google Cloud, or a [rest-server](https://github.com/restic/rest-server). See [Offsite copy](#offsite-copy) for setting it up and for getting snapshots back.
 - **History is kept.** Deleting a server does not delete its snapshots; they stay on the organization's **Backups** page until someone deletes them. Deleting an organization deletes its repository, and asks first.
 - **What a server can do to its own history.** Snapshots are taken from inside the server's workspace, over a channel the panel opens for the purpose. Through it a server can add to its organization's repository and read from it, but not delete or overwrite anything. Only the panel removes snapshots.
 - **One organization, one trust boundary.** Servers in an organization share a repository, so someone with shell access to one of them could, with effort, read snapshots of another. Put servers that must not see each other's files in different organizations.
@@ -98,6 +99,30 @@ Every flag can also be set as an environment variable: `--public-url` is `AVSYS_
 | `AVSYS_CURSEFORGE_API_KEY` | Passed to servers for CurseForge downloads. |
 | `AVSYS_ALLOW_SIGNUPS` | `true` lets anyone create an account. |
 | `AVSYS_BACKUP_DIR` | Where the snapshot repositories are kept. Defaults to `backups` in the data directory; the manifest gives it a volume of its own. |
+| `AVSYS_OFFSITE_REPOSITORY`, `AVSYS_OFFSITE_PASSWORD` | A second place every organization's snapshots are copied to, and the password that opens them there. See [Offsite copy](#offsite-copy). |
+
+### Offsite copy
+
+Snapshots live on the cluster's own storage. To keep a copy somewhere else, give the panel a place and a password:
+
+```yaml
+- name: AVSYS_OFFSITE_REPOSITORY
+  value: s3:https://s3.us-west-004.backblazeb2.com/my-bucket/avsys
+- name: AVSYS_OFFSITE_PASSWORD
+  valueFrom: { secretKeyRef: { name: avsys-offsite, key: password } }
+- name: AWS_ACCESS_KEY_ID
+  valueFrom: { secretKeyRef: { name: avsys-offsite, key: access-key-id } }
+- name: AWS_SECRET_ACCESS_KEY
+  valueFrom: { secretKeyRef: { name: avsys-offsite, key: secret-access-key } }
+```
+
+- **The place** is a restic repository location. Each organization gets its own repository under it, named after the organization; write `{org}` where the name should go if the end is not the right spot, as in `b2:my-bucket:avsys/{org}`. The credentials are the environment variables restic itself reads for that kind of place. The bucket has to exist already. Locations that go over ssh (`sftp:`) do not work: the panel's image has no ssh client.
+- **The password** is yours to choose and to keep. It is not the one the panel keeps beside its own repositories, because that one is lost with them. Without it the copy cannot be opened by anyone, so put it in a password manager as well as in the Secret.
+- **What is copied.** Everything: scheduled snapshots, ones taken by hand, the ones taken before a restore or a delete, and those of deleted servers. A snapshot removed here, by retention or by someone, is removed there with the next copy. Nothing is removed there merely because it is missing here, so a cluster that loses its storage, or a fresh install, leaves the copy whole.
+- **How it stands** is on each organization's **Backups** page: up to date, waiting, or failing and why. A failed copy is tried again every hour and whenever there is something new.
+- **A deleted organization** keeps its copy. The panel removes its own repository and leaves the offsite one for you to remove.
+
+**Getting snapshots back.** On a new install, or after the backups volume was lost: set the same place and password, create the organization under the same short name, and open its **Backups** page as an instance administrator. It shows what the copy holds, with a button to bring it all back. From there any snapshot can be [made into a server](#snapshots) again. The copy is also an ordinary restic repository, so `restic -r <place>/<organization> snapshots` and `restic restore` work on it without the panel.
 
 ### Which node a server runs on
 
@@ -167,6 +192,9 @@ curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/snapshots
 curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/backup-policy
 curl -H "Authorization: Bearer $TOKEN" -X PUT -d '{"enabled":true,"minute":540,"keep":{"daily":7,"weekly":4,"monthly":12,"yearly":2}}' $AVSYS/orgs/friends/backup-policy
 curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/backup-policy/run?wait=true"
+# The offsite copy: how it stands, and copy now.
+curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/offsite
+curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/offsite/run?wait=true"
 # One server's own: any of enabled, minute and keep; what is left out follows the organization. null goes back to it.
 curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"backups":{"keep":{"daily":30,"weekly":8,"monthly":24,"yearly":5}}}}' $AVSYS/orgs/friends/servers/survival
 curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"backups":null}}' $AVSYS/orgs/friends/servers/survival

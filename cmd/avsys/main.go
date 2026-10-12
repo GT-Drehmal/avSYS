@@ -52,24 +52,28 @@ import (
 var version = "dev"
 
 type options struct {
-	dataDir         string
-	backupDir       string
-	restic          string
-	httpAddr        string
-	sshAddr         string
-	routerAddr      string
-	publicURL       string
-	sshPublicHost   string
-	sshPublicPort   int
-	routerPort      int
-	routerDomain    string
-	namespacePrefix string
-	workspaceImage  string
-	workspacePull   string
-	webDir          string
-	podDial         string
-	allowSignups    bool
-	installCRDs     bool
+	dataDir   string
+	backupDir string
+	restic    string
+	// offsiteRepository and offsitePasswordFile say where snapshots are
+	// copied to and what opens them there.
+	offsiteRepository   string
+	offsitePasswordFile string
+	httpAddr            string
+	sshAddr             string
+	routerAddr          string
+	publicURL           string
+	sshPublicHost       string
+	sshPublicPort       int
+	routerPort          int
+	routerDomain        string
+	namespacePrefix     string
+	workspaceImage      string
+	workspacePull       string
+	webDir              string
+	podDial             string
+	allowSignups        bool
+	installCRDs         bool
 }
 
 // env returns the value of AVSYS_<NAME> for a flag called name, or fallback.
@@ -95,6 +99,8 @@ func parseFlags() options {
 	str(&o.dataDir, "data-dir", "./data", "directory for the panel's database")
 	str(&o.backupDir, "backup-dir", "", "directory for the organizations' snapshot repositories (default: backups under data-dir)")
 	str(&o.restic, "restic", "restic", "restic binary the panel runs to keep those repositories")
+	str(&o.offsiteRepository, "offsite-repository", "", "restic repository location every organization's snapshots are copied to, e.g. s3:https://s3.example.com/bucket/avsys; each organization gets its own under it")
+	str(&o.offsitePasswordFile, "offsite-password-file", "", "file holding the password of the offsite repositories (or set AVSYS_OFFSITE_PASSWORD)")
 	str(&o.httpAddr, "http-addr", ":8080", "address the web UI and API listen on")
 	str(&o.sshAddr, "ssh-addr", ":2222", "address the SSH gateway listens on (empty disables it)")
 	str(&o.routerAddr, "router-addr", ":25565", "address the Minecraft router listens on (empty disables it)")
@@ -258,6 +264,23 @@ func run(opts options, log *slog.Logger) error {
 	if !backups.Available() {
 		log.Warn("restic not found; snapshots are unavailable", "restic", opts.restic)
 	}
+	if opts.offsiteRepository != "" {
+		// The password is the operator's to keep: it is what opens the copy
+		// once everything the panel has is gone. It is never made up here.
+		password := os.Getenv("AVSYS_OFFSITE_PASSWORD")
+		if opts.offsitePasswordFile != "" {
+			data, err := os.ReadFile(opts.offsitePasswordFile)
+			if err != nil {
+				return fmt.Errorf("reading the offsite password: %w", err)
+			}
+			password = strings.TrimSpace(string(data))
+		}
+		if password == "" {
+			return errors.New("an offsite repository needs a password: set AVSYS_OFFSITE_PASSWORD or --offsite-password-file, and keep a copy of it somewhere else")
+		}
+		backups.Offsite = &backup.Offsite{Repository: opts.offsiteRepository, Password: password}
+		log.Info("snapshots are copied offsite", "repository", opts.offsiteRepository)
+	}
 	gateway := &sshgw.Gateway{Store: st, Dialer: dialer, HostKey: hostKey, WorkspaceKey: workspaceKey, Log: log.With("component", "ssh")}
 	server := &api.Server{
 		Config: api.Config{
@@ -299,6 +322,12 @@ func run(opts options, log *slog.Logger) error {
 	}
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		server.RunSchedule(ctx)
+		return nil
+	})); err != nil {
+		return err
+	}
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		server.RunOffsite(ctx)
 		return nil
 	})); err != nil {
 		return err

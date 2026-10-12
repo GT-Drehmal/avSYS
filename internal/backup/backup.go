@@ -88,9 +88,14 @@ type Manager struct {
 	// Restic is the restic binary the panel itself runs.
 	Restic string
 	Log    *slog.Logger
+	// Offsite is where every repository is copied to, if anywhere.
+	Offsite *Offsite
 
 	mu    sync.Mutex
 	locks map[string]*sync.RWMutex
+	// changed is when an organization's snapshots last changed, as far as
+	// this process has seen.
+	changed map[string]time.Time
 }
 
 // Snapshot is one saved state of a server.
@@ -109,6 +114,9 @@ type Snapshot struct {
 	Size  int64 `json:"size"`
 	Added int64 `json:"added"`
 	Files int64 `json:"files"`
+	// Lineage is the same for a snapshot and for every copy of it in another
+	// repository, which each have an ID of their own.
+	Lineage string `json:"-"`
 }
 
 // Meta describes the server a snapshot is being taken of.
@@ -221,6 +229,11 @@ func (m *Manager) password(org string) (string, error) {
 
 // restic runs the panel's own restic against an organization's repository.
 func (m *Manager) restic(ctx context.Context, org string, args ...string) ([]byte, error) {
+	return m.resticEnv(ctx, org, nil, args...)
+}
+
+// resticEnv is restic with more in its environment.
+func (m *Manager) resticEnv(ctx context.Context, org string, env []string, args ...string) ([]byte, error) {
 	if !m.Available() {
 		return nil, ErrUnavailable
 	}
@@ -229,6 +242,9 @@ func (m *Manager) restic(ctx context.Context, org string, args ...string) ([]byt
 	}
 	full := append([]string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache"}, args...)
 	cmd := exec.CommandContext(ctx, m.Restic, full...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -259,7 +275,10 @@ func (m *Manager) ensure(ctx context.Context, org string) error {
 }
 
 type resticSnapshot struct {
-	ID       string    `json:"id"`
+	ID string `json:"id"`
+	// Original is set on a snapshot that was copied from another repository,
+	// to the ID of the first one it descends from.
+	Original string    `json:"original"`
 	Time     time.Time `json:"time"`
 	Hostname string    `json:"hostname"`
 	Tags     []string  `json:"tags"`
@@ -271,7 +290,10 @@ type resticSnapshot struct {
 }
 
 func (r resticSnapshot) snapshot() Snapshot {
-	s := Snapshot{ID: r.ID, Time: r.Time, Server: r.Hostname, Trigger: TriggerManual}
+	s := Snapshot{ID: r.ID, Time: r.Time, Server: r.Hostname, Trigger: TriggerManual, Lineage: r.Original}
+	if s.Lineage == "" {
+		s.Lineage = r.ID
+	}
 	for _, tag := range r.Tags {
 		key, value, ok := strings.Cut(tag, "=")
 		if !ok {
@@ -412,8 +434,11 @@ func (m *Manager) Delete(ctx context.Context, org, id string) error {
 	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
 		return err
 	}
-	_, err = m.restic(ctx, org, "forget", "--prune", snap.ID)
-	return err
+	if _, err = m.restic(ctx, org, "forget", "--prune", snap.ID); err != nil {
+		return err
+	}
+	m.removed(org, snap.Lineage)
+	return nil
 }
 
 // Forget removes the scheduled snapshots of one server that the policy no
@@ -448,7 +473,7 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (in
 		return 0, err
 	}
 	var groups []struct {
-		Remove []json.RawMessage `json:"remove"`
+		Remove []resticSnapshot `json:"remove"`
 	}
 	// restic prints nothing at all when no snapshot matched.
 	if len(bytes.TrimSpace(out)) == 0 {
@@ -457,11 +482,14 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (in
 	if err := json.Unmarshal(out, &groups); err != nil {
 		return 0, fmt.Errorf("reading what was forgotten: %w", err)
 	}
-	removed := 0
+	var gone []string
 	for _, g := range groups {
-		removed += len(g.Remove)
+		for _, r := range g.Remove {
+			gone = append(gone, r.snapshot().Lineage)
+		}
 	}
-	return removed, nil
+	m.removed(org, gone...)
+	return len(gone), nil
 }
 
 // Prune gives back the space of snapshots that have been forgotten.
@@ -489,6 +517,12 @@ func (m *Manager) Destroy(org string) error {
 	}
 	if err := os.Remove(m.keyFile(org)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	// The offsite copy is left as it is: nothing here says to remove it.
+	for _, file := range []string{m.removedFile(org), m.statusFile(org)} {
+		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	return nil
 }
@@ -653,6 +687,7 @@ func (m *Manager) Snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 		}
 		return nil, incomplete
 	}
+	m.touch(org)
 	return snap, nil
 }
 

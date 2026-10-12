@@ -75,10 +75,22 @@ k wait --for=condition=Ready node --all --timeout=120s >/dev/null || fail "the c
 docker save "$PANEL" "$WORKSPACE" | docker exec -i "$NAME" ctr images import - >/dev/null
 echo "ok: k3s is up with both images loaded"
 
+# offsite gives the panel an offsite copy that is a directory on its own
+# volume: nowhere a real one should be, and enough to run it through here.
+offsite() {
+  python3 -c '
+import secrets, sys
+at = "              value: /backups\n"
+manifest = sys.stdin.read()
+assert manifest.count(at) == 1, "the manifest no longer sets the backup directory the way this expects"
+env = "            - name: %s\n              value: \"%s\"\n"
+print(manifest.replace(at, at + env % ("AVSYS_OFFSITE_REPOSITORY", "/data/offsite-e2e") + env % ("AVSYS_OFFSITE_PASSWORD", secrets.token_urlsafe(18))), end="")'
+}
+
 step "install"
 sed -e "s|image: ghcr.io/gt-drehmal/avsys:edge|image: $PANEL|" \
     -e "s|imagePullPolicy: Always|imagePullPolicy: IfNotPresent|" \
-    -e "s|value: https://panel.example.com|value: $URL|" deploy/install.yaml | k apply -f - >/dev/null
+    -e "s|value: https://panel.example.com|value: $URL|" deploy/install.yaml | offsite | k apply -f - >/dev/null
 k -n avsys rollout status deploy/avsys --timeout=180s >/dev/null || fail "the panel did not become ready"
 restarts=$(k -n avsys get pods -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}')
 [ "$restarts" = 0 ] || fail "the panel restarted $restarts time(s) during its first start"

@@ -24,7 +24,7 @@ func TestSnapshotFromResticJSON(t *testing.T) {
 	const listed = `[{"time":"2026-10-12T01:11:04.5Z","hostname":"survival","id":"a8878ae3ffff",
 	  "tags":["avsys","by=steve","loader=paper","trigger=manual","version=1.21.4","stray"],
 	  "summary":{"total_bytes_processed":7000,"total_files_processed":12,"data_added_packed":1402}},
-	 {"time":"2020-01-01T00:00:00Z","hostname":"old","id":"00000000aaaa"}]`
+	 {"time":"2020-01-01T00:00:00Z","hostname":"old","id":"00000000aaaa","original":"11111111bbbb"}]`
 	var raw []resticSnapshot
 	if err := json.Unmarshal([]byte(listed), &raw); err != nil {
 		t.Fatal(err)
@@ -34,13 +34,20 @@ func TestSnapshotFromResticJSON(t *testing.T) {
 		ID: "a8878ae3ffff", Time: time.Date(2026, 10, 12, 1, 11, 4, 500000000, time.UTC),
 		Server: "survival", Trigger: "manual", By: "steve", Version: "1.21.4", Loader: "paper",
 		Size: 7000, Added: 1402, Files: 12,
+		// One that was taken here is the first of its line.
+		Lineage: "a8878ae3ffff",
 	}
 	if got != want {
 		t.Errorf("got %+v\nwant %+v", got, want)
 	}
 	// A snapshot made by hand with plain restic still lists.
-	if plain := raw[1].snapshot(); plain.Server != "old" || plain.Trigger != TriggerManual || plain.Size != 0 {
+	plain := raw[1].snapshot()
+	if plain.Server != "old" || plain.Trigger != TriggerManual || plain.Size != 0 {
 		t.Errorf("snapshot without tags or summary: %+v", plain)
+	}
+	// A copy keeps the line of the one it was copied from.
+	if plain.Lineage != "11111111bbbb" {
+		t.Errorf("a copied snapshot's lineage is %q, want that of its original", plain.Lineage)
 	}
 }
 
