@@ -179,3 +179,7 @@ To cut a release, push a version tag: `git tag v0.1.0 && git push origin v0.1.0`
 | `deploy` | CRD and install manifest |
 
 Earlier planning notes: <https://docs.google.com/document/d/1D_mDTFApseszykIvamCIFB8B9JzJdk8vqC-D3iDWjWQ/edit?usp=sharing>
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

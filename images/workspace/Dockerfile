@@ -4,6 +4,7 @@
 FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="avSYS workspace: the SSH sidecar next to each Minecraft server"
 
 ARG TARGETARCH

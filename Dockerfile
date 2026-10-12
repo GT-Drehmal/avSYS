@@ -22,6 +22,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags embedweb -tri
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="avSYS: a Kubernetes-native Minecraft server panel"
 COPY --from=build /avsys /avsys
 # The database lives here; mount a volume.
