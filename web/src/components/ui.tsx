@@ -52,19 +52,26 @@ export function Button({ variant = "default", size = "md", loading, icon, childr
 }
 
 const controlClass =
-  "w-full rounded-md border border-line-strong bg-bg px-2.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-faint focus:border-accent focus:outline-none disabled:opacity-50";
+  "rounded-md border border-line-strong bg-bg px-2.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-faint focus:border-accent focus:outline-none disabled:opacity-50";
+
+/**
+ * A control fills its container unless it is given a width of its own. The
+ * two cannot simply both be named: which of two width classes wins is
+ * decided by the stylesheet's order, not by which comes last here.
+ */
+const widthOf = (className?: string) => (/(^|\s)w-/.test(className ?? "") ? "" : "w-full");
 
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...rest} className={cx(controlClass, "h-8", className)} />;
+  return <input {...rest} className={cx(controlClass, widthOf(className), "h-8", className)} />;
 }
 
 export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...rest} className={cx(controlClass, "py-1.5 leading-relaxed", className)} />;
+  return <textarea {...rest} className={cx(controlClass, widthOf(className), "py-1.5 leading-relaxed", className)} />;
 }
 
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select {...rest} className={cx(controlClass, "h-8 appearance-none bg-[length:16px] bg-[right_6px_center] bg-no-repeat pr-7", className)} style={{ backgroundImage: chevron }}>
+    <select {...rest} className={cx(controlClass, widthOf(className), "h-8 appearance-none bg-[length:16px] bg-[right_6px_center] bg-no-repeat pr-7", className)} style={{ backgroundImage: chevron }}>
       {children}
     </select>
   );
