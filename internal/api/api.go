@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -60,6 +61,8 @@ type Server struct {
 	workspaces *workspacePool
 	ops        operations
 	schedule   schedule
+	// consoles holds one lock per server, taken to type at its console.
+	consoles sync.Map
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
 	// to check that no route is left without a decision on who may call it.
 	routes []string

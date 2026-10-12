@@ -79,3 +79,14 @@ func TestConsoleCommandsAreOneLine(t *testing.T) {
 		}
 	}
 }
+
+func TestConsoleTurnsArePerServer(t *testing.T) {
+	var s Server
+	a := s.consoleTurn("mc-alpha/world")
+	if s.consoleTurn("mc-alpha/world") != a {
+		t.Error("two writers to one console were given different locks")
+	}
+	if s.consoleTurn("mc-alpha/other") == a {
+		t.Error("two servers share a console lock")
+	}
+}

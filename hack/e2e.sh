@@ -122,7 +122,7 @@ expect "WorldEdit is loaded" "$plugins" WorldEdit
 expect "log is streamed" "$(call -N --max-time 4 "$SRV/console" 2>/dev/null || true)" "Done ("
 # Typed at the server console, a message is from the server. Over RCON the
 # game would call its sender Rcon.
-expect "a command can be typed at the server console" "$(call -d '{"command":"say hello from the panel","as":"server"}' "$SRV/console" | field "d['output']")" ""
+expect "a command typed at the server console answers with nothing, its output being in the log" "$(call -d '{"command":"say hello from the panel","as":"server"}' "$SRV/console" | field "d['output'] == ''")" True
 sleep 2
 expect "and is then from the server" "$(call -N --max-time 4 "$SRV/console" 2>/dev/null || true)" "[Server] hello from the panel"
 expect "one command at a time" "$(call -o /dev/null -w '%{http_code}' -d '{"command":"say a\nsay b","as":"server"}' "$SRV/console")" 400

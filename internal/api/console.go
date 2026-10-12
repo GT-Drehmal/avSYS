@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -172,17 +173,32 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 	return nil
 }
 
+// consoleTurn returns the lock that writers to one server's console take in turn.
+func (s *Server) consoleTurn(key string) *sync.Mutex {
+	turn, _ := s.consoles.LoadOrStore(key, &sync.Mutex{})
+	return turn.(*sync.Mutex)
+}
+
 // typeAtConsole writes one line to the game's console input, through the
 // workspace that shares it. ok is false when this server has no such input:
 // its pod is from before there was one.
 func (s *Server) typeAtConsole(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (ok bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	// One writer at a time per server. Two long lines written to a pipe at
+	// once can come out interleaved, as one command that nobody typed.
+	turn := s.consoleTurn(mc.Namespace + "/" + mc.Name)
+	turn.Lock()
+	defer turn.Unlock()
 	ws, err := s.Gateway.DialWorkspace(ctx, mc.Namespace, mc.Name)
 	if err != nil {
 		return false, err
 	}
 	defer ws.Close()
+	// Nothing below watches ctx by itself. Closing the connection when the
+	// time is up is what ends a session that has stopped answering.
+	stop := context.AfterFunc(ctx, func() { ws.Close() })
+	defer stop()
 	session, err := ws.NewSession()
 	if err != nil {
 		return false, err
