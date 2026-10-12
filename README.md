@@ -152,10 +152,15 @@ Needs Go, [Bun](https://bun.sh), Docker and a cluster in your kubectl context (O
 make dev        # builds everything and runs the panel on http://localhost:8080
 make test       # unit tests and type checks
 make e2e        # creates a real server through a running panel and checks it end to end
+make e2e-cluster  # the same from nothing: an empty k3s in Docker, installed from deploy/install.yaml
 make generate   # after changing api/
 ```
 
 `make e2e` needs `AVSYS_URL` and `AVSYS_TOKEN` (an instance admin's API token). It makes a throwaway organization and a Paper server with plugins, checks the console, files, SSH and the router against it, and deletes both. Unit tests cover the logic that needs no cluster; this covers what only a running server can show.
+
+`make e2e-cluster` needs only Docker. It starts an empty single-node k3s in a container, builds both images, applies `deploy/install.yaml`, creates the first account and then runs the same check. CI runs it on every push, and images are published only if it passes.
+
+The API tests in `internal/api` run the panel in-process and check every route against every role. A new route under an organization has to be added to that table, or the tests fail.
 
 To cut a release, push a version tag: `git tag v0.1.0 && git push origin v0.1.0`. CI tests it and publishes both images under that tag.
 
