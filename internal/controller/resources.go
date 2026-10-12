@@ -168,11 +168,25 @@ func heapSize(limit resource.Quantity) string {
 	return strconv.FormatInt(heap, 10) + "M"
 }
 
+// ConsoleDir is shared by the game and the workspace, and ConsolePipe in it
+// is the game's own console input: a line written there is a command typed
+// at the server console. That is how commands from the panel come from
+// "Server". Over RCON the game calls their sender "Rcon", in chat and in
+// its log.
+const (
+	ConsoleDir  = "/run/avsys"
+	ConsolePipe = ConsoleDir + "/console-in"
+)
+
+var consoleMount = corev1.VolumeMount{Name: "console", MountPath: ConsoleDir}
+
 func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 	env := map[string]string{
 		"EULA":                           strconv.FormatBool(mc.Spec.EULA),
 		"MEMORY":                         heapSize(mc.Spec.Resources.Memory),
 		"MODRINTH_DOWNLOAD_DEPENDENCIES": "required",
+		"CREATE_CONSOLE_IN_PIPE":         "true",
+		"CONSOLE_IN_NAMED_PIPE":          ConsolePipe,
 	}
 
 	switch {
@@ -324,7 +338,7 @@ func minecraftContainer(mc *avsysv1.MinecraftServer, cfg Config) corev1.Containe
 				corev1.ResourceCPU:    resource.MustParse("250m"),
 			},
 		},
-		VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}},
+		VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}, consoleMount},
 		// Large modpacks can take many minutes to install on first boot.
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: health, PeriodSeconds: 5, TimeoutSeconds: 5, FailureThreshold: 720,
@@ -356,6 +370,7 @@ func workspaceContainer(mc *avsysv1.MinecraftServer, cfg Config) corev1.Containe
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "data", MountPath: "/data"},
 			{Name: "workspace-keys", MountPath: "/etc/avsys/keys", ReadOnly: true},
+			consoleMount,
 		},
 	}
 }
@@ -392,6 +407,7 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 			{Name: "workspace-keys", VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{SecretName: WorkspaceSecret},
 			}},
+			{Name: "console", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		},
 	}
 

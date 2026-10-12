@@ -95,7 +95,11 @@ export function Console() {
     append(toLines([text], "input"));
     setBusy(true);
     try {
-      const { output } = await api.post<{ output: string }>(`${path}/console`, { command: text });
+      // Typed at the server console, so that players see it come from the
+      // server. What the command prints shows up in the log above like
+      // anything else; only a server that has not been restarted since the
+      // panel learned to do this still answers here.
+      const { output } = await api.post<{ output: string }>(`${path}/console`, { command: text, as: "server" });
       if (output.trim()) append(toLines(output.replace(/\n$/, "").split("\n"), "output"));
     } catch (err) {
       append(toLines([err instanceof ApiError ? err.message : "The command failed."], "error"));

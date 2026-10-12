@@ -120,6 +120,12 @@ plugins=$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")
 expect "LuckPerms is loaded" "$plugins" LuckPerms
 expect "WorldEdit is loaded" "$plugins" WorldEdit
 expect "log is streamed" "$(call -N --max-time 4 "$SRV/console" 2>/dev/null || true)" "Done ("
+# Typed at the server console, a message is from the server. Over RCON the
+# game would call its sender Rcon.
+expect "a command can be typed at the server console" "$(call -d '{"command":"say hello from the panel","as":"server"}' "$SRV/console" | field "d['output']")" ""
+sleep 2
+expect "and is then from the server" "$(call -N --max-time 4 "$SRV/console" 2>/dev/null || true)" "[Server] hello from the panel"
+expect "one command at a time" "$(call -o /dev/null -w '%{http_code}' -d '{"command":"say a\nsay b","as":"server"}' "$SRV/console")" 400
 
 step "files"
 echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
