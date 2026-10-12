@@ -35,7 +35,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           docker build -t avsys:ci .
-          docker build -t avsys-workspace:ci images/workspace
+          docker build -t avsys-workspace:ci -f images/workspace/Dockerfile .
 
   # Installs the panel into an empty cluster the way a user would, then runs a
   # real Minecraft server through it. This is what catches a broken manifest,
@@ -90,7 +90,8 @@ jobs:
       - name: Workspace image
         uses: docker/build-push-action@v7
         with:
-          context: images/workspace
+          context: .
+          file: images/workspace/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |

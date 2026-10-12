@@ -32,4 +32,4 @@ e2e-cluster:
 
 images:
 	docker build -t $(IMAGE):$(VERSION) --build-arg VERSION=$(VERSION) .
-	docker build -t $(WORKSPACE_IMAGE):$(VERSION) images/workspace
+	docker build -t $(WORKSPACE_IMAGE):$(VERSION) -f images/workspace/Dockerfile .
