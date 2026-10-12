@@ -68,15 +68,23 @@ spec:
                     properties:
                       daily:
                         format: int32
+                        maximum: 90
+                        minimum: 1
                         type: integer
                       monthly:
                         format: int32
+                        maximum: 120
+                        minimum: 0
                         type: integer
                       weekly:
                         format: int32
+                        maximum: 104
+                        minimum: 0
                         type: integer
                       yearly:
                         format: int32
+                        maximum: 20
+                        minimum: 0
                         type: integer
                     required:
                     - daily

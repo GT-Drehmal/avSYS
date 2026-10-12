@@ -179,12 +179,21 @@ type BackupSpec struct {
 }
 
 // BackupKeep is how many scheduled snapshots to keep: the newest of each of
-// the last so many days, weeks, months and years.
+// the last so many days, weeks, months and years. The limits are those of an
+// organization's schedule.
 type BackupKeep struct {
-	Daily   int32 `json:"daily"`
-	Weekly  int32 `json:"weekly"`
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=90
+	Daily int32 `json:"daily"`
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=104
+	Weekly int32 `json:"weekly"`
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=120
 	Monthly int32 `json:"monthly"`
-	Yearly  int32 `json:"yearly"`
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=20
+	Yearly int32 `json:"yearly"`
 }
 
 type StorageSpec struct {
