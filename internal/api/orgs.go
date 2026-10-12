@@ -131,6 +131,7 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 	if err := s.Store.DeleteOrg(r.Context(), a.Org.ID); err != nil {
 		return err
 	}
+	_ = s.Store.DeleteSetting(context.WithoutCancel(r.Context()), policyKey(a.Org.ID))
 	s.audit(r.Context(), u, nil, "org.delete", a.Org.Slug, "")
 	w.WriteHeader(http.StatusNoContent)
 	return nil

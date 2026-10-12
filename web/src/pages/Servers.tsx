@@ -4,8 +4,8 @@ import { ServerActions } from "../components/ServerActions";
 import { useOrg } from "../components/Shell";
 import { CopyText, Empty, PageHeader, StatusDot, Loading } from "../components/ui";
 import { atLeast, type Server } from "../lib/api";
-import { describeSoftware, displayName } from "../lib/format";
-import { useServers } from "../lib/queries";
+import { ago, describeSoftware, displayName } from "../lib/format";
+import { useBackupPolicy, useServers } from "../lib/queries";
 
 function Players({ server }: { server: Server }) {
   const p = server.status.players;
@@ -27,12 +27,25 @@ const phaseWords: Record<string, string> = {
   Error: "Error",
 };
 
+const overdueAfter = 36 * 60 * 60 * 1000;
+
+/** Says so when a server's backups need looking at: the last one failed, or the daily one has not happened. */
+function BackupMark({ server, scheduled }: { server: Server; scheduled: boolean }) {
+  const backups = server.status.snapshots;
+  if (backups?.error) return <span className="text-danger"> · backup failed</span>;
+  if (!scheduled) return null;
+  const last = backups?.lastRun ?? server.createdAt;
+  if (Date.now() - new Date(last).getTime() < overdueAfter) return null;
+  return <span className="text-warn"> · {backups?.lastRun ? `last backup ${ago(backups.lastRun)}` : "never backed up"}</span>;
+}
+
 const columns = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_72px_minmax(0,1.3fr)_88px] items-center gap-4 px-4";
 
 export function Servers() {
   const { org = "" } = useParams();
   const membership = useOrg();
   const servers = useServers(org);
+  const policy = useBackupPolicy(org);
   const canCreate = atLeast(membership?.role, "admin");
   const canOperate = atLeast(membership?.role, "operator");
 
@@ -74,6 +87,7 @@ export function Servers() {
                       <span className="block truncate text-xs text-muted">
                         {phaseWords[s.status.phase ?? "Stopped"]}
                         {s.status.pendingRestart && <span className="text-warn"> · restart to apply changes</span>}
+                        <BackupMark server={s} scheduled={!!policy.data?.enabled} />
                       </span>
                     </span>
                   </span>

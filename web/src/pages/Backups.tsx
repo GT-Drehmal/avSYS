@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router";
 import { useOrg } from "../components/Shell";
+import { BackupSchedule } from "../components/BackupSchedule";
 import { OperationRow, SnapshotRows } from "../components/Snapshots";
 import { Chip, Empty, Loading, Notice, PageHeader } from "../components/ui";
 import { atLeast, type Snapshot } from "../lib/api";
@@ -51,6 +52,7 @@ export function Backups() {
           </p>
           <Notice tone="info">Snapshots are kept on this cluster only. If its storage is lost, they are lost with it.</Notice>
         </div>
+        <BackupSchedule org={org} canAdmin={canAdmin} />
         {operations.map((op) => (
           <OperationRow key={op.server} op={op} />
         ))}

@@ -463,3 +463,132 @@ func TestHolds(t *testing.T) {
 	write(filepath.Join(m.Dir, "key-only.key"))
 	check("key-only", 0, false)
 }
+
+// A scheduled snapshot of a server whose files are as its newest snapshot
+// has them is not taken, so a server that is not being played on does not
+// collect a copy a day. One asked for by hand always is.
+func TestScheduledSnapshotsSkipWhatHasNotChanged(t *testing.T) {
+	ws, m := workspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	sh(t, ws, `mkdir -p /data/world && echo one > /data/world/level.dat`)
+
+	record := map[string]any{"server": "probe", "spec": map[string]any{"version": "1.21.4"}}
+	scheduled := Meta{Server: "probe", Trigger: TriggerScheduled, Record: record, SkipUnchanged: true}
+	count := func() int {
+		t.Helper()
+		list, err := m.List(ctx, "alpha")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(list)
+	}
+
+	if _, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil); err != nil {
+		t.Fatalf("the first scheduled snapshot: %v", err)
+	}
+	written := sh(t, ws, `stat -c %Y /data/.avsys/snapshot.json`)
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil); !errors.Is(err, ErrUnchanged) {
+		t.Fatalf("a second scheduled snapshot of the same files: %v, want ErrUnchanged", err)
+	}
+	if count() != 1 {
+		t.Errorf("%d snapshots after one that was skipped, want 1", count())
+	}
+	if again := sh(t, ws, `stat -c %Y /data/.avsys/snapshot.json; ls /data/.avsys`); again != written+"\nsnapshot.json" {
+		t.Errorf("the record was written again although it says nothing new: %q, first written at %s", again, written)
+	}
+
+	// Asked for by hand, there is a snapshot whether anything changed or not.
+	if _, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerManual, Record: record}, nil); err != nil {
+		t.Fatalf("a manual snapshot of unchanged files: %v", err)
+	}
+	// And the scheduled one is measured against that, the newest of any kind.
+	if _, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil); !errors.Is(err, ErrUnchanged) {
+		t.Errorf("a scheduled snapshot straight after a manual one: %v, want ErrUnchanged", err)
+	}
+
+	sh(t, ws, `echo two > /data/world/level.dat`)
+	changed, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil)
+	if err != nil || changed.Trigger != TriggerScheduled {
+		t.Fatalf("a scheduled snapshot after a file changed: %+v, %v", changed, err)
+	}
+	// A changed setting is a change too: it is in the record.
+	scheduled.Record = map[string]any{"server": "probe", "spec": map[string]any{"version": "1.21.5"}}
+	if _, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil); err != nil {
+		t.Errorf("a scheduled snapshot after a setting changed: %v", err)
+	}
+	if count() != 4 {
+		t.Errorf("%d snapshots in all, want 4", count())
+	}
+}
+
+// Retention removes scheduled snapshots of one server that have outlived the
+// policy, and nothing else: not what someone took by hand, not an undo point,
+// not another server's.
+func TestForgetKeepsWhatThePolicySays(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := m.ensure(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	files := t.TempDir()
+	take := func(server, trigger, when string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(files, "level.dat"), []byte(server+trigger+when), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command("restic", "--repo", m.repoDir("alpha"), "--password-file", m.keyFile("alpha"),
+			"backup", files, "--host", server, "--tag", "avsys", "--tag", "trigger="+trigger, "--time", when).CombinedOutput()
+		if err != nil {
+			t.Fatalf("taking a snapshot dated %s: %v: %s", when, err, out)
+		}
+	}
+	for day := 1; day <= 10; day++ {
+		take("probe", TriggerScheduled, time.Date(2026, 9, day, 4, 0, 0, 0, time.UTC).Format("2006-01-02 15:04:05"))
+	}
+	take("probe", TriggerManual, "2026-09-02 12:00:00")
+	take("probe", TriggerPreRestore, "2026-09-03 12:00:00")
+	take("other", TriggerScheduled, "2026-09-01 04:00:00")
+
+	if _, err := m.Forget(ctx, "alpha", "probe", Keep{}); err == nil {
+		t.Fatal("a policy that keeps nothing was carried out")
+	}
+	removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3})
+	if err != nil || removed != 7 {
+		t.Fatalf("forget keeping three days: removed %d, %v; want 7", removed, err)
+	}
+	if err := m.Prune(ctx, "alpha"); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	list, err := m.List(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	for _, snap := range list {
+		kept = append(kept, snap.Server+" "+snap.Trigger+" "+snap.Time.UTC().Format("01-02"))
+	}
+	want := []string{
+		"probe scheduled 09-10", "probe scheduled 09-09", "probe scheduled 09-08",
+		"probe pre-restore 09-03", "probe manual 09-02", "other scheduled 09-01",
+	}
+	if strings.Join(kept, ", ") != strings.Join(want, ", ") {
+		t.Errorf("kept:\n %s\nwant:\n %s", strings.Join(kept, "\n "), strings.Join(want, "\n "))
+	}
+	// Nothing more to remove the second time.
+	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3, Weekly: 4, Monthly: 12, Yearly: 2}); err != nil || removed != 0 {
+		t.Errorf("forget again: removed %d, %v; want 0", removed, err)
+	}
+	// A server with no snapshots, or an organization with no repository, is nothing to do.
+	if removed, err := m.Forget(ctx, "alpha", "nobody", Keep{Daily: 1}); err != nil || removed != 0 {
+		t.Errorf("forget for a server with no snapshots: %d, %v", removed, err)
+	}
+	if removed, err := m.Forget(ctx, "beta", "probe", Keep{Daily: 1}); err != nil || removed != 0 {
+		t.Errorf("forget in an organization with no repository: %d, %v", removed, err)
+	}
+}

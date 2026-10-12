@@ -59,6 +59,7 @@ type Server struct {
 	catalog    *catalog
 	workspaces *workspacePool
 	ops        operations
+	schedule   schedule
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
 	// to check that no route is left without a decision on who may call it.
 	routes []string
@@ -281,6 +282,9 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/invites", s.authed(s.createInvite))
 	api("DELETE /orgs/{org}/invites/{token}", s.authed(s.deleteInvite))
 
+	api("GET /orgs/{org}/backup-policy", s.authed(s.getBackupPolicy))
+	api("PUT /orgs/{org}/backup-policy", s.authed(s.putBackupPolicy))
+	api("POST /orgs/{org}/backup-policy/run", s.authed(s.runBackupPolicy))
 	api("GET /orgs/{org}/snapshots", s.authed(s.listOrgSnapshots))
 	api("GET /orgs/{org}/snapshots/{id}", s.authed(s.getSnapshot))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))

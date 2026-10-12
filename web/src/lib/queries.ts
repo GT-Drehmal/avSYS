@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type Me, type Meta, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
+import { api, ApiError, serverPath, type BackupPolicy, type Me, type Meta, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
 import { toast } from "./toast";
 
 export const queryClient = new QueryClient({
@@ -23,6 +23,7 @@ export const keys = {
   invites: (org: string) => ["invites", org] as const,
   snapshots: (org: string) => ["snapshots", org] as const,
   serverSnapshots: (org: string, server: string) => ["snapshots", org, server] as const,
+  backupPolicy: (org: string) => ["backup-policy", org] as const,
 };
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
@@ -106,7 +107,7 @@ export function useLiveServers() {
       const done: OperationDone = JSON.parse(e.data);
       // Both lists are refetched: the snapshot is new to them, or gone.
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
-      if (done.calledOff) return;
+      if (done.calledOff || (done.scheduled && !done.error)) return;
       if (done.kind === "create") {
         if (done.error) toast.error(`${done.server}: ${done.error}`);
         else toast.info(`${done.server} is ready`);
@@ -128,6 +129,9 @@ function applyOperation(qc: QueryClient, op: Operation) {
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });
+
+export const useBackupPolicy = (org: string) =>
+  useQuery({ queryKey: keys.backupPolicy(org), queryFn: () => api.get<BackupPolicy>(`/orgs/${org}/backup-policy`) });
 
 export const useServerSnapshots = (org: string, server: string) =>
   useQuery({ queryKey: keys.serverSnapshots(org, server), queryFn: () => api.get<SnapshotList>(`${serverPath(org, server)}/snapshots`) });

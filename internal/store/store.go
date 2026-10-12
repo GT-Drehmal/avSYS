@@ -170,6 +170,11 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
+func (s *Store) DeleteSetting(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)
+	return err
+}
+
 type AuditEntry struct {
 	At     time.Time `json:"at"`
 	UserID string    `json:"userId"`

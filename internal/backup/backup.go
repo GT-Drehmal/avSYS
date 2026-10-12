@@ -67,6 +67,9 @@ var (
 	// read. Nothing is kept: restoring such a snapshot would delete whatever
 	// it had missed.
 	ErrIncomplete = errors.New("some of the server's files could not be read, so no snapshot was kept")
+	// ErrUnchanged is returned for a snapshot asked for with SkipUnchanged
+	// when the server's files are exactly as its newest snapshot has them.
+	ErrUnchanged = errors.New("nothing has changed since the last snapshot")
 	// ErrOldWorkspace is returned when the server's workspace has no restic:
 	// its pod was started by a panel from before snapshots existed.
 	ErrOldWorkspace = errors.New("this server's workspace is from before snapshots existed; restart the server to update it, then try again")
@@ -113,8 +116,23 @@ type Meta struct {
 	By      string
 	Version string
 	Loader  string
-	// Record is stored in the snapshot at RecordPath.
+	// Record is stored in the snapshot at RecordPath. It has to come out the
+	// same for the same server settings, or no two snapshots would ever be
+	// alike.
 	Record any
+	// SkipUnchanged takes no snapshot, and returns ErrUnchanged, when the
+	// files are as the server's newest snapshot has them.
+	SkipUnchanged bool
+}
+
+// Keep says how many scheduled snapshots of a server outlive their day: the
+// newest of each of the last Daily days that have one, and likewise for
+// weeks, months and years.
+type Keep struct {
+	Daily   int `json:"daily"`
+	Weekly  int `json:"weekly"`
+	Monthly int `json:"monthly"`
+	Yearly  int `json:"yearly"`
 }
 
 // Progress is reported while a snapshot or restore runs.
@@ -396,6 +414,69 @@ func (m *Manager) Delete(ctx context.Context, org, id string) error {
 	return err
 }
 
+// Forget removes the scheduled snapshots of one server that the policy no
+// longer keeps, and returns how many that was. Snapshots taken any other way
+// are not considered, and neither are other servers'. The space is not given
+// back until Prune.
+func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (int, error) {
+	if !tagPattern.MatchString(server) {
+		return 0, fmt.Errorf("%q cannot name a snapshot", server)
+	}
+	args := []string{"forget", "--json", "--host", server, "--tag", "trigger=" + TriggerScheduled, "--group-by", "host"}
+	for flag, n := range map[string]int{"--keep-daily": keep.Daily, "--keep-weekly": keep.Weekly, "--keep-monthly": keep.Monthly, "--keep-yearly": keep.Yearly} {
+		if n > 0 {
+			args = append(args, flag, fmt.Sprint(n))
+		}
+	}
+	// With nothing to keep restic would be asked to forget all of them.
+	if keep.Daily+keep.Weekly+keep.Monthly+keep.Yearly <= 0 {
+		return 0, errors.New("a retention policy has to keep something")
+	}
+	if !m.exists(org) {
+		return 0, nil
+	}
+	lock := m.lock(org)
+	lock.Lock()
+	defer lock.Unlock()
+	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
+		return 0, err
+	}
+	out, err := m.restic(ctx, org, args...)
+	if err != nil {
+		return 0, err
+	}
+	var groups []struct {
+		Remove []json.RawMessage `json:"remove"`
+	}
+	// restic prints nothing at all when no snapshot matched.
+	if len(bytes.TrimSpace(out)) == 0 {
+		return 0, nil
+	}
+	if err := json.Unmarshal(out, &groups); err != nil {
+		return 0, fmt.Errorf("reading what was forgotten: %w", err)
+	}
+	removed := 0
+	for _, g := range groups {
+		removed += len(g.Remove)
+	}
+	return removed, nil
+}
+
+// Prune gives back the space of snapshots that have been forgotten.
+func (m *Manager) Prune(ctx context.Context, org string) error {
+	if !m.exists(org) {
+		return nil
+	}
+	lock := m.lock(org)
+	lock.Lock()
+	defer lock.Unlock()
+	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
+		return err
+	}
+	_, err := m.restic(ctx, org, "prune")
+	return err
+}
+
 // Destroy removes an organization's repository and everything in it.
 func (m *Manager) Destroy(org string) error {
 	lock := m.lock(org)
@@ -487,7 +568,10 @@ type message struct {
 type follow struct {
 	progress   func(Progress)
 	snapshotID string
-	errors     []string
+	// finished is set by restic's closing summary, which it prints whether
+	// or not it saved a snapshot.
+	finished bool
+	errors   []string
 }
 
 func (f *follow) line(raw []byte) {
@@ -505,7 +589,7 @@ func (f *follow) line(raw []byte) {
 			f.progress(Progress{Percent: msg.PercentDone * 100, Bytes: done, Total: msg.TotalBytes})
 		}
 	case "summary":
-		f.snapshotID = msg.SnapshotID
+		f.snapshotID, f.finished = msg.SnapshotID, true
 	case "error", "exit_error":
 		text := msg.Message
 		if msg.Error != nil && msg.Error.Message != "" {
@@ -581,7 +665,14 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	if err != nil {
 		return nil, nil, err
 	}
-	write := "mkdir -p " + quote(filepath.Dir(RecordPath)) + " && cat > " + quote(RecordPath)
+	// Written only when it says something new, and compared outside the
+	// server's directory. Writing it again unchanged, or so much as creating
+	// a file next to it, would change a modification time, which is a change
+	// to the files.
+	fresh := quote(socketDir + "/record.new")
+	write := "mkdir -p " + quote(socketDir) + " && cat > " + fresh +
+		" && { cmp -s " + fresh + " " + quote(RecordPath) + " || { mkdir -p " + quote(filepath.Dir(RecordPath)) + " && cp " + fresh + " " + quote(RecordPath) + "; }; }" +
+		" && rm -f " + fresh
 	if stderr, err := run(ws, write, bytes.NewReader(record), nil); err != nil {
 		return nil, nil, fmt.Errorf("recording the server's settings: %w: %s", err, lastLine(stderr))
 	}
@@ -599,6 +690,9 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	for _, path := range excluded {
 		args = append(args, "--exclude", dataDir+path)
 	}
+	if meta.SkipUnchanged {
+		args = append(args, "--skip-if-unchanged")
+	}
 	f := &follow{progress: progress}
 	stderr, err := runCtx(ctx, ws, resticIn(socket, args...), strings.NewReader(secret+"\n"), f.line)
 	// What went wrong with individual files is reported on stderr, in the
@@ -612,6 +706,9 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	partial := errors.As(err, &exit) && exit.ExitStatus() == 3 && f.snapshotID != ""
 	if err != nil && !partial {
 		return nil, nil, f.failure(stderr, err)
+	}
+	if f.snapshotID == "" && f.finished && meta.SkipUnchanged && err == nil {
+		return nil, nil, ErrUnchanged
 	}
 	if f.snapshotID == "" {
 		return nil, nil, errors.New("restic finished without reporting a snapshot")
