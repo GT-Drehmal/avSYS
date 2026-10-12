@@ -8,7 +8,7 @@ Each server is a `MinecraftServer` resource. avSYS turns it into a pod running [
 - **Your own tools.** `ssh <server>.<org>@panel` drops you in the server directory, authenticated by the SSH keys on your account. scp, sftp, rsync and VS Code Remote SSH work. There is also a terminal and a simple file editor in the browser.
 - **Organizations.** Each has its own members, roles, servers and namespace. People can belong to several. Sign in with a password, GitHub, Discord or Google; join by invite link.
 - **One address, many servers.** The built-in router sends players to the right server by the hostname they connect with, and can put idle servers to sleep and wake them when someone joins.
-- **Snapshots.** Save a server's files and settings with one click, while it runs, and put it back later. Each organization's servers share one deduplicated store, so a snapshot costs only what changed. Snapshots outlive the server they were taken of.
+- **Snapshots.** Save a server's files and settings with one click, while it runs, and put it back later. Each organization's servers share one deduplicated store, so a snapshot costs only what changed. Snapshots outlive the server they were taken of, and a new server can be made from any of them: a deleted one brought back, or a copy to try something on.
 - **Live.** Status, players and the console stream to the browser; nothing polls.
 
 ## How it fits together
@@ -52,6 +52,7 @@ A snapshot is the server's whole directory, minus the workspace's own files and 
 
 - **Storage.** Every organization has one [restic](https://restic.net) repository on the panel's backups volume. Servers that share files (the same mods, libraries, a common map) store them once, and each snapshot adds only what changed since the last.
 - **Restore.** Restoring puts a server back to one of its own snapshots: its world, configuration, game version and mods. The server is stopped while the files are put back, and what was there is snapshotted first, so a restore can be undone. Memory, storage, address and sleep settings are left as they are.
+- **New server from a snapshot.** Any snapshot can be made into a new server, from the **Backups** page or with the API. It gets the snapshot's files along with the game version, loader, mods and game settings they were made with, and its own name, address, memory and storage. Made from a snapshot of a server that was deleted, under the same name, it is that server back with its history. Made from one of a server that still exists, it is a copy, and the original is not touched.
 - **History is kept.** Deleting a server does not delete its snapshots; they stay on the organization's **Backups** page until someone deletes them. Deleting an organization deletes its repository, and asks first.
 - **What a server can do to its own history.** Snapshots are taken from inside the server's workspace, over a channel the panel opens for the purpose. Through it a server can add to its organization's repository and read from it, but not delete or overwrite anything. Only the panel removes snapshots.
 - **One organization, one trust boundary.** Servers in an organization share a repository, so someone with shell access to one of them could, with effort, read snapshots of another. Put servers that must not see each other's files in different organizations.
@@ -129,7 +130,7 @@ For the shared router, point each server's hostname (an A or CNAME record) at th
 | --- | --- |
 | Viewer | See servers, status, console output and snapshots |
 | Operator | Also start and stop servers, run commands, SSH in, use the terminal and files, take snapshots |
-| Admin | Also create, configure and delete servers; restore and delete snapshots; manage members and invites |
+| Admin | Also create, configure and delete servers; restore and delete snapshots, and make servers from them; manage members and invites |
 | Owner | Also manage other owners and delete the organization |
 
 Instance administrators act as owner in every organization and are the only ones who can create organizations.
@@ -151,9 +152,12 @@ curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"resources":{"memor
 curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/creative/snapshots?wait=true"
 curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/creative/snapshots/<id>/restore?wait=true"
 curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/snapshots
+
+# Make a new server out of a snapshot. Its software and game settings come with it.
+curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-copy","fromSnapshot":"<id>","spec":{"state":"Stopped"}}' "$AVSYS/orgs/friends/servers?wait=true"
 ```
 
-Without `?wait=true` both answer at once and the work continues in the background; progress arrives on the event stream.
+Without `?wait=true` these answer at once and the work continues in the background; progress arrives on the event stream.
 
 A server's `spec` is the same in the API and in the Kubernetes resource, so GitOps tools can manage servers directly as `MinecraftServer` manifests.
 

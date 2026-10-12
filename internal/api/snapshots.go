@@ -39,7 +39,13 @@ type operation struct {
 const (
 	kindSnapshot = "snapshot"
 	kindRestore  = "restore"
+	// kindCreate is a new server receiving its files from a snapshot.
+	kindCreate = "create"
 )
+
+// rewrites reports whether an operation of this kind replaces the server's
+// files, so that nothing else may touch the server while it runs.
+func rewrites(kind string) bool { return kind == kindRestore || kind == kindCreate }
 
 // operations decides who may touch a server or a snapshot at a time. One
 // lock covers every question it answers, so that "nothing is running, so I
@@ -185,11 +191,16 @@ func snapshotError(err error) error {
 
 var (
 	errRestoring    = &Error{Status: http.StatusConflict, Code: "restoring", Message: "This server is being restored. Wait for that to finish."}
+	errCreating     = &Error{Status: http.StatusConflict, Code: "creating", Message: "This server is still being made from a snapshot. Wait for that to finish."}
 	errSnapshotting = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot of this server is being taken. Try again when it has finished."}
 	// errRestoreIncomplete is returned to anything that would run the game
 	// on files a restore started on and did not finish.
 	errRestoreIncomplete = &Error{Status: http.StatusConflict, Code: "restore_incomplete",
 		Message: "A restore of this server did not finish, so its files may be incomplete. Restore it again before starting it; the state from before that restore is in its newest snapshot."}
+	// errCreateIncomplete is the same for a server that never received all of
+	// the files it was to be made from.
+	errCreateIncomplete = &Error{Status: http.StatusConflict, Code: "create_incomplete",
+		Message: "This server was being made from a snapshot and that did not finish, so its files are incomplete. Delete it and make it again."}
 )
 
 // changing admits a request that changes a server. While a restore owns the
@@ -200,7 +211,7 @@ var (
 //
 // The caller must call release once its change has been made.
 func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
-	kinds := []string{kindRestore}
+	kinds := []string{kindRestore, kindCreate}
 	if alsoDuringSnapshot {
 		kinds = append(kinds, kindSnapshot)
 	}
@@ -208,10 +219,18 @@ func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) 
 	if blocker == nil {
 		return release, nil
 	}
-	if blocker.Kind == kindRestore {
-		return nil, errRestoring
+	return nil, heldBy(blocker.Kind)
+}
+
+// heldBy is the refusal given while an operation of that kind owns a server.
+func heldBy(kind string) error {
+	switch kind {
+	case kindRestore:
+		return errRestoring
+	case kindCreate:
+		return errCreating
 	}
-	return nil, errSnapshotting
+	return errSnapshotting
 }
 
 // restoreUnfinished reports whether a restore started on this server's files
@@ -219,6 +238,25 @@ func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) 
 func restoreUnfinished(mc *avsysv1.MinecraftServer) bool {
 	_, marked := mc.Annotations[avsysv1.AnnotationRestoring]
 	return marked
+}
+
+// createUnfinished reports whether the server was being made from a snapshot
+// and has not received all of its files.
+func createUnfinished(mc *avsysv1.MinecraftServer) bool {
+	_, marked := mc.Annotations[avsysv1.AnnotationCreating]
+	return marked
+}
+
+// unfinished is the reason the game may not be run on this server's files, or
+// nil when it may.
+func unfinished(mc *avsysv1.MinecraftServer) error {
+	switch {
+	case createUnfinished(mc):
+		return errCreateIncomplete
+	case restoreUnfinished(mc):
+		return errRestoreIncomplete
+	}
+	return nil
 }
 
 // settled reports whether a server is in a state its files can be copied in:
@@ -324,8 +362,8 @@ func (s *Server) createSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	}
 	// What an interrupted restore left behind is not something to keep as if
 	// it were a state of the server. Only another restore gets it out of that.
-	if restoreUnfinished(mc) {
-		return errRestoreIncomplete
+	if err := unfinished(mc); err != nil {
+		return err
 	}
 	if err := settled(mc); err != nil {
 		return err
@@ -562,6 +600,9 @@ func (s *Server) resumeSaving(ctx context.Context) {
 				mc.Status.Snapshots = &avsysv1.SnapshotStatus{}
 			}
 			mc.Status.Snapshots.Error = "A restore was interrupted when the panel restarted, so this server's files may be incomplete. Restore it again before starting it; the state from before is in its newest snapshot."
+			if createUnfinished(mc) {
+				mc.Status.Snapshots.Error = "This server was being made from a snapshot when the panel restarted, so its files are incomplete. Delete it and make it again."
+			}
 			if err := s.Client.Status().Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
 				s.Log.Error("could not report an interrupted restore", "server", mc.Name, "namespace", mc.Namespace, "error", err)
 			} else {
@@ -653,6 +694,11 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request, u *stor
 	if !s.Backups.Available() {
 		return errNoBackups
 	}
+	// A server that was never completed has no state of its own to go back
+	// to, or to save first.
+	if createUnfinished(mc) {
+		return errCreateIncomplete
+	}
 	snap, err := s.Backups.Get(r.Context(), a.Org.Slug, r.PathValue("id"))
 	if err != nil {
 		return snapshotError(err)
@@ -699,13 +745,9 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 
 	// What a snapshot holds of the server's settings is read before anything
 	// is touched, so that an unreadable snapshot stops here.
-	raw, err := s.Backups.Record(ctx, org, snap.ID)
+	record, err := s.recordOf(ctx, org, snap.ID)
 	if err != nil {
-		return nil, fmt.Errorf("reading the snapshot's record of the server: %w", err)
-	}
-	var record snapshotRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, fmt.Errorf("the snapshot's record of the server is unreadable: %w", err)
+		return nil, err
 	}
 	// The settings a restore applies get the same checks as settings typed
 	// into the panel, before anything is touched.
@@ -775,6 +817,19 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 		return undo, fmt.Errorf("the files and settings were restored, but the server could not be released to start; restore again: %w", err)
 	}
 	return undo, nil
+}
+
+// recordOf reads what a snapshot holds of its server's settings.
+func (s *Server) recordOf(ctx context.Context, org, id string) (*snapshotRecord, error) {
+	raw, err := s.Backups.Record(ctx, org, id)
+	if err != nil {
+		return nil, fmt.Errorf("reading the snapshot's record of the server: %w", err)
+	}
+	record := &snapshotRecord{}
+	if err := json.Unmarshal(raw, record); err != nil {
+		return nil, fmt.Errorf("the snapshot's record of the server is unreadable: %w", err)
+	}
+	return record, nil
 }
 
 // dialWorkspaceWithin keeps trying to reach a server's workspace for as long

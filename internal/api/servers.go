@@ -214,12 +214,18 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	var in struct {
 		Name string
 		Spec avsysv1.MinecraftServerSpec
+		// FromSnapshot makes the server out of a snapshot: its files, and the
+		// software and game settings that go with them.
+		FromSnapshot string `json:"fromSnapshot"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
 	if !serverNamePattern.MatchString(in.Name) {
 		return errBadRequest("Server names are up to 40 characters: lowercase letters, digits and dashes, starting with a letter.")
+	}
+	if in.FromSnapshot != "" {
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, in.FromSnapshot)
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// "Latest" is settled once, here. A server that kept following it would
@@ -288,8 +294,8 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	// Setting the state to Running here is starting the server by another
 	// route, and is held to the same rules as the start action.
 	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
-		if restoreUnfinished(mc) {
-			return errRestoreIncomplete
+		if err := unfinished(mc); err != nil {
+			return err
 		}
 		if s.ops.current(a.Namespace, mc.Name) != nil {
 			return errSnapshotting
@@ -345,8 +351,10 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	defer release()
-	if starts && restoreUnfinished(mc) {
-		return errRestoreIncomplete
+	if starts {
+		if err := unfinished(mc); err != nil {
+			return err
+		}
 	}
 	orig := mc.DeepCopy()
 	switch action {

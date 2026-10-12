@@ -282,6 +282,7 @@ func (s *Server) Handler() http.Handler {
 	api("DELETE /orgs/{org}/invites/{token}", s.authed(s.deleteInvite))
 
 	api("GET /orgs/{org}/snapshots", s.authed(s.listOrgSnapshots))
+	api("GET /orgs/{org}/snapshots/{id}", s.authed(s.getSnapshot))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
 
 	api("GET /orgs/{org}/servers", s.authed(s.listServers))

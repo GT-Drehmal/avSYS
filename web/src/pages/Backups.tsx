@@ -55,7 +55,7 @@ export function Backups() {
           <OperationRow key={op.server} op={op} />
         ))}
         {snapshots.length === 0 && operations.length === 0 && (
-          <Empty title="Nothing saved yet">Take a snapshot from a server's Backups tab. A snapshot outlives its server: deleting a server leaves its history here.</Empty>
+          <Empty title="Nothing saved yet">Take a snapshot from a server's Backups tab. A snapshot outlives its server: deleting a server leaves its history here, and a new server can be made from any of it.</Empty>
         )}
         {[...groups].map(([name, items]) => (
           <section key={name} className="flex flex-col gap-2.5">

@@ -1,8 +1,9 @@
-import { History, Trash2 } from "lucide-react";
+import { CopyPlus, History, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api, type Operation, type Snapshot } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { keys, useAction } from "../lib/queries";
+import { NewFromSnapshot } from "./NewFromSnapshot";
 import { Button, Chip, Confirm, CopyText } from "./ui";
 
 const triggerLabel = (s: Snapshot) => {
@@ -14,13 +15,20 @@ const triggerLabel = (s: Snapshot) => {
 /** "Paper 1.21.4", from what a snapshot recorded about its server. */
 const software = (s: Snapshot) => [loaderNames[s.loader as keyof typeof loaderNames] ?? s.loader, s.version].filter(Boolean).join(" ");
 
+const doing: Record<Operation["kind"], [title: string, noun: string]> = {
+  snapshot: ["Taking a snapshot of", "Snapshot"],
+  restore: ["Restoring", "Restore"],
+  create: ["Copying a snapshot into", "Creation"],
+};
+
 /** A snapshot or restore that is running, with how far along it is. */
 export function OperationRow({ op }: { op: Operation }) {
+  const [title, noun] = doing[op.kind];
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-accent/40 bg-accent-wash px-4 py-3" data-operation={op.kind}>
       <div className="flex items-center justify-between gap-4 text-[13px]">
         <span className="font-medium">
-          {op.kind === "restore" ? "Restoring" : "Taking a snapshot of"} {op.server}
+          {title} {op.server}
         </span>
         <span className="text-muted">
           {op.stage}
@@ -30,7 +38,7 @@ export function OperationRow({ op }: { op: Operation }) {
       <div
         className="h-1 overflow-hidden rounded-full bg-raised"
         role="progressbar"
-        aria-label={`${op.kind === "restore" ? "Restore" : "Snapshot"} of ${op.server}: ${op.stage}`}
+        aria-label={`${noun} of ${op.server}: ${op.stage}`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={op.percent > 0 ? Math.round(op.percent) : undefined}
@@ -44,7 +52,7 @@ export function OperationRow({ op }: { op: Operation }) {
 interface RowsProps {
   org: string;
   snapshots: Snapshot[];
-  /** Admins can delete; restore is offered where onRestore is given. */
+  /** Admins can delete and make a new server; restore is offered where onRestore is given. */
   canAdmin: boolean;
   /** True while something is running on the server, which rules out a restore. */
   busy?: boolean;
@@ -54,6 +62,7 @@ interface RowsProps {
 /** A list of snapshots, newest first, as rows of one bordered box. */
 export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: RowsProps) {
   const [deleting, setDeleting] = useState<Snapshot | null>(null);
+  const [creating, setCreating] = useState<Snapshot | null>(null);
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
   return (
     <>
@@ -84,10 +93,16 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: Rows
                 Restore
               </Button>
             )}
+            {canAdmin && (
+              <Button size="sm" icon={<CopyPlus className="size-3.5" />} title="Make a new server from this snapshot" aria-label={`New server from the snapshot of ${s.server} from ${ago(s.time)}`} onClick={() => setCreating(s)}>
+                <span className="max-lg:hidden">New server</span>
+              </Button>
+            )}
             {canAdmin && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} aria-label={`Delete the snapshot of ${s.server} from ${ago(s.time)}`} onClick={() => setDeleting(s)} />}
           </li>
         ))}
       </ul>
+      <NewFromSnapshot org={org} snapshot={creating} onClose={() => setCreating(null)} />
       <Confirm
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}

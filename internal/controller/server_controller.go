@@ -209,6 +209,8 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 		switch {
 		case gameInPod:
 			return avsysv1.PhaseStopping, ""
+		case mc.Annotations[avsysv1.AnnotationCreating] != "":
+			return avsysv1.PhaseStopped, "Made from a snapshot, and held stopped until all of its files are in place."
 		case mc.Spec.State == avsysv1.StateStopped:
 			return avsysv1.PhaseStopped, ""
 		case mc.Annotations[avsysv1.AnnotationRestoring] != "":

@@ -42,8 +42,12 @@ func (s *Server) AuthorizeWorkspace(ctx context.Context, u *store.User, orgSlug,
 		return "", denied
 	}
 	// No new shells or file transfers while a restore rewrites the files.
-	if op := s.ops.current(namespace, server); op != nil && op.Kind == kindRestore {
-		return "", errors.New(server + "." + orgSlug + " is being restored. Try again when that has finished.")
+	if op := s.ops.current(namespace, server); op != nil && rewrites(op.Kind) {
+		doing := "restored"
+		if op.Kind == kindCreate {
+			doing = "made from a snapshot"
+		}
+		return "", errors.New(server + "." + orgSlug + " is being " + doing + ". Try again when that has finished.")
 	}
 	return namespace, nil
 }
@@ -56,8 +60,8 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request, u *store.User)
 	if err != nil {
 		return err
 	}
-	if op := s.ops.current(a.Namespace, mc.Name); op != nil && op.Kind == kindRestore {
-		return errRestoring
+	if op := s.ops.current(a.Namespace, mc.Name); op != nil && rewrites(op.Kind) {
+		return heldBy(op.Kind)
 	}
 	// Accept checks that the Origin header matches the Host, which is what
 	// stops other sites from opening this socket with the user's cookie.

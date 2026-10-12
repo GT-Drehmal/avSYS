@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -221,6 +222,18 @@ func TestPhaseOf(t *testing.T) {
 	restoring := server(func(mc *avsysv1.MinecraftServer) {
 		mc.Annotations = map[string]string{avsysv1.AnnotationRestoring: "aaaa1111"}
 	})
+
+	// A server made from a snapshot is created stopped, and says why.
+	creating := server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.State = avsysv1.StateStopped
+		mc.Annotations = map[string]string{avsysv1.AnnotationRestoring: "aaaa1111", avsysv1.AnnotationCreating: "aaaa1111"}
+	})
+	if phase, message := phaseOf(creating, workspaceOnly); phase != avsysv1.PhaseStopped || !strings.Contains(message, "snapshot") {
+		t.Errorf("a server being made from a snapshot: %s %q, want Stopped and the reason", phase, message)
+	}
+	if _, message := phaseOf(stopped, workspaceOnly); message != "" {
+		t.Errorf("an ordinary stopped server has a message: %q", message)
+	}
 
 	cases := []struct {
 		name string
