@@ -43,11 +43,19 @@ const (
 	kindRestore  = "restore"
 	// kindCreate is a new server receiving its files from a snapshot.
 	kindCreate = "create"
+	// kindDeleteServer is a server being snapshotted one last time and then
+	// deleted.
+	kindDeleteServer = "delete-server"
 )
 
 // rewrites reports whether an operation of this kind replaces the server's
 // files, so that nothing else may touch the server while it runs.
-func rewrites(kind string) bool { return kind == kindRestore || kind == kindCreate }
+//
+// A server on its way to being deleted counts: nothing is rewritten, but a
+// change made after its last snapshot would be lost with it.
+func rewrites(kind string) bool {
+	return kind == kindRestore || kind == kindCreate || kind == kindDeleteServer
+}
 
 // operations decides who may touch a server or a snapshot at a time. One
 // lock covers every question it answers, so that "nothing is running, so I
@@ -220,6 +228,7 @@ func snapshotError(err error) error {
 
 var (
 	errRestoring    = &Error{Status: http.StatusConflict, Code: "restoring", Message: "This server is being restored. Wait for that to finish."}
+	errDeleting     = &Error{Status: http.StatusConflict, Code: "deleting", Message: "This server is being deleted."}
 	errCreating     = &Error{Status: http.StatusConflict, Code: "creating", Message: "This server is still being made from a snapshot. Wait for that to finish."}
 	errSnapshotting = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot of this server is being taken. Try again when it has finished."}
 	// errRestoreIncomplete is returned to anything that would run the game
@@ -240,7 +249,7 @@ var (
 //
 // The caller must call release once its change has been made.
 func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
-	kinds := []string{kindRestore, kindCreate}
+	kinds := []string{kindRestore, kindCreate, kindDeleteServer}
 	if alsoDuringSnapshot {
 		kinds = append(kinds, kindSnapshot)
 	}
@@ -258,6 +267,8 @@ func heldBy(kind string) error {
 		return errRestoring
 	case kindCreate:
 		return errCreating
+	case kindDeleteServer:
+		return errDeleting
 	}
 	return errSnapshotting
 }

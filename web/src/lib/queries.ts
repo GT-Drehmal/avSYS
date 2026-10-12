@@ -111,6 +111,9 @@ export function useLiveServers() {
       if (done.kind === "create") {
         if (done.error) toast.error(`${done.server}: ${done.error}`);
         else toast.info(`${done.server} is ready`);
+      } else if (done.kind === "delete-server") {
+        // Only ever sent with an error, which says the whole of it.
+        if (done.error) toast.error(done.error);
       } else if (done.error) toast.error(`${done.kind === "restore" ? "Restore" : "Snapshot"} of ${done.server} failed: ${done.error}`);
       else if (done.kind === "restore") toast.info(`${done.server} was restored`);
       else if (done.kind === "snapshot") toast.info(`Snapshot of ${done.server} taken`);
