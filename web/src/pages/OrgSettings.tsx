@@ -34,7 +34,7 @@ export function OrgSettings() {
           }}
         >
           <Field label="Name">{(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-          <Field label="URL name" hint="It cannot be changed.">
+          <Field label="Short name" hint="Used in links and SSH logins. It cannot be changed.">
             {(id) => <Input id={id} disabled value={membership.slug} className="font-mono" />}
           </Field>
           <div>

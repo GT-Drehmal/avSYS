@@ -221,7 +221,7 @@ export function NewServer() {
       </Section>
 
       <Section title="Name">
-        <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Survival" />}</Field>
+        <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
         <Field label="Short name" hint="It cannot be changed later.">
           {(id) => <Input id={id} required value={name} onChange={(e) => setCustomName(e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
         </Field>
