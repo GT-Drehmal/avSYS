@@ -4,6 +4,10 @@
 #
 # Built from the repository root, so that the license can be included:
 #   docker build -f images/workspace/Dockerfile .
+
+# Snapshots are taken from in here, where the server's files are.
+FROM restic/restic:0.19.1 AS restic
+
 FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
@@ -25,6 +29,7 @@ RUN apt-get update \
  && groupadd -g 1000 mc \
  && useradd -u 1000 -g 1000 -d /data/.workspace -s /bin/bash mc
 
+COPY --from=restic /usr/bin/restic /usr/local/bin/restic
 COPY images/workspace/sshd_config /etc/avsys/sshd_config
 COPY images/workspace/profile.sh /etc/profile.d/avsys.sh
 COPY images/workspace/bashrc /etc/bash.bashrc

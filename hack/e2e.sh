@@ -47,7 +47,7 @@ cleanup() {
     [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)' 2>/dev/null)" = 0 ] && break
     sleep 2
   done
-  call -X DELETE "$API/orgs/$ORG" >/dev/null 2>&1 || true
+  call -X DELETE "$API/orgs/$ORG?snapshots=delete" >/dev/null 2>&1 || true
   [ -n "${KEY_ID:-}" ] && call -X DELETE "$API/me/ssh-keys/$KEY_ID" >/dev/null 2>&1 || true
   rm -rf "$WORK"
   [ $status -eq 0 ] && echo "PASS" || echo "FAILED (exit $status)"
@@ -116,6 +116,26 @@ echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e
 expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "managed server.properties" "$(call "$SRV/files/content?path=/server.properties")" "motd=e2e probe"
 
+step "snapshots"
+snap=$(call -X POST "$SRV/snapshots?wait=true")
+SNAP=$(echo "$snap" | field "d['id']") || fail "no snapshot was taken: $snap"
+expect "a running server is snapshotted" "$(echo "$snap" | field "(d['server'], d['trigger'], d['version'], d['loader'], d['files'] > 10)")" "('probe', 'manual', '1.21.4', 'paper', True)"
+expect "the game goes back to saving" "$(call -d '{"command":"save-on"}' "$SRV/console" | field "d['output']")" "already turned on"
+# Change a file, add one, and take away a plugin, then go back.
+echo "changed after the snapshot" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
+echo "not in the snapshot" | call -X PUT --data-binary @- "$SRV/files/content?path=/stray.txt" >/dev/null
+call -X PATCH -d '{"spec":{"mods":[{"source":"modrinth","kind":"plugin","project":"luckperms"}]}}' "$SRV" >/dev/null
+restored=$(call -X POST "$SRV/snapshots/$SNAP/restore?wait=true")
+expect "a restore is accepted" "$(echo "$restored" | field "d['id'] == '$SNAP'")" True
+wait_phase Running
+expect "a changed file is put back" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
+expect "a file added since is removed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/stray.txt")" 404
+expect "the settings come back with the files" "$(call "$SRV" | field "sorted(m['project'] for m in d['spec']['mods'])")" "['luckperms', 'worldedit']"
+expect "the plugin runs again" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit
+listed=$(call "$SRV/snapshots")
+expect "what was there before the restore is kept too" "$(echo "$listed" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'pre-restore']"
+expect "the server shows its last snapshot" "$(call "$SRV" | field "d['status']['snapshots'].get('error', '') == '' and len(d['status']['snapshots']['lastID']) == 64")" True
+
 step "ssh"
 ssh-keygen -q -t ed25519 -N '' -f "$WORK/key" -C avsys-e2e
 KEY_ID=$(call -d "{\"name\":\"e2e\",\"publicKey\":\"$(cat "$WORK/key.pub")\"}" "$API/me/ssh-keys" | field "d['id']")
@@ -135,3 +155,16 @@ call -X POST "$SRV/stop" >/dev/null
 wait_phase Stopped
 expect "files reachable while stopped" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "router says offline" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "Offline"
+expect "a stopped server is snapshotted" "$(call -X POST "$SRV/snapshots?wait=true" | field "d['trigger']")" manual
+
+step "snapshots outlive the server"
+call -X DELETE "$SRV" >/dev/null
+for _ in $(seq 1 30); do
+  [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 0 ] && break
+  sleep 2
+done
+history=$(call "$API/orgs/$ORG/snapshots")
+expect "a deleted server's snapshots are still listed" "$(echo "$history" | field "sorted({s['server'] for s in d['snapshots']}), len(d['snapshots']), d['usage']['bytes'] > 0")" "(['probe'], 3, True)"
+expect "an organization with snapshots is not deleted by accident" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG")" 409
+expect "a snapshot can be removed on purpose" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$SNAP")" 204
+expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])")" 2

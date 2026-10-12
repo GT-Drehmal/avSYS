@@ -20,11 +20,15 @@ ARG VERSION=dev
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags embedweb -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /avsys ./cmd/avsys
 
+# The panel keeps each organization's snapshot repository and prunes it.
+FROM restic/restic:0.19.1 AS restic
+
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="avSYS: a Kubernetes-native Minecraft server panel"
 COPY --from=build /avsys /avsys
+COPY --from=restic /usr/bin/restic /usr/local/bin/restic
 COPY LICENSE /licenses/LICENSE
 # The database lives here; mount a volume.
 VOLUME /data

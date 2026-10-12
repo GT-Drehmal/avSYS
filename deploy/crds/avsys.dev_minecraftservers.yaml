@@ -496,6 +496,23 @@ spec:
               restarts:
                 format: int32
                 type: integer
+              snapshots:
+                description: Snapshots is written by the panel after each snapshot
+                  or restore.
+                properties:
+                  error:
+                    description: |-
+                      Error says why the most recent snapshot or restore failed. It is
+                      cleared by the next one that succeeds.
+                    type: string
+                  lastID:
+                    type: string
+                  lastTime:
+                    description: LastTime and LastID are the newest snapshot the panel
+                      took.
+                    format: date-time
+                    type: string
+                type: object
               version:
                 description: Version is the game version the running server reports.
                 type: string

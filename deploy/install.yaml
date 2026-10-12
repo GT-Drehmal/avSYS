@@ -78,6 +78,22 @@ spec:
     requests:
       storage: 1Gi
 ---
+# Snapshots of every organization's servers are kept here. Size it for the
+# worlds you host: a snapshot only stores what changed since the last, but the
+# first one of each server is about the size of that server. Put it on storage
+# you would be sorry to lose, since this is the only copy until an offsite one
+# is set up.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: avsys-backups
+  namespace: avsys
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -112,6 +128,8 @@ spec:
           env:
             - name: AVSYS_PUBLIC_URL
               value: https://panel.example.com
+            - name: AVSYS_BACKUP_DIR
+              value: /backups
             # Hostname shown in SSH instructions, if it differs from the panel's.
             # - name: AVSYS_SSH_PUBLIC_HOST
             #   value: ssh.example.com
@@ -134,13 +152,18 @@ spec:
             httpGet: { path: /api/v1/meta, port: http }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            limits: { memory: 512Mi }
+            # Pruning a large snapshot repository is what needs the room.
+            limits: { memory: 1Gi }
           volumeMounts:
             - { name: data, mountPath: /data }
+            - { name: backups, mountPath: /backups }
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: avsys-data
+        - name: backups
+          persistentVolumeClaim:
+            claimName: avsys-backups
 ---
 # Players and SSH need plain TCP, so this is a LoadBalancer (k3s ServiceLB and
 # MetalLB both work). Put the panel's HTTP port behind your ingress for TLS if

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -101,6 +102,18 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 	if len(servers.Items) > 0 {
 		return &Error{Status: http.StatusConflict, Code: "not_empty", Message: "Delete this organization's servers first."}
 	}
+	// Snapshots outlive servers, so an organization with none may still hold
+	// years of history. Removing that has to be asked for by name.
+	if s.Backups.Available() {
+		snapshots, err := s.Backups.List(r.Context(), a.Org.Slug)
+		if err != nil {
+			return err
+		}
+		if len(snapshots) > 0 && r.URL.Query().Get("snapshots") != "delete" {
+			return &Error{Status: http.StatusConflict, Code: "has_snapshots",
+				Message: fmt.Sprintf("This organization still has snapshots (%d). Deleting it deletes them too; confirm with ?snapshots=delete.", len(snapshots))}
+		}
+	}
 	// Only remove a namespace avSYS created for this organization.
 	ns := &corev1.Namespace{}
 	err = s.Client.Get(r.Context(), client.ObjectKey{Name: a.Namespace}, ns)
@@ -112,6 +125,11 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	if err := s.Store.DeleteOrg(r.Context(), a.Org.ID); err != nil {
 		return err
+	}
+	// A later organization with the same name must not inherit this one's
+	// repository.
+	if err := s.Backups.Destroy(a.Org.Slug); err != nil {
+		s.Log.Error("removing a deleted organization's snapshots", "org", a.Org.Slug, "error", err)
 	}
 	s.audit(r.Context(), u, nil, "org.delete", a.Org.Slug, "")
 	w.WriteHeader(http.StatusNoContent)

@@ -352,13 +352,18 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 
 // rcon runs a console command on a running server.
 func (s *Server) rcon(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error) {
+	return s.rconFor(ctx, mc, command, 15*time.Second)
+}
+
+// rconFor is rcon for commands that may take longer than most to answer.
+func (s *Server) rconFor(ctx context.Context, mc *avsysv1.MinecraftServer, command string, timeout time.Duration) (string, error) {
 	// Read straight from the API server: caching secrets cluster-wide just
 	// for this would be a lot of privilege and memory.
 	secret, err := s.Kube.CoreV1().Secrets(mc.Namespace).Get(ctx, controller.RCONSecretName(mc.Name), metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	conn, err := s.Dialer.DialPod(ctx, mc.Namespace, mc.Name, controller.RCONPort)
 	if err != nil {

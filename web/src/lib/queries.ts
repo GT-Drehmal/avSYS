@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type Me, type Meta, type Server, type SpecPatch } from "./api";
+import { api, ApiError, serverPath, type Me, type Meta, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
 import { toast } from "./toast";
 
 export const queryClient = new QueryClient({
@@ -21,6 +21,8 @@ export const keys = {
   servers: (org: string) => ["servers", org] as const,
   members: (org: string) => ["members", org] as const,
   invites: (org: string) => ["invites", org] as const,
+  snapshots: (org: string) => ["snapshots", org] as const,
+  serverSnapshots: (org: string, server: string) => ["snapshots", org, server] as const,
 };
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
@@ -93,9 +95,32 @@ export function useLiveServers() {
       qc.setQueryData<Server[]>(keys.servers(gone.org), (list) => list?.filter((s) => s.name !== gone.name));
     });
     source.addEventListener("resync", () => qc.invalidateQueries({ queryKey: ["servers"] }));
+    source.addEventListener("operation.progress", (e) => applyOperation(qc, JSON.parse(e.data)));
+    source.addEventListener("operation.done", (e) => {
+      const done: OperationDone = JSON.parse(e.data);
+      // Both lists are refetched: the snapshot is new to them, or gone.
+      qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
+      if (done.error) toast.error(`${done.kind === "restore" ? "Restore" : "Snapshot"} of ${done.server} failed: ${done.error}`);
+      else if (done.kind === "restore") toast.info(`${done.server} was restored`);
+      else if (done.kind === "snapshot") toast.info(`Snapshot of ${done.server} taken`);
+    });
     return () => source.close();
   }, [qc]);
 }
+
+/** Puts a running operation's progress into every snapshot list that shows it. */
+function applyOperation(qc: QueryClient, op: Operation) {
+  const merge = (list: SnapshotList | undefined) =>
+    list && { ...list, operations: [...list.operations.filter((o) => o.server !== op.server), op] };
+  qc.setQueryData<SnapshotList>(keys.snapshots(op.org), merge);
+  qc.setQueryData<SnapshotList>(keys.serverSnapshots(op.org, op.server), merge);
+}
+
+export const useOrgSnapshots = (org: string) =>
+  useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });
+
+export const useServerSnapshots = (org: string, server: string) =>
+  useQuery({ queryKey: keys.serverSnapshots(org, server), queryFn: () => api.get<SnapshotList>(`${serverPath(org, server)}/snapshots`) });
 
 const onError = (err: unknown) => toast.error(err instanceof Error ? err.message : "Something went wrong.");
 
