@@ -193,6 +193,9 @@ type operationDone struct {
 	Org    string `json:"org"`
 	Server string `json:"server"`
 	Error  string `json:"error,omitempty"`
+	// Scheduled is set for the daily snapshots, which nobody asked for just
+	// now and nobody needs telling about unless they fail.
+	Scheduled bool `json:"scheduled,omitempty"`
 	// CalledOff is set when the operation ended because someone stopped it,
 	// which is not a failure anyone needs telling about.
 	CalledOff bool             `json:"calledOff,omitempty"`
@@ -303,13 +306,15 @@ func settled(mc *avsysv1.MinecraftServer) error {
 
 // snapshotRecord is stored inside every snapshot. It is what lets a server be
 // recreated from the repository alone.
+//
+// It holds nothing that differs from one snapshot to the next unless the
+// server did: no time, no panel version. A scheduled snapshot is skipped
+// when the files are unchanged, and this is one of the files.
 type snapshotRecord struct {
-	Format  int                         `json:"format"`
-	Panel   string                      `json:"panel"`
-	Org     string                      `json:"org"`
-	Server  string                      `json:"server"`
-	TakenAt time.Time                   `json:"takenAt"`
-	Spec    avsysv1.MinecraftServerSpec `json:"spec"`
+	Format int                         `json:"format"`
+	Org    string                      `json:"org"`
+	Server string                      `json:"server"`
+	Spec   avsysv1.MinecraftServerSpec `json:"spec"`
 }
 
 func softwareOf(spec *avsysv1.MinecraftServerSpec) (version, loader string) {
@@ -497,7 +502,9 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 	version, loader := softwareOf(&mc.Spec)
 	meta := backup.Meta{
 		Server: mc.Name, Trigger: trigger, By: by, Version: version, Loader: loader,
-		Record: snapshotRecord{Format: 1, Panel: s.Config.Version, Org: org, Server: mc.Name, TakenAt: time.Now().UTC(), Spec: mc.Spec},
+		Record: snapshotRecord{Format: 1, Org: org, Server: mc.Name, Spec: mc.Spec},
+		// A scheduled snapshot of a server nothing has happened to is not taken.
+		SkipUnchanged: trigger == backup.TriggerScheduled,
 	}
 	s.setOperation(mc.Namespace, op, "Copying files", 0)
 	last := time.Time{}
@@ -667,9 +674,16 @@ func (s *Server) resumeSaving(ctx context.Context) {
 // snapshot taken of the server along the way, if any: for a restore that is
 // the undo point, not the snapshot restored to.
 func (s *Server) finishOperation(ctx context.Context, namespace, server, kind string, subject, newest *backup.Snapshot, opErr error) {
+	s.finish(ctx, namespace, server, kind, subject, newest, opErr, false)
+}
+
+// finish is finishOperation, with scheduled set for a run of the daily
+// snapshot. One that completed is noted on the server as such even when it
+// found nothing to save.
+func (s *Server) finish(ctx context.Context, namespace, server, kind string, subject, newest *backup.Snapshot, opErr error, scheduled bool) {
 	ctx = context.WithoutCancel(ctx)
 	org, _ := s.orgOfNamespace(namespace)
-	done := operationDone{Kind: kind, Org: org, Server: server, Snapshot: subject}
+	done := operationDone{Kind: kind, Org: org, Server: server, Snapshot: subject, Scheduled: scheduled}
 	switch {
 	case errors.Is(opErr, context.Canceled):
 		done.Error, done.CalledOff = opErr.Error(), true
@@ -688,6 +702,10 @@ func (s *Server) finishOperation(ctx context.Context, namespace, server, kind st
 		if newest != nil {
 			at := metav1.NewTime(newest.Time)
 			mc.Status.Snapshots.LastTime, mc.Status.Snapshots.LastID = &at, newest.ID
+		}
+		if scheduled && opErr == nil {
+			now := metav1.Now()
+			mc.Status.Snapshots.LastRun = &now
 		}
 		if err := s.Client.Status().Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
 			s.Log.Error("recording a "+kind+" on the server", "server", server, "error", err)

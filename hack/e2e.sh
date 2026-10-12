@@ -97,6 +97,12 @@ wait_phase() {
 
 step "organization and server"
 call -d "{\"name\":\"E2E $ORG\",\"slug\":\"$ORG\"}" "$API/orgs" >/dev/null
+POLICY=$API/orgs/$ORG/backup-policy
+expect "daily snapshots are on unless switched off" "$(call "$POLICY" | field "(d['enabled'], d['keep']['daily'], 'next' in d)")" "(True, 7, True)"
+expect "a policy that keeps nothing is refused" "$(call -o /dev/null -w '%{http_code}' -X PUT -d '{"enabled":true,"minute":540,"keep":{"daily":0}}' "$POLICY")" 400
+# Off for this run, so that nothing happens by the clock in the middle of it.
+# The schedule is run by hand further down.
+expect "they can be switched off" "$(call -X PUT -d '{"enabled":false,"minute":540,"keep":{"daily":7,"weekly":4,"monthly":12,"yearly":2}}' "$POLICY" | field "(d['enabled'], 'next' in d)")" "(False, False)"
 # WorldEdit is here on purpose: its newest builds need a newer Java than this
 # game version ships with, so it proves a version that actually loads is chosen.
 created=$(call -d "{\"name\":\"probe\",\"spec\":{\"eula\":true,\"loader\":\"paper\",\"version\":\"1.21.4\",
@@ -163,6 +169,19 @@ stopped=$(call -X POST "$SRV/snapshots?wait=true")
 LAST=$(echo "$stopped" | field "d['id']") || fail "no snapshot was taken of the stopped server: $stopped"
 expect "a stopped server is snapshotted" "$(echo "$stopped" | field "d['trigger']")" manual
 
+step "scheduled snapshots"
+RUN="$POLICY/run?wait=true"
+outcome="[(r['server'], r['outcome'], r.get('removed', 0)) for r in d['results']]"
+expect "a server nothing has happened to gets no new snapshot" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'unchanged', 0)]"
+expect "but is marked as having had its run" "$(call "$SRV" | field "'lastRun' in d['status']['snapshots']")" True
+echo "something happened" | call -X PUT --data-binary @- "$SRV/files/content?path=/scheduled.txt" >/dev/null
+expect "one that has changed gets one" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'snapshot', 0)]"
+# Keep a single day's worth, and take another the same day: the older one goes.
+call -X PUT -d '{"enabled":false,"minute":540,"keep":{"daily":1}}' "$POLICY" >/dev/null
+echo "and again" | call -X PUT --data-binary @- "$SRV/files/content?path=/scheduled.txt" >/dev/null
+expect "what the policy no longer keeps is removed" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'snapshot', 1)]"
+expect "and only scheduled snapshots are" "$(call "$SRV/snapshots" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'manual', 'pre-restore', 'scheduled']"
+
 step "a new server from a snapshot"
 COPY=$API/orgs/$ORG/servers/copy
 expect "a snapshot says what its server was" "$(call "$API/orgs/$ORG/snapshots/$LAST" | field "(d['server'], d['spec']['version'], d['spec']['loader'])")" "('probe', '1.21.4', 'paper')"
@@ -191,17 +210,17 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 history=$(call "$API/orgs/$ORG/snapshots")
-expect "a deleted server's snapshots are still listed" "$(echo "$history" | field "sorted({s['server'] for s in d['snapshots']}), len(d['snapshots']), d['usage']['bytes'] > 0")" "(['probe'], 3, True)"
+expect "a deleted server's snapshots are still listed" "$(echo "$history" | field "sorted({s['server'] for s in d['snapshots']}), len(d['snapshots']), d['usage']['bytes'] > 0")" "(['probe'], 4, True)"
 expect "an organization with snapshots is not deleted by accident" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG")" 409
 expect "a snapshot can be removed on purpose" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$SNAP")" 204
-expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])")" 2
+expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])")" 3
 
 step "a deleted server comes back"
 back=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
 case "$back" in *'"spec"'*) ;; *) fail "the deleted server was not brought back: $back" ;; esac
 expect "under its own name, left stopped as asked" "$(echo "$back" | field "(d['name'], d['spec']['state'], d['spec']['expose']['hostname'])")" "('probe', 'Stopped', '$HOST')"
 expect "with its files" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
-expect "and its history" "$(call "$SRV/snapshots" | field "len(d['snapshots'])")" 2
+expect "and its history" "$(call "$SRV/snapshots" | field "len(d['snapshots'])")" 3
 # And again with no pause, while what is left of the one just deleted is still
 # being cleared away. Its files must not land in a volume that is on its way out.
 call -X DELETE "$SRV" >/dev/null

@@ -507,6 +507,12 @@ spec:
                     type: string
                   lastID:
                     type: string
+                  lastRun:
+                    description: |-
+                      LastRun is when the scheduled snapshot last ran to completion, whether
+                      it took a snapshot or found nothing changed since the one before.
+                    format: date-time
+                    type: string
                   lastTime:
                     description: LastTime and LastID are the newest snapshot the panel
                       took.

@@ -245,6 +245,9 @@ type SnapshotStatus struct {
 	// LastTime and LastID are the newest snapshot the panel took.
 	LastTime *metav1.Time `json:"lastTime,omitempty"`
 	LastID   string       `json:"lastID,omitempty"`
+	// LastRun is when the scheduled snapshot last ran to completion, whether
+	// it took a snapshot or found nothing changed since the one before.
+	LastRun *metav1.Time `json:"lastRun,omitempty"`
 	// Error says why the most recent snapshot or restore failed. It is
 	// cleared by the next one that succeeds.
 	Error string `json:"error,omitempty"`

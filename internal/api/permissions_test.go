@@ -209,6 +209,9 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST /orgs/{org}/invites", "", `{"role":"viewer"}`, store.RoleAdmin, 201},
 		{"DELETE /orgs/{org}/invites/{token}", "", "", store.RoleAdmin, 204},
 
+		{"GET /orgs/{org}/backup-policy", "", "", store.RoleViewer, 200},
+		{"PUT /orgs/{org}/backup-policy", "", `{"enabled":true,"minute":540,"keep":{"daily":7,"weekly":4,"monthly":12,"yearly":2}}`, store.RoleAdmin, 200},
+		{"POST /orgs/{org}/backup-policy/run", "", "", store.RoleAdmin, 503},
 		{"GET /orgs/{org}/snapshots", "", "", store.RoleViewer, 200},
 		// 503 below: allowed, and then told that this panel has no restic.
 		{"GET /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},

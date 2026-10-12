@@ -39,6 +39,7 @@ export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
+  put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
   del: <T = void>(path: string) => request<T>("DELETE", path),
   putRaw: <T = void>(path: string, data: BodyInit) => request<T>("PUT", path, undefined, data),
 };
@@ -164,7 +165,7 @@ export interface ServerStatus {
   /** The cluster node the server runs on. */
   node?: string;
   /** Written by the panel after each snapshot or restore. */
-  snapshots?: { lastTime?: string; lastID?: string; error?: string } | null;
+  snapshots?: { lastTime?: string; lastID?: string; error?: string; /** When the daily snapshot last completed, whether or not anything had changed. */ lastRun?: string } | null;
 }
 
 export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore";
@@ -205,9 +206,21 @@ export interface OperationDone {
   org: string;
   server: string;
   error?: string;
+  /** One of the daily snapshots, which nobody is waiting to hear about. */
+  scheduled?: boolean;
   /** The operation was stopped on purpose; its error is not news. */
   calledOff?: boolean;
   snapshot?: Snapshot;
+}
+
+/** An organization's daily snapshots and how long they are kept. */
+export interface BackupPolicy {
+  enabled: boolean;
+  /** Minute of the day, UTC, at which they begin. */
+  minute: number;
+  keep: { daily: number; weekly: number; monthly: number; yearly: number };
+  /** When they next begin; absent when they are off. */
+  next?: string;
 }
 
 export interface SnapshotList {

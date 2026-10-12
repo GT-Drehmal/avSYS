@@ -51,6 +51,8 @@ Dependencies are still fetched by the server image at start and are not pinned o
 A snapshot is the server's whole directory, minus the workspace's own files and download caches, plus a record of its settings. Take one from the server's **Backups** tab or with the API; a running game is told to write everything out and hold its saves for the moment the files are copied.
 
 - **Storage.** Every organization has one [restic](https://restic.net) repository on the panel's backups volume. Servers that share files (the same mods, libraries, a common map) store them once, and each snapshot adds only what changed since the last.
+- **Every day.** Each server is snapshotted once a day without anyone asking, at a time set on the organization's **Backups** page (05:00 US Eastern unless changed). A server whose files are exactly as its last snapshot has them gets no new one. Of these scheduled snapshots the newest of each of the last 7 days, 4 weeks, 12 months and 2 years is kept, which can be changed on the same page, or the daily snapshots switched off. A snapshot that fails, or does not happen, shows on the server list.
+- **What is never removed for you.** Retention only applies to scheduled snapshots of servers that exist. Snapshots taken by hand, the ones taken before a restore, and every snapshot of a server that has been deleted stay until someone deletes them.
 - **Restore.** Restoring puts a server back to one of its own snapshots: its world, configuration, game version and mods. The server is stopped while the files are put back, and what was there is snapshotted first, so a restore can be undone. Memory, storage, address and sleep settings are left as they are.
 - **New server from a snapshot.** Any snapshot can be made into a new server, from the **Backups** page or with the API. It gets the snapshot's files along with the game version, loader, mods and game settings they were made with, and its own name, address, memory and storage. Made from a snapshot of a server that was deleted, under the same name, it is that server back with its history. Made from one of a server that still exists, it is a copy, and the original is not touched. Until its files are all in, the new server cannot be started or changed; deleting it calls the copy off.
 - **History is kept.** Deleting a server does not delete its snapshots; they stay on the organization's **Backups** page until someone deletes them. Deleting an organization deletes its repository, and asks first.
@@ -63,7 +65,7 @@ A snapshot is the server's whole directory, minus the workspace's own files and 
   restic -r /backups/friends --password-file /backups/friends.key restore <id>:/data --target ./restored
   ```
 
-Snapshots live on the cluster only. Scheduled snapshots, retention and an offsite copy are not built yet.
+Snapshots live on the cluster only. An offsite copy is not built yet.
 
 After upgrading from a version without snapshots, a server has to be restarted once before it can be snapshotted; its page says so.
 
@@ -130,7 +132,7 @@ For the shared router, point each server's hostname (an A or CNAME record) at th
 | --- | --- |
 | Viewer | See servers, status, console output and snapshots |
 | Operator | Also start and stop servers, run commands, SSH in, use the terminal and files, take snapshots |
-| Admin | Also create, configure and delete servers; restore and delete snapshots, and make servers from them; manage members and invites |
+| Admin | Also create, configure and delete servers; restore and delete snapshots, and make servers from them; set the snapshot schedule; manage members and invites |
 | Owner | Also manage other owners and delete the organization |
 
 Instance administrators act as owner in every organization and are the only ones who can create organizations.
@@ -152,6 +154,12 @@ curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"resources":{"memor
 curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/creative/snapshots?wait=true"
 curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/creative/snapshots/<id>/restore?wait=true"
 curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/snapshots
+
+# The organization's daily snapshots: read the policy, change it, or run it now.
+# "minute" is the time of day they begin, in minutes after midnight UTC.
+curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/backup-policy
+curl -H "Authorization: Bearer $TOKEN" -X PUT -d '{"enabled":true,"minute":540,"keep":{"daily":7,"weekly":4,"monthly":12,"yearly":2}}' $AVSYS/orgs/friends/backup-policy
+curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/backup-policy/run?wait=true"
 
 # Make a new server out of a snapshot. Its software and game settings come with it.
 curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-copy","fromSnapshot":"<id>","spec":{"state":"Stopped"}}' "$AVSYS/orgs/friends/servers?wait=true"
