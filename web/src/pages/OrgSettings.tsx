@@ -34,7 +34,7 @@ export function OrgSettings() {
           }}
         >
           <Field label="Name">{(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-          <Field label="URL name" hint="Fixed: it names the Kubernetes namespace and appears in SSH targets.">
+          <Field label="URL name" hint="It cannot be changed.">
             {(id) => <Input id={id} disabled value={membership.slug} className="font-mono" />}
           </Field>
           <div>
@@ -55,7 +55,7 @@ export function OrgSettings() {
         open={deleting}
         onOpenChange={setDeleting}
         title={`Delete ${membership.name}?`}
-        description={`The organization, its memberships and its namespace are removed${
+        description={`The organization and its memberships are removed${
           snapshots === undefined ? ", along with any snapshots it has" : snapshots > 0 ? `, along with its ${snapshots} snapshot${snapshots === 1 ? "" : "s"}` : ""
         }. This cannot be undone.`}
         action="Delete organization"

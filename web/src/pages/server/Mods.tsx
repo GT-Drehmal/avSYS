@@ -108,7 +108,7 @@ export function Mods() {
 
       {server.java.effective > server.java.game && (
         <Notice tone="info">
-          This server runs on Java {server.java.effective} rather than the game's usual Java {server.java.game}, because something installed here needs it. Older versions of that content may not.
+          This server runs on Java {server.java.effective} instead of the game's usual Java {server.java.game}, because something installed needs it.
         </Notice>
       )}
 
@@ -128,7 +128,7 @@ export function Mods() {
           <Empty title={server.spec.loader === "vanilla" ? "Vanilla servers take datapacks" : "Nothing installed yet"}>
             {server.spec.loader === "vanilla"
               ? "To run mods or plugins, switch the server software under Settings."
-              : "Search Modrinth and add what you want. Versions matching this server are picked for you."}
+              : "Search Modrinth and add what you want."}
           </Empty>
         )
       ) : (
@@ -151,7 +151,7 @@ export function Mods() {
           software={server.spec}
           mods={mods}
           busy={update.isPending}
-          description="Downloaded when the server next starts, along with anything it requires."
+          description="Downloaded when the server next starts."
           onAdd={(ref) => update.mutate({ mods: [...mods, ref] })}
           onUpload={upload}
           onClose={() => setAdding(false)}

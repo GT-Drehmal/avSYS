@@ -103,7 +103,7 @@ function Form({ org, detail, taken, onClose }: { org: string; detail: SnapshotDe
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
       <p className="text-[13px] leading-relaxed text-muted">
-        Its world, files, game version, mods and game settings come from the snapshot. {copying ? `${detail.server} itself is not touched.` : `${detail.server} no longer exists, so this brings it back.`}
+        {copying ? `A copy of ${detail.server} as it was then. ${detail.server} itself is not touched.` : `Brings ${detail.server} back as it was then.`}
       </p>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
@@ -113,10 +113,10 @@ function Form({ org, detail, taken, onClose }: { org: string; detail: SnapshotDe
         <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={memory} onChange={(e) => setMemory(e.target.value)} />}</Field>
         <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={storage} onChange={(e) => setStorage(e.target.value)} />}</Field>
       </div>
-      <Field label="Hostname" hint="The address players connect to. It can be left empty and set later.">
+      <Field label="Hostname" hint="Optional.">
         {(id) => <Input id={id} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
       </Field>
-      <Toggle checked={start} onChange={setStart} label="Start it when its files are in place" hint="Otherwise it is left stopped, to look over or change first." />
+      <Toggle checked={start} onChange={setStart} label="Start it when its files are in place" />
       {custom && (
         <Toggle
           checked={keepCustom}

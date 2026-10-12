@@ -126,7 +126,7 @@ export function NewServer() {
       </Link>
       <PageHeader title="New server" />
 
-      <Section title="Software" description="Start from a plain game version and add mods or plugins later, or install a whole modpack.">
+      <Section title="Software">
         <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
           <button type="button" className={segment(kind === "game")} onClick={() => kind !== "game" && changeSoftware(() => setKind("game"))}>
             Game version
@@ -200,11 +200,7 @@ export function NewServer() {
       <Section
         title="Content"
         description={
-          kind === "modpack"
-            ? "Optional extras on top of the modpack. You can also add them later from the server's Mods tab."
-            : software
-              ? `Optional. Add ${kindsPhrase(software)} now, or later from the server's Mods tab.`
-              : "Optional. What can be added depends on the server type."
+          software ? "Optional. Can also be added later." : "Optional."
         }
       >
         {mods.length > 0 && <ContentList mods={mods} onRemove={(i) => setMods(mods.filter((_, j) => j !== i))} />}
@@ -217,7 +213,7 @@ export function NewServer() {
           <AddContentDialog
             software={software}
             mods={mods}
-            description="Downloaded when the server first starts, along with anything it requires."
+            description="Downloaded when the server first starts."
             onAdd={(ref) => setMods((current) => [...current, ref])}
             onClose={() => setAddingMods(false)}
           />
@@ -226,7 +222,7 @@ export function NewServer() {
 
       <Section title="Name">
         <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Survival" />}</Field>
-        <Field label="Short name" hint="Used in URLs, SSH targets and Kubernetes. It cannot be changed later.">
+        <Field label="Short name" hint="It cannot be changed later.">
           {(id) => <Input id={id} required value={name} onChange={(e) => setCustomName(e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
         </Field>
       </Section>
@@ -234,9 +230,7 @@ export function NewServer() {
       <Section
         title="World"
         description={
-          kind === "modpack"
-            ? "The modpack's own settings apply unless you choose otherwise. A pack that ships a ready-made world ignores the world options."
-            : "Game mode and difficulty can be changed at any time. The world options are fixed once the world has been generated."
+          kind === "modpack" ? "A pack that ships a ready-made world ignores the world options." : undefined
         }
       >
         <div className="grid grid-cols-2 gap-4">
@@ -288,7 +282,7 @@ export function NewServer() {
                 </Field>
                 <Field label="Seed">{(id) => <Input id={id} value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="Random" className="font-mono" spellCheck={false} />}</Field>
               </div>
-              <Toggle checked={structures} onChange={setStructures} label="Generate structures" hint="Villages, strongholds, temples and the like." />
+              <Toggle checked={structures} onChange={setStructures} label="Generate structures" />
               <Toggle checked={hardcore} onChange={setHardcore} label="Hardcore" hint="Difficulty is locked to hard, and players who die can only spectate." />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -303,22 +297,22 @@ export function NewServer() {
                 )}
               </Field>
             </div>
-            <Field label="Other properties" hint="One key=value per line, for anything else in server.properties. These and everything outside the box above can be changed later in Settings.">
+            <Field label="Other properties" hint="One key=value per line.">
               {(id) => <Textarea id={id} rows={3} value={otherProperties} onChange={(e) => setOtherProperties(e.target.value)} placeholder={"view-distance=12\nspawn-protection=0"} className="font-mono" spellCheck={false} />}
             </Field>
           </>
         )}
       </Section>
 
-      <Section title="Resources" description={kind === "modpack" ? "Large modpacks usually want 6 GB or more." : "4 GB suits a small server; plugins and view distance push it up. The Java heap is set somewhat below this."}>
+      <Section title="Resources" description={kind === "modpack" ? "Large modpacks usually want 6 GB or more." : "4 GB suits a small server."}>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={memory} onChange={(e) => setMemory(e.target.value)} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={1} step={1} value={storage} onChange={(e) => setStorage(e.target.value)} />}</Field>
         </div>
       </Section>
 
-      <Section title="Address" description="Many servers can share one IP address: players are routed by the hostname they connect with.">
-        <Field label="Hostname" hint="Point this name's DNS at the avSYS router. You can leave it empty and set it later.">
+      <Section title="Address">
+        <Field label="Hostname" hint="Optional. Point this name's DNS at the avSYS router.">
           {(id) => <Input id={id} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
         </Field>
       </Section>

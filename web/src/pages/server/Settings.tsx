@@ -168,12 +168,12 @@ export function Settings() {
   return (
     <>
     <form onSubmit={save} className="pb-20">
-      <Section title="General" description="How the server appears here and in the multiplayer list.">
+      <Section title="General">
         <Field label="Display name">{(id) => <Input id={id} {...text("displayName")} placeholder={server.name} />}</Field>
         <Field label="Message of the day">{(id) => <Input id={id} {...text("motd")} placeholder="A Minecraft Server" />}</Field>
       </Section>
 
-      <Section title="Software" description={server.spec.modpack ? "The modpack decides the game version and mod loader." : "Changing the loader or going back a version can break an existing world. Take a copy first."}>
+      <Section title="Software" description={server.spec.modpack ? "The modpack decides the game version and mod loader." : "Changing the loader or going back a version can break an existing world. Back it up first."}>
         {server.spec.modpack ? (
           <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change its version under Mods.</Notice>
         ) : (
@@ -212,7 +212,7 @@ export function Settings() {
         )}
       </Section>
 
-      <Section title="Gameplay" description="Written to server.properties on each start. Fields left on the default are not touched, so hand edits to the file survive.">
+      <Section title="Gameplay" description="Fields left on Default leave server.properties as it is.">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Difficulty">
             {(id) => (
@@ -280,11 +280,11 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section title="Resource pack" description="Offered to players when they join. The game downloads it from this URL, so it must be reachable by them.">
+      <Section title="Resource pack" description="The URL must be reachable by players.">
         <Field label="Pack URL">{(id) => <Input id={id} type="url" {...text("packURL")} placeholder="https://example.com/pack.zip" className="font-mono" />}</Field>
         {draft.packURL && (
           <>
-            <Field label="SHA-1" hint="Lets the game cache the pack and notice when it changes.">
+            <Field label="SHA-1" hint="Optional.">
               {(id) => (
                 <div className="flex gap-2">
                   <Input id={id} {...text("packSHA1")} className="font-mono" spellCheck={false} />
@@ -300,14 +300,14 @@ export function Settings() {
         )}
       </Section>
 
-      <Section title="Resources" description="Memory is the limit for the whole server. The Java heap is set somewhat below it, since Java needs room outside the heap. Storage can grow but not shrink.">
+      <Section title="Resources" description="Storage can grow but not shrink.">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} {...text("memory")} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={toGigabytes(server.spec.storage.size) || 1} step={1} {...text("storage")} />}</Field>
         </div>
       </Section>
 
-      <Section title="Network" description="How players reach the server.">
+      <Section title="Network">
         <Field label="Exposure">
           {(id) => (
             <Select id={id} value={draft.exposeType} onChange={(e) => set("exposeType", e.target.value as ExposeType)}>
@@ -319,38 +319,38 @@ export function Settings() {
           )}
         </Field>
         {draft.exposeType !== "None" && (
-          <Field label="Hostname" hint={usesRouter ? "Point this name's DNS at the avSYS router. Players are routed by the name they connect with." : "Optional. Shown as the address if you have DNS for it."}>
+          <Field label="Hostname" hint={usesRouter ? "Point this name's DNS at the avSYS router." : "Optional."}>
             {(id) => <Input id={id} required={usesRouter} {...text("hostname")} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
           </Field>
         )}
         {draft.exposeType === "LoadBalancer" && (
-          <Field label="Requested IP" hint="Optional. For load balancers that honor a requested address, such as MetalLB.">
+          <Field label="Requested IP" hint="Optional.">
             {(id) => <Input id={id} {...text("loadBalancerIP")} placeholder="192.168.1.240" className="font-mono" />}
           </Field>
         )}
       </Section>
 
-      <Section title="Sleep" description="Frees the server's memory while nobody is playing.">
+      <Section title="Sleep" description="Stops the server while nobody is playing.">
         <Toggle
           checked={draft.sleepEnabled && usesRouter}
           disabled={!usesRouter}
           onChange={(v) => set("sleepEnabled", v)}
           label="Sleep when empty"
-          hint={usesRouter ? "The first player to join wakes it and is asked to rejoin once it is up." : "Needs the shared address, which is what notices a player trying to join."}
+          hint={usesRouter ? "The first player to join wakes it and is asked to rejoin once it is up." : "Needs the shared address."}
         />
         {draft.sleepEnabled && usesRouter && <Field label="After minutes with no players">{(id) => <Input id={id} type="number" min={1} {...text("idleMinutes")} className="max-w-32" />}</Field>}
       </Section>
 
-      <Section title="Advanced" description="For options of the itzg/minecraft-server image that have no field here.">
-        <Field label="Environment" hint="One NAME=value per line, passed to the server container after everything avSYS sets.">
+      <Section title="Advanced" description="Options of the itzg/minecraft-server image.">
+        <Field label="Environment" hint="One NAME=value per line.">
           {(id) => <Textarea id={id} rows={3} {...text("env")} placeholder="USE_AIKAR_FLAGS=true" className="font-mono" spellCheck={false} />}
         </Field>
-        <Field label="Image" hint="Leave empty to use the image with the right Java for the game version.">
+        <Field label="Image" hint="Leave empty for the default.">
           {(id) => <Input id={id} {...text("image")} placeholder="itzg/minecraft-server:java21" className="font-mono" spellCheck={false} />}
         </Field>
       </Section>
 
-      <Section title="Delete server" description="Removes the server and its world, plugins and configuration from the cluster.">
+      <Section title="Delete server" description="Removes the server and all of its files.">
         <div>
           <Button variant="danger" onClick={() => setDeleting(true)}>
             Delete {server.name}

@@ -170,7 +170,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
               setUrl("");
             }}
           >
-            <Field label="Download URL" hint="A direct link to the file, for content that is not on Modrinth.">
+            <Field label="Download URL" hint="A direct link to the file.">
               {(id) => <Input id={id} type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/some-mod-1.2.3.jar" className="font-mono" />}
             </Field>
             <div className="flex justify-end">

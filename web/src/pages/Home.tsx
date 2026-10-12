@@ -21,7 +21,7 @@ export function Home() {
             </Button>
           }
         >
-          Servers and members belong to an organization. Each one gets its own Kubernetes namespace.
+          Servers and members belong to an organization.
         </Empty>
       ) : (
         <Empty title="You are not in an organization yet">Ask an organization admin for an invite link.</Empty>

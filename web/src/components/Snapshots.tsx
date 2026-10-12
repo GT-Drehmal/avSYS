@@ -83,7 +83,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: Rows
             </div>
             <div className="text-right max-sm:hidden">
               <p className="font-mono text-[13px] tabular-nums">{bytes(s.size)}</p>
-              <p className="text-xs text-faint" title="What this snapshot added to storage, after files it shares with other snapshots">
+              <p className="text-xs text-faint" title="What this snapshot added to storage when it was taken">
                 +{bytes(s.added)} stored
               </p>
             </div>
@@ -107,7 +107,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: Rows
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
         title="Delete this snapshot?"
-        description={deleting ? `The snapshot of ${deleting.server} from ${new Date(deleting.time).toLocaleString()} is removed for good. Other snapshots are not affected.` : ""}
+        description={deleting ? `The snapshot of ${deleting.server} from ${new Date(deleting.time).toLocaleString()} is removed for good.` : ""}
         action="Delete snapshot"
         loading={remove.isPending}
         onConfirm={() => deleting && remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}
