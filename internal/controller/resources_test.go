@@ -307,3 +307,38 @@ func TestLeftOf(t *testing.T) {
 		t.Error("a volume with no owner was taken for a leftover")
 	}
 }
+
+// The game reads its console from a pipe in a directory it shares with the
+// workspace, which is how a command from the panel or a shell is typed at the
+// server console rather than sent over RCON.
+func TestConsoleIsSharedWithTheWorkspace(t *testing.T) {
+	mounted := func(pod *corev1.Pod, container string) bool {
+		for _, c := range pod.Spec.Containers {
+			if c.Name != container {
+				continue
+			}
+			for _, m := range c.VolumeMounts {
+				if m.Name == "console" && m.MountPath == ConsoleDir {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	running := buildPod(server(nil), Config{})
+	if !mounted(running, MinecraftContainer) || !mounted(running, WorkspaceContainer) {
+		t.Error("the console directory is not mounted in both the game and the workspace")
+	}
+	env := envOf(server(nil))
+	if env["CREATE_CONSOLE_IN_PIPE"] != "true" || env["CONSOLE_IN_NAMED_PIPE"] != ConsolePipe || !strings.HasPrefix(ConsolePipe, ConsoleDir+"/") {
+		t.Errorf("the game is not told to read its console from %s: %v %v", ConsolePipe, env["CREATE_CONSOLE_IN_PIPE"], env["CONSOLE_IN_NAMED_PIPE"])
+	}
+	// It is not kept with the server's files, where a snapshot would pick it up.
+	if strings.HasPrefix(ConsoleDir, "/data") {
+		t.Errorf("the console pipe is among the server's files: %s", ConsoleDir)
+	}
+	stopped := buildPod(server(func(mc *avsysv1.MinecraftServer) { mc.Spec.State = avsysv1.StateStopped }), Config{})
+	if !mounted(stopped, WorkspaceContainer) {
+		t.Error("a stopped server's workspace has no console directory, so its pod would differ in more than the game")
+	}
+}

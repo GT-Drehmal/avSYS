@@ -149,7 +149,11 @@ export TOKEN=avsys_...
 
 curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/servers
 curl -H "Authorization: Bearer $TOKEN" -X POST $AVSYS/orgs/friends/servers/creative/restart
-curl -H "Authorization: Bearer $TOKEN" -d '{"command":"say hello"}' $AVSYS/orgs/friends/servers/creative/console
+# Run a command and get what it printed. Add "as":"server" to type it at the
+# server console instead: players then see it come from [Server] rather than
+# [Rcon], and what it prints goes to the log.
+curl -H "Authorization: Bearer $TOKEN" -d '{"command":"list"}' $AVSYS/orgs/friends/servers/creative/console
+curl -H "Authorization: Bearer $TOKEN" -d '{"command":"say hello","as":"server"}' $AVSYS/orgs/friends/servers/creative/console
 curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"resources":{"memory":"6Gi"}}}' $AVSYS/orgs/friends/servers/creative
 
 # Take a snapshot and wait for it; then put the server back to it.

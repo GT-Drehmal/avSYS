@@ -2,11 +2,16 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
@@ -121,7 +126,15 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 	if err != nil {
 		return err
 	}
-	var in struct{ Command string }
+	var in struct {
+		Command string
+		// As says who the game should take the command to be from. "server"
+		// types it at the server console: players see "[Server]", and what
+		// the command prints goes to the log, not into the answer. Left out,
+		// the command goes over RCON: the answer carries what it printed,
+		// and the game names its sender "Rcon".
+		As string
+	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
@@ -129,15 +142,77 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 	if command == "" {
 		return errBadRequest("Enter a command.")
 	}
+	if strings.ContainsAny(command, "\r\n") {
+		return errBadRequest("One command at a time: it has to fit on one line.")
+	}
+	if in.As != "" && in.As != "server" {
+		return errBadRequest(`"as" is "server" or left out.`)
+	}
 	if mc.Status.Phase != avsysv1.PhaseRunning {
 		return &Error{Status: http.StatusConflict, Code: "not_running", Message: "The server is not running."}
 	}
-	output, err := s.rcon(r.Context(), mc, command)
-	if err != nil {
-		s.Log.Warn("rcon command failed", "server", mc.Name, "error", err)
-		return &Error{Status: http.StatusBadGateway, Code: "rcon", Message: "The server did not answer the command."}
+	output := ""
+	typed := false
+	if in.As == "server" {
+		typed, err = s.typeAtConsole(r.Context(), mc, command)
+		if err != nil {
+			s.Log.Warn("console command failed", "server", mc.Name, "error", err)
+			return &Error{Status: http.StatusBadGateway, Code: "console", Message: "The server did not take the command."}
+		}
+	}
+	// A server started before the console could be typed at has no way in
+	// but RCON, until its next restart.
+	if !typed {
+		if output, err = s.rcon(r.Context(), mc, command); err != nil {
+			s.Log.Warn("rcon command failed", "server", mc.Name, "error", err)
+			return &Error{Status: http.StatusBadGateway, Code: "rcon", Message: "The server did not answer the command."}
+		}
 	}
 	s.audit(r.Context(), u, a.Org, "console.command", mc.Name, command)
 	writeJSON(w, http.StatusOK, map[string]string{"output": output})
 	return nil
+}
+
+// consoleTurn returns the lock that writers to one server's console take in turn.
+func (s *Server) consoleTurn(key string) *sync.Mutex {
+	turn, _ := s.consoles.LoadOrStore(key, &sync.Mutex{})
+	return turn.(*sync.Mutex)
+}
+
+// typeAtConsole writes one line to the game's console input, through the
+// workspace that shares it. ok is false when this server has no such input:
+// its pod is from before there was one.
+func (s *Server) typeAtConsole(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (ok bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	// One writer at a time per server. Two long lines written to a pipe at
+	// once can come out interleaved, as one command that nobody typed.
+	turn := s.consoleTurn(mc.Namespace + "/" + mc.Name)
+	turn.Lock()
+	defer turn.Unlock()
+	ws, err := s.Gateway.DialWorkspace(ctx, mc.Namespace, mc.Name)
+	if err != nil {
+		return false, err
+	}
+	defer ws.Close()
+	// Nothing below watches ctx by itself. Closing the connection when the
+	// time is up is what ends a session that has stopped answering.
+	stop := context.AfterFunc(ctx, func() { ws.Close() })
+	defer stop()
+	session, err := ws.NewSession()
+	if err != nil {
+		return false, err
+	}
+	defer session.Close()
+	session.Stdin = strings.NewReader(command + "\n")
+	// Opening the pipe waits for the game to be reading it, which it is
+	// unless it is between two runs; hence the limit. The command itself
+	// arrives on stdin and is never part of a command line.
+	const script = `[ -p ` + controller.ConsolePipe + ` ] || exit 3; exec timeout 5 sh -c 'cat > ` + controller.ConsolePipe + `'`
+	err = session.Run(script)
+	var exit *ssh.ExitError
+	if errors.As(err, &exit) && exit.ExitStatus() == 3 {
+		return false, nil
+	}
+	return err == nil, err
 }

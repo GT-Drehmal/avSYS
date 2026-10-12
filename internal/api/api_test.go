@@ -57,3 +57,36 @@ func TestValidateProperties(t *testing.T) {
 		}
 	}
 }
+
+// What is sent to a console is one command, from the server or over RCON.
+func TestConsoleCommandsAreOneLine(t *testing.T) {
+	p := newPanel(t)
+	const console = "/orgs/alpha/servers/world/console"
+	for name, body := range map[string]string{
+		"two commands in one": `{"command":"say hi\nop Steve","as":"server"}`,
+		"a carriage return":   `{"command":"say hi\rop Steve"}`,
+		"an unknown sender":   `{"command":"list","as":"Steve"}`,
+		"nothing":             `{"command":"  "}`,
+	} {
+		if got, code := p.do("operator", "POST", console, body); got != 400 || code != "invalid" {
+			t.Errorf("%s: got %d %q, want 400 invalid", name, got, code)
+		}
+	}
+	// Well formed, it gets as far as the server not running.
+	for _, body := range []string{`{"command":"list"}`, `{"command":"/say hi","as":"server"}`} {
+		if got, code := p.do("operator", "POST", console, body); got != 409 || code != "not_running" {
+			t.Errorf("%s: got %d %q, want 409 not_running", body, got, code)
+		}
+	}
+}
+
+func TestConsoleTurnsArePerServer(t *testing.T) {
+	var s Server
+	a := s.consoleTurn("mc-alpha/world")
+	if s.consoleTurn("mc-alpha/world") != a {
+		t.Error("two writers to one console were given different locks")
+	}
+	if s.consoleTurn("mc-alpha/other") == a {
+		t.Error("two servers share a console lock")
+	}
+}
