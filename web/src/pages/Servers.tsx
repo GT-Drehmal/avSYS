@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
 import { Link, useParams } from "react-router";
+import { scheduleOf } from "../components/BackupSchedule";
 import { ServerActions } from "../components/ServerActions";
 import { useOrg } from "../components/Shell";
 import { CopyText, Empty, PageHeader, StatusDot, Loading } from "../components/ui";
@@ -87,7 +88,7 @@ export function Servers() {
                       <span className="block truncate text-xs text-muted">
                         {phaseWords[s.status.phase ?? "Stopped"]}
                         {s.status.pendingRestart && <span className="text-warn"> · restart to apply changes</span>}
-                        <BackupMark server={s} scheduled={!!policy.data?.enabled} />
+                        <BackupMark server={s} scheduled={!!policy.data && scheduleOf(policy.data, s.spec.backups).enabled} />
                       </span>
                     </span>
                   </span>

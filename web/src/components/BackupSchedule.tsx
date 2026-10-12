@@ -1,9 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, type BackupPolicy } from "../lib/api";
-import { keys, useAction, useBackupPolicy } from "../lib/queries";
+import { api, type BackupOverride, type BackupPolicy, type Server } from "../lib/api";
+import { keys, useAction, useBackupPolicy, useUpdateServer } from "../lib/queries";
 import { toast } from "../lib/toast";
-import { Button, Input, Toggle } from "./ui";
+import { Button, Input, Select, Toggle } from "./ui";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -43,6 +43,119 @@ const periods = [
   ["monthly", "months", 120],
   ["yearly", "years", 20],
 ] as const;
+
+type When = Pick<BackupPolicy, "minute" | "keep">;
+
+/** The time of day and what to keep, as inputs. */
+function ScheduleFields({ value, onChange }: { value: When; onChange: (patch: Partial<When>) => void }) {
+  return (
+    <>
+      <label className="flex flex-col gap-1.5 text-xs text-muted">
+        Time
+        <Input type="time" required value={toLocal(value.minute)} onChange={(e) => e.target.value && onChange({ minute: toUTC(e.target.value) })} className="h-8 w-28" />
+      </label>
+      <fieldset className="flex flex-col gap-1.5">
+        <legend className="mb-1.5 text-xs text-muted">Keep the newest of each of the last</legend>
+        <div className="flex flex-wrap gap-3">
+          {periods.map(([key, unit, most]) => (
+            <label key={key} className="flex items-center gap-1.5 text-[13px] text-muted">
+              <Input
+                type="number"
+                required
+                min={key === "daily" ? 1 : 0}
+                max={most}
+                value={value.keep[key]}
+                onChange={(e) => onChange({ keep: { ...value.keep, [key]: Number(e.target.value) } })}
+                className="h-8 w-16"
+                aria-label={`${unit} to keep`}
+              />
+              {unit}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    </>
+  );
+}
+
+/** The schedule a server's snapshots follow: its organization's, with what it sets for itself in its place. */
+export function scheduleOf(policy: BackupPolicy, own: BackupOverride | null | undefined): BackupPolicy {
+  return { enabled: own?.enabled ?? policy.enabled, minute: own?.minute ?? policy.minute, keep: own?.keep ?? policy.keep };
+}
+
+const describe = (p: BackupPolicy) => (p.enabled ? `Daily at ${toLocal(p.minute)}, kept for ${kept(p.keep)}.` : "Off.");
+
+type Mode = "org" | "own" | "off";
+
+const modeOf = (own: BackupOverride | null | undefined): Mode => (!own ? "org" : own.enabled === false ? "off" : "own");
+
+/**
+ * One server's scheduled snapshots: as its organization has them, off, or
+ * at a time and kept for as long as it sets for itself.
+ */
+export function ServerSchedule({ server, canAdmin }: { server: Server; canAdmin: boolean }) {
+  const policy = useBackupPolicy(server.org);
+  const update = useUpdateServer(server.org, server.name);
+  // A schedule of its own while it is being written and not yet saved.
+  const [draft, setDraft] = useState<When | null>(null);
+
+  if (!policy.data) return null;
+  const own = server.spec.backups;
+  const stored = modeOf(own);
+  const mode: Mode = draft ? "own" : stored;
+  const effective = scheduleOf(policy.data, own);
+
+  if (!canAdmin) {
+    return <p className="text-[13px] text-muted">Scheduled snapshots: {describe(effective).replace(/^./, (c) => c.toLowerCase())}</p>;
+  }
+
+  // Every part is named, so that none is left over from what was set before.
+  const save = (backups: BackupOverride | null, then?: () => void) => update.mutate({ backups }, { onSuccess: then });
+  const choose = (next: Mode) => {
+    if (next === "own") return setDraft({ minute: effective.minute, keep: effective.keep });
+    setDraft(null);
+    if (next !== stored) save(next === "off" ? { enabled: false, minute: null, keep: null } : null);
+  };
+  const shown = draft ?? { minute: effective.minute, keep: effective.keep };
+  const hint = mode === "org" ? describe(policy.data) : mode === "off" ? "This server is only snapshotted by hand." : undefined;
+
+  return (
+    <form
+      className="flex flex-col gap-4 rounded-lg border border-line bg-surface p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save({ enabled: true, minute: shown.minute, keep: shown.keep }, () => setDraft(null));
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label htmlFor="server-schedule" className="text-[13px] font-medium">
+          Scheduled snapshots
+        </label>
+        <Select id="server-schedule" value={mode} disabled={update.isPending} onChange={(e) => choose(e.target.value as Mode)} className="w-52">
+          <option value="org">Same as the organization</option>
+          <option value="own">Its own schedule</option>
+          <option value="off">Off</option>
+        </Select>
+        {hint && <span className="text-[13px] text-muted">{hint}</span>}
+      </div>
+      {mode === "own" && (
+        <div className="flex flex-wrap items-end gap-x-6 gap-y-3 border-t border-line pt-4">
+          <ScheduleFields value={shown} onChange={(patch) => setDraft({ ...shown, ...patch })} />
+          {draft && (
+            <div className="ml-auto flex gap-2">
+              <Button size="sm" onClick={() => setDraft(null)}>
+                Cancel
+              </Button>
+              <Button size="sm" type="submit" variant="primary" loading={update.isPending}>
+                Save
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </form>
+  );
+}
 
 /** The organization's daily snapshots: on or off, when, and how long they are kept. */
 export function BackupSchedule({ org, canAdmin }: { org: string; canAdmin: boolean }) {
@@ -103,30 +216,7 @@ export function BackupSchedule({ org, canAdmin }: { org: string; canAdmin: boole
       </div>
       {shown.enabled && (
         <div className="flex flex-wrap items-end gap-x-6 gap-y-3 border-t border-line pt-4">
-          <label className="flex flex-col gap-1.5 text-xs text-muted">
-            Time
-            <Input type="time" required value={toLocal(shown.minute)} onChange={(e) => e.target.value && change({ minute: toUTC(e.target.value) })} className="h-8 w-28" />
-          </label>
-          <fieldset className="flex flex-col gap-1.5">
-            <legend className="mb-1.5 text-xs text-muted">Keep the newest of each of the last</legend>
-            <div className="flex flex-wrap gap-3">
-              {periods.map(([key, unit, most]) => (
-                <label key={key} className="flex items-center gap-1.5 text-[13px] text-muted">
-                  <Input
-                    type="number"
-                    required
-                    min={key === "daily" ? 1 : 0}
-                    max={most}
-                    value={shown.keep[key]}
-                    onChange={(e) => change({ keep: { ...shown.keep, [key]: Number(e.target.value) } })}
-                    className="h-8 w-16"
-                    aria-label={`${unit} to keep`}
-                  />
-                  {unit}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <ScheduleFields value={shown} onChange={change} />
           {draft && (
             <div className="ml-auto flex gap-2">
               <Button size="sm" onClick={() => setDraft(null)}>

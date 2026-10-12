@@ -277,3 +277,147 @@ func TestAFailedPruneIsOwed(t *testing.T) {
 		t.Error("one organization's owed prune shows up for another")
 	}
 }
+
+func TestPolicyForAServer(t *testing.T) {
+	org := backupPolicy{Enabled: true, Minute: 540, Keep: backup.Keep{Daily: 7, Weekly: 4, Monthly: 12, Yearly: 2}}
+	off, on, minute := false, true, int32(60)
+	for name, c := range map[string]struct {
+		own  *avsysv1.BackupSpec
+		org  backupPolicy
+		want backupPolicy
+	}{
+		"nothing of its own":         {nil, org, org},
+		"an empty setting":           {&avsysv1.BackupSpec{}, org, org},
+		"off":                        {&avsysv1.BackupSpec{Enabled: &off}, org, backupPolicy{Enabled: false, Minute: 540, Keep: org.Keep}},
+		"its own time":               {&avsysv1.BackupSpec{Minute: &minute}, org, backupPolicy{Enabled: true, Minute: 60, Keep: org.Keep}},
+		"its own retention":          {&avsysv1.BackupSpec{Keep: &avsysv1.BackupKeep{Daily: 30}}, org, backupPolicy{Enabled: true, Minute: 540, Keep: backup.Keep{Daily: 30}}},
+		"on, in an organization off": {&avsysv1.BackupSpec{Enabled: &on}, backupPolicy{Minute: 540, Keep: org.Keep}, org},
+		"a time, in one that is off": {&avsysv1.BackupSpec{Minute: &minute}, backupPolicy{Minute: 540, Keep: org.Keep}, backupPolicy{Minute: 60, Keep: org.Keep}},
+	} {
+		if got := policyFor(c.org, &avsysv1.MinecraftServerSpec{Backups: c.own}); got != c.want {
+			t.Errorf("%s: %+v, want %+v", name, got, c.want)
+		}
+	}
+}
+
+// A server's own setting is part of its settings, changed as they are and
+// held to the limits an organization's schedule is.
+func TestAServersOwnSchedule(t *testing.T) {
+	p := newPanel(t)
+	backups := func() map[string]any {
+		_, got := p.get("viewer", "GET", "/orgs/alpha/servers/world", "")
+		spec, _ := got["spec"].(map[string]any)
+		own, _ := spec["backups"].(map[string]any)
+		return own
+	}
+	patch := func(who, body string) int {
+		code, _ := p.do(who, "PATCH", "/orgs/alpha/servers/world", `{"spec":{"backups":`+body+`}}`)
+		return code
+	}
+	if own := backups(); own != nil {
+		t.Fatalf("a server starts with a schedule of its own: %v", own)
+	}
+	if code := patch("operator", `{"enabled":false}`); code != 403 {
+		t.Errorf("an operator changing it: %d, want 403", code)
+	}
+	if code := patch("admin", `{"enabled":false}`); code != 200 || backups()["enabled"] != false {
+		t.Errorf("switching it off: %d %v", code, backups())
+	}
+	if code := patch("admin", `{"enabled":true,"minute":120,"keep":{"daily":30,"weekly":0,"monthly":0,"yearly":0}}`); code != 200 || backups()["minute"] != float64(120) {
+		t.Errorf("giving it its own: %d %v", code, backups())
+	}
+	for name, body := range map[string]string{
+		"a minute past the day's end": `{"minute":1440}`,
+		"keeping nothing":             `{"keep":{"daily":0,"weekly":0,"monthly":0,"yearly":0}}`,
+		"keeping too much":            `{"keep":{"daily":91,"weekly":0,"monthly":0,"yearly":0}}`,
+	} {
+		if code := patch("admin", body); code != 400 {
+			t.Errorf("%s: %d, want 400", name, code)
+		}
+	}
+	if own := backups(); own["minute"] != float64(120) {
+		t.Errorf("a refused change replaced what was there: %v", own)
+	}
+	if code := patch("admin", `null`); code != 200 || backups() != nil {
+		t.Errorf("going back to the organization's: %d %v", code, backups())
+	}
+}
+
+func TestOwedFollowsEachServersOwnSchedule(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	// The organization's were due at 09:00, three hours ago.
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	for _, name := range []string{"off", "later", "kept"} {
+		p.addServer("alpha", name, "")
+	}
+	set := func(name, body string) {
+		t.Helper()
+		if code, _ := p.do("admin", "PATCH", "/orgs/alpha/servers/"+name, `{"spec":{"backups":`+body+`}}`); code != 200 {
+			t.Fatalf("setting %s's schedule: %d", name, code)
+		}
+	}
+	names := func(now time.Time) string {
+		var out []string
+		for _, group := range p.srv.owedServers(ctx, now) {
+			for _, mc := range group.servers {
+				out = append(out, mc.Name)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	if got, want := names(now), "kept later off world"; got != want {
+		t.Fatalf("owed with nothing set: %q, want %q", got, want)
+	}
+
+	set("off", `{"enabled":false}`)
+	set("kept", `{"keep":{"daily":30,"weekly":0,"monthly":0,"yearly":0}}`)
+	if got, want := names(now), "kept later world"; got != want {
+		t.Errorf("with one switched off: %q, want %q", got, want)
+	}
+
+	// The organization off: only a server switched on for itself is owed.
+	if code, _ := p.do("admin", "PUT", "/orgs/alpha/backup-policy", `{"enabled":false,"minute":540,"keep":{"daily":7}}`); code != 200 {
+		t.Fatalf("switching alpha's off: %d", code)
+	}
+	if got := names(now); got != "" {
+		t.Errorf("with the organization off: %q, want none", got)
+	}
+	// One switched on for itself, at 13:00, that had yesterday's run.
+	set("later", `{"enabled":true,"minute":780}`)
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Namespace: "mc-alpha", Name: "later"}, mc); err != nil {
+		t.Fatal(err)
+	}
+	mc.Status.Snapshots = &avsysv1.SnapshotStatus{LastRun: &metav1.Time{Time: now.Add(-23 * time.Hour).Add(5 * time.Minute)}}
+	if err := p.srv.Client.Status().Update(ctx, mc); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(now); got != "" {
+		t.Errorf("at 12:00, a server due at 13:00: %q, want none", got)
+	}
+	if got, want := names(now.Add(90*time.Minute)), "later"; got != want {
+		t.Errorf("at 13:30: %q, want %q", got, want)
+	}
+}
+
+// Asked for by hand, a run still passes over a server that was taken out.
+func TestRunNowPassesOverAServerSwitchedOff(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	alpha, err := p.srv.Store.OrgBySlug(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"backups":{"enabled":false}}}`); code != 200 {
+		t.Fatalf("switching it off: %d", code)
+	}
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Namespace: "mc-alpha", Name: "world"}, mc); err != nil {
+		t.Fatal(err)
+	}
+	res := p.srv.scheduledSnapshot(ctx, alpha, mc, defaultPolicy)
+	if res.Outcome != "skipped" || !strings.Contains(res.Reason, "off for this server") {
+		t.Errorf("a run over a server switched off: %+v", res)
+	}
+}

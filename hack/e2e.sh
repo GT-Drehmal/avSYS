@@ -187,6 +187,11 @@ call -X PUT -d '{"enabled":false,"minute":540,"keep":{"daily":1}}' "$POLICY" >/d
 echo "and again" | call -X PUT --data-binary @- "$SRV/files/content?path=/scheduled.txt" >/dev/null
 expect "what the policy no longer keeps is removed" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'snapshot', 1)]"
 expect "and only scheduled snapshots are" "$(call "$SRV/snapshots" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'manual', 'pre-restore', 'scheduled']"
+# A server can leave its organization's schedule, and come back to it.
+expect "a server can switch its own off" "$(call -X PATCH -d '{"spec":{"backups":{"enabled":false}}}' "$SRV" | field "d['spec']['backups']")" "{'enabled': False}"
+expect "a run passes over it" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'skipped', 0)]"
+expect "and it can follow the organization again" "$(call -X PATCH -d '{"spec":{"backups":null}}' "$SRV" | field "'backups' in d['spec']")" False
+expect "changing its schedule did not count as the server changing" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'unchanged', 0)]"
 
 step "a new server from a snapshot"
 COPY=$API/orgs/$ORG/servers/copy
