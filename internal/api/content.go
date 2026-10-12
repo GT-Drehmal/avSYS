@@ -490,6 +490,9 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 	if err != nil {
 		return err
 	}
+	if err := s.notRestoring(mc); err != nil {
+		return err
+	}
 	kind := avsysv1.ContentKind(r.URL.Query().Get("kind"))
 	switch kind {
 	case avsysv1.KindMod, avsysv1.KindPlugin, avsysv1.KindDatapack:

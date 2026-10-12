@@ -143,6 +143,10 @@ func (m *Manager) lock(org string) *sync.RWMutex {
 	return m.locks[org]
 }
 
+// Exists reports whether the organization has a repository, whether or not
+// the panel is able to read it right now.
+func (m *Manager) Exists(org string) bool { return m.exists(org) }
+
 // exists reports whether the organization has a repository yet.
 func (m *Manager) exists(org string) bool {
 	_, err := os.Stat(filepath.Join(m.repoDir(org), "config"))
@@ -251,12 +255,18 @@ func (r resticSnapshot) snapshot() Snapshot {
 // List returns an organization's snapshots, newest first. They come from the
 // repository itself, so servers that no longer exist are still listed.
 func (m *Manager) List(ctx context.Context, org string) ([]Snapshot, error) {
-	if !m.exists(org) {
-		return []Snapshot{}, nil
-	}
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	return m.list(ctx, org)
+}
+
+// list is List for callers that already hold the repository's lock. Taking a
+// read lock twice deadlocks as soon as a writer is waiting in between.
+func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
+	if !m.exists(org) {
+		return []Snapshot{}, nil
+	}
 	out, err := m.restic(ctx, org, "snapshots", "--json", "--no-lock")
 	if err != nil {
 		return nil, err
@@ -275,10 +285,18 @@ func (m *Manager) List(ctx context.Context, org string) ([]Snapshot, error) {
 
 // Get returns one snapshot by its full ID or an unambiguous prefix of it.
 func (m *Manager) Get(ctx context.Context, org, id string) (*Snapshot, error) {
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	return m.get(ctx, org, id)
+}
+
+// get is Get for callers that already hold the repository's lock.
+func (m *Manager) get(ctx context.Context, org, id string) (*Snapshot, error) {
 	if !idPattern.MatchString(id) {
 		return nil, ErrNotFound
 	}
-	list, err := m.List(ctx, org)
+	list, err := m.list(ctx, org)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +575,7 @@ func (m *Manager) Snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	if incomplete {
 		m.Log.Warn("snapshot saved with unreadable files", "org", org, "server", meta.Server, "errors", f.errors)
 	}
-	return m.Get(ctx, org, f.snapshotID)
+	return m.get(ctx, org, f.snapshotID)
 }
 
 // Restore puts the server's files back to how a snapshot has them. Files

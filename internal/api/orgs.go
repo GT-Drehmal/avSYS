@@ -103,16 +103,25 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 		return &Error{Status: http.StatusConflict, Code: "not_empty", Message: "Delete this organization's servers first."}
 	}
 	// Snapshots outlive servers, so an organization with none may still hold
-	// years of history. Removing that has to be asked for by name.
-	if s.Backups.Available() {
+	// years of history. Removing that has to be asked for by name. If there
+	// is a repository that cannot be read just now, it is assumed to hold
+	// some.
+	if s.Backups.Exists(a.Org.Slug) && r.URL.Query().Get("snapshots") != "delete" {
+		count := "they could not be counted"
 		snapshots, err := s.Backups.List(r.Context(), a.Org.Slug)
-		if err != nil {
-			return err
+		if err == nil {
+			count = fmt.Sprint(len(snapshots))
 		}
-		if len(snapshots) > 0 && r.URL.Query().Get("snapshots") != "delete" {
+		if err != nil || len(snapshots) > 0 {
 			return &Error{Status: http.StatusConflict, Code: "has_snapshots",
-				Message: fmt.Sprintf("This organization still has snapshots (%d). Deleting it deletes them too; confirm with ?snapshots=delete.", len(snapshots))}
+				Message: fmt.Sprintf("This organization still has snapshots (%s). Deleting it deletes them too; confirm with ?snapshots=delete.", count)}
 		}
+	}
+	// The repository goes first. If it cannot be removed the organization
+	// stays, name included: a later organization of the same name would
+	// otherwise find itself holding this one's snapshots and their password.
+	if err := s.Backups.Destroy(a.Org.Slug); err != nil {
+		return fmt.Errorf("removing the organization's snapshots: %w", err)
 	}
 	// Only remove a namespace avSYS created for this organization.
 	ns := &corev1.Namespace{}
@@ -125,11 +134,6 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	if err := s.Store.DeleteOrg(r.Context(), a.Org.ID); err != nil {
 		return err
-	}
-	// A later organization with the same name must not inherit this one's
-	// repository.
-	if err := s.Backups.Destroy(a.Org.Slug); err != nil {
-		s.Log.Error("removing a deleted organization's snapshots", "org", a.Org.Slug, "error", err)
 	}
 	s.audit(r.Context(), u, nil, "org.delete", a.Org.Slug, "")
 	w.WriteHeader(http.StatusNoContent)

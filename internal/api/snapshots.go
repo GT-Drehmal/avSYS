@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -117,6 +118,16 @@ func snapshotError(err error) error {
 	return err
 }
 
+// notRestoring refuses a change to a server whose files are being put back.
+// Starting the game then would run it on a half-restored world, and most
+// other changes replace the pod the restore is working through.
+func (s *Server) notRestoring(mc *avsysv1.MinecraftServer) error {
+	if op := s.ops.current(mc.Namespace, mc.Name); op != nil && op.Kind == kindRestore {
+		return &Error{Status: http.StatusConflict, Code: "restoring", Message: "This server is being restored. Wait for that to finish."}
+	}
+	return nil
+}
+
 // snapshotRecord is stored inside every snapshot. It is what lets a server be
 // recreated from the repository alone.
 type snapshotRecord struct {
@@ -206,16 +217,22 @@ func (s *Server) createSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	if !ok {
 		return errBusy
 	}
+	// What the caller is told has started is a copy: the original is updated
+	// by the work as it goes.
+	started := *op
 	work := func(ctx context.Context) (*backup.Snapshot, error) {
-		defer s.ops.end(a.Namespace, mc.Name)
+		ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+		defer cancel()
 		snap, err := s.takeSnapshot(ctx, a.Org.Slug, mc, op, backup.TriggerManual, u.Username)
-		s.finishOperation(ctx, a.Namespace, mc.Name, kindSnapshot, snap, err)
+		s.finishOperation(ctx, a.Namespace, mc.Name, kindSnapshot, snap, snap, err)
 		if err == nil {
 			s.audit(ctx, u, a.Org, "snapshot.create", mc.Name, snap.ID)
 		}
 		return snap, err
 	}
 	if r.URL.Query().Get("wait") == "true" {
+		// The caller hanging up does not stop the work, but the work still
+		// has a limit of its own.
 		snap, err := work(context.WithoutCancel(r.Context()))
 		if err != nil {
 			return operationFailed(err)
@@ -223,12 +240,8 @@ func (s *Server) createSnapshot(w http.ResponseWriter, r *http.Request, u *store
 		writeJSON(w, http.StatusCreated, snap)
 		return nil
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
-		defer cancel()
-		_, _ = work(ctx)
-	}()
-	writeJSON(w, http.StatusAccepted, op)
+	go func() { _, _ = work(context.Background()) }()
+	writeJSON(w, http.StatusAccepted, started)
 	return nil
 }
 
@@ -275,14 +288,14 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 				s.Log.Warn("could not clear the saving-paused note", "server", mc.Name, "error", err)
 			}
 		}()
-		if _, err := s.rconFor(ctx, mc, "save-off", 15*time.Second); err == nil {
-			if _, err := s.rconFor(ctx, mc, "save-all flush", 5*time.Minute); err != nil {
-				s.Log.Warn("could not flush the world before a snapshot", "server", mc.Name, "error", err)
-			}
-		} else {
-			// A game that is still starting has no console yet. Its files are
-			// copied as they are.
-			s.Log.Warn("could not pause saving before a snapshot", "server", mc.Name, "error", err)
+		// Without both of these the copy could miss what the game still holds
+		// in memory, or catch a file half written. That is not a snapshot
+		// anyone should restore from, so there is none.
+		if _, err := s.rconFor(ctx, mc, "save-off", 15*time.Second); err != nil {
+			return nil, fmt.Errorf("the game did not answer, so its world could not be saved first (stop the server to snapshot it as it is): %w", err)
+		}
+		if _, err := s.rconFor(ctx, mc, "save-all flush", 5*time.Minute); err != nil {
+			return nil, fmt.Errorf("the game did not finish writing its world out: %w", err)
 		}
 	}
 
@@ -322,10 +335,24 @@ func (s *Server) markSavingPaused(ctx context.Context, key client.ObjectKey, pau
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }
 
-// ResumeSaving switches saving back on for every game that a previous panel
-// left holding its saves, having been stopped in the middle of a snapshot.
-// It is run once when the panel starts.
+// ResumeSaving switches saving back on for every game left holding its
+// saves by a snapshot that was cut short: by the panel being stopped in the
+// middle of one, or by the game not answering when it was over. It keeps
+// looking until ctx ends, because a game that could not be reached now may be
+// reachable in a minute, and one left with saving off loses everything at its
+// next stop.
 func (s *Server) ResumeSaving(ctx context.Context) {
+	for {
+		s.resumeSaving(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Minute):
+		}
+	}
+}
+
+func (s *Server) resumeSaving(ctx context.Context) {
 	var all avsysv1.MinecraftServerList
 	if err := s.Client.List(ctx, &all); err != nil {
 		s.Log.Error("looking for games left with saving paused", "error", err)
@@ -336,11 +363,16 @@ func (s *Server) ResumeSaving(ctx context.Context) {
 		if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; !paused {
 			continue
 		}
+		// A snapshot that is running right now paused saving on purpose and
+		// will switch it back on itself.
+		if s.ops.current(mc.Namespace, mc.Name) != nil {
+			continue
+		}
 		key := client.ObjectKeyFromObject(mc)
 		// A game that is not running any more starts with saving on.
 		if mc.Status.Phase == avsysv1.PhaseRunning {
 			if _, err := s.rconFor(ctx, mc, "save-on", 15*time.Second); err != nil {
-				s.Log.Error("could not switch saving back on after an interrupted snapshot", "server", mc.Name, "namespace", mc.Namespace, "error", err)
+				s.Log.Error("could not switch saving back on after an interrupted snapshot; trying again in a minute", "server", mc.Name, "namespace", mc.Namespace, "error", err)
 				continue
 			}
 		}
@@ -354,10 +386,14 @@ func (s *Server) ResumeSaving(ctx context.Context) {
 
 // finishOperation records how a snapshot or restore ended on the server and
 // tells open pages.
-func (s *Server) finishOperation(ctx context.Context, namespace, server, kind string, snap *backup.Snapshot, opErr error) {
+//
+// subject is the snapshot the operation was about. newest is the latest
+// snapshot taken of the server along the way, if any: for a restore that is
+// the undo point, not the snapshot restored to.
+func (s *Server) finishOperation(ctx context.Context, namespace, server, kind string, subject, newest *backup.Snapshot, opErr error) {
 	ctx = context.WithoutCancel(ctx)
 	org, _ := s.orgOfNamespace(namespace)
-	done := operationDone{Kind: kind, Org: org, Server: server, Snapshot: snap}
+	done := operationDone{Kind: kind, Org: org, Server: server, Snapshot: subject}
 	if opErr != nil {
 		done.Error = opErr.Error()
 		s.Log.Error(kind+" failed", "namespace", namespace, "server", server, "error", opErr)
@@ -369,14 +405,17 @@ func (s *Server) finishOperation(ctx context.Context, namespace, server, kind st
 			mc.Status.Snapshots = &avsysv1.SnapshotStatus{}
 		}
 		mc.Status.Snapshots.Error = done.Error
-		if snap != nil && kind == kindSnapshot {
-			at := metav1.NewTime(snap.Time)
-			mc.Status.Snapshots.LastTime, mc.Status.Snapshots.LastID = &at, snap.ID
+		if newest != nil {
+			at := metav1.NewTime(newest.Time)
+			mc.Status.Snapshots.LastTime, mc.Status.Snapshots.LastID = &at, newest.ID
 		}
 		if err := s.Client.Status().Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
 			s.Log.Error("recording a "+kind+" on the server", "server", server, "error", err)
 		}
 	}
+	// The operation is over before anyone is told so. A page refetches its
+	// list on this event, and must not be handed the operation as running.
+	s.ops.end(namespace, server)
 	s.Events.Publish(Event{Type: "operation.done", Namespace: namespace, Data: done})
 }
 
@@ -416,10 +455,12 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request, u *stor
 	if !ok {
 		return errBusy
 	}
+	started := *op
 	work := func(ctx context.Context) error {
-		defer s.ops.end(a.Namespace, mc.Name)
-		err := s.restore(ctx, a.Org.Slug, mc, snap, op, u.Username)
-		s.finishOperation(ctx, a.Namespace, mc.Name, kindRestore, snap, err)
+		ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+		defer cancel()
+		undo, err := s.restore(ctx, a.Org.Slug, mc, snap, op, u.Username)
+		s.finishOperation(ctx, a.Namespace, mc.Name, kindRestore, snap, undo, err)
 		if err == nil {
 			s.audit(ctx, u, a.Org, "snapshot.restore", mc.Name, snap.ID)
 		}
@@ -432,16 +473,14 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request, u *stor
 		writeJSON(w, http.StatusOK, snap)
 		return nil
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
-		defer cancel()
-		_ = work(ctx)
-	}()
-	writeJSON(w, http.StatusAccepted, op)
+	go func() { _ = work(context.Background()) }()
+	writeJSON(w, http.StatusAccepted, started)
 	return nil
 }
 
-func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, by string) error {
+// restore returns the snapshot it took of the state it replaced, once there
+// is one, whether or not the rest then succeeded.
+func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, by string) (undo *backup.Snapshot, err error) {
 	key := client.ObjectKeyFromObject(mc)
 	wasRunning := mc.Spec.State != avsysv1.StateStopped
 
@@ -449,36 +488,39 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	// is touched, so that an unreadable snapshot stops here.
 	raw, err := s.Backups.Record(ctx, org, snap.ID)
 	if err != nil {
-		return fmt.Errorf("reading the snapshot's record of the server: %w", err)
+		return nil, fmt.Errorf("reading the snapshot's record of the server: %w", err)
 	}
 	var record snapshotRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return fmt.Errorf("the snapshot's record of the server is unreadable: %w", err)
+		return nil, fmt.Errorf("the snapshot's record of the server is unreadable: %w", err)
 	}
 	// The settings a restore applies get the same checks as settings typed
 	// into the panel, before anything is touched.
 	restored := mc.Spec.DeepCopy()
 	restoreSoftware(restored, &record.Spec)
 	if err := s.validateSpec(ctx, mc.Namespace, mc.Name, restored); err != nil {
-		return fmt.Errorf("the snapshot's settings are not valid here: %w", err)
+		return nil, fmt.Errorf("the snapshot's settings are not valid here: %w", err)
 	}
 
 	s.setOperation(mc.Namespace, op, "Saving the current state first", 0)
-	if _, err := s.takeSnapshot(ctx, org, mc, op, backup.TriggerPreRestore, by); err != nil {
-		return fmt.Errorf("the current state could not be saved first, so nothing was changed: %w", err)
+	undo, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerPreRestore, by)
+	if err != nil {
+		return nil, fmt.Errorf("the current state could not be saved first, so nothing was changed: %w", err)
 	}
 
 	s.setOperation(mc.Namespace, op, "Stopping the server", 0)
 	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateStopped }); err != nil {
-		return err
+		return undo, err
 	}
 	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
-		return fmt.Errorf("the server did not stop: %w", err)
+		return undo, fmt.Errorf("the server did not stop: %w", err)
 	}
 
-	ws, err := s.Gateway.DialWorkspace(ctx, mc.Namespace, mc.Name)
+	// Stopping replaces the pod with one that has only the workspace. That
+	// pod may take a while to be scheduled and have its volume attached.
+	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, 5*time.Minute)
 	if err != nil {
-		return fmt.Errorf("the server's files are not reachable: %w", err)
+		return undo, fmt.Errorf("the server was stopped, but its files did not become reachable, so nothing was restored: %w", err)
 	}
 	defer ws.Close()
 	s.setOperation(mc.Namespace, op, "Restoring files", 0)
@@ -493,16 +535,34 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	if err != nil {
 		// The server is left stopped: its files are in an unknown state and
 		// starting the game on them could make it worse.
-		return fmt.Errorf("restoring files failed and the server was left stopped; the state from before is in the newest snapshot: %w", err)
+		return undo, fmt.Errorf("restoring files failed and the server was left stopped; the state from before is in the newest snapshot: %w", err)
 	}
 
 	s.setOperation(mc.Namespace, op, "Applying settings", 100)
-	return s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) {
+	return undo, s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) {
 		restoreSoftware(spec, &record.Spec)
 		if wasRunning {
 			spec.State = avsysv1.StateRunning
 		}
 	})
+}
+
+// dialWorkspaceWithin keeps trying to reach a server's workspace for as long
+// as it may reasonably take a new pod to start.
+func (s *Server) dialWorkspaceWithin(ctx context.Context, namespace, server string, limit time.Duration) (*ssh.Client, error) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	for {
+		ws, err := s.Gateway.DialWorkspace(ctx, namespace, server)
+		if err == nil {
+			return ws, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // patchSpec applies a change to a server's spec on top of its current state.

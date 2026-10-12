@@ -257,6 +257,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
+	if err := s.notRestoring(mc); err != nil {
+		return err
+	}
 	var in struct{ Spec json.RawMessage }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -303,6 +306,9 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
+	if err := s.notRestoring(mc); err != nil {
+		return err
+	}
 	if err := s.Client.Delete(r.Context(), mc); err != nil {
 		return err
 	}
@@ -314,6 +320,9 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, mc, err := s.server(r, u, store.RoleOperator)
 	if err != nil {
+		return err
+	}
+	if err := s.notRestoring(mc); err != nil {
 		return err
 	}
 	action := r.PathValue("action")

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -293,5 +294,61 @@ func TestAWorkspaceCannotDeleteSnapshots(t *testing.T) {
 	// Whatever those attempts left locked must not get in the panel's way.
 	if _, err := m.Usage(ctx, "alpha"); err != nil {
 		t.Errorf("usage after the attempts: %v", err)
+	}
+}
+
+// A snapshot that finishes while a delete is waiting for the repository must
+// not wait on that delete, which is itself waiting on the snapshot.
+func TestSnapshotFinishesWhileADeleteWaits(t *testing.T) {
+	ws, m := workspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	sh(t, ws, "mkdir -p /data/world && echo one > /data/world/level.dat")
+	old, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerManual, Record: map[string]any{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Enough new data that restic reports progress along the way.
+	sh(t, ws, "head -c 60000000 /dev/urandom > /data/world/region.bin")
+
+	type result struct {
+		what string
+		err  error
+	}
+	done := make(chan result, 2)
+	started := make(chan struct{})
+	go func() {
+		var once sync.Once
+		_, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerManual, Record: map[string]any{}}, func(Progress) {
+			// Holding up the first report holds the snapshot open, with the
+			// repository in use, for long enough that the delete below is
+			// certainly waiting for it by the time the snapshot wraps up.
+			once.Do(func() {
+				close(started)
+				time.Sleep(4 * time.Second)
+			})
+		})
+		done <- result{"snapshot", err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Minute):
+		t.Fatal("the snapshot never reported progress")
+	}
+	go func() { done <- result{"delete", m.Delete(ctx, "alpha", old.ID)} }()
+
+	for range 2 {
+		select {
+		case r := <-done:
+			if r.err != nil {
+				t.Errorf("%s: %v", r.what, r.err)
+			}
+		case <-time.After(45 * time.Second):
+			t.Fatal("the snapshot and the delete are waiting on each other")
+		}
+	}
+	if list, err := m.List(ctx, "alpha"); err != nil || len(list) != 1 || list[0].ID == old.ID {
+		t.Errorf("after both: %+v, %v", list, err)
 	}
 }
