@@ -202,4 +202,11 @@ case "$back" in *'"spec"'*) ;; *) fail "the deleted server was not brought back:
 expect "under its own name, left stopped as asked" "$(echo "$back" | field "(d['name'], d['spec']['state'], d['spec']['expose']['hostname'])")" "('probe', 'Stopped', '$HOST')"
 expect "with its files" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "and its history" "$(call "$SRV/snapshots" | field "len(d['snapshots'])")" 2
-expect "it can be started like any other" "$(call -o /dev/null -w '%{http_code}' -X POST "$SRV/start")" 200
+# And again with no pause, while what is left of the one just deleted is still
+# being cleared away. Its files must not land in a volume that is on its way out.
+call -X DELETE "$SRV" >/dev/null
+again=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
+case "$again" in *'"spec"'*) ;; *) fail "the server was not brought back straight after being deleted: $again" ;; esac
+wait_phase Running
+expect "brought back straight after a delete, it keeps its files once it runs" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
+expect "and its plugins" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit

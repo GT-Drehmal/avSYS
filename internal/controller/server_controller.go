@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -60,6 +61,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// Everything is owned by the server and garbage collected with it.
 		return ctrl.Result{}, nil
 	}
+	// A server made under the name of one that was just deleted finds that
+	// one's pod, volume and secret still there, on their way out. They are
+	// not adopted: whatever went into such a volume would be lost when its
+	// removal completed. Nothing is made for the new server until they are gone.
+	if left, err := r.leftovers(ctx, mc); err != nil {
+		return ctrl.Result{}, fmt.Errorf("leftovers: %w", err)
+	} else if left != "" {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, r.waitForLeftovers(ctx, mc, left)
+	}
 
 	if err := r.ensureWorkspaceSecret(ctx, mc.Namespace); err != nil {
 		return ctrl.Result{}, fmt.Errorf("workspace secret: %w", err)
@@ -82,6 +92,59 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, fmt.Errorf("pod: %w", err)
 	}
 	return ctrl.Result{}, r.updateStatus(ctx, mc, pod, svc, pending)
+}
+
+// leftOf reports whether an object belongs to another server than this one,
+// which for an object of this server's name means one that was deleted.
+// Objects that belong to no server at all, such as a volume someone made by
+// hand for a server to use, are not leftovers.
+func leftOf(obj metav1.Object, mc *avsysv1.MinecraftServer) bool {
+	owner := metav1.GetControllerOf(obj)
+	return owner != nil && owner.UID != mc.UID
+}
+
+// leftovers names the first thing found under this server's name that
+// belongs to a deleted server, or returns "" when there is none.
+func (r *Reconciler) leftovers(ctx context.Context, mc *avsysv1.MinecraftServer) (string, error) {
+	for _, candidate := range []struct {
+		what string
+		name string
+		obj  client.Object
+	}{
+		{"pod", mc.Name, &corev1.Pod{}},
+		{"volume", DataPVCName(mc.Name), &corev1.PersistentVolumeClaim{}},
+		{"console secret", RCONSecretName(mc.Name), &corev1.Secret{}},
+		{"service", mc.Name, &corev1.Service{}},
+	} {
+		err := r.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: candidate.name}, candidate.obj)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if leftOf(candidate.obj, mc) {
+			return candidate.what, nil
+		}
+	}
+	return "", nil
+}
+
+// waitForLeftovers says on the server why nothing is happening yet. The phase
+// is one of the in-between ones, so that nothing treats the server as settled
+// while a pod of its name is still someone else's.
+func (r *Reconciler) waitForLeftovers(ctx context.Context, mc *avsysv1.MinecraftServer, what string) error {
+	orig := mc.DeepCopy()
+	mc.Status.Phase = avsysv1.PhaseStopping
+	if wantsMinecraft(mc) {
+		mc.Status.Phase = avsysv1.PhaseStarting
+	}
+	mc.Status.Message = fmt.Sprintf("Waiting for the %s of a deleted server of this name to be removed.", what)
+	mc.Status.Players = nil
+	if equality.Semantic.DeepEqual(orig.Status, mc.Status) {
+		return nil
+	}
+	return r.Status().Patch(ctx, mc, client.MergeFrom(orig))
 }
 
 func (r *Reconciler) ensureWorkspaceSecret(ctx context.Context, namespace string) error {

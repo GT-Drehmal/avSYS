@@ -211,21 +211,34 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
-	var in struct {
+	var raw struct {
 		Name string
-		Spec avsysv1.MinecraftServerSpec
+		Spec json.RawMessage
 		// FromSnapshot makes the server out of a snapshot: its files, and the
 		// software and game settings that go with them.
 		FromSnapshot string `json:"fromSnapshot"`
 	}
-	if err := decode(r, &in); err != nil {
+	if err := decode(r, &raw); err != nil {
 		return err
+	}
+	in := struct {
+		Name string
+		Spec avsysv1.MinecraftServerSpec
+	}{Name: raw.Name}
+	if len(raw.Spec) > 0 {
+		if err := json.Unmarshal(raw.Spec, &in.Spec); err != nil {
+			return errBadRequest("Invalid spec: %v", err)
+		}
 	}
 	if !serverNamePattern.MatchString(in.Name) {
 		return errBadRequest("Server names are up to 40 characters: lowercase letters, digits and dashes, starting with a letter.")
 	}
-	if in.FromSnapshot != "" {
-		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, in.FromSnapshot)
+	if raw.FromSnapshot != "" {
+		// Which settings the request names at all, as opposed to leaving
+		// out: "sleep off" and no word about sleep decode to the same thing.
+		given := map[string]json.RawMessage{}
+		_ = json.Unmarshal(raw.Spec, &given)
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot)
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// "Latest" is settled once, here. A server that kept following it would

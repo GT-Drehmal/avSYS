@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,14 +64,16 @@ func softwareGiven(spec *avsysv1.MinecraftServerSpec) bool {
 // What the files depend on comes from the snapshot: game version, loader,
 // modpack, mods, resource pack, game properties, operators and whitelist.
 // How much memory and storage it gets, and whether it sleeps, come from the
-// snapshot too unless the request says otherwise.
+// snapshot too unless the request says otherwise. given holds the settings
+// the request named, which is how sleep switched off is told from sleep not
+// mentioned.
 //
 // Its address is its own. The image and extra environment are taken from
 // the request alone, for the reason given at restoreSoftware: the record is
 // read out of a repository the server itself could add to, and those two
 // decide what runs. Whoever asks can read them from the snapshot and send
 // them back, which makes it their decision.
-func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec) avsysv1.MinecraftServerSpec {
+func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage) avsysv1.MinecraftServerSpec {
 	spec := *requested.DeepCopy()
 	restoreSoftware(&spec, recorded.DeepCopy())
 	spec.EULA = spec.EULA || recorded.EULA
@@ -82,7 +86,7 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec) avsysv1.Mine
 	if spec.Storage.Size.IsZero() {
 		spec.Storage.Size = recorded.Storage.Size
 	}
-	if spec.Sleep == (avsysv1.SleepSpec{}) {
+	if _, said := given["sleep"]; !said {
 		spec.Sleep = recorded.Sleep
 	}
 	return spec
@@ -92,7 +96,7 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec) avsysv1.Mine
 // was deleted, to bring it back, or of one that still exists, to copy it.
 // The server exists as soon as this answers, stopped and held, and its files
 // follow; with ?wait=true the answer waits for them.
-func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, id string) error {
+func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -103,6 +107,11 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
 	} else if !apierrors.IsNotFound(err) {
 		return err
+	}
+	// The state asked for is only applied once the files are in, which is too
+	// late to find out that it is not one.
+	if st := requested.State; st != "" && st != avsysv1.StateRunning && st != avsysv1.StateStopped {
+		return errBadRequest("%q is not a state. A server is Running or Stopped.", st)
 	}
 	snap, err := s.Backups.Get(ctx, a.Org.Slug, id)
 	if err != nil {
@@ -115,7 +124,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return errNoRecord(err)
 	}
-	spec := fromSnapshot(&requested, &record.Spec)
+	spec := fromSnapshot(&requested, &record.Spec, given)
 	s.applyDefaults(a.Org.Slug, name, &spec)
 	if err := s.validateSpec(ctx, a.Namespace, name, &spec); err != nil {
 		return err
@@ -137,6 +146,12 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if !ok {
 		return &Error{Status: http.StatusConflict, Code: "busy", Message: "That snapshot is being deleted, or a server of this name is being made already."}
 	}
+	// It was looked up before the claim, and may have been deleted since.
+	// With the claim held it cannot be.
+	if _, err := s.Backups.Get(ctx, a.Org.Slug, snap.ID); err != nil {
+		s.ops.end(a.Namespace, name)
+		return snapshotError(err)
+	}
 	mc := &avsysv1.MinecraftServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: a.Namespace, Name: name,
@@ -150,7 +165,6 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	}
 	s.audit(ctx, u, a.Org, "server.create", name, fmt.Sprintf("from snapshot %s of %s", snap.ID, snap.Server))
 
-	key := client.ObjectKeyFromObject(mc)
 	// Deleting the server calls this off. Nothing else does: the request
 	// that asked for it going away does not.
 	working, stop := context.WithCancel(context.WithoutCancel(ctx))
@@ -159,7 +173,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		defer stop()
 		ctx, cancel := context.WithTimeout(working, operationTimeout)
 		defer cancel()
-		err := s.populate(ctx, a.Org.Slug, key, snap, op, final)
+		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final)
 		if err != nil {
 			err = fmt.Errorf("making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again: %w", err)
 		}
@@ -182,11 +196,17 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 
 // populate copies a snapshot's files into a server that has just been
 // created, and then lets it go.
-func (s *Server) populate(ctx context.Context, org string, key client.ObjectKey, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState) error {
+func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState) error {
+	key := client.ObjectKeyFromObject(created)
 	// A new server's volume has to be provisioned and the workspace image may
 	// have to be pulled, which on a node that has never run one takes a while.
 	s.setOperation(key.Namespace, op, "Waiting for storage", 0)
-	ws, err := s.dialWorkspaceWithin(ctx, key.Namespace, key.Name, 10*time.Minute)
+	waiting, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	if err := s.ownPod(waiting, created); err != nil {
+		return fmt.Errorf("the new server's storage was not ready within 10 minutes: %w", err)
+	}
+	ws, err := s.dialWorkspaceWithin(waiting, key.Namespace, key.Name, 10*time.Minute)
 	if err != nil {
 		return fmt.Errorf("the new server's storage was not ready within 10 minutes: %w", err)
 	}
@@ -217,6 +237,28 @@ func (s *Server) populate(ctx context.Context, org string, key client.ObjectKey,
 	delete(mc.Annotations, avsysv1.AnnotationRestoring)
 	delete(mc.Annotations, avsysv1.AnnotationCreating)
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// ownPod waits until the pod of this name is one that was made for this
+// server. A server made under the name of one that was just deleted finds the
+// old one's pod still there for a while, with the old volume, which is on
+// its way out: files put there would go with it.
+func (s *Server) ownPod(ctx context.Context, mc *avsysv1.MinecraftServer) error {
+	for {
+		pod := &corev1.Pod{}
+		err := s.Client.Get(ctx, client.ObjectKeyFromObject(mc), pod)
+		if err == nil && pod.DeletionTimestamp.IsZero() && metav1.IsControlledBy(pod, mc) {
+			return nil
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 // sizeOf writes a number of bytes the way people say it.

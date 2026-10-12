@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
@@ -32,7 +34,7 @@ func TestFromSnapshot(t *testing.T) {
 		NodeSelector: map[string]string{"kubernetes.io/hostname": "elsewhere"},
 	}
 
-	got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded)
+	got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil)
 	if got.Version != "1.21.4" || got.Loader != avsysv1.LoaderPaper || got.LoaderVersion != "232" || len(got.Mods) != 1 || got.Mods[0].Version != "abc" ||
 		got.Properties["motd"] != "hello" || len(got.Ops) != 1 || len(got.Whitelist) != 1 {
 		t.Errorf("the software did not come from the snapshot: %+v", got)
@@ -65,13 +67,19 @@ func TestFromSnapshot(t *testing.T) {
 		Image:     "example.org/asked-for",
 		Env:       []corev1.EnvVar{{Name: "TZ", Value: "UTC"}},
 	}
-	got = fromSnapshot(asked, recorded)
+	got = fromSnapshot(asked, recorded, map[string]json.RawMessage{"sleep": nil})
 	if got.DisplayName != "Copy" || got.State != avsysv1.StateStopped || got.Resources.Memory.String() != "2Gi" || got.Storage.Size.String() != "5Gi" ||
 		got.Sleep.Enabled || got.Sleep.IdleMinutes != 5 || got.Expose.Hostname != "copy.example.org" || got.Image != "example.org/asked-for" || len(got.Env) != 1 || got.Env[0].Name != "TZ" {
 		t.Errorf("the request did not win: %+v", got)
 	}
 	if got.Version != "1.21.4" {
 		t.Errorf("the software did not come from the snapshot: %+v", got)
+	}
+
+	// Sleep switched off is a choice, and not the same as sleep not mentioned.
+	off := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, map[string]json.RawMessage{"sleep": json.RawMessage(`{"enabled":false}`)})
+	if off.Sleep.Enabled {
+		t.Error("a request that switched sleep off got the snapshot's sleep setting")
 	}
 }
 
@@ -198,6 +206,12 @@ func TestCreateFromSnapshotRequests(t *testing.T) {
 		t.Error("a refused request left the name claimed")
 	}
 
+	// A state that is not one is refused now, not after the files are copied.
+	p.srv.Backups.Restic = "true"
+	if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"copy","fromSnapshot":"abcdef12","spec":{"state":"Bogus"}}`); got != 400 || code != "invalid" {
+		t.Errorf("a state that is not one: got %d %q, want 400 invalid", got, code)
+	}
+
 	// A name that is taken is refused without touching the server that has it.
 	p.srv.Backups.Restic = "true"
 	if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"world","fromSnapshot":"abcdef12"}`); got != 409 || code != "conflict" {
@@ -249,5 +263,46 @@ func TestDeletingAServerCallsOffItsCreation(t *testing.T) {
 	}
 	if stopped {
 		t.Error("a restore was called off by a delete")
+	}
+}
+
+// Files are only put into a pod that was made for the new server. One of the
+// same name that belongs to a server deleted a moment ago has the old volume,
+// and both are on their way out.
+func TestOwnPod(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-alpha", Name: "back", UID: "new"}}
+	yes := true
+	pod := func(owner string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Namespace: "mc-alpha", Name: "back",
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "avsys.dev/v1alpha1", Kind: "MinecraftServer", Name: "back", UID: types.UID(owner), Controller: &yes}},
+		}}
+	}
+	wait := func() error {
+		limited, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+		defer cancel()
+		return p.srv.ownPod(limited, mc)
+	}
+
+	if err := wait(); err == nil {
+		t.Error("a pod was found where there is none")
+	}
+	old := pod("old")
+	if err := p.srv.Client.Create(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(); err == nil {
+		t.Fatal("the pod of a deleted server of the same name was taken for the new server's")
+	}
+	if err := p.srv.Client.Delete(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.srv.Client.Create(ctx, pod("new")); err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(); err != nil {
+		t.Errorf("the new server's own pod was not accepted: %v", err)
 	}
 }
