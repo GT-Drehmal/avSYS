@@ -25,6 +25,7 @@ LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="avSYS: a Kubernetes-native Minecraft server panel"
 COPY --from=build /avsys /avsys
+COPY LICENSE /licenses/LICENSE
 # The database lives here; mount a volume.
 VOLUME /data
 ENV AVSYS_DATA_DIR=/data

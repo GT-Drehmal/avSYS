@@ -1,6 +1,9 @@
 # The workspace runs next to every Minecraft server with its /data volume
 # mounted. The avSYS gateway proxies SSH, the web terminal and the file browser
 # to the sshd in here.
+#
+# Built from the repository root, so that the license can be included:
+#   docker build -f images/workspace/Dockerfile .
 FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
@@ -22,11 +25,12 @@ RUN apt-get update \
  && groupadd -g 1000 mc \
  && useradd -u 1000 -g 1000 -d /data/.workspace -s /bin/bash mc
 
-COPY sshd_config /etc/avsys/sshd_config
-COPY profile.sh /etc/profile.d/avsys.sh
-COPY bashrc /etc/bash.bashrc
-COPY entrypoint.sh /usr/local/bin/avsys-workspace
-COPY mc /usr/local/bin/mc
+COPY images/workspace/sshd_config /etc/avsys/sshd_config
+COPY images/workspace/profile.sh /etc/profile.d/avsys.sh
+COPY images/workspace/bashrc /etc/bash.bashrc
+COPY images/workspace/entrypoint.sh /usr/local/bin/avsys-workspace
+COPY images/workspace/mc /usr/local/bin/mc
+COPY LICENSE /licenses/LICENSE
 
 USER 1000:1000
 WORKDIR /data

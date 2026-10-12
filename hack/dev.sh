@@ -4,7 +4,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p .dev
-docker build -q -t avsys-workspace:dev images/workspace >/dev/null
+docker build -q -t avsys-workspace:dev -f images/workspace/Dockerfile . >/dev/null
 go build -o .dev/avsys ./cmd/avsys
 exec ./.dev/avsys \
   --data-dir .dev/data \

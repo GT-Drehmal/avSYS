@@ -45,7 +45,7 @@ trap finish EXIT
 step "images"
 if [ -z "${E2E_SKIP_BUILD:-}" ]; then
   docker build -q -t "$PANEL" --build-arg VERSION=e2e . >/dev/null
-  docker build -q -t "$WORKSPACE" images/workspace >/dev/null
+  docker build -q -t "$WORKSPACE" -f images/workspace/Dockerfile . >/dev/null
 fi
 echo "ok: $PANEL and $WORKSPACE"
 
