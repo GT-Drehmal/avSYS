@@ -3,7 +3,7 @@ import { useState } from "react";
 import { api, type Operation, type Snapshot } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { keys, useAction } from "../lib/queries";
-import { Button, Chip, Confirm } from "./ui";
+import { Button, Chip, Confirm, CopyText } from "./ui";
 
 const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
@@ -65,9 +65,11 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: Rows
                 {ago(s.time)}
                 <span className="ml-2 font-normal text-muted">{new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</span>
               </p>
-              <p className="truncate text-xs text-faint">
-                {[software(s), triggerLabel(s)].filter(Boolean).join(" · ")}
-                <span className="ml-2 font-mono">{s.id.slice(0, 8)}</span>
+              <p className="flex items-center gap-1.5 truncate text-xs text-faint">
+                <span className="truncate">{[software(s), triggerLabel(s)].filter(Boolean).join(" · ")}</span>
+                {/* The start of the snapshot's ID, which is what the API and plain restic take. Copies the whole of it. */}
+                <span className="shrink-0">· ID</span>
+                <CopyText value={s.id} display={s.id.slice(0, 8)} className="shrink-0 text-xs! text-faint! hover:text-accent!" />
               </p>
             </div>
             <div className="text-right max-sm:hidden">
