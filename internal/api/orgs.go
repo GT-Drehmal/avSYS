@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -100,6 +101,23 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	if len(servers.Items) > 0 {
 		return &Error{Status: http.StatusConflict, Code: "not_empty", Message: "Delete this organization's servers first."}
+	}
+	// Snapshots outlive servers, so an organization with none may still hold
+	// years of history. Removing that has to be asked for by name. If how
+	// much there is cannot be said, it is assumed to be some.
+	if count, known := s.Backups.Holds(r.Context(), a.Org.Slug); (!known || count > 0) && r.URL.Query().Get("snapshots") != "delete" {
+		how := "they could not be counted"
+		if known {
+			how = fmt.Sprint(count)
+		}
+		return &Error{Status: http.StatusConflict, Code: "has_snapshots",
+			Message: fmt.Sprintf("This organization still has snapshots (%s). Deleting it deletes them too; confirm with ?snapshots=delete.", how)}
+	}
+	// The repository goes first. If it cannot be removed the organization
+	// stays, name included: a later organization of the same name would
+	// otherwise find itself holding this one's snapshots and their password.
+	if err := s.Backups.Destroy(a.Org.Slug); err != nil {
+		return fmt.Errorf("removing the organization's snapshots: %w", err)
 	}
 	// Only remove a namespace avSYS created for this organization.
 	ns := &corev1.Namespace{}

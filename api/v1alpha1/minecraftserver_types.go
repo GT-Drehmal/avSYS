@@ -22,6 +22,15 @@ const (
 	LabelNodeScore = "avsys.dev/score"
 	// LabelNodeHosts set to "false" on a node keeps game servers off it.
 	LabelNodeHosts = "avsys.dev/game-servers"
+	// AnnotationSavingPaused is set while the panel has told a running game
+	// to hold its saves for a snapshot. A panel that starts and finds it set
+	// was interrupted before it could switch saving back on, and does so.
+	AnnotationSavingPaused = "avsys.dev/saving-paused"
+	// AnnotationRestoring is set, to the snapshot's ID, while a restore is
+	// putting a server's files back, and removed when it has finished. One
+	// that is still there with no restore running was cut short, and the
+	// files may be a mix of two states: the game is not started on them.
+	AnnotationRestoring = "avsys.dev/restoring"
 	// AnnotationRestart is copied to the pod template; changing it rolls the pod.
 	AnnotationRestart = "avsys.dev/restarted-at"
 )
@@ -226,6 +235,16 @@ type PlayersStatus struct {
 	Names  []string `json:"names,omitempty"`
 }
 
+// SnapshotStatus is where a server stands with its snapshots.
+type SnapshotStatus struct {
+	// LastTime and LastID are the newest snapshot the panel took.
+	LastTime *metav1.Time `json:"lastTime,omitempty"`
+	LastID   string       `json:"lastID,omitempty"`
+	// Error says why the most recent snapshot or restore failed. It is
+	// cleared by the next one that succeeds.
+	Error string `json:"error,omitempty"`
+}
+
 type MinecraftServerStatus struct {
 	Phase   Phase  `json:"phase,omitempty"`
 	Message string `json:"message,omitempty"`
@@ -241,8 +260,10 @@ type MinecraftServerStatus struct {
 	Restarts   int32        `json:"restarts,omitempty"`
 	// PendingRestart is true when the running server was started from an older
 	// spec; the changes apply on the next restart.
-	PendingRestart     bool  `json:"pendingRestart,omitempty"`
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	PendingRestart bool `json:"pendingRestart,omitempty"`
+	// Snapshots is written by the panel after each snapshot or restore.
+	Snapshots          *SnapshotStatus `json:"snapshots,omitempty"`
+	ObservedGeneration int64           `json:"observedGeneration,omitempty"`
 }
 
 // +kubebuilder:object:root=true

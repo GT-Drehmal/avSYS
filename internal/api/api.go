@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/GT-Drehmal/avSYS/internal/auth"
+	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/kube"
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
@@ -48,6 +49,8 @@ type Server struct {
 	Kube    kubernetes.Interface
 	Dialer  kube.PodDialer
 	Gateway *sshgw.Gateway
+	// Backups keeps each organization's snapshot repository.
+	Backups *backup.Manager
 	Events  *Hub
 	Log     *slog.Logger
 	// Static is the built web UI. Nil serves the API only.
@@ -55,6 +58,7 @@ type Server struct {
 
 	catalog    *catalog
 	workspaces *workspacePool
+	ops        operations
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
 	// to check that no route is left without a decision on who may call it.
 	routes []string
@@ -277,6 +281,9 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/invites", s.authed(s.createInvite))
 	api("DELETE /orgs/{org}/invites/{token}", s.authed(s.deleteInvite))
 
+	api("GET /orgs/{org}/snapshots", s.authed(s.listOrgSnapshots))
+	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
+
 	api("GET /orgs/{org}/servers", s.authed(s.listServers))
 	api("POST /orgs/{org}/servers", s.authed(s.createServer))
 	api("GET /orgs/{org}/servers/{server}", s.authed(s.getServer))
@@ -286,6 +293,9 @@ func (s *Server) Handler() http.Handler {
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
 	api("GET /orgs/{org}/servers/{server}/console", s.authed(s.streamConsole))
 	api("POST /orgs/{org}/servers/{server}/console", s.authed(s.runCommand))
+	api("GET /orgs/{org}/servers/{server}/snapshots", s.authed(s.listServerSnapshots))
+	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
+	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))
 	api("GET /orgs/{org}/servers/{server}/terminal", s.authed(s.terminal))
 	api("GET /orgs/{org}/servers/{server}/files", s.authed(s.listFiles))
 	api("DELETE /orgs/{org}/servers/{server}/files", s.authed(s.deleteFile))

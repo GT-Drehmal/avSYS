@@ -211,6 +211,8 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 			return avsysv1.PhaseStopping, ""
 		case mc.Spec.State == avsysv1.StateStopped:
 			return avsysv1.PhaseStopped, ""
+		case mc.Annotations[avsysv1.AnnotationRestoring] != "":
+			return avsysv1.PhaseStopped, "Held stopped until a restore of its files has completed."
 		default:
 			return avsysv1.PhaseSleeping, ""
 		}

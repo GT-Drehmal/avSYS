@@ -7,6 +7,7 @@ import { Shell } from "./components/Shell";
 import { Loading, Spinner, Toaster } from "./components/ui";
 import { queryClient, useMe } from "./lib/queries";
 import { Account } from "./pages/Account";
+import { Backups } from "./pages/Backups";
 import { Home } from "./pages/Home";
 import { Invite } from "./pages/Invite";
 import { Login } from "./pages/Login";
@@ -18,6 +19,7 @@ import { Servers } from "./pages/Servers";
 import { Console } from "./pages/server/Console";
 import { Mods } from "./pages/server/Mods";
 import { Settings } from "./pages/server/Settings";
+import { Snapshots } from "./pages/server/Snapshots";
 
 // The editor and terminal pull in large libraries, so they load on demand.
 const Files = lazy(() => import("./pages/server/Files"));
@@ -45,6 +47,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="o/:org">
                 <Route index element={<Servers />} />
                 <Route path="new" element={<NewServer />} />
+                <Route path="backups" element={<Backups />} />
                 <Route path="members" element={<Members />} />
                 <Route path="settings" element={<OrgSettings />} />
                 <Route path="s/:server" element={<ServerPage />}>
@@ -52,6 +55,7 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="files/*" element={<Suspense fallback={<Loading />}><Files /></Suspense>} />
                   <Route path="terminal" element={<Suspense fallback={<Loading />}><Terminal /></Suspense>} />
                   <Route path="mods" element={<Mods />} />
+                  <Route path="backups" element={<Snapshots />} />
                   <Route path="settings" element={<Settings />} />
                 </Route>
               </Route>

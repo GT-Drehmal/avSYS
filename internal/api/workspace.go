@@ -41,6 +41,10 @@ func (s *Server) AuthorizeWorkspace(ctx context.Context, u *store.User, orgSlug,
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: server}, &avsysv1.MinecraftServer{}); err != nil {
 		return "", denied
 	}
+	// No new shells or file transfers while a restore rewrites the files.
+	if op := s.ops.current(namespace, server); op != nil && op.Kind == kindRestore {
+		return "", errors.New(server + "." + orgSlug + " is being restored. Try again when that has finished.")
+	}
 	return namespace, nil
 }
 
@@ -51,6 +55,9 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request, u *store.User)
 	a, mc, err := s.server(r, u, store.RoleOperator)
 	if err != nil {
 		return err
+	}
+	if op := s.ops.current(a.Namespace, mc.Name); op != nil && op.Kind == kindRestore {
+		return errRestoring
 	}
 	// Accept checks that the Origin header matches the Host, which is what
 	// stops other sites from opening this socket with the user's cookie.
@@ -223,10 +230,38 @@ func dataPath(p string) (string, error) {
 
 // files resolves the request to an SFTP client and the path it names.
 func (s *Server) files(r *http.Request, u *store.User) (*access, string, *sftp.Client, string, error) {
+	a, server, sc, full, _, err := s.filesFor(r, u, false)
+	return a, server, sc, full, err
+}
+
+// writableFiles is files for a request that changes them. It is refused
+// while a restore is putting the server's files back; the caller must call
+// release when its change has been made.
+func (s *Server) writableFiles(r *http.Request, u *store.User) (a *access, server string, sc *sftp.Client, full string, release func(), err error) {
+	return s.filesFor(r, u, true)
+}
+
+func (s *Server) filesFor(r *http.Request, u *store.User, write bool) (*access, string, *sftp.Client, string, func(), error) {
+	none := func() {}
 	a, mc, err := s.server(r, u, store.RoleOperator)
 	if err != nil {
-		return nil, "", nil, "", err
+		return nil, "", nil, "", none, err
 	}
+	release := none
+	if write {
+		if release, err = s.changing(mc, false); err != nil {
+			return nil, "", nil, "", none, err
+		}
+	}
+	a, server, sc, full, err := s.openFiles(r, a, mc)
+	if err != nil {
+		release()
+		return nil, "", nil, "", none, err
+	}
+	return a, server, sc, full, release, nil
+}
+
+func (s *Server) openFiles(r *http.Request, a *access, mc *avsysv1.MinecraftServer) (*access, string, *sftp.Client, string, error) {
 	full, err := dataPath(r.URL.Query().Get("path"))
 	if err != nil {
 		return nil, "", nil, "", err
@@ -332,10 +367,11 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 const maxUpload = 2 << 30
 
 func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, server, sc, full, err := s.files(r, u)
+	a, server, sc, full, release, err := s.writableFiles(r, u)
 	if err != nil {
 		return err
 	}
+	defer release()
 	if full == dataRoot {
 		return errBadRequest("Name a file to write.")
 	}
@@ -367,10 +403,11 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 }
 
 func (s *Server) makeDir(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	_, _, sc, full, err := s.files(r, u)
+	_, _, sc, full, release, err := s.writableFiles(r, u)
 	if err != nil {
 		return err
 	}
+	defer release()
 	if err := sc.MkdirAll(full); err != nil {
 		return fileError(err)
 	}
@@ -379,10 +416,11 @@ func (s *Server) makeDir(w http.ResponseWriter, r *http.Request, u *store.User) 
 }
 
 func (s *Server) renameFile(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, server, sc, from, err := s.files(r, u)
+	a, server, sc, from, release, err := s.writableFiles(r, u)
 	if err != nil {
 		return err
 	}
+	defer release()
 	to, err := dataPath(r.URL.Query().Get("to"))
 	if err != nil {
 		return err
@@ -402,10 +440,11 @@ func (s *Server) renameFile(w http.ResponseWriter, r *http.Request, u *store.Use
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, server, sc, full, err := s.files(r, u)
+	a, server, sc, full, release, err := s.writableFiles(r, u)
 	if err != nil {
 		return err
 	}
+	defer release()
 	if full == dataRoot {
 		return errBadRequest("The server directory itself cannot be deleted.")
 	}

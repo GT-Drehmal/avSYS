@@ -20,6 +20,14 @@ jobs:
           test -z "$(gofmt -l .)"
           go vet ./...
           go test ./...
+      # The snapshot engine against a real workspace container: that a server
+      # can add to its organization's repository but not delete from it, and
+      # that a restore touches nothing outside the server's own files.
+      - name: Snapshots
+        run: |
+          docker build -q -t avsys-workspace:ci -f images/workspace/Dockerfile .
+          docker cp "$(docker create avsys-workspace:ci)":/usr/local/bin/restic /usr/local/bin/restic
+          AVSYS_TEST_WORKSPACE_IMAGE=avsys-workspace:ci go test -count=1 ./internal/backup/
       - name: Generated code is current
         run: |
           go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest object crd paths=./api/... output:crd:dir=deploy/crds

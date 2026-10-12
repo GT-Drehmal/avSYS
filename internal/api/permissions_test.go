@@ -18,9 +18,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/router"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
@@ -63,6 +65,8 @@ func newPanel(t *testing.T) *panel {
 	cluster := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithIndex(&avsysv1.MinecraftServer{}, router.HostnameIndex, router.IndexHostname).
+		// As in a real cluster, status is written separately from the rest.
+		WithStatusSubresource(&avsysv1.MinecraftServer{}).
 		Build()
 
 	p := &panel{
@@ -73,6 +77,9 @@ func newPanel(t *testing.T) *panel {
 			Client: cluster,
 			Events: NewHub(),
 			Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+			// No restic here: these tests are about who gets as far as being
+			// told so. internal/backup tests the snapshots themselves.
+			Backups: &backup.Manager{Dir: t.TempDir(), Restic: "restic-is-not-installed", Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
 		},
 		users:  map[string]*store.User{},
 		tokens: map[string]string{},
@@ -136,6 +143,21 @@ func (p *panel) addServer(org, name, hostname string) {
 	if err := p.srv.Client.Create(context.Background(), mc); err != nil {
 		p.t.Fatal(err)
 	}
+	p.setPhase(org, name, avsysv1.PhaseStopped)
+}
+
+// setPhase stands in for the controller, which is not running here.
+func (p *panel) setPhase(org, name string, phase avsysv1.Phase) {
+	p.t.Helper()
+	ctx := context.Background()
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Namespace: p.srv.Namespace(org), Name: name}, mc); err != nil {
+		p.t.Fatal(err)
+	}
+	mc.Status.Phase = phase
+	if err := p.srv.Client.Status().Update(ctx, mc); err != nil {
+		p.t.Fatal(err)
+	}
 }
 
 // do sends a request as the named person, or signed out for "". It returns
@@ -187,6 +209,10 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST /orgs/{org}/invites", "", `{"role":"viewer"}`, store.RoleAdmin, 201},
 		{"DELETE /orgs/{org}/invites/{token}", "", "", store.RoleAdmin, 204},
 
+		{"GET /orgs/{org}/snapshots", "", "", store.RoleViewer, 200},
+		// 503 below: allowed, and then told that this panel has no restic.
+		{"DELETE /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},
+
 		{"GET /orgs/{org}/servers", "", "", store.RoleViewer, 200},
 		{"POST /orgs/{org}/servers", "", `{"name":"by-{who}","spec":{"eula":true,"version":"1.21.4"}}`, store.RoleAdmin, 201},
 		{"GET " + server, "", "", store.RoleViewer, 200},
@@ -199,6 +225,9 @@ func TestOrganizationRoutes(t *testing.T) {
 		// 409: allowed, and then refused because the server is not running.
 		{"POST " + server + "/console", "", `{"command":"list"}`, store.RoleOperator, 409},
 		{"GET " + server + "/console", "", "", store.RoleViewer, 0},
+		{"GET " + server + "/snapshots", "", "", store.RoleViewer, 200},
+		{"POST " + server + "/snapshots", "", "", store.RoleOperator, 503},
+		{"POST " + server + "/snapshots/{id}/restore", "", "", store.RoleAdmin, 503},
 		{"GET " + server + "/terminal", "", "", store.RoleOperator, 0},
 		{"PUT " + server + "/content", "", "x", store.RoleAdmin, 0},
 		{"GET " + server + "/files", "", "", store.RoleOperator, 0},
@@ -215,7 +244,7 @@ func TestOrganizationRoutes(t *testing.T) {
 			p.addServer("alpha", "doomed-"+who, "")
 		}
 	}
-	fill := strings.NewReplacer("{org}", "alpha", "{server}", "world", "{user}", p.users["viewer"].ID, "{token}", "none")
+	fill := strings.NewReplacer("{org}", "alpha", "{server}", "world", "{user}", p.users["viewer"].ID, "{token}", "none", "{id}", "abcdef12")
 
 	tested := map[string]bool{}
 	for _, route := range routes {

@@ -163,6 +163,18 @@ export function ServerPage() {
 
       <div className="mt-3 flex flex-col gap-2 empty:hidden">
         {status.message && <Notice tone={status.phase === "Error" ? "danger" : "info"}>{status.message}</Notice>}
+        {status.snapshots?.error && (
+          <Notice
+            tone="danger"
+            action={
+              <Link to="backups" className="text-xs font-medium underline-offset-2 hover:underline">
+                Backups
+              </Link>
+            }
+          >
+            The last snapshot or restore failed: {status.snapshots.error}
+          </Notice>
+        )}
         {status.pendingRestart && (
           <Notice
             action={
@@ -173,7 +185,7 @@ export function ServerPage() {
               )
             }
           >
-            Settings changed since this server started. They apply on the next restart.
+            This server was started before its latest settings, or before the panel was last updated. Both apply on the next restart.
           </Notice>
         )}
       </div>
@@ -185,6 +197,7 @@ export function ServerPage() {
         {canOperate && <Tab to="files">Files</Tab>}
         {canOperate && <Tab to="terminal">Terminal</Tab>}
         <Tab to="mods">Mods</Tab>
+        <Tab to="backups">Backups</Tab>
         {atLeast(role, "admin") && <Tab to="settings">Settings</Tab>}
       </nav>
       <div className="pt-5">

@@ -163,6 +163,52 @@ export interface ServerStatus {
   pendingRestart?: boolean;
   /** The cluster node the server runs on. */
   node?: string;
+  /** Written by the panel after each snapshot or restore. */
+  snapshots?: { lastTime?: string; lastID?: string; error?: string } | null;
+}
+
+export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore";
+
+/** One saved state of a server. */
+export interface Snapshot {
+  id: string;
+  time: string;
+  server: string;
+  trigger: SnapshotTrigger;
+  by?: string;
+  version?: string;
+  loader?: string;
+  /** How large the server's files were. */
+  size: number;
+  /** What this snapshot added to the repository. */
+  added: number;
+  files: number;
+}
+
+/** A snapshot or restore under way on a server. */
+export interface Operation {
+  kind: "snapshot" | "restore";
+  org: string;
+  server: string;
+  stage: string;
+  percent: number;
+  startedAt: string;
+}
+
+export interface OperationDone {
+  kind: "snapshot" | "restore" | "delete";
+  org: string;
+  server: string;
+  error?: string;
+  snapshot?: Snapshot;
+}
+
+export interface SnapshotList {
+  /** False when the panel has no restic and cannot take snapshots at all. */
+  available: boolean;
+  snapshots: Snapshot[];
+  operations: Operation[];
+  usage?: { bytes: number; snapshots: number };
 }
 
 export interface Server {

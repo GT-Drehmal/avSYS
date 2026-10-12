@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
+import { Archive, Check, ChevronsUpDown, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useMatch, useNavigate } from "react-router";
 import { api, atLeast, type Org } from "../lib/api";
@@ -169,6 +169,9 @@ export function Shell() {
           <nav className="flex gap-0.5 md:flex-col">
             <NavItem to={`/o/${navOrg.slug}`} end icon={<Server />}>
               Servers
+            </NavItem>
+            <NavItem to={`/o/${navOrg.slug}/backups`} icon={<Archive />}>
+              Backups
             </NavItem>
             <NavItem to={`/o/${navOrg.slug}/members`} icon={<Users />}>
               Members

@@ -8,6 +8,7 @@ Each server is a `MinecraftServer` resource. avSYS turns it into a pod running [
 - **Your own tools.** `ssh <server>.<org>@panel` drops you in the server directory, authenticated by the SSH keys on your account. scp, sftp, rsync and VS Code Remote SSH work. There is also a terminal and a simple file editor in the browser.
 - **Organizations.** Each has its own members, roles, servers and namespace. People can belong to several. Sign in with a password, GitHub, Discord or Google; join by invite link.
 - **One address, many servers.** The built-in router sends players to the right server by the hostname they connect with, and can put idle servers to sleep and wake them when someone joins.
+- **Snapshots.** Save a server's files and settings with one click, while it runs, and put it back later. Each organization's servers share one deduplicated store, so a snapshot costs only what changed. Snapshots outlive the server they were taken of.
 - **Live.** Status, players and the console stream to the browser; nothing polls.
 
 ## How it fits together
@@ -45,13 +46,33 @@ Content is resolved when you add it, not when the server starts:
 
 Dependencies are still fetched by the server image at start and are not pinned or checked.
 
+## Snapshots
+
+A snapshot is the server's whole directory, minus the workspace's own files and download caches, plus a record of its settings. Take one from the server's **Backups** tab or with the API; a running game is told to write everything out and hold its saves for the moment the files are copied.
+
+- **Storage.** Every organization has one [restic](https://restic.net) repository on the panel's backups volume. Servers that share files (the same mods, libraries, a common map) store them once, and each snapshot adds only what changed since the last.
+- **Restore.** Restoring puts a server back to one of its own snapshots: its world, configuration, game version and mods. The server is stopped while the files are put back, and what was there is snapshotted first, so a restore can be undone. Memory, storage, address and sleep settings are left as they are.
+- **History is kept.** Deleting a server does not delete its snapshots; they stay on the organization's **Backups** page until someone deletes them. Deleting an organization deletes its repository, and asks first.
+- **What a server can do to its own history.** Snapshots are taken from inside the server's workspace, over a channel the panel opens for the purpose. Through it a server can add to its organization's repository and read from it, but not delete or overwrite anything. Only the panel removes snapshots.
+- **One organization, one trust boundary.** Servers in an organization share a repository, so someone with shell access to one of them could, with effort, read snapshots of another. Put servers that must not see each other's files in different organizations.
+- **Without the panel.** A repository is an ordinary restic repository with its password in the file beside it, so snapshots can be listed and restored with plain restic:
+
+  ```sh
+  restic -r /backups/friends --password-file /backups/friends.key snapshots
+  restic -r /backups/friends --password-file /backups/friends.key restore <id>:/data --target ./restored
+  ```
+
+Snapshots live on the cluster only. Scheduled snapshots, retention and an offsite copy are not built yet.
+
+After upgrading from a version without snapshots, a server has to be restarted once before it can be snapshotted; its page says so.
+
 ## Install
 
 ```sh
 kubectl apply -f deploy/install.yaml
 ```
 
-Edit `AVSYS_PUBLIC_URL` in that file first. It creates the `avsys` namespace, a service account with the permissions the panel needs, a 1Gi volume for the database, and a LoadBalancer service for the three ports. The panel installs and upgrades the `MinecraftServer` CRD itself.
+Edit `AVSYS_PUBLIC_URL` in that file first. It creates the `avsys` namespace, a service account with the permissions the panel needs, a 1Gi volume for the database, a 50Gi volume for snapshots, and a LoadBalancer service for the three ports. Size the snapshots volume for the worlds you host. The panel installs and upgrades the `MinecraftServer` CRD itself.
 
 Images are published to `ghcr.io/gt-drehmal/avsys` for amd64 and arm64. `:edge` follows the main branch; releases are `:v1.2.3`, with `:latest` on the newest. The panel starts the workspace image of its own version, so there is only the one image to choose.
 
@@ -70,6 +91,7 @@ Every flag can also be set as an environment variable: `--public-url` is `AVSYS_
 | `AVSYS_ROUTER_PUBLIC_PORT` | The port players reach the router on, if not 25565. Shown in server addresses. |
 | `AVSYS_CURSEFORGE_API_KEY` | Passed to servers for CurseForge downloads. |
 | `AVSYS_ALLOW_SIGNUPS` | `true` lets anyone create an account. |
+| `AVSYS_BACKUP_DIR` | Where the snapshot repositories are kept. Defaults to `backups` in the data directory; the manifest gives it a volume of its own. |
 
 ### Which node a server runs on
 
@@ -105,9 +127,9 @@ For the shared router, point each server's hostname (an A or CNAME record) at th
 
 | Role | Can |
 | --- | --- |
-| Viewer | See servers, status and console output |
-| Operator | Also start and stop servers, run commands, SSH in, use the terminal and files |
-| Admin | Also create, configure and delete servers; manage members and invites |
+| Viewer | See servers, status, console output and snapshots |
+| Operator | Also start and stop servers, run commands, SSH in, use the terminal and files, take snapshots |
+| Admin | Also create, configure and delete servers; restore and delete snapshots; manage members and invites |
 | Owner | Also manage other owners and delete the organization |
 
 Instance administrators act as owner in every organization and are the only ones who can create organizations.
@@ -124,7 +146,14 @@ curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/servers
 curl -H "Authorization: Bearer $TOKEN" -X POST $AVSYS/orgs/friends/servers/creative/restart
 curl -H "Authorization: Bearer $TOKEN" -d '{"command":"say hello"}' $AVSYS/orgs/friends/servers/creative/console
 curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"resources":{"memory":"6Gi"}}}' $AVSYS/orgs/friends/servers/creative
+
+# Take a snapshot and wait for it; then put the server back to it.
+curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/creative/snapshots?wait=true"
+curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/creative/snapshots/<id>/restore?wait=true"
+curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/snapshots
 ```
+
+Without `?wait=true` both answer at once and the work continues in the background; progress arrives on the event stream.
 
 A server's `spec` is the same in the API and in the Kubernetes resource, so GitOps tools can manage servers directly as `MinecraftServer` manifests.
 
@@ -146,17 +175,18 @@ rsync -av -e 'ssh -p 2222' ./world/ creative.friends@panel.example.com:world/
 
 ## Development
 
-Needs Go, [Bun](https://bun.sh), Docker and a cluster in your kubectl context (OrbStack's works well).
+Needs Go, [Bun](https://bun.sh), Docker, [restic](https://restic.net) and a cluster in your kubectl context (OrbStack's works well). Without restic the panel runs, with snapshots switched off.
 
 ```sh
 make dev        # builds everything and runs the panel on http://localhost:8080
 make test       # unit tests and type checks
+make test-snapshots  # the snapshot engine against a real workspace container
 make e2e        # creates a real server through a running panel and checks it end to end
 make e2e-cluster  # the same from nothing: an empty k3s in Docker, installed from deploy/install.yaml
 make generate   # after changing api/
 ```
 
-`make e2e` needs `AVSYS_URL` and `AVSYS_TOKEN` (an instance admin's API token). It makes a throwaway organization and a Paper server with plugins, checks the console, files, SSH and the router against it, and deletes both. Unit tests cover the logic that needs no cluster; this covers what only a running server can show.
+`make e2e` needs `AVSYS_URL` and `AVSYS_TOKEN` (an instance admin's API token). It makes a throwaway organization and a Paper server with plugins, checks the console, files, snapshots and restore, SSH and the router against it, and deletes both. Unit tests cover the logic that needs no cluster; this covers what only a running server can show.
 
 `make e2e-cluster` needs only Docker. It starts an empty single-node k3s in a container, builds both images, applies `deploy/install.yaml`, creates the first account and then runs the same check. CI runs it on every push, and images are published only if it passes.
 
@@ -174,6 +204,7 @@ To cut a release, push a version tag: `git tag v0.1.0 && git push origin v0.1.0`
 | `internal/sshgw` | SSH gateway |
 | `internal/router` | Hostname router |
 | `internal/store` | Users, organizations, invites (SQLite) |
+| `internal/backup` | Snapshot repositories, snapshot and restore |
 | `images/workspace` | The SSH sidecar image |
 | `web` | The React UI |
 | `deploy` | CRD and install manifest |

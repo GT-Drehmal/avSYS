@@ -39,6 +39,7 @@ import (
 	"github.com/GT-Drehmal/avSYS/deploy/crds"
 	"github.com/GT-Drehmal/avSYS/internal/api"
 	"github.com/GT-Drehmal/avSYS/internal/auth"
+	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/kube"
 	"github.com/GT-Drehmal/avSYS/internal/router"
@@ -52,6 +53,8 @@ var version = "dev"
 
 type options struct {
 	dataDir         string
+	backupDir       string
+	restic          string
 	httpAddr        string
 	sshAddr         string
 	routerAddr      string
@@ -90,6 +93,8 @@ func parseFlags() options {
 		flag.StringVar(p, name, env(name, fallback), usage)
 	}
 	str(&o.dataDir, "data-dir", "./data", "directory for the panel's database")
+	str(&o.backupDir, "backup-dir", "", "directory for the organizations' snapshot repositories (default: backups under data-dir)")
+	str(&o.restic, "restic", "restic", "restic binary the panel runs to keep those repositories")
 	str(&o.httpAddr, "http-addr", ":8080", "address the web UI and API listen on")
 	str(&o.sshAddr, "ssh-addr", ":2222", "address the SSH gateway listens on (empty disables it)")
 	str(&o.routerAddr, "router-addr", ":25565", "address the Minecraft router listens on (empty disables it)")
@@ -246,6 +251,13 @@ func run(opts options, log *slog.Logger) error {
 		}
 	}
 
+	if opts.backupDir == "" {
+		opts.backupDir = filepath.Join(opts.dataDir, "backups")
+	}
+	backups := &backup.Manager{Dir: opts.backupDir, Restic: opts.restic, Log: log.With("component", "backup")}
+	if !backups.Available() {
+		log.Warn("restic not found; snapshots are unavailable", "restic", opts.restic)
+	}
 	gateway := &sshgw.Gateway{Store: st, Dialer: dialer, HostKey: hostKey, WorkspaceKey: workspaceKey, Log: log.With("component", "ssh")}
 	server := &api.Server{
 		Config: api.Config{
@@ -263,6 +275,7 @@ func run(opts options, log *slog.Logger) error {
 		Kube:    clientset,
 		Dialer:  dialer,
 		Gateway: gateway,
+		Backups: backups,
 		Events:  api.NewHub(),
 		Log:     log.With("component", "api"),
 		Static:  staticFiles(opts.webDir, log),
@@ -274,6 +287,14 @@ func run(opts options, log *slog.Logger) error {
 		return err
 	}
 	if err := server.WatchServers(informer); err != nil {
+		return err
+	}
+
+	// Runs once the cache has the servers in it.
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		server.ResumeSaving(ctx)
+		return nil
+	})); err != nil {
 		return err
 	}
 

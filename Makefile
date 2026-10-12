@@ -2,7 +2,7 @@ VERSION ?= dev
 IMAGE ?= ghcr.io/gt-drehmal/avsys
 WORKSPACE_IMAGE ?= ghcr.io/gt-drehmal/avsys-workspace
 
-.PHONY: dev web generate test e2e e2e-cluster images
+.PHONY: dev web generate test test-snapshots e2e e2e-cluster images
 
 # Run the panel on this machine against the current kubectl context.
 dev: web
@@ -19,6 +19,12 @@ test:
 	go vet ./...
 	go test ./...
 	cd web && bun run typecheck
+
+# The snapshot engine against a real workspace container. Needs Docker and
+# restic.
+test-snapshots:
+	docker build -q -t avsys-workspace:dev -f images/workspace/Dockerfile .
+	AVSYS_TEST_WORKSPACE_IMAGE=avsys-workspace:dev go test -count=1 ./internal/backup/
 
 # Exercise a running panel and cluster end to end. Needs AVSYS_URL and
 # AVSYS_TOKEN (an instance admin's API token).

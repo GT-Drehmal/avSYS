@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router";
 import { useOrg } from "../components/Shell";
 import { Button, Confirm, Field, Input, PageHeader, Section } from "../components/ui";
 import { api } from "../lib/api";
-import { keys, useAction } from "../lib/queries";
+import { keys, useAction, useOrgSnapshots } from "../lib/queries";
 import { toast } from "../lib/toast";
 
 export function OrgSettings() {
@@ -13,7 +13,13 @@ export function OrgSettings() {
   const [name, setName] = useState(membership?.name ?? "");
   const [deleting, setDeleting] = useState(false);
   const rename = useAction(() => api.patch(`/orgs/${org}`, { name }), [keys.me]);
-  const remove = useAction(() => api.del(`/orgs/${org}`), [keys.me]);
+  // Snapshots outlive servers, so an organization with no servers left can
+  // still hold a long history. The dialog says what goes with it, and typing
+  // the name there is the confirmation the API asks for. That holds when the
+  // snapshots could not be counted, too: the API then assumes there are some.
+  const listed = useOrgSnapshots(org);
+  const snapshots = listed.data?.available ? listed.data.snapshots.length : undefined;
+  const remove = useAction(() => api.del(`/orgs/${org}?snapshots=delete`), [keys.me]);
   if (!membership) return null;
 
   return (
@@ -38,7 +44,7 @@ export function OrgSettings() {
           </div>
         </form>
       </Section>
-      <Section title="Delete organization" description="Its servers must be deleted first. Members keep their accounts.">
+      <Section title="Delete organization" description="Its servers must be deleted first. Members keep their accounts. Its snapshots are deleted with it.">
         <div>
           <Button variant="danger" onClick={() => setDeleting(true)}>
             Delete {membership.name}
@@ -49,7 +55,9 @@ export function OrgSettings() {
         open={deleting}
         onOpenChange={setDeleting}
         title={`Delete ${membership.name}?`}
-        description="The organization, its memberships and its namespace are removed. This cannot be undone."
+        description={`The organization, its memberships and its namespace are removed${
+          snapshots === undefined ? ", along with any snapshots it has" : snapshots > 0 ? `, along with its ${snapshots} snapshot${snapshots === 1 ? "" : "s"}` : ""
+        }. This cannot be undone.`}
         action="Delete organization"
         typeToConfirm={membership.slug}
         loading={remove.isPending}
