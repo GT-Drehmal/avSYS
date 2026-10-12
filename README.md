@@ -179,9 +179,9 @@ A server's `spec` is the same in the API and in the Kubernetes resource, so GitO
 
 ```console
 $ ssh creative.friends@panel.example.com -p 2222
-steve@creative:/data$ mc run list
+steve@creative:/data$ mc console     # the server console: its log, and a line to type on
+steve@creative:/data$ mc run list    # one command, with its answer
 There are 3 of a max of 20 players online: ...
-steve@creative:/data$ mc logs        # follow the log
 steve@creative:/data$ mc restart     # restart the game, keeping this shell
 ```
 

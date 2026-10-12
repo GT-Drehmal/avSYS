@@ -2,12 +2,17 @@
 # mc — talk to the Minecraft server this workspace belongs to.
 . /tmp/avsys/env 2>/dev/null
 
+# The game's own console input. A line written here is a command typed at
+# the server console.
+pipe=/run/avsys/console-in
+log=/data/logs/latest.log
+
 usage() {
   cat <<'USAGE'
 usage: mc <command>
 
-  mc console         interactive server console (RCON)
-  mc run <command>   run one server command, e.g. mc run list
+  mc console         the server console: its log, and a line to type commands on
+  mc run <command>   run one command and print its answer, e.g. mc run list
   mc logs            follow the server log
   mc restart         save and restart the server process
 
@@ -15,10 +20,39 @@ Starting, stopping and changing versions or mods is done from the avSYS panel.
 USAGE
 }
 
+# send types one line at the server console. It gives up after a few seconds,
+# which is what happens while the game is between two runs.
+send() {
+  [ -p "$pipe" ] || return 3
+  printf '%s\n' "$1" | timeout 5 sh -c 'cat > "$0"' "$pipe"
+}
+
+console() {
+  if [ ! -p "$pipe" ]; then
+    echo "The server is not running, or was started before the panel was last updated: restart it for the full console." >&2
+    echo "Commands go over RCON for now; mc logs shows the log." >&2
+    exec rcon-cli
+  fi
+  # The log scrolls above while a line is typed below, as at the game's own
+  # console. Ctrl-D or Ctrl-C leaves; the server keeps running.
+  tail -n 30 -F "$log" 2>/dev/null &
+  tail_pid=$!
+  trap 'kill "$tail_pid" 2>/dev/null' EXIT
+  trap 'exit 0' INT TERM
+  while IFS= read -e -r line; do
+    line=${line#/}
+    [ -z "$line" ] && continue
+    history -s -- "$line"
+    send "$line" || echo "The server did not take that: it may be restarting." >&2
+  done
+  # Typed in from a script, give the log a moment to show what happened.
+  [ -t 0 ] || sleep 1
+}
+
 case "${1:-}" in
-  console) exec rcon-cli ;;
+  console) console ;;
   run)     shift; exec rcon-cli "$@" ;;
-  logs)    exec tail -n 200 -F /data/logs/latest.log ;;
+  logs)    exec tail -n 200 -F "$log" ;;
   restart) rcon-cli stop && echo "Server stopped; it starts again on its own." ;;
   *)       usage ;;
 esac

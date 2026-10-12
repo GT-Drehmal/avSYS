@@ -157,10 +157,11 @@ ssh-keygen -q -t ed25519 -N '' -f "$WORK/key" -C avsys-e2e
 KEY_ID=$(call -d "{\"name\":\"e2e\",\"publicKey\":\"$(cat "$WORK/key.pub")\"}" "$API/me/ssh-keys" | field "d['id']")
 ssh_host=$(echo "$AVSYS_URL" | sed -E 's#^[a-z]+://##; s#[:/].*$##')
 out=$(ssh -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'pwd; cat /data/e2e.txt; mc run list')
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'pwd; cat /data/e2e.txt; mc run list; echo "say hello from a shell" | mc console 2>&1 | tail -3')
 expect "shell lands in the server directory" "$out" /data
 expect "shell sees the same files" "$out" "written by e2e"
 expect "mc helper reaches the game" "$out" "players online"
+expect "mc console types at the server console and shows the log" "$out" "[Server] hello from a shell"
 
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
