@@ -56,6 +56,8 @@ const (
 	TriggerManual     = "manual"
 	TriggerScheduled  = "scheduled"
 	TriggerPreRestore = "pre-restore"
+	// TriggerFinal is the snapshot taken of a server as it is deleted.
+	TriggerFinal = "final"
 )
 
 var (

@@ -42,7 +42,7 @@ cleanup() {
   fi
   step "cleaning up"
   for name in $(call "$API/orgs/$ORG/servers" | field "' '.join(s['name'] for s in d)" 2>/dev/null); do
-    call -X DELETE "$API/orgs/$ORG/servers/$name" >/dev/null 2>&1 || true
+    call -X DELETE "$API/orgs/$ORG/servers/$name?snapshot=false" >/dev/null 2>&1 || true
   done
   # The organization can only go once its servers are gone.
   for _ in $(seq 1 30); do
@@ -197,34 +197,38 @@ expect "and runs on them" "$(call -d '{"command":"plugins"}' "$COPY/console" | f
 expect "players reach it by its own name" "$(python3 "$HERE/mcping.py" "copy.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "the server it was copied from is as it was" "$(call "$SRV" | field "(d['status']['phase'], d['spec']['expose']['hostname'])")" "('Stopped', '$HOST')"
 expect "it has no history of its own yet" "$(call "$COPY/snapshots" | field "len(d['snapshots'])")" 0
-call -X DELETE "$COPY" >/dev/null
+expect "a server can be deleted with no last snapshot of it" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$COPY?snapshot=false")" 204
 # One that can never get its files, being bound for a node that does not exist.
 call -d "{\"name\":\"stuck\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"nodeSelector\":{\"avsys.dev/no-such-node\":\"true\"}}}" "$API/orgs/$ORG/servers" >/dev/null
 expect "a server still waiting for its files is not started" "$(call -X POST "$API/orgs/$ORG/servers/stuck/start" | field "d['code']")" creating
 expect "deleting it calls the copy off" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/servers/stuck")" 204
 
 step "snapshots outlive the server"
-call -X DELETE "$SRV" >/dev/null
+# Something that is in no snapshot yet. Deleting the server must not lose it.
+echo "written just before the end" | call -X PUT --data-binary @- "$SRV/files/content?path=/last.txt" >/dev/null
+expect "deleting a server takes a last snapshot of it first" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$SRV")" 204
 for _ in $(seq 1 30); do
   [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 0 ] && break
   sleep 2
 done
 history=$(call "$API/orgs/$ORG/snapshots")
-expect "a deleted server's snapshots are still listed" "$(echo "$history" | field "sorted({s['server'] for s in d['snapshots']}), len(d['snapshots']), d['usage']['bytes'] > 0")" "(['probe'], 4, True)"
+expect "a deleted server's snapshots are still listed" "$(echo "$history" | field "sorted({s['server'] for s in d['snapshots']}), len(d['snapshots']), d['usage']['bytes'] > 0")" "(['probe'], 5, True)"
 expect "an organization with snapshots is not deleted by accident" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG")" 409
 expect "a snapshot can be removed on purpose" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$SNAP")" 204
-expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])")" 3
+expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])")" 4
+FINAL=$(call "$API/orgs/$ORG/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'final'][0]") || fail "there is no final snapshot of the deleted server"
 
 step "a deleted server comes back"
-back=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
+back=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$FINAL\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
 case "$back" in *'"spec"'*) ;; *) fail "the deleted server was not brought back: $back" ;; esac
 expect "under its own name, left stopped as asked" "$(echo "$back" | field "(d['name'], d['spec']['state'], d['spec']['expose']['hostname'])")" "('probe', 'Stopped', '$HOST')"
 expect "with its files" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
-expect "and its history" "$(call "$SRV/snapshots" | field "len(d['snapshots'])")" 3
+expect "down to what was written just before it was deleted" "$(call "$SRV/files/content?path=/last.txt")" "written just before the end"
+expect "and its history" "$(call "$SRV/snapshots" | field "len(d['snapshots'])")" 4
 # And again with no pause, while what is left of the one just deleted is still
 # being cleared away. Its files must not land in a volume that is on its way out.
 call -X DELETE "$SRV" >/dev/null
-again=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
+again=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$FINAL\",\"spec\":{\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
 case "$again" in *'"spec"'*) ;; *) fail "the server was not brought back straight after being deleted: $again" ;; esac
 wait_phase Running
 expect "brought back straight after a delete, it keeps its files once it runs" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"

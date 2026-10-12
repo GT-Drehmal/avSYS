@@ -9,6 +9,7 @@ import { Button, Chip, Confirm, CopyText } from "./ui";
 const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
   if (s.trigger === "pre-restore") return "Before a restore";
+  if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
   return s.by ? `By ${s.by}` : "Manual";
 };
 

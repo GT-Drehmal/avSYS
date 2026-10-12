@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { Button, Confirm, Field, Input, Notice, Section, Select, Textarea, Toggle } from "../../components/ui";
 import { api, serverPath, type ExposeType, type Loader, type ServerSpec, type SpecPatch } from "../../lib/api";
 import { difficulties, gameModes, parseProperties, worldKeys } from "../../lib/properties";
-import { useAction, useUpdateServer } from "../../lib/queries";
+import { useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
 import { toast } from "../../lib/toast";
 import { useServerContext } from "./ServerPage";
@@ -148,7 +148,12 @@ export function Settings() {
     const { sha1 } = await api.post<{ sha1: string }>("/catalog/sha1", { url: draft.packURL });
     set("packSHA1", sha1);
   });
-  const remove = useAction(() => api.del(serverPath(server.org, server.name)));
+  const meta = useMeta();
+  // A last snapshot is taken unless this is switched off, so that what is
+  // deleted can be brought back.
+  const [finalSnapshot, setFinalSnapshot] = useState(true);
+  const keeps = !!meta.data?.snapshots && finalSnapshot;
+  const remove = useAction(() => api.del(serverPath(server.org, server.name) + (keeps ? "" : "?snapshot=false")));
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
@@ -370,12 +375,14 @@ export function Settings() {
         open={deleting}
         onOpenChange={setDeleting}
         title={`Delete ${server.name}?`}
-        description="The world and every file of this server are deleted with it. This cannot be undone."
-        action="Delete server"
+        description={keeps ? "It is stopped and a last snapshot is taken, so it can be brought back from Backups." : "The world and every file of this server are deleted with it. This cannot be undone."}
+        action={remove.isPending && keeps ? "Taking a snapshot" : "Delete server"}
         typeToConfirm={server.name}
         loading={remove.isPending}
         onConfirm={() => remove.mutate(undefined, { onSuccess: () => navigate(`/o/${server.org}`) })}
-      />
+      >
+        {meta.data?.snapshots && <Toggle checked={finalSnapshot} onChange={setFinalSnapshot} disabled={remove.isPending} label="Take a final snapshot" />}
+      </Confirm>
     </>
   );
 }
