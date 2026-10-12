@@ -7,6 +7,7 @@
 #
 # The token must belong to an instance admin (it creates an organization).
 # Optional: AVSYS_SSH_PORT (2222), AVSYS_ROUTER_HOST (127.0.0.1), AVSYS_ROUTER_PORT (25565).
+# AVSYS_E2E_KEEP_ON_FAILURE=1 leaves the organization and server in place when a check fails.
 set -eu
 
 : "${AVSYS_URL:?set AVSYS_URL to the panel address}"
@@ -30,6 +31,12 @@ expect() { case "$2" in *"$3"*) printf 'ok: %s\n' "$1" ;; *) fail "$1: expected 
 
 cleanup() {
   status=$?
+  if [ $status -ne 0 ] && [ -n "${AVSYS_E2E_KEEP_ON_FAILURE:-}" ]; then
+    # Whoever started this wants to look at what is left, and will remove it.
+    rm -rf "$WORK"
+    echo "FAILED (exit $status); $ORG left in place"
+    return
+  fi
   step "cleaning up"
   call -X DELETE "$SRV" >/dev/null 2>&1 || true
   # The organization can only go once its server is gone.
@@ -44,13 +51,40 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The last lines of the game's log, for explaining a failure. The stream sends
+# a reset each time it reattaches, followed by the log so far.
+game_log() {
+  call -N --max-time 5 "$SRV/console" 2>/dev/null | python3 -c '
+import json, sys
+lines = []
+for raw in sys.stdin:
+    if not raw.startswith("data: "):
+        continue
+    try:
+        data = json.loads(raw[6:])
+    except ValueError:
+        continue
+    if data is None:
+        lines = []
+    elif isinstance(data, list):
+        lines += [str(line) for line in data]
+print("\n".join("  | " + line for line in lines[-40:]))' || true
+}
+
 wait_phase() {
   for _ in $(seq 1 120); do
     phase=$(call "$SRV" | field "d['status'].get('phase')")
     [ "$phase" = "$1" ] && return 0
-    [ "$phase" = Error ] && fail "server went to Error: $(call "$SRV" | field "d['status'].get('message')")"
+    if [ "$phase" = Error ]; then
+      message=$(call "$SRV" | field "d['status'].get('message')")
+      printf 'server went to Error: %s\nThe end of its log:\n' "$message" >&2
+      game_log >&2
+      fail "server went to Error: $message"
+    fi
     sleep 3
   done
+  printf 'The end of its log:\n' >&2
+  game_log >&2
   fail "timed out waiting for $1 (last phase: $phase)"
 }
 
@@ -62,6 +96,7 @@ created=$(call -d "{\"name\":\"probe\",\"spec\":{\"eula\":true,\"loader\":\"pape
   \"resources\":{\"memory\":\"2Gi\"},\"storage\":{\"size\":\"2Gi\"},\"expose\":{\"hostname\":\"$HOST\"},
   \"properties\":{\"motd\":\"e2e probe\"},
   \"mods\":[{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"luckperms\"},{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"worldedit\"}]}}" "$API/orgs/$ORG/servers")
+case "$created" in *'"spec"'*) ;; *) fail "the server was not created: $created" ;; esac
 expect "content is pinned when added" "$(echo "$created" | field "all(m.get('version') for m in d['spec']['mods'])")" True
 expect "content fits the game's Java" "$(echo "$created" | field "d['java']['effective'] == d['java']['game'] == 21")" True
 wait_phase Running
