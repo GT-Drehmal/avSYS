@@ -2,7 +2,7 @@ VERSION ?= dev
 IMAGE ?= ghcr.io/gt-drehmal/avsys
 WORKSPACE_IMAGE ?= ghcr.io/gt-drehmal/avsys-workspace
 
-.PHONY: dev web generate test e2e images
+.PHONY: dev web generate test e2e e2e-cluster images
 
 # Run the panel on this machine against the current kubectl context.
 dev: web
@@ -24,6 +24,11 @@ test:
 # AVSYS_TOKEN (an instance admin's API token).
 e2e:
 	./hack/e2e.sh
+
+# The same check from nothing: an empty k3s in Docker, the panel installed
+# from deploy/install.yaml, its first account, then e2e. Needs only Docker.
+e2e-cluster:
+	./hack/e2e-cluster.sh
 
 images:
 	docker build -t $(IMAGE):$(VERSION) --build-arg VERSION=$(VERSION) .

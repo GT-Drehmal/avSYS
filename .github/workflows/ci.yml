@@ -37,6 +37,17 @@ jobs:
           docker build -t avsys:ci .
           docker build -t avsys-workspace:ci images/workspace
 
+  # Installs the panel into an empty cluster the way a user would, then runs a
+  # real Minecraft server through it. This is what catches a broken manifest,
+  # missing permissions or a panel that cannot make its first start.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: End to end
+        run: ./hack/e2e-cluster.sh
+
   # Publishes the panel and workspace images to GitHub's container registry,
   # once the tests above pass.
   #
@@ -46,7 +57,7 @@ jobs:
   # The panel is built knowing its own version, and starts the workspace image
   # with that same tag, so the two always match.
   publish:
-    needs: test
+    needs: [test, e2e]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
