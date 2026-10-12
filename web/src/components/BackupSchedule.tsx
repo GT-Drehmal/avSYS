@@ -131,13 +131,11 @@ export function ServerSchedule({ server, canAdmin }: { server: Server; canAdmin:
         <label htmlFor="server-schedule" className="text-[13px] font-medium">
           Scheduled snapshots
         </label>
-        <div className="w-56">
-          <Select id="server-schedule" value={mode} disabled={update.isPending} onChange={(e) => choose(e.target.value as Mode)}>
-            <option value="org">Same as the organization</option>
-            <option value="own">Its own schedule</option>
-            <option value="off">Off</option>
-          </Select>
-        </div>
+        <Select id="server-schedule" value={mode} disabled={update.isPending} onChange={(e) => choose(e.target.value as Mode)} className="w-56">
+          <option value="org">Same as the organization</option>
+          <option value="own">Its own schedule</option>
+          <option value="off">Off</option>
+        </Select>
         {hint && <span className="text-[13px] text-muted">{hint}</span>}
       </div>
       {mode === "own" && (
