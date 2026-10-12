@@ -89,8 +89,8 @@ func TestSupportedReleases(t *testing.T) {
 	}
 }
 
-// get reads a route as the owner and decodes what it answers.
-func (p *panel) get(path string, into any) {
+// fetch reads a route as the owner and decodes what it answers.
+func (p *panel) fetch(path string, into any) {
 	p.t.Helper()
 	req := httptest.NewRequest("GET", "/api/v1"+path, nil)
 	req.Header.Set("Authorization", "Bearer "+p.tokens["owner"])
@@ -117,12 +117,12 @@ func TestVersionListFollowsTheLoader(t *testing.T) {
 	p := newPanel(t)
 	p.srv.catalog.http.Transport = upstream
 	var list manifest
-	p.get("/catalog/minecraft/versions?loader=folia", &list)
+	p.fetch("/catalog/minecraft/versions?loader=folia", &list)
 	if list.Latest["release"] != "26.2" || len(list.Versions) != 2 {
 		t.Errorf("Folia's list is %+v, want 26.2 and 1.21.4 with 26.2 the latest", list)
 	}
 	list = manifest{}
-	p.get("/catalog/minecraft/versions", &list)
+	p.fetch("/catalog/minecraft/versions", &list)
 	if list.Latest["release"] != "26.3" || len(list.Versions) != 7 {
 		t.Errorf("the list for no loader is %+v, want Mojang's own", list)
 	}
@@ -135,7 +135,7 @@ func TestVersionListFollowsTheLoader(t *testing.T) {
 	p = newPanel(t)
 	p.srv.catalog.http.Transport = down
 	list = manifest{}
-	p.get("/catalog/minecraft/versions?loader=folia", &list)
+	p.fetch("/catalog/minecraft/versions?loader=folia", &list)
 	if list.Latest["release"] != "26.3" || len(list.Versions) != 7 {
 		t.Errorf("with Folia's list unreachable the list is %+v, want Mojang's own", list)
 	}
