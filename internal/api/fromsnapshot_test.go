@@ -306,3 +306,33 @@ func TestOwnPod(t *testing.T) {
 		t.Errorf("the new server's own pod was not accepted: %v", err)
 	}
 }
+
+// Deleting a server takes a last snapshot of it unless told not to. Told not
+// to, it is simply deleted. While something else is running on the server,
+// the last snapshot cannot be taken, and the server is not deleted.
+func TestDeletingWithoutAFinalSnapshot(t *testing.T) {
+	p := newPanel(t)
+	p.srv.Backups.Restic = "true" // present, so that a final snapshot would be attempted
+	p.addServer("alpha", "doomed", "")
+	p.addServer("alpha", "busy", "")
+
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "busy", kindSnapshot, ""); !ok {
+		t.Fatal("could not start a snapshot")
+	}
+	if got, code := p.do("owner", "DELETE", "/orgs/alpha/servers/busy", ""); got != 409 || code != "busy" {
+		t.Errorf("deleting a server that is being snapshotted: got %d %q, want 409 busy", got, code)
+	}
+	if got, _ := p.do("owner", "GET", "/orgs/alpha/servers/busy", ""); got != 200 {
+		t.Errorf("a server whose last snapshot could not be taken was deleted all the same: %d", got)
+	}
+
+	if got, code := p.do("owner", "DELETE", "/orgs/alpha/servers/doomed?snapshot=false", ""); got != 204 {
+		t.Fatalf("deleting with no final snapshot: got %d %s, want 204", got, code)
+	}
+	if got, _ := p.do("owner", "GET", "/orgs/alpha/servers/doomed", ""); got != 404 {
+		t.Errorf("the server is still there: %d", got)
+	}
+	if p.srv.ops.current("mc-alpha", "doomed") != nil {
+		t.Error("a claim was left on a deleted server")
+	}
+}

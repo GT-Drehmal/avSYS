@@ -42,6 +42,8 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) error {
 		"allowSignups":  s.Config.AllowSignups,
 		"providers":     providers,
 		"ssh":           map[string]any{"host": s.Config.SSHHost, "port": s.Config.SSHPort},
+		// Whether this panel can take snapshots at all.
+		"snapshots": s.Backups.Available(),
 	})
 	return nil
 }

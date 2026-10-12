@@ -271,9 +271,11 @@ interface ConfirmProps {
   typeToConfirm?: string;
   onConfirm: () => void;
   loading?: boolean;
+  /** Anything else to decide before confirming, shown above the buttons. */
+  children?: ReactNode;
 }
 
-export function Confirm({ open, onOpenChange, title, description, action, typeToConfirm, onConfirm, loading }: ConfirmProps) {
+export function Confirm({ open, onOpenChange, title, description, action, typeToConfirm, onConfirm, loading, children }: ConfirmProps) {
   const [typed, setTyped] = useState("");
   const ready = !typeToConfirm || typed === typeToConfirm;
   return (
@@ -298,6 +300,7 @@ export function Confirm({ open, onOpenChange, title, description, action, typeTo
             {(id) => <Input id={id} autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} className="font-mono" autoComplete="off" />}
           </Field>
         )}
+        {children}
         <div className="flex justify-end gap-2">
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button type="submit" variant="danger" disabled={!ready} loading={loading}>
