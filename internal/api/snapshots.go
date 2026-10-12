@@ -511,9 +511,13 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 	before := s.gameInstance(ctx, mc)
 
 	version, loader := softwareOf(&mc.Spec)
+	// When the server is snapshotted is not part of what it was: changing
+	// that alone should not count as the server having changed.
+	recorded := *mc.Spec.DeepCopy()
+	recorded.Backups = nil
 	meta := backup.Meta{
 		Server: mc.Name, Trigger: trigger, By: by, Version: version, Loader: loader,
-		Record: snapshotRecord{Format: 1, Org: org, Server: mc.Name, Spec: mc.Spec},
+		Record: snapshotRecord{Format: 1, Org: org, Server: mc.Name, Spec: recorded},
 		// A scheduled snapshot of a server nothing has happened to is not
 		// taken, and neither is a final one: the last one is as good.
 		SkipUnchanged: trigger == backup.TriggerScheduled || trigger == backup.TriggerFinal,

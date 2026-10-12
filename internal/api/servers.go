@@ -144,6 +144,12 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if rp := spec.ResourcePack; rp != nil && rp.URL != "" && !strings.HasPrefix(rp.URL, "http://") && !strings.HasPrefix(rp.URL, "https://") {
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
+	if spec.Backups != nil {
+		// Held to the limits an organization's own schedule is.
+		if err := policyFor(defaultPolicy, spec).validate(); err != nil {
+			return err
+		}
+	}
 	return validateProperties(spec.Properties)
 }
 

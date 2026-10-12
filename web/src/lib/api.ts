@@ -151,6 +151,8 @@ export interface ServerSpec {
   storage: { size: string; storageClassName?: string };
   expose: { type: ExposeType; hostname?: string; loadBalancerIP?: string; nodePort?: number };
   sleep: { enabled?: boolean; idleMinutes: number };
+  /** Where the server's scheduled snapshots depart from its organization's. Absent, it follows them. */
+  backups?: BackupOverride | null;
   image?: string;
   env?: { name: string; value?: string }[];
 }
@@ -213,6 +215,13 @@ export interface OperationDone {
   /** The operation was stopped on purpose; its error is not news. */
   calledOff?: boolean;
   snapshot?: Snapshot;
+}
+
+/** What a server sets for itself in place of its organization's schedule. A part left out, or null, follows the organization. */
+export interface BackupOverride {
+  enabled?: boolean | null;
+  minute?: number | null;
+  keep?: BackupPolicy["keep"] | null;
 }
 
 /** An organization's daily snapshots and how long they are kept. */

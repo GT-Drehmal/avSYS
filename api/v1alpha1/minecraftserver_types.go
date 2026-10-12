@@ -165,6 +165,37 @@ type SleepSpec struct {
 	IdleMinutes int32 `json:"idleMinutes,omitempty"`
 }
 
+// BackupSpec says where a server departs from its organization's scheduled
+// snapshots. Whatever is left out follows the organization.
+type BackupSpec struct {
+	// Enabled says whether the server gets scheduled snapshots at all.
+	Enabled *bool `json:"enabled,omitempty"`
+	// Minute of the day, in UTC, at which its snapshot is taken.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1439
+	Minute *int32 `json:"minute,omitempty"`
+	// Keep is how many of its scheduled snapshots are kept.
+	Keep *BackupKeep `json:"keep,omitempty"`
+}
+
+// BackupKeep is how many scheduled snapshots to keep: the newest of each of
+// the last so many days, weeks, months and years. The limits are those of an
+// organization's schedule.
+type BackupKeep struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=90
+	Daily int32 `json:"daily"`
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=104
+	Weekly int32 `json:"weekly"`
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=120
+	Monthly int32 `json:"monthly"`
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=20
+	Yearly int32 `json:"yearly"`
+}
+
 type StorageSpec struct {
 	// +kubebuilder:default="10Gi"
 	Size             resource.Quantity `json:"size,omitempty"`
@@ -212,6 +243,8 @@ type MinecraftServerSpec struct {
 	Storage   StorageSpec   `json:"storage,omitempty"`
 	Expose    ExposeSpec    `json:"expose,omitempty"`
 	Sleep     SleepSpec     `json:"sleep,omitempty"`
+	// Backups is the server's own schedule for snapshots, where it has one.
+	Backups *BackupSpec `json:"backups,omitempty"`
 
 	// Image overrides the server image. By default a tag of itzg/minecraft-server
 	// with the right Java for the game version is chosen.

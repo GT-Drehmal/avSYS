@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Camera } from "lucide-react";
 import { useState } from "react";
+import { ServerSchedule } from "../../components/BackupSchedule";
 import { OperationRow, SnapshotRows } from "../../components/Snapshots";
 import { Button, Empty, Loading, Modal, Notice } from "../../components/ui";
 import { api, atLeast, serverPath, type Operation, type Snapshot } from "../../lib/api";
@@ -45,6 +46,7 @@ export function Snapshots() {
           </Button>
         )}
       </div>
+      <ServerSchedule server={server} canAdmin={canAdmin} />
       {failure && !op && <Notice tone="danger">The last snapshot or restore failed: {failure}</Notice>}
       {op && <OperationRow op={op} />}
       {snapshots.length === 0 ? (

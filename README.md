@@ -53,6 +53,7 @@ A snapshot is the server's whole directory, minus the workspace's own files and 
 
 - **Storage.** Every organization has one [restic](https://restic.net) repository on the panel's backups volume. Servers that share files (the same mods, libraries, a common map) store them once, and each snapshot adds only what changed since the last.
 - **Every day.** Each server is snapshotted once a day without anyone asking, at a time set on the organization's **Backups** page (05:00 US Eastern unless changed). A server whose files are exactly as its last snapshot has them gets no new one. Of these scheduled snapshots the newest of each of the last 7 days, 4 weeks, 12 months and 2 years is kept, which can be changed on the same page, or the daily snapshots switched off. Days on which nothing was saved do not count, so a server that stops changing keeps the history it has, however old. A snapshot that fails, or does not happen, shows on the server list.
+- **A server's own schedule.** The organization's schedule is what a server follows unless it sets its own, on its **Backups** tab: off, for a server not worth keeping, or its own time and its own retention, for one worth keeping longer. A server can have a schedule while its organization's is off. "Run now" passes over a server that is switched off.
 - **What is never removed for you.** Retention only applies to scheduled snapshots of servers that exist. Snapshots taken by hand, the ones taken before a restore or a delete, and every snapshot of a server that has been deleted stay until someone deletes them.
 - **Restore.** Restoring puts a server back to one of its own snapshots: its world, configuration, game version and mods. The server is stopped while the files are put back, and what was there is snapshotted first, so a restore can be undone. Memory, storage, address and sleep settings are left as they are.
 - **New server from a snapshot.** Any snapshot can be made into a new server, from the **Backups** page or with the API. It gets the snapshot's files along with the game version, loader, mods and game settings they were made with, and its own name, address, memory and storage. Made from a snapshot of a server that was deleted, under the same name, it is that server back with its history. Made from one of a server that still exists, it is a copy, and the original is not touched. Until its files are all in, the new server cannot be started or changed; deleting it calls the copy off.
@@ -166,6 +167,9 @@ curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/snapshots
 curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/backup-policy
 curl -H "Authorization: Bearer $TOKEN" -X PUT -d '{"enabled":true,"minute":540,"keep":{"daily":7,"weekly":4,"monthly":12,"yearly":2}}' $AVSYS/orgs/friends/backup-policy
 curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/backup-policy/run?wait=true"
+# One server's own: any of enabled, minute and keep; what is left out follows the organization. null goes back to it.
+curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"backups":{"keep":{"daily":30,"weekly":8,"monthly":24,"yearly":5}}}}' $AVSYS/orgs/friends/servers/survival
+curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"backups":null}}' $AVSYS/orgs/friends/servers/survival
 
 # Make a new server out of a snapshot. Its software and game settings come with it.
 curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-copy","fromSnapshot":"<id>","spec":{"state":"Stopped"}}' "$AVSYS/orgs/friends/servers?wait=true"

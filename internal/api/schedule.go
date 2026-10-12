@@ -59,6 +59,31 @@ func (p backupPolicy) validate() error {
 	return nil
 }
 
+// policyFor is the policy one server's scheduled snapshots follow: its
+// organization's, with what the server sets for itself in its place.
+func policyFor(org backupPolicy, spec *avsysv1.MinecraftServerSpec) backupPolicy {
+	own := spec.Backups
+	if own == nil {
+		return org
+	}
+	if own.Enabled != nil {
+		org.Enabled = *own.Enabled
+	}
+	if own.Minute != nil {
+		org.Minute = int(*own.Minute)
+	}
+	if k := own.Keep; k != nil {
+		org.Keep = backup.Keep{Daily: int(k.Daily), Weekly: int(k.Weekly), Monthly: int(k.Monthly), Yearly: int(k.Yearly)}
+	}
+	return org
+}
+
+// switchedOff reports whether a server has been taken out of scheduled
+// snapshots itself, whatever its organization does.
+func switchedOff(spec *avsysv1.MinecraftServerSpec) bool {
+	return spec.Backups != nil && spec.Backups.Enabled != nil && !*spec.Backups.Enabled
+}
+
 // lastDue is the most recent moment, at or before now, at which the daily
 // snapshots were to begin.
 func (p backupPolicy) lastDue(now time.Time) time.Time {
@@ -259,7 +284,8 @@ func (s *Server) scheduleTick(ctx context.Context, now time.Time) {
 }
 
 type owedGroup struct {
-	org     *store.Org
+	org *store.Org
+	// policy is the organization's. Each server's own is made from it.
 	policy  backupPolicy
 	servers []*avsysv1.MinecraftServer
 }
@@ -293,13 +319,15 @@ func (s *Server) owedServers(ctx context.Context, now time.Time) []owedGroup {
 			continue
 		}
 		policy, err := s.policyOf(ctx, org)
-		if err != nil || !policy.Enabled {
+		if err != nil {
 			continue
 		}
-		due := policy.lastDue(now)
 		group := owedGroup{org: org, policy: policy}
 		for _, mc := range byNamespace[ns] {
-			if owed(mc, due) && !s.schedule.failedRecently(ns+"/"+mc.Name, now) {
+			// A server can be on while its organization is off, at a time of
+			// its own, or off while the rest are on.
+			own := policyFor(policy, &mc.Spec)
+			if own.Enabled && owed(mc, own.lastDue(now)) && !s.schedule.failedRecently(ns+"/"+mc.Name, now) {
 				group.servers = append(group.servers, mc)
 			}
 		}
@@ -326,7 +354,9 @@ type scheduleResult struct {
 }
 
 // runScheduled gives each of the servers its scheduled snapshot, one after
-// another, and then lets go of the ones the policy no longer keeps.
+// another, and then lets go of the ones no longer kept. policy is the
+// organization's; a server that keeps its own for longer or shorter has
+// that applied to it.
 func (s *Server) runScheduled(ctx context.Context, org *store.Org, policy backupPolicy, servers []*avsysv1.MinecraftServer) []scheduleResult {
 	results := make([]scheduleResult, 0, len(servers))
 	removed := 0
@@ -334,7 +364,7 @@ func (s *Server) runScheduled(ctx context.Context, org *store.Org, policy backup
 		if ctx.Err() != nil {
 			break
 		}
-		res := s.scheduledSnapshot(ctx, org, mc, policy.Keep)
+		res := s.scheduledSnapshot(ctx, org, mc, policy)
 		removed += res.Removed
 		results = append(results, res)
 	}
@@ -358,13 +388,19 @@ func (s *Server) runScheduled(ctx context.Context, org *store.Org, policy backup
 	return results
 }
 
-func (s *Server) scheduledSnapshot(ctx context.Context, org *store.Org, mc *avsysv1.MinecraftServer, keep backup.Keep) scheduleResult {
+func (s *Server) scheduledSnapshot(ctx context.Context, org *store.Org, mc *avsysv1.MinecraftServer, policy backupPolicy) scheduleResult {
 	res := scheduleResult{Server: mc.Name, Outcome: "skipped"}
 	// As it is now: the list this came from may be a while old by the time
 	// its turn comes.
 	mc, err := s.fresh(ctx, mc)
 	if err != nil {
 		res.Reason = "The server is gone."
+		return res
+	}
+	// Also when the run was asked for by hand: that is for the servers that
+	// have scheduled snapshots, early, and this one was taken out of them.
+	if switchedOff(&mc.Spec) {
+		res.Reason = "Scheduled snapshots are off for this server."
 		return res
 	}
 	if err := unfinished(mc); err != nil {
@@ -399,7 +435,7 @@ func (s *Server) scheduledSnapshot(ctx context.Context, org *store.Org, mc *avsy
 	}
 	// Retention is applied whenever the server's run completes, also when it
 	// took nothing new: the policy may have been tightened since.
-	removed, err := s.Backups.Forget(context.WithoutCancel(ctx), org.Slug, mc.Name, keep)
+	removed, err := s.Backups.Forget(context.WithoutCancel(ctx), org.Slug, mc.Name, policyFor(policy, &mc.Spec).Keep)
 	if err != nil {
 		s.Log.Error("could not apply the retention policy", "org", org.Slug, "server", mc.Name, "error", err)
 	}
@@ -409,7 +445,8 @@ func (s *Server) scheduledSnapshot(ctx context.Context, org *store.Org, mc *avsy
 
 // runBackupPolicy gives every server in the organization its scheduled
 // snapshot now, whether or not one is due and whether or not the daily
-// snapshots are switched on. It answers at once; with ?wait=true it answers
+// snapshots are switched on. A server that has itself been taken out of
+// them is passed over. It answers at once; with ?wait=true it answers
 // when the run is over, with what it did.
 func (s *Server) runBackupPolicy(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleAdmin)

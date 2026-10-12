@@ -55,6 +55,51 @@ spec:
             type: object
           spec:
             properties:
+              backups:
+                description: Backups is the server's own schedule for snapshots, where
+                  it has one.
+                properties:
+                  enabled:
+                    description: Enabled says whether the server gets scheduled snapshots
+                      at all.
+                    type: boolean
+                  keep:
+                    description: Keep is how many of its scheduled snapshots are kept.
+                    properties:
+                      daily:
+                        format: int32
+                        maximum: 90
+                        minimum: 1
+                        type: integer
+                      monthly:
+                        format: int32
+                        maximum: 120
+                        minimum: 0
+                        type: integer
+                      weekly:
+                        format: int32
+                        maximum: 104
+                        minimum: 0
+                        type: integer
+                      yearly:
+                        format: int32
+                        maximum: 20
+                        minimum: 0
+                        type: integer
+                    required:
+                    - daily
+                    - monthly
+                    - weekly
+                    - yearly
+                    type: object
+                  minute:
+                    description: Minute of the day, in UTC, at which its snapshot
+                      is taken.
+                    format: int32
+                    maximum: 1439
+                    minimum: 0
+                    type: integer
+                type: object
               displayName:
                 type: string
               env:
