@@ -44,8 +44,11 @@ func (s *Server) AuthorizeWorkspace(ctx context.Context, u *store.User, orgSlug,
 	// No new shells or file transfers while a restore rewrites the files.
 	if op := s.ops.current(namespace, server); op != nil && rewrites(op.Kind) {
 		doing := "restored"
-		if op.Kind == kindCreate {
+		switch op.Kind {
+		case kindCreate:
 			doing = "made from a snapshot"
+		case kindDeleteServer:
+			doing = "deleted"
 		}
 		return "", errors.New(server + "." + orgSlug + " is being " + doing + ". Try again when that has finished.")
 	}

@@ -336,3 +336,33 @@ func TestDeletingWithoutAFinalSnapshot(t *testing.T) {
 		t.Error("a claim was left on a deleted server")
 	}
 }
+
+// From its last snapshot until it is gone, nothing else changes a server
+// that is being deleted: a change made after the copy would be lost with it.
+func TestAServerBeingDeletedIsHeld(t *testing.T) {
+	p := newPanel(t)
+	const world = "/orgs/alpha/servers/world"
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindDeleteServer, ""); !ok {
+		t.Fatal("could not claim the server")
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{"POST", world + "/start", ""},
+		{"PATCH", world, `{"spec":{"displayName":"World"}}`},
+		{"PUT", world + "/files/content?path=/a.txt", "x"},
+		{"DELETE", world + "/files?path=/a.txt", ""},
+		{"POST", world + "/files/rename?path=/a&to=/b", ""},
+		{"DELETE", world + "?snapshot=false", ""},
+	} {
+		if got, code := p.do("owner", c.method, c.path, c.body); got != 409 || code != "deleting" {
+			t.Errorf("%s %s while the server is being deleted: got %d %q, want 409 deleting", c.method, c.path, got, code)
+		}
+	}
+	if _, err := p.srv.AuthorizeWorkspace(context.Background(), p.users["operator"], "alpha", "world"); err == nil || !strings.Contains(err.Error(), "being deleted") {
+		t.Errorf("a shell was let into a server that is being deleted: %v", err)
+	}
+	// A second delete does not start a second one.
+	p.srv.Backups.Restic = "true"
+	if got, code := p.do("owner", "DELETE", world, ""); got != 409 || code != "deleting" {
+		t.Errorf("deleting a server that is being deleted: got %d %q, want 409 deleting", got, code)
+	}
+}

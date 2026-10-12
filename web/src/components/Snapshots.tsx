@@ -20,6 +20,7 @@ const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   snapshot: ["Taking a snapshot of", "Snapshot"],
   restore: ["Restoring", "Restore"],
   create: ["Copying a snapshot into", "Creation"],
+  "delete-server": ["Deleting", "Deletion"],
 };
 
 /** A snapshot or restore that is running, with how far along it is. */

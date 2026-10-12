@@ -351,75 +351,96 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 			}
 		}
 	}
-	if op := s.ops.current(a.Namespace, mc.Name); op != nil && rewrites(op.Kind) {
-		return heldBy(op.Kind)
-	}
-	// What is deleted can be brought back from its snapshots, so one is
-	// taken of the server as it is now, unless the caller says not to. A
-	// server that never got its files, or whose files a restore left in
-	// between two states, has no state worth keeping.
-	detail := ""
-	if r.URL.Query().Get("snapshot") != "false" && s.Backups.Available() && unfinished(mc) == nil {
-		snap, err := s.finalSnapshot(r.Context(), a, mc, u)
+	// Without a last snapshot this is a plain delete.
+	if r.URL.Query().Get("snapshot") == "false" || !s.Backups.Available() {
+		release, err := s.changing(mc, false)
 		if err != nil {
 			return err
 		}
+		defer release()
+		if err := s.Client.Delete(r.Context(), mc); err != nil {
+			return err
+		}
+		s.audit(r.Context(), u, a.Org, "server.delete", mc.Name, "")
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+
+	// What is deleted can be brought back from its snapshots, so one is
+	// taken of the server as it is now. The server is claimed for the whole
+	// of it, from before the snapshot until the delete has been issued:
+	// nothing else may change its files in between, because what changed
+	// after the copy would be gone for good.
+	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindDeleteServer, "")
+	if !ok {
+		if running := s.ops.current(a.Namespace, mc.Name); running != nil {
+			return heldBy(running.Kind)
+		}
+		return errBusy
+	}
+	// The caller going away does not leave this half done.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), operationTimeout)
+	defer cancel()
+	fail := func(err error) error {
+		// Says so on the server, and gives the claim up.
+		s.finishOperation(ctx, a.Namespace, mc.Name, kindDeleteServer, nil, nil, err)
+		return err
+	}
+	// As it is now that the claim is held: a restore may have finished since
+	// the request first looked.
+	if mc, err = s.fresh(ctx, mc); err != nil {
+		s.ops.end(a.Namespace, mc.Name)
+		return err
+	}
+	detail := ""
+	// A server that never got its files, or whose files a restore left in
+	// between two states, has no state worth keeping.
+	if unfinished(mc) == nil {
+		snap, stopped, err := s.finalSnapshot(ctx, a.Org.Slug, mc, op, u.Username)
+		if err != nil {
+			state := "It was left as it was."
+			if stopped {
+				state = "It is stopped now."
+			}
+			return fail(&Error{Status: http.StatusBadGateway, Code: "snapshot_failed",
+				Message: fmt.Sprintf("%s was not deleted, because a final snapshot of it could not be taken: %s. %s To delete it without one, say so when deleting.", mc.Name, operationFailed(err).Error(), state)})
+		}
 		if snap != nil {
 			detail = "final snapshot " + snap.ID
+			s.audit(ctx, u, a.Org, "snapshot.create", mc.Name, snap.ID)
 		}
 	}
-	release, err := s.changing(mc, false)
-	if err != nil {
-		return err
+	if err := s.Client.Delete(ctx, mc); err != nil {
+		return fail(err)
 	}
-	defer release()
-	if err := s.Client.Delete(context.WithoutCancel(r.Context()), mc); err != nil {
-		return err
-	}
-	s.audit(r.Context(), u, a.Org, "server.delete", mc.Name, detail)
+	s.ops.end(a.Namespace, mc.Name)
+	s.Events.Publish(Event{Type: "operation.done", Namespace: a.Namespace, Data: operationDone{Kind: "delete", Org: a.Org.Slug, Server: mc.Name}})
+	s.audit(ctx, u, a.Org, "server.delete", mc.Name, detail)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
-// finalSnapshot stops a server and takes a snapshot of it, before it is
-// deleted. It returns nil with no error when the server's newest snapshot
-// already has everything. If it fails the server is not deleted: it is left
-// stopped, and the caller is told how to delete it regardless.
-func (s *Server) finalSnapshot(ctx context.Context, a *access, mc *avsysv1.MinecraftServer, u *store.User) (*backup.Snapshot, error) {
-	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot, "")
-	if !ok {
-		return nil, errBusy
-	}
-	// The caller going away does not leave this half done.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), operationTimeout)
-	defer cancel()
+// finalSnapshot stops a server and takes a snapshot of it, for the caller
+// that is about to delete it and holds the claim on it. The snapshot is nil,
+// with no error, when the server's newest one already has everything.
+// stopped says whether the server got as far as being stopped.
+func (s *Server) finalSnapshot(ctx context.Context, org string, mc *avsysv1.MinecraftServer, op *operation, by string) (snap *backup.Snapshot, stopped bool, err error) {
 	key := client.ObjectKeyFromObject(mc)
-
-	snap, err := func() (*backup.Snapshot, error) {
-		// Stopped first, whatever it was doing: a game that is shutting down
-		// writes its world out, and one that is not running cannot change
-		// the files while they are copied.
-		s.setOperation(a.Namespace, op, "Stopping the server", 0)
-		if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateStopped }); err != nil {
-			return nil, err
-		}
-		if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
-			return nil, fmt.Errorf("the server did not stop: %w", err)
-		}
-		return s.takeSnapshot(ctx, a.Org.Slug, mc, op, backup.TriggerFinal, u.Username)
-	}()
+	// Stopped first, whatever it was doing: a game that is shutting down
+	// writes its world out, and one that is not running cannot change the
+	// files while they are copied.
+	s.setOperation(mc.Namespace, op, "Stopping the server", 0)
+	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateStopped }); err != nil {
+		return nil, false, err
+	}
+	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
+		return nil, false, fmt.Errorf("the server did not stop: %w", err)
+	}
+	snap, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerFinal, by)
 	if errors.Is(err, backup.ErrUnchanged) {
-		snap, err = nil, nil
+		return nil, true, nil
 	}
-	s.finishOperation(ctx, a.Namespace, mc.Name, kindSnapshot, snap, snap, err)
-	if err != nil {
-		return nil, &Error{Status: http.StatusBadGateway, Code: "snapshot_failed",
-			Message: fmt.Sprintf("%s was not deleted, because a final snapshot of it could not be taken: %s. It is stopped now. To delete it without one, say so when deleting.", mc.Name, operationFailed(err).Error())}
-	}
-	if snap != nil {
-		s.audit(ctx, u, a.Org, "snapshot.create", mc.Name, snap.ID)
-	}
-	return snap, nil
+	return snap, true, err
 }
 
 func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.User) error {

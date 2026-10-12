@@ -195,7 +195,7 @@ export interface SnapshotDetail extends Snapshot {
 
 /** A snapshot or restore under way on a server, or a new server receiving its files. */
 export interface Operation {
-  kind: "snapshot" | "restore" | "create";
+  kind: "snapshot" | "restore" | "create" | "delete-server";
   org: string;
   server: string;
   stage: string;
@@ -204,7 +204,7 @@ export interface Operation {
 }
 
 export interface OperationDone {
-  kind: "snapshot" | "restore" | "create" | "delete";
+  kind: "snapshot" | "restore" | "create" | "delete" | "delete-server";
   org: string;
   server: string;
   error?: string;
