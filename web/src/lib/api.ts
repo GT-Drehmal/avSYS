@@ -185,9 +185,14 @@ export interface Snapshot {
   files: number;
 }
 
-/** A snapshot or restore under way on a server. */
+/** A snapshot with the settings its server had when it was taken. */
+export interface SnapshotDetail extends Snapshot {
+  spec: ServerSpec;
+}
+
+/** A snapshot or restore under way on a server, or a new server receiving its files. */
 export interface Operation {
-  kind: "snapshot" | "restore";
+  kind: "snapshot" | "restore" | "create";
   org: string;
   server: string;
   stage: string;
@@ -196,10 +201,12 @@ export interface Operation {
 }
 
 export interface OperationDone {
-  kind: "snapshot" | "restore" | "delete";
+  kind: "snapshot" | "restore" | "create" | "delete";
   org: string;
   server: string;
   error?: string;
+  /** The operation was stopped on purpose; its error is not news. */
+  calledOff?: boolean;
   snapshot?: Snapshot;
 }
 

@@ -41,8 +41,10 @@ cleanup() {
     return
   fi
   step "cleaning up"
-  call -X DELETE "$SRV" >/dev/null 2>&1 || true
-  # The organization can only go once its server is gone.
+  for name in $(call "$API/orgs/$ORG/servers" | field "' '.join(s['name'] for s in d)" 2>/dev/null); do
+    call -X DELETE "$API/orgs/$ORG/servers/$name" >/dev/null 2>&1 || true
+  done
+  # The organization can only go once its servers are gone.
   for _ in $(seq 1 30); do
     [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)' 2>/dev/null)" = 0 ] && break
     sleep 2
@@ -57,7 +59,7 @@ trap cleanup EXIT
 # The last lines of the game's log, for explaining a failure. The stream sends
 # a reset each time it reattaches, followed by the log so far.
 game_log() {
-  call -N --max-time 5 "$SRV/console" 2>/dev/null | python3 -c '
+  call -N --max-time 5 "${1:-$SRV}/console" 2>/dev/null | python3 -c '
 import json, sys
 lines = []
 for raw in sys.stdin:
@@ -74,20 +76,22 @@ for raw in sys.stdin:
 print("\n".join("  | " + line for line in lines[-40:]))' || true
 }
 
+# wait_phase PHASE [SERVER]: the probe unless another server is named.
 wait_phase() {
+  target=${2:-$SRV}
   for _ in $(seq 1 120); do
-    phase=$(call "$SRV" | field "d['status'].get('phase')")
+    phase=$(call "$target" | field "d['status'].get('phase')")
     [ "$phase" = "$1" ] && return 0
     if [ "$phase" = Error ]; then
-      message=$(call "$SRV" | field "d['status'].get('message')")
+      message=$(call "$target" | field "d['status'].get('message')")
       printf 'server went to Error: %s\nThe end of its log:\n' "$message" >&2
-      game_log >&2
+      game_log "$target" >&2
       fail "server went to Error: $message"
     fi
     sleep 3
   done
   printf 'The end of its log:\n' >&2
-  game_log >&2
+  game_log "$target" >&2
   fail "timed out waiting for $1 (last phase: $phase)"
 }
 
@@ -155,7 +159,30 @@ call -X POST "$SRV/stop" >/dev/null
 wait_phase Stopped
 expect "files reachable while stopped" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "router says offline" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "Offline"
-expect "a stopped server is snapshotted" "$(call -X POST "$SRV/snapshots?wait=true" | field "d['trigger']")" manual
+stopped=$(call -X POST "$SRV/snapshots?wait=true")
+LAST=$(echo "$stopped" | field "d['id']") || fail "no snapshot was taken of the stopped server: $stopped"
+expect "a stopped server is snapshotted" "$(echo "$stopped" | field "d['trigger']")" manual
+
+step "a new server from a snapshot"
+COPY=$API/orgs/$ORG/servers/copy
+expect "a snapshot says what its server was" "$(call "$API/orgs/$ORG/snapshots/$LAST" | field "(d['server'], d['spec']['version'], d['spec']['loader'])")" "('probe', '1.21.4', 'paper')"
+expect "its software is not chosen again" "$(call -o /dev/null -w '%{http_code}' -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"version\":\"1.20.1\"}}" "$API/orgs/$ORG/servers")" 400
+# Answers once the files are in. It is then started, being asked for nothing else.
+copied=$(call -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"expose\":{\"hostname\":\"copy.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
+case "$copied" in *'"spec"'*) ;; *) fail "no server was made from the snapshot: $copied" ;; esac
+expect "it has the snapshot's software and settings" "$(echo "$copied" | field "(d['spec']['version'], d['spec']['loader'], sorted(m['project'] for m in d['spec']['mods']), d['spec']['properties']['motd'], d['spec']['resources']['memory'])")" "('1.21.4', 'paper', ['luckperms', 'worldedit'], 'e2e probe', '2Gi')"
+expect "and an address of its own" "$(echo "$copied" | field "(d['spec']['expose']['hostname'], d['spec']['state'])")" "('copy.$ORG.test', 'Running')"
+expect "it has the snapshot's files" "$(call "$COPY/files/content?path=/e2e.txt")" "written by e2e"
+wait_phase Running "$COPY"
+expect "and runs on them" "$(call -d '{"command":"plugins"}' "$COPY/console" | field "d['output']")" WorldEdit
+expect "players reach it by its own name" "$(python3 "$HERE/mcping.py" "copy.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
+expect "the server it was copied from is as it was" "$(call "$SRV" | field "(d['status']['phase'], d['spec']['expose']['hostname'])")" "('Stopped', '$HOST')"
+expect "it has no history of its own yet" "$(call "$COPY/snapshots" | field "len(d['snapshots'])")" 0
+call -X DELETE "$COPY" >/dev/null
+# One that can never get its files, being bound for a node that does not exist.
+call -d "{\"name\":\"stuck\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"nodeSelector\":{\"avsys.dev/no-such-node\":\"true\"}}}" "$API/orgs/$ORG/servers" >/dev/null
+expect "a server still waiting for its files is not started" "$(call -X POST "$API/orgs/$ORG/servers/stuck/start" | field "d['code']")" creating
+expect "deleting it calls the copy off" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/servers/stuck")" 204
 
 step "snapshots outlive the server"
 call -X DELETE "$SRV" >/dev/null
@@ -168,3 +195,18 @@ expect "a deleted server's snapshots are still listed" "$(echo "$history" | fiel
 expect "an organization with snapshots is not deleted by accident" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG")" 409
 expect "a snapshot can be removed on purpose" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$SNAP")" 204
 expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])")" 2
+
+step "a deleted server comes back"
+back=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
+case "$back" in *'"spec"'*) ;; *) fail "the deleted server was not brought back: $back" ;; esac
+expect "under its own name, left stopped as asked" "$(echo "$back" | field "(d['name'], d['spec']['state'], d['spec']['expose']['hostname'])")" "('probe', 'Stopped', '$HOST')"
+expect "with its files" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
+expect "and its history" "$(call "$SRV/snapshots" | field "len(d['snapshots'])")" 2
+# And again with no pause, while what is left of the one just deleted is still
+# being cleared away. Its files must not land in a volume that is on its way out.
+call -X DELETE "$SRV" >/dev/null
+again=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
+case "$again" in *'"spec"'*) ;; *) fail "the server was not brought back straight after being deleted: $again" ;; esac
+wait_phase Running
+expect "brought back straight after a delete, it keeps its files once it runs" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
+expect "and its plugins" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit

@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -222,6 +224,18 @@ func TestPhaseOf(t *testing.T) {
 		mc.Annotations = map[string]string{avsysv1.AnnotationRestoring: "aaaa1111"}
 	})
 
+	// A server made from a snapshot is created stopped, and says why.
+	creating := server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.State = avsysv1.StateStopped
+		mc.Annotations = map[string]string{avsysv1.AnnotationRestoring: "aaaa1111", avsysv1.AnnotationCreating: "aaaa1111"}
+	})
+	if phase, message := phaseOf(creating, workspaceOnly); phase != avsysv1.PhaseStopped || !strings.Contains(message, "snapshot") {
+		t.Errorf("a server being made from a snapshot: %s %q, want Stopped and the reason", phase, message)
+	}
+	if _, message := phaseOf(stopped, workspaceOnly); message != "" {
+		t.Errorf("an ordinary stopped server has a message: %q", message)
+	}
+
 	cases := []struct {
 		name string
 		mc   *avsysv1.MinecraftServer
@@ -272,4 +286,24 @@ func containerNames(pod *corev1.Pod) []string {
 		names = append(names, c.Name)
 	}
 	return names
+}
+
+// What is left of a deleted server is told from what belongs to the server
+// of the same name that replaced it by whose it is, not by what it is called.
+func TestLeftOf(t *testing.T) {
+	mc := server(func(mc *avsysv1.MinecraftServer) { mc.UID = "new" })
+	owned := func(uid string) *corev1.PersistentVolumeClaim {
+		yes := true
+		return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{OwnerReferences: []metav1.OwnerReference{{Kind: "MinecraftServer", Name: mc.Name, UID: types.UID(uid), Controller: &yes}}}}
+	}
+	if !leftOf(owned("old"), mc) {
+		t.Error("a volume of a deleted server of the same name was taken for this server's")
+	}
+	if leftOf(owned("new"), mc) {
+		t.Error("the server's own volume was taken for a leftover")
+	}
+	// A volume made by hand for the server to use belongs to nobody yet.
+	if leftOf(&corev1.PersistentVolumeClaim{}, mc) {
+		t.Error("a volume with no owner was taken for a leftover")
+	}
 }

@@ -245,6 +245,41 @@ func TestSnapshotAndRestoreThroughAWorkspace(t *testing.T) {
 	}
 }
 
+// A snapshot of one server can be put into another, which is how a deleted
+// server is brought back and how a server is copied. The other server ends up
+// with the snapshot's files and none of the first one's later changes, and
+// the first is not touched.
+func TestRestoreIntoAnotherServer(t *testing.T) {
+	first, m := workspace(t)
+	second, _ := workspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	sh(t, first, `mkdir -p /data/world /data/plugins /data/.workspace &&
+		echo one > /data/world/level.dat && echo jar > /data/plugins/a.jar && chmod 600 /data/plugins/a.jar &&
+		echo first > /data/.workspace/.bash_history`)
+	snap, err := m.Snapshot(ctx, "alpha", first, Meta{Server: "probe", Trigger: TriggerManual, Record: map[string]any{"name": "probe"}}, nil)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	sh(t, first, `echo two > /data/world/level.dat`)
+
+	// The new server's workspace has made itself at home before any files arrive.
+	sh(t, second, `mkdir -p /data/.workspace && echo second > /data/.workspace/.bash_history`)
+	var reported int
+	if err := m.Restore(ctx, "alpha", second, snap.ID, func(Progress) { reported++ }); err != nil {
+		t.Fatalf("restore into another server: %v", err)
+	}
+	got := sh(t, second, `cat /data/world/level.dat /data/plugins/a.jar; stat -c %a /data/plugins/a.jar;
+		cat /data/.workspace/.bash_history; test -s /data/.avsys/snapshot.json && echo record`)
+	if want := "one\njar\n600\nsecond\nrecord"; got != want {
+		t.Errorf("the other server after the restore:\n%s\nwant:\n%s", got, want)
+	}
+	if still := sh(t, first, `cat /data/world/level.dat`); still != "two" {
+		t.Errorf("the server the snapshot was taken of changed: %q", still)
+	}
+}
+
 // What a workspace is given can be added to and read, never deleted from,
 // even by someone who has the repository password.
 func TestAWorkspaceCannotDeleteSnapshots(t *testing.T) {

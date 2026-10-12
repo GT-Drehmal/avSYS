@@ -106,7 +106,11 @@ export function useLiveServers() {
       const done: OperationDone = JSON.parse(e.data);
       // Both lists are refetched: the snapshot is new to them, or gone.
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
-      if (done.error) toast.error(`${done.kind === "restore" ? "Restore" : "Snapshot"} of ${done.server} failed: ${done.error}`);
+      if (done.calledOff) return;
+      if (done.kind === "create") {
+        if (done.error) toast.error(`${done.server}: ${done.error}`);
+        else toast.info(`${done.server} is ready`);
+      } else if (done.error) toast.error(`${done.kind === "restore" ? "Restore" : "Snapshot"} of ${done.server} failed: ${done.error}`);
       else if (done.kind === "restore") toast.info(`${done.server} was restored`);
       else if (done.kind === "snapshot") toast.info(`Snapshot of ${done.server} taken`);
     });

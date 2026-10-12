@@ -211,15 +211,34 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
-	var in struct {
+	var raw struct {
+		Name string
+		Spec json.RawMessage
+		// FromSnapshot makes the server out of a snapshot: its files, and the
+		// software and game settings that go with them.
+		FromSnapshot string `json:"fromSnapshot"`
+	}
+	if err := decode(r, &raw); err != nil {
+		return err
+	}
+	in := struct {
 		Name string
 		Spec avsysv1.MinecraftServerSpec
-	}
-	if err := decode(r, &in); err != nil {
-		return err
+	}{Name: raw.Name}
+	if len(raw.Spec) > 0 {
+		if err := json.Unmarshal(raw.Spec, &in.Spec); err != nil {
+			return errBadRequest("Invalid spec: %v", err)
+		}
 	}
 	if !serverNamePattern.MatchString(in.Name) {
 		return errBadRequest("Server names are up to 40 characters: lowercase letters, digits and dashes, starting with a letter.")
+	}
+	if raw.FromSnapshot != "" {
+		// Which settings the request names at all, as opposed to leaving
+		// out: "sleep off" and no word about sleep decode to the same thing.
+		given := map[string]json.RawMessage{}
+		_ = json.Unmarshal(raw.Spec, &given)
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot)
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// "Latest" is settled once, here. A server that kept following it would
@@ -288,8 +307,8 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	// Setting the state to Running here is starting the server by another
 	// route, and is held to the same rules as the start action.
 	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
-		if restoreUnfinished(mc) {
-			return errRestoreIncomplete
+		if err := unfinished(mc); err != nil {
+			return err
 		}
 		if s.ops.current(a.Namespace, mc.Name) != nil {
 			return errSnapshotting
@@ -318,6 +337,18 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
+	// A server that is still being made from a snapshot has nothing in it to
+	// lose, so deleting it calls that off instead of waiting for it. A
+	// restore is different: it is let finish.
+	if s.ops.callOff(a.Namespace, mc.Name, kindCreate) {
+		for wait := 0; s.ops.current(a.Namespace, mc.Name) != nil && wait < 300; wait++ {
+			select {
+			case <-r.Context().Done():
+				return r.Context().Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
 	release, err := s.changing(mc, false)
 	if err != nil {
 		return err
@@ -345,8 +376,10 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	defer release()
-	if starts && restoreUnfinished(mc) {
-		return errRestoreIncomplete
+	if starts {
+		if err := unfinished(mc); err != nil {
+			return err
+		}
 	}
 	orig := mc.DeepCopy()
 	switch action {
