@@ -171,7 +171,7 @@ export function Settings() {
         <Field label="Message of the day">{(id) => <Input id={id} {...text("motd")} placeholder="A Minecraft Server" />}</Field>
       </Section>
 
-      <Section title="Software" description={server.spec.modpack ? "The modpack decides the game version and mod loader." : "Changing the loader or going back a version can break an existing world. Take a snapshot first."}>
+      <Section title="Software" description={server.spec.modpack ? "The modpack decides the game version and mod loader." : "Changing the loader or going back a version can break an existing world. Back it up first."}>
         {server.spec.modpack ? (
           <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change its version under Mods.</Notice>
         ) : (

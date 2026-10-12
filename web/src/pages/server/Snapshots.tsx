@@ -66,7 +66,7 @@ export function Snapshots() {
         <div className="flex flex-col gap-4">
           <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-relaxed text-muted">
             <li>The server is stopped while its files are put back{server.spec.state === "Stopped" ? "" : ", then started again"}.</li>
-            <li>Its world, configuration, game version and mods return to how they were. Anything added since is removed.</li>
+            <li>Its world, files, game version and mods return to how they were. Anything added since is removed.</li>
             <li>What is there now is saved as a snapshot first, so a restore can be undone.</li>
           </ul>
           <div className="flex justify-end gap-2">

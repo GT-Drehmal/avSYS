@@ -83,7 +83,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: Rows
             </div>
             <div className="text-right max-sm:hidden">
               <p className="font-mono text-[13px] tabular-nums">{bytes(s.size)}</p>
-              <p className="text-xs text-faint" title="Extra storage this snapshot uses">
+              <p className="text-xs text-faint" title="What this snapshot added to storage when it was taken">
                 +{bytes(s.added)} stored
               </p>
             </div>
