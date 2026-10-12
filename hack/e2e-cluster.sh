@@ -31,6 +31,16 @@ finish() {
     step "what the cluster looked like"
     k get pods -A -o wide 2>&1 | tail -20 || true
     k -n avsys logs deploy/avsys --tail=60 2>&1 || true
+    # The test server is left in place on failure so that its own output,
+    # including that of a game container that has since restarted, is here.
+    for ns in $(k get namespaces -o name 2>/dev/null | sed -n 's|^namespace/\(mc-.*\)|\1|p'); do
+      for pod in $(k -n "$ns" get pods -o name 2>/dev/null); do
+        step "$ns $pod"
+        k -n "$ns" get "$pod" -o jsonpath='{range .status.containerStatuses[*]}{.name}{": restarts="}{.restartCount}{" state="}{.state}{" last="}{.lastState}{"\n"}{end}' 2>&1 || true
+        k -n "$ns" logs "$pod" -c minecraft --previous --tail=60 2>/dev/null | sed 's/^/previous| /' || true
+        k -n "$ns" logs "$pod" -c minecraft --tail=60 2>&1 | sed 's/^/current | /' || true
+      done
+    done
     k get events -A --sort-by=.lastTimestamp 2>&1 | tail -25 || true
   fi
   if [ -n "${KEEP:-}" ]; then
@@ -93,4 +103,4 @@ TOKEN=$(curl -fsS -b "$JAR" -H 'X-Avsys: 1' -d '{"name":"e2e"}' "$URL/api/v1/me/
 rm -f "$JAR"
 echo "ok: first account is the administrator, and signups then close"
 
-AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT ./hack/e2e.sh
+AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 ./hack/e2e.sh
