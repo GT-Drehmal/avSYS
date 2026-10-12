@@ -33,6 +33,9 @@ cleanup() {
   status=$?
   if [ $status -ne 0 ] && [ -n "${AVSYS_E2E_KEEP_ON_FAILURE:-}" ]; then
     # Whoever started this wants to look at what is left, and will remove it.
+    # The key goes regardless: its private half is deleted with $WORK, so it
+    # would only be clutter on the administrator's account.
+    [ -n "${KEY_ID:-}" ] && call -X DELETE "$API/me/ssh-keys/$KEY_ID" >/dev/null 2>&1 || true
     rm -rf "$WORK"
     echo "FAILED (exit $status); $ORG left in place"
     return
