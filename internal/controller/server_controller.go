@@ -301,7 +301,11 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 		case "ContainerCreating", "PodInitializing":
 			return avsysv1.PhaseStarting, ""
 		case "CrashLoopBackOff":
-			return avsysv1.PhaseError, fmt.Sprintf("The server keeps crashing (%d restarts). Check the console for the cause.", cs.RestartCount)
+			restarts := "1 restart"
+			if cs.RestartCount != 1 {
+				restarts = fmt.Sprintf("%d restarts", cs.RestartCount)
+			}
+			return avsysv1.PhaseError, fmt.Sprintf("The server keeps crashing (%s). Check the console for the cause.", restarts)
 		default:
 			return avsysv1.PhaseError, fmt.Sprintf("%s: %s", w.Reason, w.Message)
 		}

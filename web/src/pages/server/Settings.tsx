@@ -126,10 +126,12 @@ export function Settings() {
   const { server } = useServerContext();
   const navigate = useNavigate();
   const update = useUpdateServer(server.org, server.name);
-  const versions = useGameVersions();
   const specKey = JSON.stringify(server.spec);
   const saved = useMemo(() => toDraft(server.spec), [specKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const [draft, setDraft] = useState(saved);
+  const versions = useGameVersions(draft.loader);
+  // Known to be missing, as opposed to the list not having loaded.
+  const noBuild = draft.version !== "LATEST" && !!versions.data && !versions.isPlaceholderData && !versions.data.all.has(draft.version);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const [deleting, setDeleting] = useState(false);
 
@@ -187,12 +189,17 @@ export function Settings() {
                 </Select>
               )}
             </Field>
-            <Field label="Game version">
+            <Field
+              label="Game version"
+              hint={noBuild ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so the server cannot start. Its newest is ${versions.data?.latest}.` : undefined}
+            >
               {(id) => (
                 <Select id={id} {...text("version")}>
                   <option value="LATEST">Latest release{versions.data ? ` (${versions.data.latest})` : ""}</option>
-                  {/* Keeps a version selectable even if Mojang's list could not be loaded. */}
-                  {draft.version !== "LATEST" && !versions.data?.releases.includes(draft.version) && <option value={draft.version}>{draft.version}</option>}
+                  {/* Keeps the version it has selectable when the list could not be loaded, or does not have it. */}
+                  {draft.version !== "LATEST" && !versions.data?.releases.includes(draft.version) && (
+                    <option value={draft.version}>{noBuild ? `${draft.version} (no build)` : draft.version}</option>
+                  )}
                   {versions.data?.releases.map((v) => (
                     <option key={v} value={v}>
                       {v}

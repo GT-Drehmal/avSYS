@@ -449,24 +449,6 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 	return first
 }
 
-// latestRelease is the newest released game version, or "" if Mojang's list
-// cannot be reached.
-func (s *Server) latestRelease(ctx context.Context) string {
-	body, err := s.catalog.get(ctx, "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json", time.Hour)
-	if err != nil {
-		return ""
-	}
-	var manifest struct {
-		Latest struct {
-			Release string `json:"release"`
-		} `json:"latest"`
-	}
-	if json.Unmarshal(body, &manifest) != nil {
-		return ""
-	}
-	return manifest.Latest.Release
-}
-
 var unsafeFilenameChars = regexp.MustCompile(`[^A-Za-z0-9._+()\[\] -]+`)
 
 // contentFilename makes an uploaded file's name safe to store and to list in

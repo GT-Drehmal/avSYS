@@ -83,7 +83,8 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
   };
   const [url, setUrl] = useState("");
   const picked = new Set(mods.filter((m) => m.source === "modrinth").map((m) => m.project));
-  const latest = useGameVersions().data?.latest;
+  // "Latest" is what the server's own software will get, which can be behind the newest there is.
+  const latest = useGameVersions(software.modpack ? null : software.loader).data?.latest;
 
   const tabClass = (active: boolean) => cx("h-7 rounded-sm px-2.5 text-xs font-medium", active ? "bg-hover text-fg" : "text-muted hover:text-fg");
   return (

@@ -41,7 +41,8 @@ Content is resolved when you add it, not when the server starts:
 - The panel reads each file to see which **Java** it was compiled for, and picks the newest release that runs on the Java the game version ships with. A plugin can list a game version as supported and still need a newer Java; such a build downloads fine and then fails to load.
 - If nothing fits, or you pin a newer build yourself, the server's Java is raised to match. The server page shows the Java it runs on.
 - If a project has no build for the server's loader and game version, adding it fails with that message instead of a broken start.
-- "Latest release" is settled to the actual version when a server is created, so a restart never upgrades a world on its own. A modpack's own game version decides its Java.
+- Each loader is asked which **game versions** it has a build for, and only those are offered. A new game version usually reaches Vanilla first and the others days or weeks later. Asking for one a loader does not have yet fails with that message instead of a broken start.
+- "Latest release" is the newest version the chosen loader has a build for. It is settled to the actual version when a server is created, so a restart never upgrades a world on its own. A modpack's own game version decides its Java.
 - Uploaded files are kept on the server's volume under `.avsys/content` and installed like any other entry.
 
 Dependencies are still fetched by the server image at start and are not pinned or checked.
