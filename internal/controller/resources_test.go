@@ -217,6 +217,10 @@ func TestPhaseOf(t *testing.T) {
 	asleep := server(func(mc *avsysv1.MinecraftServer) {
 		mc.Annotations = map[string]string{avsysv1.AnnotationAsleep: "now"}
 	})
+	// Its spec says Running, as it would after a kubectl edit or a GitOps sync.
+	restoring := server(func(mc *avsysv1.MinecraftServer) {
+		mc.Annotations = map[string]string{avsysv1.AnnotationRestoring: "aaaa1111"}
+	})
 
 	cases := []struct {
 		name string
@@ -232,10 +236,40 @@ func TestPhaseOf(t *testing.T) {
 		{"stopped", stopped, workspaceOnly, avsysv1.PhaseStopped},
 		{"stopping", stopped, gamePod(corev1.ContainerStatus{Ready: true}), avsysv1.PhaseStopping},
 		{"asleep", asleep, workspaceOnly, avsysv1.PhaseSleeping},
+		{"wanted running, but a restore has not finished", restoring, workspaceOnly, avsysv1.PhaseStopped},
+		{"a restore begins under a running game", restoring, gamePod(corev1.ContainerStatus{Ready: true}), avsysv1.PhaseStopping},
 	}
 	for _, c := range cases {
 		if got, _ := phaseOf(c.mc, c.pod); got != c.want {
 			t.Errorf("%s: phase = %s, want %s", c.name, got, c.want)
 		}
 	}
+}
+
+// While a restore is rewriting a server's files, or was cut short doing so,
+// no pod is built with the game in it, whatever the spec says. This is the
+// one place every way of starting a server passes through.
+func TestNoGameWhileRestoring(t *testing.T) {
+	mc := server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.State = avsysv1.StateRunning
+		mc.Annotations = map[string]string{avsysv1.AnnotationRestoring: "aaaa1111"}
+	})
+	if wantsMinecraft(mc) {
+		t.Fatal("the game is wanted during a restore")
+	}
+	if pod := buildPod(mc, Config{}); hasContainer(pod, MinecraftContainer) || !hasContainer(pod, WorkspaceContainer) {
+		t.Errorf("pod during a restore has containers %v; want only the workspace", containerNames(pod))
+	}
+	delete(mc.Annotations, avsysv1.AnnotationRestoring)
+	if !wantsMinecraft(mc) {
+		t.Error("the game is still held once the restore has completed")
+	}
+}
+
+func containerNames(pod *corev1.Pod) []string {
+	names := []string{}
+	for _, c := range pod.Spec.Containers {
+		names = append(names, c.Name)
+	}
+	return names
 }

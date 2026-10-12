@@ -41,6 +41,10 @@ func (s *Server) AuthorizeWorkspace(ctx context.Context, u *store.User, orgSlug,
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: server}, &avsysv1.MinecraftServer{}); err != nil {
 		return "", denied
 	}
+	// No new shells or file transfers while a restore rewrites the files.
+	if op := s.ops.current(namespace, server); op != nil && op.Kind == kindRestore {
+		return "", errors.New(server + "." + orgSlug + " is being restored. Try again when that has finished.")
+	}
 	return namespace, nil
 }
 
@@ -51,6 +55,9 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request, u *store.User)
 	a, mc, err := s.server(r, u, store.RoleOperator)
 	if err != nil {
 		return err
+	}
+	if op := s.ops.current(a.Namespace, mc.Name); op != nil && op.Kind == kindRestore {
+		return errRestoring
 	}
 	// Accept checks that the Origin header matches the Host, which is what
 	// stops other sites from opening this socket with the user's cookie.

@@ -58,6 +58,12 @@ func wantsMinecraft(mc *avsysv1.MinecraftServer) bool {
 	if mc.Spec.State == avsysv1.StateStopped {
 		return false
 	}
+	// A restore is rewriting the files, or was cut short while doing so.
+	// Whatever the spec says, and whoever changed it, the game does not run
+	// on them until a restore has completed.
+	if _, restoring := mc.Annotations[avsysv1.AnnotationRestoring]; restoring {
+		return false
+	}
 	_, asleep := mc.Annotations[avsysv1.AnnotationAsleep]
 	return !asleep
 }

@@ -221,6 +221,22 @@ func restoreUnfinished(mc *avsysv1.MinecraftServer) bool {
 	return marked
 }
 
+// settled reports whether a server is in a state its files can be copied in:
+// running, where the game can be told to hold its saves, or with no game
+// running at all. In between, a game is starting or shutting down and
+// writing as it pleases.
+func settled(mc *avsysv1.MinecraftServer) error {
+	switch mc.Status.Phase {
+	case avsysv1.PhaseRunning, avsysv1.PhaseStopped, avsysv1.PhaseSleeping:
+		return nil
+	}
+	state := strings.ToLower(string(mc.Status.Phase))
+	if state == "" {
+		state = "not ready"
+	}
+	return &Error{Status: http.StatusConflict, Code: "unsettled", Message: fmt.Sprintf("This server is %s. Wait until it is running or stopped, then try again.", state)}
+}
+
 // snapshotRecord is stored inside every snapshot. It is what lets a server be
 // recreated from the repository alone.
 type snapshotRecord struct {
@@ -306,6 +322,14 @@ func (s *Server) createSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	if !s.Backups.Available() {
 		return errNoBackups
 	}
+	// What an interrupted restore left behind is not something to keep as if
+	// it were a state of the server. Only another restore gets it out of that.
+	if restoreUnfinished(mc) {
+		return errRestoreIncomplete
+	}
+	if err := settled(mc); err != nil {
+		return err
+	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot, "")
 	if !ok {
 		return errBusy
@@ -354,6 +378,15 @@ func operationFailed(err error) error {
 // takeSnapshot saves the server as it is now. A running game is told to
 // write everything out and then hold its saves until the files are copied.
 func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.MinecraftServer, op *operation, trigger, by string) (*backup.Snapshot, error) {
+	// The caller read the server before it held the claim, and it may have
+	// been started, stopped or changed since. From here it cannot be.
+	mc, err := s.fresh(ctx, mc)
+	if err != nil {
+		return nil, err
+	}
+	if err := settled(mc); err != nil {
+		return nil, err
+	}
 	ws, err := s.Gateway.DialWorkspace(ctx, mc.Namespace, mc.Name)
 	if err != nil {
 		return nil, fmt.Errorf("the server's files are not reachable: %w", err)
@@ -426,6 +459,15 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 		return nil, errors.New("the game restarted while its files were being copied, so the snapshot was discarded; take it again")
 	}
 	return snap, nil
+}
+
+// fresh returns the server as it is now.
+func (s *Server) fresh(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv1.MinecraftServer, error) {
+	now := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
+		return nil, err
+	}
+	return now, nil
 }
 
 // gameInstance identifies the running instance of a server's game container:
@@ -530,12 +572,18 @@ func (s *Server) resumeSaving(ctx context.Context) {
 			continue
 		}
 		key := client.ObjectKeyFromObject(mc)
-		// A game that is not running any more starts with saving on.
-		if mc.Status.Phase == avsysv1.PhaseRunning {
+		switch mc.Status.Phase {
+		case avsysv1.PhaseRunning:
 			if _, err := s.rconFor(ctx, mc, "save-on", 15*time.Second); err != nil {
 				s.Log.Error("could not switch saving back on after an interrupted snapshot; trying again in a minute", "server", mc.Name, "namespace", mc.Namespace, "error", err)
 				continue
 			}
+		case avsysv1.PhaseStopped, avsysv1.PhaseSleeping:
+			// No game is running, and the next one starts with saving on.
+		default:
+			// Starting or stopping: the game that was told to hold its saves
+			// may still be there. Looked at again in a minute.
+			continue
 		}
 		if err := s.markSavingPaused(ctx, key, false); err != nil {
 			s.Log.Warn("could not clear the saving-paused note", "server", mc.Name, "error", err)
@@ -643,6 +691,10 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request, u *stor
 // is one, whether or not the rest then succeeded.
 func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, by string) (undo *backup.Snapshot, err error) {
 	key := client.ObjectKeyFromObject(mc)
+	// As it is now that the claim is held, not as the request first saw it.
+	if mc, err = s.fresh(ctx, mc); err != nil {
+		return nil, err
+	}
 	wasRunning := mc.Spec.State != avsysv1.StateStopped
 
 	// What a snapshot holds of the server's settings is read before anything
@@ -705,17 +757,24 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 		return undo, fmt.Errorf("restoring files failed and the server was left stopped; the state from before is in the newest snapshot: %w", err)
 	}
 
-	if err := s.markRestoring(ctx, key, ""); err != nil {
-		return undo, fmt.Errorf("the files were restored, but the server could not be marked as whole again: %w", err)
-	}
-
+	// The settings go on before the mark comes off. With the mark in place
+	// the game is not started, so a server whose files are back but whose
+	// settings could not be applied stays held, and says why, instead of
+	// starting on a version or mod list that does not match its files.
 	s.setOperation(mc.Namespace, op, "Applying settings", 100)
-	return undo, s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) {
+	err = s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) {
 		restoreSoftware(spec, &record.Spec)
 		if wasRunning {
 			spec.State = avsysv1.StateRunning
 		}
 	})
+	if err != nil {
+		return undo, fmt.Errorf("the files were restored, but the settings that go with them could not be applied; restore again: %w", err)
+	}
+	if err := s.markRestoring(ctx, key, ""); err != nil {
+		return undo, fmt.Errorf("the files and settings were restored, but the server could not be released to start; restore again: %w", err)
+	}
+	return undo, nil
 }
 
 // dialWorkspaceWithin keeps trying to reach a server's workspace for as long

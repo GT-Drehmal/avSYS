@@ -155,6 +155,7 @@ func TestResumeSaving(t *testing.T) {
 	add("stopped-since", avsysv1.PhaseStopped, true)
 	add("still-running", avsysv1.PhaseRunning, true)
 	add("untouched", avsysv1.PhaseRunning, false)
+	add("on-its-way-down", avsysv1.PhaseStopping, true)
 
 	// A snapshot running right now paused saving on purpose.
 	add("mid-snapshot", avsysv1.PhaseStopped, true)
@@ -179,6 +180,10 @@ func TestResumeSaving(t *testing.T) {
 	}
 	if _, ok := note("untouched"); ok {
 		t.Error("a server that was never paused got a note")
+	}
+	// The game that was told to hold its saves may still be there.
+	if _, ok := note("on-its-way-down"); !ok {
+		t.Error("the note was cleared while the game was still shutting down")
 	}
 
 	// Setting and clearing the note leaves the rest of the server alone.
@@ -414,5 +419,63 @@ func TestAnOrganizationOutlivesARepositoryThatCannotBeRemoved(t *testing.T) {
 	}
 	if got, _ := p.do("outsider", "GET", "/orgs/beta", ""); got != 200 {
 		t.Errorf("the organization was deleted although its repository could not be: %d", got)
+	}
+}
+
+// A snapshot is only taken of a server whose files hold still: one that is
+// running, where the game can be told to hold its saves, or one with no game.
+func TestSnapshotsWaitForASettledServer(t *testing.T) {
+	p := newPanel(t)
+	p.srv.Backups.Restic = "true" // present, so requests get as far as these checks
+	const path = "/orgs/alpha/servers/world/snapshots"
+
+	for _, phase := range []avsysv1.Phase{avsysv1.PhaseStarting, avsysv1.PhaseStopping, avsysv1.PhaseError, ""} {
+		p.setPhase("alpha", "world", phase)
+		if got, code := p.do("owner", "POST", path, ""); got != 409 || code != "unsettled" {
+			t.Errorf("snapshot of a server that is %q: got %d %q, want 409 unsettled", phase, got, code)
+		}
+	}
+	if p.srv.ops.current("mc-alpha", "world") != nil {
+		t.Error("a refused snapshot left the server claimed")
+	}
+
+	// What an interrupted restore left is not kept as a state of the server.
+	p.setPhase("alpha", "world", avsysv1.PhaseStopped)
+	key := client.ObjectKey{Namespace: "mc-alpha", Name: "world"}
+	if err := p.srv.markRestoring(context.Background(), key, "aaaa1111"); err != nil {
+		t.Fatal(err)
+	}
+	if got, code := p.do("owner", "POST", path, ""); got != 409 || code != "restore_incomplete" {
+		t.Errorf("snapshot after an unfinished restore: got %d %q, want 409 restore_incomplete", got, code)
+	}
+}
+
+// No new shell or file transfer is opened into a server while its files are
+// being put back.
+func TestNoNewShellsDuringARestore(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	if _, err := p.srv.AuthorizeWorkspace(ctx, p.users["operator"], "alpha", "world"); err != nil {
+		t.Fatalf("before the restore: %v", err)
+	}
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindRestore, "aaaa1111"); !ok {
+		t.Fatal("could not start a restore")
+	}
+	_, err := p.srv.AuthorizeWorkspace(ctx, p.users["owner"], "alpha", "world")
+	if err == nil || !strings.Contains(err.Error(), "being restored") {
+		t.Errorf("during the restore: %v", err)
+	}
+	// Someone with no access learns nothing new from it.
+	_, outside := p.srv.AuthorizeWorkspace(ctx, p.users["outsider"], "alpha", "world")
+	if outside == nil || strings.Contains(outside.Error(), "restored") {
+		t.Errorf("an outsider during the restore: %v", outside)
+	}
+	// A snapshot does not keep people out.
+	p.srv.ops.end("mc-alpha", "world")
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindSnapshot, ""); !ok {
+		t.Fatal("could not start a snapshot")
+	}
+	if _, err := p.srv.AuthorizeWorkspace(ctx, p.users["operator"], "alpha", "world"); err != nil {
+		t.Errorf("during a snapshot: %v", err)
 	}
 }

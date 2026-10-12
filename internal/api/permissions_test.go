@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
@@ -140,6 +141,21 @@ func (p *panel) addServer(org, name, hostname string) {
 	}
 	p.srv.applyDefaults(org, name, &mc.Spec)
 	if err := p.srv.Client.Create(context.Background(), mc); err != nil {
+		p.t.Fatal(err)
+	}
+	p.setPhase(org, name, avsysv1.PhaseStopped)
+}
+
+// setPhase stands in for the controller, which is not running here.
+func (p *panel) setPhase(org, name string, phase avsysv1.Phase) {
+	p.t.Helper()
+	ctx := context.Background()
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Namespace: p.srv.Namespace(org), Name: name}, mc); err != nil {
+		p.t.Fatal(err)
+	}
+	mc.Status.Phase = phase
+	if err := p.srv.Client.Status().Update(ctx, mc); err != nil {
 		p.t.Fatal(err)
 	}
 }
