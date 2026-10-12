@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api, type Loader, type MinecraftVersions } from "./api";
 
 export const loaders: { id: Loader; name: string; blurb: string }[] = [
@@ -12,12 +12,17 @@ export const loaders: { id: Loader; name: string; blurb: string }[] = [
   { id: "folia", name: "Folia", blurb: "Paper for huge servers" },
 ];
 
-/** Released game versions, newest first, from Mojang's manifest. */
-export function useGameVersions() {
+/**
+ * Released game versions, newest first. Given a kind of server, only the
+ * ones it has a build for, and "latest" is the newest of those.
+ */
+export function useGameVersions(loader?: Loader | null) {
   return useQuery({
-    queryKey: ["minecraft-versions"],
-    queryFn: () => api.get<MinecraftVersions>("/catalog/minecraft/versions"),
-    staleTime: 60 * 60_000,
+    queryKey: ["minecraft-versions", loader ?? ""],
+    queryFn: () => api.get<MinecraftVersions>(`/catalog/minecraft/versions${loader ? `?loader=${loader}` : ""}`),
+    staleTime: 10 * 60_000,
+    // The list for the previous kind stays up while the next one loads.
+    placeholderData: keepPreviousData,
     select: (m) => ({ latest: m.latest.release, releases: m.versions.filter((v) => v.type === "release").map((v) => v.id) }),
   });
 }

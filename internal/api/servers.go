@@ -243,12 +243,17 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// "Latest" is settled once, here. A server that kept following it would
 	// upgrade its world, and outgrow its mods, on some later restart.
+	// It is the newest the chosen software has a build for, which can be
+	// behind the newest there is.
 	if in.Spec.Version == "LATEST" && in.Spec.Modpack == nil {
-		if latest := s.latestRelease(r.Context()); latest != "" {
+		if latest := s.latestRelease(r.Context(), in.Spec.Loader); latest != "" {
 			in.Spec.Version = latest
 		}
 	}
 	if err := s.validateSpec(r.Context(), a.Namespace, in.Name, &in.Spec); err != nil {
+		return err
+	}
+	if err := s.checkVersion(r.Context(), &in.Spec); err != nil {
 		return err
 	}
 	if err := s.resolveContent(r.Context(), &in.Spec, nil); err != nil {
@@ -303,6 +308,13 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
 	if err := s.validateSpec(r.Context(), a.Namespace, mc.Name, &spec); err != nil {
 		return err
+	}
+	// Only a change of software is checked. A server whose version has since
+	// left its software's list can still have everything else changed.
+	if spec.Loader != mc.Spec.Loader || spec.Version != mc.Spec.Version || spec.LoaderVersion != mc.Spec.LoaderVersion {
+		if err := s.checkVersion(r.Context(), &spec); err != nil {
+			return err
+		}
 	}
 	// Setting the state to Running here is starting the server by another
 	// route, and is held to the same rules as the start action.

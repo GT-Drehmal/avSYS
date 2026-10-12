@@ -85,6 +85,9 @@ func newPanel(t *testing.T) *panel {
 		tokens: map[string]string{},
 	}
 	p.h = p.srv.Handler()
+	// Nothing here reaches the internet: what the panel looks up elsewhere
+	// is answered from offline, which tests fill in as they need.
+	p.srv.catalog.http.Transport = offline{}
 
 	for _, name := range []string{"root", "owner", "admin", "operator", "viewer", "outsider"} {
 		u := &store.User{Username: name, IsAdmin: name == "root"}

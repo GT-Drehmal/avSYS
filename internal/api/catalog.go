@@ -92,30 +92,6 @@ func writeRawJSON(w http.ResponseWriter, body []byte, maxAge time.Duration) {
 	_, _ = w.Write(body)
 }
 
-func (s *Server) minecraftVersions(w http.ResponseWriter, r *http.Request, _ *store.User) error {
-	body, err := s.catalog.get(r.Context(), "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json", time.Hour)
-	if err != nil {
-		return err
-	}
-	var manifest struct {
-		Latest   map[string]string `json:"latest"`
-		Versions []struct {
-			ID          string `json:"id"`
-			Type        string `json:"type"`
-			ReleaseTime string `json:"releaseTime"`
-		} `json:"versions"`
-	}
-	if err := json.Unmarshal(body, &manifest); err != nil {
-		return err
-	}
-	out, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-	writeRawJSON(w, out, time.Hour)
-	return nil
-}
-
 // modrinthLoaders maps what a server runs to the loader names Modrinth files
 // are tagged with. Plugin servers accept plugins built for their ancestors.
 var modrinthLoaders = map[string][]string{

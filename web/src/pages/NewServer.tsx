@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
@@ -22,14 +22,19 @@ export function NewServer() {
   const { org = "" } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const versions = useGameVersions();
-
   const [kind, setKind] = useState<"game" | "modpack">("game");
   // Nothing is picked for you: the type decides what the server can run.
   const [loader, setLoader] = useState<Loader | null>(null);
   const [needsLoader, setNeedsLoader] = useState(false);
   const softwareRef = useRef<HTMLDivElement>(null);
   const [version, setVersion] = useState("LATEST");
+  const versions = useGameVersions(kind === "game" ? loader : null);
+  // A version picked for one kind of server may have no build for the next.
+  useEffect(() => {
+    if (version === "LATEST" || !versions.data || versions.isPlaceholderData || versions.data.releases.includes(version)) return;
+    toast.info(`${loaders.find((l) => l.id === loader)?.name ?? "This software"} has no build for ${version} yet`);
+    setVersion("LATEST");
+  }, [version, versions.data, versions.isPlaceholderData, loader]);
   const [modpack, setModpack] = useState<Modpack | null>(null);
   const [mods, setMods] = useState<ContentRef[]>([]);
   const [addingMods, setAddingMods] = useState(false);
