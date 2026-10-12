@@ -324,6 +324,18 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
+	// A server that is still being made from a snapshot has nothing in it to
+	// lose, so deleting it calls that off instead of waiting for it. A
+	// restore is different: it is let finish.
+	if s.ops.callOff(a.Namespace, mc.Name, kindCreate) {
+		for wait := 0; s.ops.current(a.Namespace, mc.Name) != nil && wait < 300; wait++ {
+			select {
+			case <-r.Context().Done():
+				return r.Context().Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
 	release, err := s.changing(mc, false)
 	if err != nil {
 		return err

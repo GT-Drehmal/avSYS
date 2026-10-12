@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -157,7 +158,6 @@ func TestANewServerIsHeldWhileItsFilesArrive(t *testing.T) {
 		{"POST", world + "/stop", ""},
 		{"PATCH", world, `{"spec":{"displayName":"World"}}`},
 		{"PUT", world + "/files/content?path=/a.txt", "x"},
-		{"DELETE", world, ""},
 	} {
 		if got, code := p.do("owner", c.method, c.path, c.body); got != 409 || code != "creating" {
 			t.Errorf("%s %s while files arrive: got %d %q, want 409 creating", c.method, c.path, got, code)
@@ -205,5 +205,49 @@ func TestCreateFromSnapshotRequests(t *testing.T) {
 	}
 	if p.srv.ops.current("mc-alpha", "world") != nil {
 		t.Error("the server that has the name was claimed")
+	}
+}
+
+// Deleting a server that is still being made from a snapshot calls that off
+// and deletes it, instead of making its owner wait for a copy nobody wants.
+// A restore is not called off by anything.
+func TestDeletingAServerCallsOffItsCreation(t *testing.T) {
+	p := newPanel(t)
+	const world = "/orgs/alpha/servers/world"
+
+	op, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindCreate, "aaaa1111")
+	if !ok {
+		t.Fatal("could not claim the server")
+	}
+	working, stop := context.WithCancel(context.Background())
+	p.srv.ops.stoppable(op, stop)
+	// The copy, which winds down a moment after it is told to.
+	go func() {
+		<-working.Done()
+		time.Sleep(150 * time.Millisecond)
+		p.srv.finishOperation(context.Background(), "mc-alpha", "world", kindCreate, nil, nil, working.Err())
+	}()
+	if got, code := p.do("owner", "DELETE", world, ""); got != 204 {
+		t.Fatalf("deleting a server that is being made: got %d %s, want 204", got, code)
+	}
+	if working.Err() == nil {
+		t.Error("the copy was not told to stop")
+	}
+	if got, _ := p.do("owner", "GET", world, ""); got != 404 {
+		t.Errorf("the server is still there: %d", got)
+	}
+
+	p.addServer("alpha", "other", "")
+	restoring, ok := p.srv.ops.begin("mc-alpha", "alpha", "other", kindRestore, "aaaa1111")
+	if !ok {
+		t.Fatal("could not start a restore")
+	}
+	stopped := false
+	p.srv.ops.stoppable(restoring, func() { stopped = true })
+	if got, code := p.do("owner", "DELETE", "/orgs/alpha/servers/other", ""); got != 409 || code != "restoring" {
+		t.Errorf("deleting a server that is being restored: got %d %q, want 409 restoring", got, code)
+	}
+	if stopped {
+		t.Error("a restore was called off by a delete")
 	}
 }

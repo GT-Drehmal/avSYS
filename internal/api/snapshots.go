@@ -34,6 +34,8 @@ type operation struct {
 	Stage     string    `json:"stage"`
 	Percent   float64   `json:"percent"`
 	StartedAt time.Time `json:"startedAt"`
+	// stop calls the operation off, for the kinds that can be.
+	stop context.CancelFunc
 }
 
 const (
@@ -85,6 +87,27 @@ func (o *operations) end(namespace, server string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	delete(o.running, namespace+"/"+server)
+}
+
+// stoppable gives an operation the means to be called off.
+func (o *operations) stoppable(op *operation, stop context.CancelFunc) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	op.stop = stop
+}
+
+// callOff stops the operation running on a server if it is of the given kind
+// and can be stopped. The operation still has to wind down: it is over when
+// current no longer returns it.
+func (o *operations) callOff(namespace, server, kind string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	op := o.running[namespace+"/"+server]
+	if op == nil || op.Kind != kind || op.stop == nil {
+		return false
+	}
+	op.stop()
+	return true
 }
 
 // change admits a request that is about to change a server, unless an
@@ -166,11 +189,14 @@ func (s *Server) setOperation(namespace string, op *operation, stage string, per
 
 // operationDone is sent when a snapshot or restore ends, either way.
 type operationDone struct {
-	Kind     string           `json:"kind"`
-	Org      string           `json:"org"`
-	Server   string           `json:"server"`
-	Error    string           `json:"error,omitempty"`
-	Snapshot *backup.Snapshot `json:"snapshot,omitempty"`
+	Kind   string `json:"kind"`
+	Org    string `json:"org"`
+	Server string `json:"server"`
+	Error  string `json:"error,omitempty"`
+	// CalledOff is set when the operation ended because someone stopped it,
+	// which is not a failure anyone needs telling about.
+	CalledOff bool             `json:"calledOff,omitempty"`
+	Snapshot  *backup.Snapshot `json:"snapshot,omitempty"`
 }
 
 var (
@@ -644,7 +670,11 @@ func (s *Server) finishOperation(ctx context.Context, namespace, server, kind st
 	ctx = context.WithoutCancel(ctx)
 	org, _ := s.orgOfNamespace(namespace)
 	done := operationDone{Kind: kind, Org: org, Server: server, Snapshot: subject}
-	if opErr != nil {
+	switch {
+	case errors.Is(opErr, context.Canceled):
+		done.Error, done.CalledOff = opErr.Error(), true
+		s.Log.Info(kind+" called off", "namespace", namespace, "server", server)
+	case opErr != nil:
 		done.Error = opErr.Error()
 		s.Log.Error(kind+" failed", "namespace", namespace, "server", server, "error", opErr)
 	}

@@ -205,6 +205,8 @@ export interface OperationDone {
   org: string;
   server: string;
   error?: string;
+  /** The operation was stopped on purpose; its error is not news. */
+  calledOff?: boolean;
   snapshot?: Snapshot;
 }
 

@@ -151,8 +151,13 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	s.audit(ctx, u, a.Org, "server.create", name, fmt.Sprintf("from snapshot %s of %s", snap.ID, snap.Server))
 
 	key := client.ObjectKeyFromObject(mc)
-	work := func(ctx context.Context) error {
-		ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	// Deleting the server calls this off. Nothing else does: the request
+	// that asked for it going away does not.
+	working, stop := context.WithCancel(context.WithoutCancel(ctx))
+	s.ops.stoppable(op, stop)
+	work := func() error {
+		defer stop()
+		ctx, cancel := context.WithTimeout(working, operationTimeout)
 		defer cancel()
 		err := s.populate(ctx, a.Org.Slug, key, snap, op, final)
 		if err != nil {
@@ -162,14 +167,14 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		return err
 	}
 	if r.URL.Query().Get("wait") == "true" {
-		if err := work(context.WithoutCancel(ctx)); err != nil {
+		if err := work(); err != nil {
 			return operationFailed(err)
 		}
 		if mc, err = s.fresh(ctx, mc); err != nil {
 			return err
 		}
 	} else {
-		go func() { _ = work(context.Background()) }()
+		go func() { _ = work() }()
 	}
 	writeJSON(w, http.StatusCreated, s.view(mc))
 	return nil
@@ -183,7 +188,7 @@ func (s *Server) populate(ctx context.Context, org string, key client.ObjectKey,
 	s.setOperation(key.Namespace, op, "Waiting for storage", 0)
 	ws, err := s.dialWorkspaceWithin(ctx, key.Namespace, key.Name, 10*time.Minute)
 	if err != nil {
-		return fmt.Errorf("the new server's storage did not become reachable: %w", err)
+		return fmt.Errorf("the new server's storage was not ready within 10 minutes: %w", err)
 	}
 	defer ws.Close()
 
