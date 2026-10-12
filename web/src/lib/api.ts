@@ -56,6 +56,8 @@ export interface Meta {
   allowSignups: boolean;
   providers: { id: string; name: string }[];
   ssh: { host: string; port: number };
+  /** Whether this panel can take snapshots at all. */
+  snapshots: boolean;
 }
 
 export interface User {
@@ -168,7 +170,7 @@ export interface ServerStatus {
   snapshots?: { lastTime?: string; lastID?: string; error?: string; /** When the daily snapshot last completed, whether or not anything had changed. */ lastRun?: string } | null;
 }
 
-export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore";
+export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore" | "final";
 
 /** One saved state of a server. */
 export interface Snapshot {
@@ -193,7 +195,7 @@ export interface SnapshotDetail extends Snapshot {
 
 /** A snapshot or restore under way on a server, or a new server receiving its files. */
 export interface Operation {
-  kind: "snapshot" | "restore" | "create";
+  kind: "snapshot" | "restore" | "create" | "delete-server";
   org: string;
   server: string;
   stage: string;
@@ -202,7 +204,7 @@ export interface Operation {
 }
 
 export interface OperationDone {
-  kind: "snapshot" | "restore" | "create" | "delete";
+  kind: "snapshot" | "restore" | "create" | "delete" | "delete-server";
   org: string;
   server: string;
   error?: string;

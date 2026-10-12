@@ -9,6 +9,7 @@ import { Button, Chip, Confirm, CopyText } from "./ui";
 const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
   if (s.trigger === "pre-restore") return "Before a restore";
+  if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
   return s.by ? `By ${s.by}` : "Manual";
 };
 
@@ -19,6 +20,7 @@ const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   snapshot: ["Taking a snapshot of", "Snapshot"],
   restore: ["Restoring", "Restore"],
   create: ["Copying a snapshot into", "Creation"],
+  "delete-server": ["Deleting", "Deletion"],
 };
 
 /** A snapshot or restore that is running, with how far along it is. */

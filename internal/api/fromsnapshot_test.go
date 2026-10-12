@@ -306,3 +306,63 @@ func TestOwnPod(t *testing.T) {
 		t.Errorf("the new server's own pod was not accepted: %v", err)
 	}
 }
+
+// Deleting a server takes a last snapshot of it unless told not to. Told not
+// to, it is simply deleted. While something else is running on the server,
+// the last snapshot cannot be taken, and the server is not deleted.
+func TestDeletingWithoutAFinalSnapshot(t *testing.T) {
+	p := newPanel(t)
+	p.srv.Backups.Restic = "true" // present, so that a final snapshot would be attempted
+	p.addServer("alpha", "doomed", "")
+	p.addServer("alpha", "busy", "")
+
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "busy", kindSnapshot, ""); !ok {
+		t.Fatal("could not start a snapshot")
+	}
+	if got, code := p.do("owner", "DELETE", "/orgs/alpha/servers/busy", ""); got != 409 || code != "busy" {
+		t.Errorf("deleting a server that is being snapshotted: got %d %q, want 409 busy", got, code)
+	}
+	if got, _ := p.do("owner", "GET", "/orgs/alpha/servers/busy", ""); got != 200 {
+		t.Errorf("a server whose last snapshot could not be taken was deleted all the same: %d", got)
+	}
+
+	if got, code := p.do("owner", "DELETE", "/orgs/alpha/servers/doomed?snapshot=false", ""); got != 204 {
+		t.Fatalf("deleting with no final snapshot: got %d %s, want 204", got, code)
+	}
+	if got, _ := p.do("owner", "GET", "/orgs/alpha/servers/doomed", ""); got != 404 {
+		t.Errorf("the server is still there: %d", got)
+	}
+	if p.srv.ops.current("mc-alpha", "doomed") != nil {
+		t.Error("a claim was left on a deleted server")
+	}
+}
+
+// From its last snapshot until it is gone, nothing else changes a server
+// that is being deleted: a change made after the copy would be lost with it.
+func TestAServerBeingDeletedIsHeld(t *testing.T) {
+	p := newPanel(t)
+	const world = "/orgs/alpha/servers/world"
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindDeleteServer, ""); !ok {
+		t.Fatal("could not claim the server")
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{"POST", world + "/start", ""},
+		{"PATCH", world, `{"spec":{"displayName":"World"}}`},
+		{"PUT", world + "/files/content?path=/a.txt", "x"},
+		{"DELETE", world + "/files?path=/a.txt", ""},
+		{"POST", world + "/files/rename?path=/a&to=/b", ""},
+		{"DELETE", world + "?snapshot=false", ""},
+	} {
+		if got, code := p.do("owner", c.method, c.path, c.body); got != 409 || code != "deleting" {
+			t.Errorf("%s %s while the server is being deleted: got %d %q, want 409 deleting", c.method, c.path, got, code)
+		}
+	}
+	if _, err := p.srv.AuthorizeWorkspace(context.Background(), p.users["operator"], "alpha", "world"); err == nil || !strings.Contains(err.Error(), "being deleted") {
+		t.Errorf("a shell was let into a server that is being deleted: %v", err)
+	}
+	// A second delete does not start a second one.
+	p.srv.Backups.Restic = "true"
+	if got, code := p.do("owner", "DELETE", world, ""); got != 409 || code != "deleting" {
+		t.Errorf("deleting a server that is being deleted: got %d %q, want 409 deleting", got, code)
+	}
+}
