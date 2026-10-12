@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type BackupPolicy } from "../lib/api";
 import { keys, useAction, useBackupPolicy } from "../lib/queries";
 import { toast } from "../lib/toast";
@@ -48,17 +48,25 @@ const periods = [
 export function BackupSchedule({ org, canAdmin }: { org: string; canAdmin: boolean }) {
   const qc = useQueryClient();
   const policy = useBackupPolicy(org);
-  const [draft, setDraft] = useState<BackupPolicy | null>(null);
-  // What is shown follows what is stored until someone starts changing it.
-  useEffect(() => setDraft(null), [policy.data]);
+  // The time and what to keep, while they are being changed and not yet
+  // saved. Whether the snapshots are on is never part of it: the switch acts
+  // at once, on what is stored, and leaves an edit in progress alone.
+  const [draft, setDraft] = useState<Pick<BackupPolicy, "minute" | "keep"> | null>(null);
 
   const save = useAction((p: BackupPolicy) => api.put<BackupPolicy>(`/orgs/${org}/backup-policy`, { enabled: p.enabled, minute: p.minute, keep: p.keep }));
   const run = useAction(() => api.post(`/orgs/${org}/backup-policy/run`));
 
   if (!policy.data) return null;
-  const shown = draft ?? policy.data;
-  const change = (patch: Partial<BackupPolicy>) => setDraft({ ...shown, ...patch });
-  const store = (p: BackupPolicy) => save.mutate(p, { onSuccess: (stored) => qc.setQueryData(keys.backupPolicy(org), stored) });
+  const stored = policy.data;
+  const shown = { ...stored, ...draft };
+  const change = (patch: Partial<Pick<BackupPolicy, "minute" | "keep">>) => setDraft({ minute: shown.minute, keep: shown.keep, ...patch });
+  const store = (p: BackupPolicy, then?: () => void) =>
+    save.mutate(p, {
+      onSuccess: (now) => {
+        qc.setQueryData(keys.backupPolicy(org), now);
+        then?.();
+      },
+    });
 
   if (!canAdmin) {
     return (
@@ -73,14 +81,14 @@ export function BackupSchedule({ org, canAdmin }: { org: string; canAdmin: boole
       className="flex flex-col gap-4 rounded-lg border border-line bg-surface p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        store(shown);
+        store(shown, () => setDraft(null));
       }}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         {/* Switching on or off takes effect at once; the rest waits for Save. */}
         <Toggle
           checked={shown.enabled}
-          onChange={(enabled) => store({ ...shown, enabled })}
+          onChange={(enabled) => store({ ...stored, enabled })}
           disabled={save.isPending}
           label="Daily snapshots"
           hint={shown.enabled ? (policy.data.next ? `Every server. Next ${when(policy.data.next)}.` : "Every server.") : "Off. Servers are only snapshotted by hand."}

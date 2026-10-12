@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -236,5 +238,42 @@ func TestOneRunPerOrganization(t *testing.T) {
 	release()
 	if _, ok := sc.claim("a"); !ok {
 		t.Error("a run could not start once the last was over")
+	}
+}
+
+// Space that could not be given back is still owed after the run that
+// failed to, so that the next run tries again without needing anything new
+// to let go of.
+func TestAFailedPruneIsOwed(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	alpha, err := p.srv.Store.OrgBySlug(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.srv.schedule.pruneOwed(alpha.ID) {
+		t.Fatal("space is owed before anything was removed")
+	}
+	// A repository this panel cannot prune: there is no restic to do it with.
+	if err := os.MkdirAll(filepath.Join(p.srv.Backups.Dir, "alpha"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.srv.Backups.Dir, "alpha", "config"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.srv.schedule.owesPrune(alpha.ID, true)
+	p.srv.runScheduled(ctx, alpha, defaultPolicy, nil)
+	if !p.srv.schedule.pruneOwed(alpha.ID) {
+		t.Error("a prune that failed is no longer owed")
+	}
+	// One that works settles it.
+	p.srv.Backups.Restic = "true"
+	p.srv.runScheduled(ctx, alpha, defaultPolicy, nil)
+	if p.srv.schedule.pruneOwed(alpha.ID) {
+		t.Error("a prune that succeeded is still owed")
+	}
+	// And another organization's debt is its own.
+	if p.srv.schedule.pruneOwed("someone-else") {
+		t.Error("one organization's owed prune shows up for another")
 	}
 }

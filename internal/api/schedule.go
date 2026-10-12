@@ -161,6 +161,9 @@ type schedule struct {
 	// failed is when a server's scheduled snapshot last failed. It is tried
 	// again an hour later, not every minute.
 	failed map[string]time.Time
+	// unpruned holds the organizations whose expired snapshots have been
+	// unlisted but whose space has not been given back yet.
+	unpruned map[string]bool
 }
 
 const retryFailedAfter = time.Hour
@@ -169,9 +172,7 @@ const retryFailedAfter = time.Hour
 func (sc *schedule) claim(orgID string) (release func(), ok bool) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	if sc.running == nil {
-		sc.running, sc.failed = map[string]bool{}, map[string]time.Time{}
-	}
+	sc.init()
 	if sc.running[orgID] {
 		return nil, false
 	}
@@ -181,6 +182,31 @@ func (sc *schedule) claim(orgID string) (release func(), ok bool) {
 		defer sc.mu.Unlock()
 		delete(sc.running, orgID)
 	}, true
+}
+
+func (sc *schedule) init() {
+	if sc.running == nil {
+		sc.running, sc.failed, sc.unpruned = map[string]bool{}, map[string]time.Time{}, map[string]bool{}
+	}
+}
+
+// owesPrune notes that an organization has space to give back, or with
+// owed false that it has been.
+func (sc *schedule) owesPrune(orgID string, owed bool) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.init()
+	if owed {
+		sc.unpruned[orgID] = true
+	} else {
+		delete(sc.unpruned, orgID)
+	}
+}
+
+func (sc *schedule) pruneOwed(orgID string) bool {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.unpruned[orgID]
 }
 
 func (sc *schedule) failedRecently(key string, now time.Time) bool {
@@ -193,9 +219,7 @@ func (sc *schedule) failedRecently(key string, now time.Time) bool {
 func (sc *schedule) note(key string, failed bool, now time.Time) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	if sc.failed == nil {
-		sc.running, sc.failed = map[string]bool{}, map[string]time.Time{}
-	}
+	sc.init()
 	if failed {
 		sc.failed[key] = now
 	} else {
@@ -316,10 +340,19 @@ func (s *Server) runScheduled(ctx context.Context, org *store.Org, policy backup
 	}
 	// Forgetting a snapshot only unlists it. The space comes back here, once
 	// for the organization, because it means going through the whole store.
+	// If that fails it is still owed, and the next run tries again whether or
+	// not it has anything new to let go of.
 	if removed > 0 {
+		s.schedule.owesPrune(org.ID, true)
+	}
+	if s.schedule.pruneOwed(org.ID) {
 		if err := s.Backups.Prune(context.WithoutCancel(ctx), org.Slug); err != nil {
-			s.Log.Error("could not reclaim the space of expired snapshots", "org", org.Slug, "error", err)
+			s.Log.Error("could not reclaim the space of expired snapshots; it will be tried again with the next run", "org", org.Slug, "error", err)
+		} else {
+			s.schedule.owesPrune(org.ID, false)
 		}
+	}
+	if removed > 0 {
 		s.Events.Publish(Event{Type: "operation.done", Namespace: s.Namespace(org.Slug), Data: operationDone{Kind: "delete", Org: org.Slug, Scheduled: true}})
 	}
 	return results
