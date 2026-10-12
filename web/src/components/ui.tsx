@@ -361,13 +361,16 @@ export function Toaster() {
         <div
           key={t.id}
           className={cx(
-            "pointer-events-auto flex animate-rise items-start gap-3 rounded-md border bg-surface px-3 py-2.5 text-[13px] shadow-xl shadow-black/50",
+            "pointer-events-auto flex animate-rise items-start gap-3 rounded-md border bg-surface px-3 py-2.5 text-[13px] leading-relaxed shadow-xl shadow-black/50",
             t.kind === "error" ? "border-danger/40 text-fg" : "border-line-strong text-fg",
           )}
         >
-          <span className={cx("mt-1.5 size-1.5 shrink-0 rounded-full", t.kind === "error" ? "bg-danger" : "bg-accent")} />
-          <p className="flex-1 leading-relaxed">{t.message}</p>
-          <button onClick={() => dismiss(t.id)} className="text-faint hover:text-fg" aria-label="Dismiss">
+          {/* The dot and the button each sit in a box one line of text high, so they are level with the first line however many there are. */}
+          <span className="flex h-lh shrink-0 items-center">
+            <span className={cx("size-1.5 rounded-full", t.kind === "error" ? "bg-danger" : "bg-accent")} />
+          </span>
+          <p className="min-w-0 flex-1 wrap-break-word">{t.message}</p>
+          <button onClick={() => dismiss(t.id)} className="flex h-lh shrink-0 items-center text-faint hover:text-fg" aria-label="Dismiss">
             <X className="size-3.5" />
           </button>
         </div>
