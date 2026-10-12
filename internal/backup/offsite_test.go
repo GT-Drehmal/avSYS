@@ -211,7 +211,9 @@ func TestOffsiteNeedsSettingUp(t *testing.T) {
 		t.Errorf("fetch with no offsite: %v", err)
 	}
 	// Nothing is noted for an offsite copy that does not exist.
-	m.removed("alpha", "abc")
+	if err := m.removing("alpha", "abc"); err != nil {
+		t.Errorf("noting a removal with no offsite copy: %v", err)
+	}
 	if _, err := os.Stat(m.removedFile("alpha")); !os.IsNotExist(err) {
 		t.Errorf("a removal was noted with no offsite copy to act on it: %v", err)
 	}
@@ -234,5 +236,92 @@ func TestOffsiteFailuresAreNotEmptiness(t *testing.T) {
 	}
 	if _, err := m.FetchOffsite(ctx, "alpha"); err == nil {
 		t.Error("fetching with the wrong password did not fail")
+	}
+}
+
+// A removal is noted before it is made, and one that cannot be noted is not
+// made: afterwards nothing would say which copy to remove.
+func TestARemovalThatCannotBeNotedIsNotMade(t *testing.T) {
+	m, take, _ := offsiteFixture(t)
+	ctx := context.Background()
+	take("world", TriggerManual, "one")
+	take("world", TriggerScheduled, "two")
+	take("world", TriggerScheduled, "three")
+	if _, err := m.SyncOffsite(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	// Something in the way of the note: a directory where the file goes.
+	if err := os.Mkdir(m.removedFile("alpha"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	list, err := m.List(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(ctx, "alpha", list[0].ID); err == nil {
+		t.Error("a snapshot was deleted though its removal could not be noted")
+	}
+	if removed, err := m.Forget(ctx, "alpha", "world", Keep{Daily: 1}); err == nil || removed != 0 {
+		t.Errorf("retention went ahead though its removals could not be noted: %d, %v", removed, err)
+	}
+	if after, err := m.List(ctx, "alpha"); err != nil || len(after) != 3 {
+		t.Errorf("after two refused removals there are %d snapshots here, %v; want all 3", len(after), err)
+	}
+	if err := os.Remove(m.removedFile("alpha")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A note for a snapshot that is still here, as after a removal that
+	// then failed, does not cost it its copy.
+	if err := m.removing("alpha", list[0].Lineage); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := m.SyncOffsite(ctx, "alpha"); err != nil || res.Removed != 0 || res.Snapshots != 3 {
+		t.Errorf("sync with a note for a snapshot still here: %+v, %v; want nothing removed", res, err)
+	}
+	if _, err := os.Stat(m.removedFile("alpha")); !os.IsNotExist(err) {
+		t.Errorf("the void note was kept: %v", err)
+	}
+}
+
+// What comes back is only what was not removed here on purpose, and only
+// into an organization that has nothing.
+func TestFetchLeavesBehindWhatWasRemoved(t *testing.T) {
+	m, take, names := offsiteFixture(t)
+	ctx := context.Background()
+	take("world", TriggerManual, "one")
+	take("world", TriggerManual, "two")
+	if _, err := m.SyncOffsite(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	// Not into one that has snapshots.
+	if n, err := m.FetchOffsite(ctx, "alpha"); err != ErrNotEmpty || n != 0 {
+		t.Errorf("fetch into an organization with snapshots: %d, %v; want ErrNotEmpty", n, err)
+	}
+	// Both deleted here, and not yet removed there.
+	list, err := m.List(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range list {
+		if err := m.Delete(ctx, "alpha", s.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := names(m.OffsiteSnapshots(ctx, "alpha")); !strings.Contains(got, "world") {
+		t.Fatalf("the copies were removed before any sync: %q", got)
+	}
+	if back, err := m.Recoverable(ctx, "alpha"); err != nil || len(back) != 0 {
+		t.Errorf("what could be brought back after deleting everything: %v, %v; want nothing", back, err)
+	}
+	if n, err := m.FetchOffsite(ctx, "alpha"); err != nil || n != 0 {
+		t.Errorf("fetch after deleting everything: %d, %v; want nothing brought back", n, err)
+	}
+	if here, err := m.List(ctx, "alpha"); err != nil || len(here) != 0 {
+		t.Errorf("deleted snapshots came back: %v, %v", here, err)
+	}
+	// And the next sync removes them there.
+	if res, err := m.SyncOffsite(ctx, "alpha"); err != nil || res.Removed != 2 || res.Snapshots != 0 {
+		t.Errorf("sync after deleting everything: %+v, %v; want 2 removed", res, err)
 	}
 }

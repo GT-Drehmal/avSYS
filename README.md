@@ -69,7 +69,7 @@ A snapshot is the server's whole directory, minus the workspace's own files and 
   restic -r /backups/friends --password-file /backups/friends.key restore <id>:/data --target ./restored
   ```
 
-Snapshots live on the cluster only. An offsite copy is not built yet.
+Snapshots live on the cluster only unless it is given a second place to copy them to: see [Offsite copy](#offsite-copy).
 
 After upgrading from a version without snapshots, a server has to be restarted once before it can be snapshotted; its page says so.
 

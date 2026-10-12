@@ -151,33 +151,42 @@ func (m *Manager) Changed(org string) time.Time {
 	return m.changed[org]
 }
 
-// removed notes snapshots that were deliberately removed here, so that their
-// copies offsite are removed with the next sync. Only what is noted is ever
-// removed there: a repository that is simply missing snapshots, because it
-// is new or was lost, takes nothing with it.
-func (m *Manager) removed(org string, lineages ...string) {
+// removing notes snapshots that are about to be removed here on purpose, so
+// that their copies offsite are removed with the next sync. Only what is
+// noted is ever removed there: a repository that is simply missing
+// snapshots, because it is new or was lost, takes nothing with it.
+//
+// It is called before the removal and fails it if the note cannot be kept:
+// afterwards nothing would say which copy to remove. A note for a snapshot
+// that then was not removed after all does no harm; the sync finds it still
+// here and drops the note.
+func (m *Manager) removing(org string, lineages ...string) error {
 	if len(lineages) == 0 {
-		return
+		return nil
 	}
 	m.touch(org)
 	if !m.HasOffsite() {
-		return
+		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	f, err := os.OpenFile(m.removedFile(org), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err == nil {
 		_, err = f.WriteString(strings.Join(lineages, "\n") + "\n")
+		if serr := f.Sync(); err == nil {
+			err = serr
+		}
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
 	}
 	if err != nil {
-		m.Log.Error("could not note removed snapshots; their offsite copies will stay", "org", org, "error", err)
+		return fmt.Errorf("nothing was removed: its offsite copy could not be marked for removal: %w", err)
 	}
+	return nil
 }
 
-// pendingRemovals reads what removed has noted.
+// pendingRemovals reads what removing has noted.
 func (m *Manager) pendingRemovals(org string) (map[string]bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -359,9 +368,21 @@ func (m *Manager) syncOffsite(ctx context.Context, org string) (OffsiteResult, e
 		return res, err
 	}
 	var ids []string
-	for _, s := range after {
-		if gone[s.Lineage] {
-			ids = append(ids, s.ID)
+	if len(gone) > 0 {
+		// A note is made before its removal, which may then not have gone
+		// through. What is still here keeps its copy.
+		here, err := m.list(ctx, org)
+		if err != nil {
+			return res, err
+		}
+		still := map[string]bool{}
+		for _, s := range here {
+			still[s.Lineage] = true
+		}
+		for _, s := range after {
+			if gone[s.Lineage] && !still[s.Lineage] {
+				ids = append(ids, s.ID)
+			}
 		}
 	}
 	if len(ids) > 0 {
@@ -376,10 +397,39 @@ func (m *Manager) syncOffsite(ctx context.Context, org string) (OffsiteResult, e
 	return res, nil
 }
 
+// ErrNotEmpty is returned when snapshots would be brought back into an
+// organization that has some.
+var ErrNotEmpty = errors.New("this organization has snapshots here already")
+
+// Recoverable lists what could be brought back from the offsite repository:
+// what it holds of an organization, less the copies of snapshots that were
+// removed here on purpose and are only waiting to be removed there.
+func (m *Manager) Recoverable(ctx context.Context, org string) ([]Snapshot, error) {
+	there, _, err := m.offsiteList(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	gone, err := m.pendingRemovals(org)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Snapshot, 0, len(there))
+	for _, s := range there {
+		if !gone[s.Lineage] {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
 // FetchOffsite copies an organization's snapshots back from the offsite
 // repository into the panel's own, which is made if it is not there. It is
 // how an organization gets its history back after the panel's storage was
 // lost. It returns how many snapshots were brought back.
+//
+// It only fills an organization that has none, which is checked with the
+// repository held: one taken in the meantime is not mixed with what comes
+// back. And it leaves behind what was removed here on purpose.
 func (m *Manager) FetchOffsite(ctx context.Context, org string) (int, error) {
 	if !m.HasOffsite() {
 		return 0, ErrNoOffsite
@@ -389,12 +439,25 @@ func (m *Manager) FetchOffsite(ctx context.Context, org string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(there) == 0 {
-		return 0, nil
+	back, err := m.Recoverable(ctx, org)
+	if err != nil {
+		return 0, err
 	}
 	lock := m.lock(org)
 	lock.Lock()
 	defer lock.Unlock()
+	if m.exists(org) {
+		here, err := m.list(ctx, org)
+		if err != nil {
+			return 0, err
+		}
+		if len(here) > 0 {
+			return 0, ErrNotEmpty
+		}
+	}
+	if len(back) == 0 {
+		return 0, nil
+	}
 
 	from := []string{"--from-repo", m.offsiteRepo(org)}
 	env := []string{"RESTIC_FROM_PASSWORD=" + m.Offsite.Password}
@@ -406,22 +469,23 @@ func (m *Manager) FetchOffsite(ctx context.Context, org string) (int, error) {
 			return 0, err
 		}
 	}
-	before, err := m.list(ctx, org)
-	if err != nil {
-		return 0, err
+	ids := make([]string, len(back))
+	for i, s := range back {
+		ids[i] = s.ID
 	}
-	if _, err := m.resticEnv(ctx, org, env, append([]string{"copy"}, from...)...); err != nil {
+	if _, err := m.resticEnv(ctx, org, env, append(append([]string{"copy"}, from...), ids...)...); err != nil {
 		return 0, err
 	}
 	after, err := m.list(ctx, org)
 	if err != nil {
 		return 0, err
 	}
-	if len(before) == 0 {
+	if len(back) == len(there) {
 		// Everything here has just come from there, so the two are level.
 		m.noteOffsite(org, began, OffsiteResult{Snapshots: len(there)}, nil)
 	} else {
+		// What was left behind is still to be removed there.
 		m.touch(org)
 	}
-	return len(after) - len(before), nil
+	return len(after), nil
 }

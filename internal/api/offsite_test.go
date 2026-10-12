@@ -149,3 +149,39 @@ func TestOffsiteThroughTheAPI(t *testing.T) {
 		t.Errorf("after a failed copy: %v", got)
 	}
 }
+
+// The panel copies a few organizations at a time on its own, so that one
+// long copy does not hold up the rest, and never one organization twice.
+func TestOffsiteCopiesAFewAtATime(t *testing.T) {
+	var o offsite
+	var release []func()
+	for i := 0; i < offsiteAtOnce; i++ {
+		done, ok := o.slot()
+		if !ok {
+			t.Fatalf("place %d of %d was refused", i+1, offsiteAtOnce)
+		}
+		release = append(release, done)
+	}
+	if _, ok := o.slot(); ok {
+		t.Error("one more than the limit was let in")
+	}
+	release[0]()
+	if _, ok := o.slot(); !ok {
+		t.Error("a place given back was not given out again")
+	}
+
+	done, ok := o.claim("alpha")
+	if !ok || !o.isRunning("alpha") {
+		t.Fatal("claiming an organization")
+	}
+	if _, ok := o.claim("alpha"); ok {
+		t.Error("an organization was claimed twice")
+	}
+	if _, ok := o.claim("beta"); !ok {
+		t.Error("one organization's copy held up another's")
+	}
+	done()
+	if o.isRunning("alpha") {
+		t.Error("an organization stayed claimed after its copy")
+	}
+}

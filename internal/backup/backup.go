@@ -434,11 +434,13 @@ func (m *Manager) Delete(ctx context.Context, org, id string) error {
 	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
 		return err
 	}
-	if _, err = m.restic(ctx, org, "forget", "--prune", snap.ID); err != nil {
+	// Noted first: once the snapshot is gone, so is the only record of which
+	// copy offsite was its.
+	if err := m.removing(org, snap.Lineage); err != nil {
 		return err
 	}
-	m.removed(org, snap.Lineage)
-	return nil
+	_, err = m.restic(ctx, org, "forget", "--prune", snap.ID)
+	return err
 }
 
 // Forget removes the scheduled snapshots of one server that the policy no
@@ -468,28 +470,44 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (in
 	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
 		return 0, err
 	}
+	// Asked first what it would remove, so that it can be noted before it
+	// is gone. Nothing else touches the repository in between: the lock is
+	// held alone.
+	going, err := m.forgetting(ctx, org, append(args, "--dry-run")...)
+	if err != nil || len(going) == 0 {
+		return 0, err
+	}
+	if err := m.removing(org, going...); err != nil {
+		return 0, err
+	}
+	gone, err := m.forgetting(ctx, org, args...)
+	return len(gone), err
+}
+
+// forgetting runs a forget and returns the lineages of what it removed, or
+// with --dry-run would remove.
+func (m *Manager) forgetting(ctx context.Context, org string, args ...string) ([]string, error) {
 	out, err := m.restic(ctx, org, args...)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var groups []struct {
 		Remove []resticSnapshot `json:"remove"`
 	}
 	// restic prints nothing at all when no snapshot matched.
 	if len(bytes.TrimSpace(out)) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	if err := json.Unmarshal(out, &groups); err != nil {
-		return 0, fmt.Errorf("reading what was forgotten: %w", err)
+		return nil, fmt.Errorf("reading what was forgotten: %w", err)
 	}
-	var gone []string
+	var lineages []string
 	for _, g := range groups {
 		for _, r := range g.Remove {
-			gone = append(gone, r.snapshot().Lineage)
+			lineages = append(lineages, r.snapshot().Lineage)
 		}
 	}
-	m.removed(org, gone...)
-	return len(gone), nil
+	return lineages, nil
 }
 
 // Prune gives back the space of snapshots that have been forgotten.

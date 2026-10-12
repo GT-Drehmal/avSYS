@@ -21,6 +21,8 @@ type offsite struct {
 	started time.Time
 	// running holds the organizations being synced right now.
 	running map[string]bool
+	// busy is how many of those the panel started by itself.
+	busy int
 }
 
 const (
@@ -34,6 +36,8 @@ const (
 	// uploads everything it has.
 	offsiteTimeout = 12 * time.Hour
 )
+
+var errHasSnapshots = &Error{Status: http.StatusConflict, Code: "has_snapshots", Message: "This organization has snapshots here already. Snapshots are only brought back into an organization that has none."}
 
 var errNoOffsite = &Error{Status: http.StatusServiceUnavailable, Code: "no_offsite", Message: "No offsite copy is set up on this install."}
 
@@ -52,6 +56,26 @@ func (o *offsite) claim(org string) (release func(), ok bool) {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		delete(o.running, org)
+	}, true
+}
+
+// offsiteAtOnce is how many organizations the panel copies at a time on its
+// own. A copy asked for by hand does not count against it.
+const offsiteAtOnce = 3
+
+// slot takes one of the places for a sync the panel starts by itself. ok is
+// false when they are all taken.
+func (o *offsite) slot() (release func(), ok bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.busy >= offsiteAtOnce {
+		return nil, false
+	}
+	o.busy++
+	return func() {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		o.busy--
 	}, true
 }
 
@@ -107,14 +131,26 @@ func (s *Server) RunOffsite(ctx context.Context) {
 	}
 }
 
+// offsiteTick starts a sync of every organization that is due one. Each runs
+// on its own, a few at a time: one organization's first copy can take
+// hours, and the others' new snapshots are not to wait behind it.
 func (s *Server) offsiteTick(ctx context.Context, now time.Time) {
 	for _, org := range s.Backups.Organizations() {
 		if ctx.Err() != nil {
 			return
 		}
-		if s.offsiteDue(org, now) {
-			_, _ = s.syncOffsite(ctx, org)
+		if s.offsite.isRunning(org) || !s.offsiteDue(org, now) {
+			continue
 		}
+		done, ok := s.offsite.slot()
+		if !ok {
+			// Looked at again in a minute.
+			return
+		}
+		go func() {
+			defer done()
+			_, _ = s.syncOffsite(ctx, org)
+		}()
 	}
 }
 
@@ -235,8 +271,9 @@ func offsiteFailed(err error) error {
 	return &Error{Status: http.StatusBadGateway, Code: "offsite_failed", Message: "Copying offsite failed: " + err.Error()}
 }
 
-// offsiteSnapshots lists what the offsite copy holds of an organization
-// whose own repository is empty: what could be brought back. Asking means
+// offsiteSnapshots lists what could be brought back from the offsite copy
+// of an organization: what it holds, less what was removed here on purpose
+// and is only waiting to be removed there. Asking means
 // reaching the far end, so it is not part of the status.
 //
 // It is for those who run the install. An organization made under the name
@@ -253,7 +290,7 @@ func (s *Server) offsiteSnapshots(w http.ResponseWriter, r *http.Request, u *sto
 	if !s.Backups.HasOffsite() {
 		return errNoOffsite
 	}
-	list, err := s.Backups.OffsiteSnapshots(r.Context(), a.Org.Slug)
+	list, err := s.Backups.Recoverable(r.Context(), a.Org.Slug)
 	if err != nil {
 		return offsiteFailed(err)
 	}
@@ -280,7 +317,7 @@ func (s *Server) fetchOffsite(w http.ResponseWriter, r *http.Request, u *store.U
 		return errNoOffsite
 	}
 	if n, known := s.Backups.Holds(r.Context(), a.Org.Slug); !known || n > 0 {
-		return &Error{Status: http.StatusConflict, Code: "has_snapshots", Message: "This organization has snapshots here already. Snapshots are only brought back into an organization that has none."}
+		return errHasSnapshots
 	}
 	release, ok := s.offsite.claim(a.Org.Slug)
 	if !ok {
@@ -290,6 +327,11 @@ func (s *Server) fetchOffsite(w http.ResponseWriter, r *http.Request, u *store.U
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), offsiteTimeout)
 	defer cancel()
 	fetched, err := s.Backups.FetchOffsite(ctx, a.Org.Slug)
+	// Found out with the repository held: one may have been taken since the
+	// look above.
+	if errors.Is(err, backup.ErrNotEmpty) {
+		return errHasSnapshots
+	}
 	if err != nil {
 		return offsiteFailed(err)
 	}
