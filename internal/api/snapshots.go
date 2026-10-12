@@ -5,25 +5,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
 // operation is a snapshot or restore under way on one server. There is at
 // most one per server at a time.
 type operation struct {
-	Kind      string    `json:"kind"`
-	Org       string    `json:"org"`
-	Server    string    `json:"server"`
+	Kind   string `json:"kind"`
+	Org    string `json:"org"`
+	Server string `json:"server"`
+	// Snapshot is the one being restored to, for a restore.
+	Snapshot  string    `json:"snapshot,omitempty"`
 	Stage     string    `json:"stage"`
 	Percent   float64   `json:"percent"`
 	StartedAt time.Time `json:"startedAt"`
@@ -34,23 +41,36 @@ const (
 	kindRestore  = "restore"
 )
 
+// operations decides who may touch a server or a snapshot at a time. One
+// lock covers every question it answers, so that "nothing is running, so I
+// may" and "now something is running" cannot both be true.
 type operations struct {
 	mu      sync.Mutex
 	running map[string]*operation
+	// changes counts requests that are in the middle of changing a server.
+	changes map[string]int
+	// deleting holds snapshots that are being removed, by namespace and ID.
+	deleting map[string]bool
 }
 
-// begin claims a server for an operation; ok is false if it already has one.
-func (o *operations) begin(namespace, org, server, kind string) (*operation, bool) {
+func (o *operations) init() {
+	if o.running == nil {
+		o.running, o.changes, o.deleting = map[string]*operation{}, map[string]int{}, map[string]bool{}
+	}
+}
+
+// begin claims a server for an operation. ok is false if it already has one,
+// if a change to it is still being applied, or if the snapshot it needs is
+// being deleted.
+func (o *operations) begin(namespace, org, server, kind, snapshot string) (*operation, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.running == nil {
-		o.running = map[string]*operation{}
-	}
+	o.init()
 	key := namespace + "/" + server
-	if o.running[key] != nil {
+	if o.running[key] != nil || o.changes[key] > 0 || (snapshot != "" && o.deleting[namespace+"/"+snapshot]) {
 		return nil, false
 	}
-	op := &operation{Kind: kind, Org: org, Server: server, Stage: "Starting", StartedAt: time.Now().UTC()}
+	op := &operation{Kind: kind, Org: org, Server: server, Snapshot: snapshot, Stage: "Starting", StartedAt: time.Now().UTC()}
 	o.running[key] = op
 	return op, true
 }
@@ -59,6 +79,51 @@ func (o *operations) end(namespace, server string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	delete(o.running, namespace+"/"+server)
+}
+
+// change admits a request that is about to change a server, unless an
+// operation of one of the given kinds owns it. The caller must call release
+// when the change has been made; until then no operation can start.
+func (o *operations) change(namespace, server string, blockedBy ...string) (release func(), blocker *operation) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.init()
+	key := namespace + "/" + server
+	if op := o.running[key]; op != nil && slices.Contains(blockedBy, op.Kind) {
+		copied := *op
+		return nil, &copied
+	}
+	o.changes[key]++
+	return func() {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if o.changes[key]--; o.changes[key] <= 0 {
+			delete(o.changes, key)
+		}
+	}, nil
+}
+
+// remove admits the deletion of a snapshot, unless a restore is using it.
+// Until release is called no restore to that snapshot can start.
+func (o *operations) remove(namespace, snapshot string) (release func(), ok bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.init()
+	for key, op := range o.running {
+		if strings.HasPrefix(key, namespace+"/") && op.Snapshot == snapshot {
+			return nil, false
+		}
+	}
+	key := namespace + "/" + snapshot
+	if o.deleting[key] {
+		return nil, false
+	}
+	o.deleting[key] = true
+	return func() {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		delete(o.deleting, key)
+	}, true
 }
 
 // current returns a copy of the operation running on a server, if any.
@@ -77,7 +142,7 @@ func (o *operations) inNamespace(namespace string) []operation {
 	defer o.mu.Unlock()
 	out := []operation{}
 	for key, op := range o.running {
-		if len(key) > len(namespace) && key[:len(namespace)+1] == namespace+"/" {
+		if strings.HasPrefix(key, namespace+"/") {
 			out = append(out, *op)
 		}
 	}
@@ -118,14 +183,42 @@ func snapshotError(err error) error {
 	return err
 }
 
-// notRestoring refuses a change to a server whose files are being put back.
-// Starting the game then would run it on a half-restored world, and most
-// other changes replace the pod the restore is working through.
-func (s *Server) notRestoring(mc *avsysv1.MinecraftServer) error {
-	if op := s.ops.current(mc.Namespace, mc.Name); op != nil && op.Kind == kindRestore {
-		return &Error{Status: http.StatusConflict, Code: "restoring", Message: "This server is being restored. Wait for that to finish."}
+var (
+	errRestoring    = &Error{Status: http.StatusConflict, Code: "restoring", Message: "This server is being restored. Wait for that to finish."}
+	errSnapshotting = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot of this server is being taken. Try again when it has finished."}
+	// errRestoreIncomplete is returned to anything that would run the game
+	// on files a restore started on and did not finish.
+	errRestoreIncomplete = &Error{Status: http.StatusConflict, Code: "restore_incomplete",
+		Message: "A restore of this server did not finish, so its files may be incomplete. Restore it again before starting it; the state from before that restore is in its newest snapshot."}
+)
+
+// changing admits a request that changes a server. While a restore owns the
+// server nothing else may touch it: starting the game would run it on a
+// half-restored world, and most other changes replace the pod the restore is
+// working through. A snapshot only needs the game not to be started or
+// restarted under it, which callers ask for with alsoDuringSnapshot.
+//
+// The caller must call release once its change has been made.
+func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
+	kinds := []string{kindRestore}
+	if alsoDuringSnapshot {
+		kinds = append(kinds, kindSnapshot)
 	}
-	return nil
+	release, blocker := s.ops.change(mc.Namespace, mc.Name, kinds...)
+	if blocker == nil {
+		return release, nil
+	}
+	if blocker.Kind == kindRestore {
+		return nil, errRestoring
+	}
+	return nil, errSnapshotting
+}
+
+// restoreUnfinished reports whether a restore started on this server's files
+// and never completed.
+func restoreUnfinished(mc *avsysv1.MinecraftServer) bool {
+	_, marked := mc.Annotations[avsysv1.AnnotationRestoring]
+	return marked
 }
 
 // snapshotRecord is stored inside every snapshot. It is what lets a server be
@@ -213,7 +306,7 @@ func (s *Server) createSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	if !s.Backups.Available() {
 		return errNoBackups
 	}
-	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot)
+	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot, "")
 	if !ok {
 		return errBusy
 	}
@@ -299,6 +392,11 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 		}
 	}
 
+	// The game restarting while its files are copied, on its own or because
+	// someone restarted it, would leave a copy that mixes two states. Its
+	// container is looked at before and after to tell.
+	before := s.gameInstance(ctx, mc)
+
 	version, loader := softwareOf(&mc.Spec)
 	meta := backup.Meta{
 		Server: mc.Name, Trigger: trigger, By: by, Version: version, Loader: loader,
@@ -306,7 +404,7 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 	}
 	s.setOperation(mc.Namespace, op, "Copying files", 0)
 	last := time.Time{}
-	return s.Backups.Snapshot(ctx, org, ws, meta, func(p backup.Progress) {
+	snap, err := s.Backups.Snapshot(ctx, org, ws, meta, func(p backup.Progress) {
 		// restic reports many times a second; pages do not need that.
 		if time.Since(last) < 500*time.Millisecond {
 			return
@@ -314,6 +412,55 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 		last = time.Now()
 		s.setOperation(mc.Namespace, op, "Copying files", p.Percent)
 	})
+	if err != nil {
+		if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF") || strings.Contains(err.Error(), "closed") {
+			return nil, fmt.Errorf("the connection to the server's files was lost while they were being copied, which is what happens when the server is stopped or started meanwhile; no snapshot was kept: %w", err)
+		}
+		return nil, err
+	}
+	if after := s.gameInstance(ctx, mc); after != before {
+		// The copy cannot be trusted and must not be offered for a restore.
+		if err := s.Backups.Delete(context.WithoutCancel(ctx), org, snap.ID); err != nil {
+			s.Log.Error("could not remove a snapshot taken across a restart of the game", "server", mc.Name, "snapshot", snap.ID, "error", err)
+		}
+		return nil, errors.New("the game restarted while its files were being copied, so the snapshot was discarded; take it again")
+	}
+	return snap, nil
+}
+
+// gameInstance identifies the running instance of a server's game container:
+// it changes whenever that container is restarted or its pod replaced. It is
+// empty for a server with no game running.
+func (s *Server) gameInstance(ctx context.Context, mc *avsysv1.MinecraftServer) string {
+	pod := &corev1.Pod{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: mc.Namespace, Name: mc.Name}, pod); err != nil {
+		return ""
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == controller.MinecraftContainer {
+			return fmt.Sprintf("%s/%d/%s", pod.UID, cs.RestartCount, cs.ContainerID)
+		}
+	}
+	return string(pod.UID)
+}
+
+// markRestoring notes on a server that a restore to the given snapshot is
+// rewriting its files, or with an empty ID that it no longer is.
+func (s *Server) markRestoring(ctx context.Context, key client.ObjectKey, snapshot string) error {
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, mc); err != nil {
+		return err
+	}
+	orig := mc.DeepCopy()
+	if snapshot == "" {
+		delete(mc.Annotations, avsysv1.AnnotationRestoring)
+	} else {
+		if mc.Annotations == nil {
+			mc.Annotations = map[string]string{}
+		}
+		mc.Annotations[avsysv1.AnnotationRestoring] = snapshot
+	}
+	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }
 
 // markSavingPaused sets or clears the note that a game has been told to hold
@@ -360,12 +507,26 @@ func (s *Server) resumeSaving(ctx context.Context) {
 	}
 	for i := range all.Items {
 		mc := &all.Items[i]
-		if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; !paused {
+		// Whatever is running right now set its own notes and will clear them.
+		if s.ops.current(mc.Namespace, mc.Name) != nil {
 			continue
 		}
-		// A snapshot that is running right now paused saving on purpose and
-		// will switch it back on itself.
-		if s.ops.current(mc.Namespace, mc.Name) != nil {
+		// A restore with nobody running it was cut short, by this panel's
+		// predecessor being stopped in the middle of it. The note stays, and
+		// keeps the game from being started; the server is made to say why.
+		if restoreUnfinished(mc) && (mc.Status.Snapshots == nil || mc.Status.Snapshots.Error == "") {
+			orig := mc.DeepCopy()
+			if mc.Status.Snapshots == nil {
+				mc.Status.Snapshots = &avsysv1.SnapshotStatus{}
+			}
+			mc.Status.Snapshots.Error = "A restore was interrupted when the panel restarted, so this server's files may be incomplete. Restore it again before starting it; the state from before is in its newest snapshot."
+			if err := s.Client.Status().Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
+				s.Log.Error("could not report an interrupted restore", "server", mc.Name, "namespace", mc.Namespace, "error", err)
+			} else {
+				s.Log.Warn("found a restore that was interrupted", "server", mc.Name, "namespace", mc.Namespace)
+			}
+		}
+		if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; !paused {
 			continue
 		}
 		key := client.ObjectKeyFromObject(mc)
@@ -451,7 +612,7 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request, u *stor
 	if snap.Server != mc.Name {
 		return errBadRequest("That snapshot is of %s. A server can only be restored to its own snapshots.", snap.Server)
 	}
-	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindRestore)
+	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindRestore, snap.ID)
 	if !ok {
 		return errBusy
 	}
@@ -523,6 +684,12 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 		return undo, fmt.Errorf("the server was stopped, but its files did not become reachable, so nothing was restored: %w", err)
 	}
 	defer ws.Close()
+	// From here the files are in between two states until the restore is
+	// done. That is written on the server itself, where a panel that
+	// replaces this one will find it: the game is not started on such files.
+	if err := s.markRestoring(ctx, key, snap.ID); err != nil {
+		return undo, err
+	}
 	s.setOperation(mc.Namespace, op, "Restoring files", 0)
 	last := time.Time{}
 	err = s.Backups.Restore(ctx, org, ws, snap.ID, func(p backup.Progress) {
@@ -536,6 +703,10 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 		// The server is left stopped: its files are in an unknown state and
 		// starting the game on them could make it worse.
 		return undo, fmt.Errorf("restoring files failed and the server was left stopped; the state from before is in the newest snapshot: %w", err)
+	}
+
+	if err := s.markRestoring(ctx, key, ""); err != nil {
+		return undo, fmt.Errorf("the files were restored, but the server could not be marked as whole again: %w", err)
 	}
 
 	s.setOperation(mc.Namespace, op, "Applying settings", 100)
@@ -609,6 +780,11 @@ func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return snapshotError(err)
 	}
+	release, ok := s.ops.remove(a.Namespace, snap.ID)
+	if !ok {
+		return &Error{Status: http.StatusConflict, Code: "in_use", Message: "A server is being restored to this snapshot. Wait for that to finish."}
+	}
+	defer release()
 	if err := s.Backups.Delete(context.WithoutCancel(r.Context()), a.Org.Slug, snap.ID); err != nil {
 		return snapshotError(err)
 	}

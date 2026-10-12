@@ -257,9 +257,11 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
-	if err := s.notRestoring(mc); err != nil {
+	release, err := s.changing(mc, false)
+	if err != nil {
 		return err
 	}
+	defer release()
 	var in struct{ Spec json.RawMessage }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -282,6 +284,16 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
 	if err := s.validateSpec(r.Context(), a.Namespace, mc.Name, &spec); err != nil {
 		return err
+	}
+	// Setting the state to Running here is starting the server by another
+	// route, and is held to the same rules as the start action.
+	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
+		if restoreUnfinished(mc) {
+			return errRestoreIncomplete
+		}
+		if s.ops.current(a.Namespace, mc.Name) != nil {
+			return errSnapshotting
+		}
 	}
 	previous := mc.Spec.DeepCopy()
 	if err := s.resolveContent(r.Context(), &spec, previous); err != nil {
@@ -306,9 +318,11 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
-	if err := s.notRestoring(mc); err != nil {
+	release, err := s.changing(mc, false)
+	if err != nil {
 		return err
 	}
+	defer release()
 	if err := s.Client.Delete(r.Context(), mc); err != nil {
 		return err
 	}
@@ -322,10 +336,18 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
-	if err := s.notRestoring(mc); err != nil {
+	action := r.PathValue("action")
+	// Starting or restarting the game under a snapshot would spoil the copy,
+	// so those wait for it. Stopping is always allowed outside a restore.
+	starts := action == "start" || action == "restart"
+	release, err := s.changing(mc, starts)
+	if err != nil {
 		return err
 	}
-	action := r.PathValue("action")
+	defer release()
+	if starts && restoreUnfinished(mc) {
+		return errRestoreIncomplete
+	}
 	orig := mc.DeepCopy()
 	switch action {
 	case "start":

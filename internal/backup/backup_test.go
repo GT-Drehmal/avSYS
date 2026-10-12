@@ -352,3 +352,79 @@ func TestSnapshotFinishesWhileADeleteWaits(t *testing.T) {
 		t.Errorf("after both: %+v, %v", list, err)
 	}
 }
+
+// A snapshot that could not read every file is not kept. Restoring one would
+// delete the files it had missed.
+func TestAnIncompleteSnapshotIsDiscarded(t *testing.T) {
+	ws, m := workspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	sh(t, ws, `mkdir -p /data/world && echo fine > /data/world/level.dat &&
+		echo secret > /data/world/unreadable.dat && chmod 000 /data/world/unreadable.dat`)
+	snap, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerManual, Record: map[string]any{}}, nil)
+	if !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("snapshot with an unreadable file: %+v, %v; want ErrIncomplete", snap, err)
+	}
+	if !strings.Contains(err.Error(), "unreadable.dat") {
+		t.Errorf("the error does not name the file: %v", err)
+	}
+	if list, err := m.List(ctx, "alpha"); err != nil || len(list) != 0 {
+		t.Errorf("an incomplete snapshot was kept: %+v, %v", list, err)
+	}
+
+	// Once the file can be read, the snapshot is taken and holds it.
+	sh(t, ws, "chmod 600 /data/world/unreadable.dat")
+	whole, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerManual, Record: map[string]any{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh(t, ws, "rm /data/world/unreadable.dat")
+	if err := m.Restore(ctx, "alpha", ws, whole.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := sh(t, ws, "cat /data/world/unreadable.dat"); got != "secret" {
+		t.Errorf("after restoring the whole snapshot: %q", got)
+	}
+}
+
+// Whether an organization has snapshots is "unknown", not "none", whenever
+// something is there that cannot be read.
+func TestHolds(t *testing.T) {
+	ctx := context.Background()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic-is-not-installed", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	check := func(org string, wantCount int, wantKnown bool) {
+		t.Helper()
+		if count, known := m.Holds(ctx, org); count != wantCount || known != wantKnown {
+			t.Errorf("Holds(%s) = %d, %v; want %d, %v", org, count, known, wantCount, wantKnown)
+		}
+	}
+	write := func(path string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	check("nothing-there", 0, true)
+
+	if err := os.MkdirAll(filepath.Join(m.Dir, "empty-directory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	check("empty-directory", 0, true)
+
+	// A repository this panel has no restic to read.
+	write(filepath.Join(m.Dir, "unreadable", "config"))
+	check("unreadable", 0, false)
+
+	// One that lost its configuration but still has data in it.
+	write(filepath.Join(m.Dir, "damaged", "data", "ab", "abcdef"))
+	check("damaged", 0, false)
+
+	// A password with no repository beside it.
+	write(filepath.Join(m.Dir, "key-only.key"))
+	check("key-only", 0, false)
+}

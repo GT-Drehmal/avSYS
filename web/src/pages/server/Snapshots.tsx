@@ -3,7 +3,7 @@ import { Camera } from "lucide-react";
 import { useState } from "react";
 import { OperationRow, SnapshotRows } from "../../components/Snapshots";
 import { Button, Empty, Loading, Modal, Notice } from "../../components/ui";
-import { api, atLeast, serverPath, type Operation, type Snapshot, type SnapshotList } from "../../lib/api";
+import { api, atLeast, serverPath, type Operation, type Snapshot } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { keys, useAction, useServerSnapshots } from "../../lib/queries";
 import { useServerContext } from "./ServerPage";
@@ -16,10 +16,11 @@ export function Snapshots() {
   const canOperate = atLeast(role, "operator");
   const canAdmin = atLeast(role, "admin");
 
-  // The answer to starting something is the operation itself, shown at once
-  // rather than when its first progress report arrives.
-  const started = (op: Operation) =>
-    qc.setQueryData<SnapshotList>(keys.serverSnapshots(server.org, server.name), (l) => l && { ...l, operations: [op] });
+  // Once something has been started the list is asked for again, and shows
+  // it as running. The answer to the request is not put into the list
+  // directly: an operation that failed at once may already have been
+  // reported as over, and would then be shown as running for ever.
+  const started = () => qc.invalidateQueries({ queryKey: keys.serverSnapshots(server.org, server.name) });
   const snapshot = useAction(() => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots`));
   const restore = useAction((id: string) => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots/${id}/restore`));
 
@@ -77,8 +78,8 @@ export function Snapshots() {
               onClick={() =>
                 restoring &&
                 restore.mutate(restoring.id, {
-                  onSuccess: (o) => {
-                    started(o);
+                  onSuccess: () => {
+                    started();
                     setRestoring(null);
                   },
                 })

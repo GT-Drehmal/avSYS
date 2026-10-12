@@ -82,11 +82,17 @@ const applyServer = (qc: QueryClient, server: Server) =>
 export function useLiveServers() {
   const qc = useQueryClient();
   useEffect(() => {
+    // Everything the stream keeps current: servers, and snapshots with the
+    // operations running on them.
+    const refetchAll = () => {
+      qc.invalidateQueries({ queryKey: ["servers"] });
+      qc.invalidateQueries({ queryKey: ["snapshots"] });
+    };
     const source = new EventSource("/api/v1/events");
     let opened = false;
     source.onopen = () => {
       // Anything that changed while disconnected was missed, so refetch.
-      if (opened) qc.invalidateQueries({ queryKey: ["servers"] });
+      if (opened) refetchAll();
       opened = true;
     };
     source.addEventListener("server.updated", (e) => applyServer(qc, JSON.parse(e.data)));
@@ -94,7 +100,7 @@ export function useLiveServers() {
       const gone: Server = JSON.parse(e.data);
       qc.setQueryData<Server[]>(keys.servers(gone.org), (list) => list?.filter((s) => s.name !== gone.name));
     });
-    source.addEventListener("resync", () => qc.invalidateQueries({ queryKey: ["servers"] }));
+    source.addEventListener("resync", refetchAll);
     source.addEventListener("operation.progress", (e) => applyOperation(qc, JSON.parse(e.data)));
     source.addEventListener("operation.done", (e) => {
       const done: OperationDone = JSON.parse(e.data);

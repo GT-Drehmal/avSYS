@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -81,25 +82,25 @@ func TestSoftwareOf(t *testing.T) {
 
 func TestOneOperationPerServer(t *testing.T) {
 	var ops operations
-	first, ok := ops.begin("mc-alpha", "alpha", "world", kindSnapshot)
+	first, ok := ops.begin("mc-alpha", "alpha", "world", kindSnapshot, "")
 	if !ok || first.Org != "alpha" || first.Server != "world" {
 		t.Fatalf("first operation: %+v, %v", first, ok)
 	}
-	if _, ok := ops.begin("mc-alpha", "alpha", "world", kindRestore); ok {
+	if _, ok := ops.begin("mc-alpha", "alpha", "world", kindRestore, ""); ok {
 		t.Error("a second operation started on a busy server")
 	}
 	// Another server, and a server of the same name elsewhere, are free.
-	if _, ok := ops.begin("mc-alpha", "alpha", "creative", kindSnapshot); !ok {
+	if _, ok := ops.begin("mc-alpha", "alpha", "creative", kindSnapshot, ""); !ok {
 		t.Error("another server in the organization was blocked")
 	}
-	if _, ok := ops.begin("mc-beta", "beta", "world", kindSnapshot); !ok {
+	if _, ok := ops.begin("mc-beta", "beta", "world", kindSnapshot, ""); !ok {
 		t.Error("a server of the same name in another organization was blocked")
 	}
 	if got := ops.inNamespace("mc-alpha"); len(got) != 2 {
 		t.Errorf("operations in alpha: %+v", got)
 	}
 	// "mc-alpha" must not match a namespace that merely starts with it.
-	if _, ok := ops.begin("mc-alpha-two", "alpha-two", "world", kindSnapshot); !ok {
+	if _, ok := ops.begin("mc-alpha-two", "alpha-two", "world", kindSnapshot, ""); !ok {
 		t.Fatal("could not start in a third namespace")
 	}
 	if got := ops.inNamespace("mc-alpha"); len(got) != 2 {
@@ -115,7 +116,7 @@ func TestOneOperationPerServer(t *testing.T) {
 	if ops.current("mc-alpha", "world") != nil {
 		t.Error("the operation is still there after it ended")
 	}
-	if _, ok := ops.begin("mc-alpha", "alpha", "world", kindRestore); !ok {
+	if _, ok := ops.begin("mc-alpha", "alpha", "world", kindRestore, ""); !ok {
 		t.Error("a finished server stayed busy")
 	}
 }
@@ -146,6 +147,10 @@ func TestResumeSaving(t *testing.T) {
 		if err := p.srv.Client.Create(ctx, mc); err != nil {
 			t.Fatal(err)
 		}
+		mc.Status.Phase = phase
+		if err := p.srv.Client.Status().Update(ctx, mc); err != nil {
+			t.Fatal(err)
+		}
 	}
 	add("stopped-since", avsysv1.PhaseStopped, true)
 	add("still-running", avsysv1.PhaseRunning, true)
@@ -153,7 +158,7 @@ func TestResumeSaving(t *testing.T) {
 
 	// A snapshot running right now paused saving on purpose.
 	add("mid-snapshot", avsysv1.PhaseStopped, true)
-	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "mid-snapshot", kindSnapshot); !ok {
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "mid-snapshot", kindSnapshot, ""); !ok {
 		t.Fatal("could not start an operation")
 	}
 
@@ -192,28 +197,47 @@ func TestResumeSaving(t *testing.T) {
 	}
 }
 
-// While a server's files are being put back, nothing else may change it.
-func TestNothingChangesAServerBeingRestored(t *testing.T) {
+// While a server's files are being put back, nothing else may change it,
+// through any route. A snapshot only keeps the game from being started or
+// restarted under it.
+func TestWhatAnOperationHoldsOff(t *testing.T) {
 	p := newPanel(t)
+	const world = "/orgs/alpha/servers/world"
 	changes := []struct{ method, path, body string }{
-		{"POST", "/orgs/alpha/servers/world/start", ""},
-		{"POST", "/orgs/alpha/servers/world/stop", ""},
-		{"POST", "/orgs/alpha/servers/world/restart", ""},
-		{"PATCH", "/orgs/alpha/servers/world", `{"spec":{"displayName":"World"}}`},
-		{"PUT", "/orgs/alpha/servers/world/content?name=a.jar&kind=mod", "x"},
-		{"DELETE", "/orgs/alpha/servers/world", ""},
+		{"POST", world + "/start", ""},
+		{"POST", world + "/stop", ""},
+		{"POST", world + "/restart", ""},
+		{"PATCH", world, `{"spec":{"displayName":"World"}}`},
+		{"PUT", world + "/content?name=a.jar&kind=mod", "x"},
+		{"PUT", world + "/files/content?path=/a.txt", "x"},
+		{"DELETE", world + "/files?path=/a.txt", ""},
+		{"POST", world + "/files/mkdir?path=/a", ""},
+		{"POST", world + "/files/rename?path=/a&to=/b", ""},
+		{"DELETE", world, ""},
 	}
 
-	// A snapshot does not get in the way of running the server.
-	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindSnapshot); !ok {
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindSnapshot, ""); !ok {
 		t.Fatal("could not start a snapshot")
 	}
-	if got, code := p.do("owner", "POST", "/orgs/alpha/servers/world/stop", ""); got != 200 {
+	for _, action := range []string{"start", "restart"} {
+		if got, code := p.do("owner", "POST", world+"/"+action, ""); got != 409 || code != "busy" {
+			t.Errorf("%s during a snapshot: got %d %q, want 409 busy", action, got, code)
+		}
+	}
+	// Starting by setting the state is starting all the same.
+	if got, code := p.do("owner", "PATCH", world, `{"spec":{"state":"Running"}}`); got != 409 || code != "busy" {
+		t.Errorf("setting the state to Running during a snapshot: got %d %q, want 409 busy", got, code)
+	}
+	// Stopping and other settings are not held up by a snapshot.
+	if got, code := p.do("owner", "POST", world+"/stop", ""); got != 200 {
 		t.Errorf("stop during a snapshot: got %d %s, want 200", got, code)
+	}
+	if got, code := p.do("owner", "PATCH", world, `{"spec":{"displayName":"World"}}`); got != 200 {
+		t.Errorf("renaming during a snapshot: got %d %s, want 200", got, code)
 	}
 	p.srv.ops.end("mc-alpha", "world")
 
-	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindRestore); !ok {
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindRestore, "aaaa1111"); !ok {
 		t.Fatal("could not start a restore")
 	}
 	for _, c := range changes {
@@ -221,19 +245,126 @@ func TestNothingChangesAServerBeingRestored(t *testing.T) {
 			t.Errorf("%s %s during a restore: got %d %q, want 409 restoring", c.method, c.path, got, code)
 		}
 	}
-	// Looking is still fine, and so is another server.
-	if got, _ := p.do("viewer", "GET", "/orgs/alpha/servers/world", ""); got != 200 {
+	// Looking is still fine.
+	if got, _ := p.do("viewer", "GET", world, ""); got != 200 {
 		t.Errorf("reading a server during its restore: got %d", got)
 	}
 	// A second snapshot or restore is refused as busy.
 	p.srv.Backups.Restic = "true"
-	if got, code := p.do("owner", "POST", "/orgs/alpha/servers/world/snapshots", ""); got != 409 || code != "busy" {
+	if got, code := p.do("owner", "POST", world+"/snapshots", ""); got != 409 || code != "busy" {
 		t.Errorf("snapshot during a restore: got %d %q, want 409 busy", got, code)
 	}
 
 	p.srv.ops.end("mc-alpha", "world")
-	if got, code := p.do("owner", "POST", "/orgs/alpha/servers/world/stop", ""); got != 200 {
+	if got, code := p.do("owner", "POST", world+"/stop", ""); got != 200 {
 		t.Errorf("stop after the restore ended: got %d %s, want 200", got, code)
+	}
+}
+
+// Claims on a server and on a snapshot are decided under one lock, so that
+// neither side can slip in between the other's check and its act.
+func TestClaims(t *testing.T) {
+	var ops operations
+
+	// A change being applied holds off the start of an operation.
+	release, blocker := ops.change("mc-alpha", "world", kindRestore)
+	if blocker != nil {
+		t.Fatalf("a change was refused with nothing running: %+v", blocker)
+	}
+	if _, ok := ops.begin("mc-alpha", "alpha", "world", kindRestore, "aaaa1111"); ok {
+		t.Error("a restore started while a change was being applied")
+	}
+	// Changes do not hold each other off.
+	second, blocker := ops.change("mc-alpha", "world", kindRestore)
+	if blocker != nil {
+		t.Errorf("two changes at once: second refused by %+v", blocker)
+	}
+	second()
+	release()
+	if _, ok := ops.begin("mc-alpha", "alpha", "world", kindRestore, "aaaa1111"); !ok {
+		t.Fatal("a restore could not start after the changes finished")
+	}
+
+	// Now the restore holds off changes that ask about restores, and tells
+	// them what is in the way.
+	if _, blocker := ops.change("mc-alpha", "world", kindRestore); blocker == nil || blocker.Kind != kindRestore {
+		t.Errorf("a change was admitted during a restore: %+v", blocker)
+	}
+	if release, blocker := ops.change("mc-alpha", "world", kindSnapshot); blocker != nil {
+		t.Errorf("a change that only minds snapshots was refused by a restore: %+v", blocker)
+	} else {
+		release()
+	}
+
+	// The snapshot being restored to cannot be deleted; another can.
+	if _, ok := ops.remove("mc-alpha", "aaaa1111"); ok {
+		t.Error("the snapshot a restore is using was allowed to be deleted")
+	}
+	if _, ok := ops.remove("mc-beta", "aaaa1111"); !ok {
+		t.Error("a snapshot of the same ID in another organization was held")
+	}
+	done, ok := ops.remove("mc-alpha", "bbbb2222")
+	if !ok {
+		t.Fatal("an unrelated snapshot could not be deleted")
+	}
+	// And while that one is being deleted, no restore to it can start.
+	ops.end("mc-alpha", "world")
+	if _, ok := ops.begin("mc-alpha", "alpha", "world", kindRestore, "bbbb2222"); ok {
+		t.Error("a restore started to a snapshot that is being deleted")
+	}
+	if _, ok := ops.remove("mc-alpha", "bbbb2222"); ok {
+		t.Error("the same snapshot was allowed to be deleted twice at once")
+	}
+	done()
+	if _, ok := ops.begin("mc-alpha", "alpha", "world", kindRestore, "bbbb2222"); !ok {
+		t.Error("a restore could not start once the deletion was over")
+	}
+}
+
+// A restore that was cut short leaves its mark on the server. Until a
+// restore completes, the game is not started on those files by any route.
+func TestAnUnfinishedRestoreKeepsTheGameOff(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	key := client.ObjectKey{Namespace: "mc-alpha", Name: "world"}
+	const world = "/orgs/alpha/servers/world"
+
+	if err := p.srv.markRestoring(ctx, key, "aaaa1111"); err != nil {
+		t.Fatal(err)
+	}
+	for _, start := range []struct{ method, path, body string }{
+		{"POST", world + "/start", ""},
+		{"POST", world + "/restart", ""},
+		{"PATCH", world, `{"spec":{"state":"Running"}}`},
+	} {
+		if got, code := p.do("owner", start.method, start.path, start.body); got != 409 || code != "restore_incomplete" {
+			t.Errorf("%s %s after an unfinished restore: got %d %q, want 409 restore_incomplete", start.method, start.path, got, code)
+		}
+	}
+	// Everything short of running the game still works.
+	if got, code := p.do("owner", "PATCH", world, `{"spec":{"displayName":"World"}}`); got != 200 {
+		t.Errorf("renaming after an unfinished restore: got %d %s", got, code)
+	}
+
+	// The panel that finds the mark, with nothing running, says so on the server.
+	p.srv.resumeSaving(ctx)
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(ctx, key, mc); err != nil {
+		t.Fatal(err)
+	}
+	if mc.Status.Snapshots == nil || !strings.Contains(mc.Status.Snapshots.Error, "interrupted") {
+		t.Errorf("the server does not say its restore was interrupted: %+v", mc.Status.Snapshots)
+	}
+	if !restoreUnfinished(mc) {
+		t.Error("reporting the interruption cleared the mark")
+	}
+
+	// A restore that completes clears it.
+	if err := p.srv.markRestoring(ctx, key, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, code := p.do("owner", "POST", world+"/start", ""); got != 200 {
+		t.Errorf("start once a restore has completed: got %d %s, want 200", got, code)
 	}
 }
 

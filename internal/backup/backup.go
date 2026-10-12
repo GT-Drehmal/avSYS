@@ -63,6 +63,10 @@ var (
 	ErrNotFound = errors.New("no such snapshot")
 	// ErrUnavailable is returned when the panel has no restic to run.
 	ErrUnavailable = errors.New("restic is not installed where the panel runs")
+	// ErrIncomplete is returned when some of the server's files could not be
+	// read. Nothing is kept: restoring such a snapshot would delete whatever
+	// it had missed.
+	ErrIncomplete = errors.New("some of the server's files could not be read, so no snapshot was kept")
 	// ErrOldWorkspace is returned when the server's workspace has no restic:
 	// its pod was started by a panel from before snapshots existed.
 	ErrOldWorkspace = errors.New("this server's workspace is from before snapshots existed; restart the server to update it, then try again")
@@ -143,9 +147,27 @@ func (m *Manager) lock(org string) *sync.RWMutex {
 	return m.locks[org]
 }
 
-// Exists reports whether the organization has a repository, whether or not
-// the panel is able to read it right now.
-func (m *Manager) Exists(org string) bool { return m.exists(org) }
+// Holds reports how many snapshots an organization has. known is false when
+// that cannot be said: there is something where its repository would be that
+// the panel cannot read, a repository it has no restic for, or one that has
+// lost its configuration. Callers deciding whether it is safe to delete must
+// treat that as "some".
+func (m *Manager) Holds(ctx context.Context, org string) (count int, known bool) {
+	if m.exists(org) {
+		list, err := m.List(ctx, org)
+		return len(list), err == nil
+	}
+	// No usable repository. That is only "none" if nothing is there at all.
+	entries, err := os.ReadDir(m.repoDir(org))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		_, err := os.Stat(m.keyFile(org))
+		return 0, errors.Is(err, os.ErrNotExist)
+	case err != nil:
+		return 0, false
+	}
+	return 0, len(entries) == 0
+}
 
 // exists reports whether the organization has a repository yet.
 func (m *Manager) exists(org string) bool {
@@ -534,22 +556,39 @@ func (m *Manager) Snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	if err != nil {
 		return nil, err
 	}
+	snap, incomplete, err := m.snapshot(ctx, org, ws, meta, tags, secret, progress)
+	if err != nil {
+		return nil, err
+	}
+	if incomplete != nil {
+		// Removed with the lock released: removal needs it alone.
+		if err := m.Delete(context.WithoutCancel(ctx), org, snap.ID); err != nil {
+			m.Log.Error("could not remove an incomplete snapshot", "org", org, "server", meta.Server, "snapshot", snap.ID, "error", err)
+		}
+		return nil, incomplete
+	}
+	return snap, nil
+}
+
+// snapshot runs the backup holding the repository's read lock. incomplete is
+// set when restic saved a snapshot but could not read every file.
+func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta Meta, tags []string, secret string, progress func(Progress)) (snap *Snapshot, incomplete, err error) {
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
 
 	record, err := json.MarshalIndent(meta.Record, "", "  ")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	write := "mkdir -p " + quote(filepath.Dir(RecordPath)) + " && cat > " + quote(RecordPath)
 	if stderr, err := run(ws, write, bytes.NewReader(record), nil); err != nil {
-		return nil, fmt.Errorf("recording the server's settings: %w: %s", err, lastLine(stderr))
+		return nil, nil, fmt.Errorf("recording the server's settings: %w: %s", err, lastLine(stderr))
 	}
 
 	socket, stop, err := m.serve(ws, org)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer stop()
 
@@ -562,20 +601,33 @@ func (m *Manager) Snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	}
 	f := &follow{progress: progress}
 	stderr, err := runCtx(ctx, ws, resticIn(socket, args...), strings.NewReader(secret+"\n"), f.line)
-	// restic exits with 3 when it could not read some files, a region file
-	// the game was replacing for example, and still saves the snapshot.
+	// What went wrong with individual files is reported on stderr, in the
+	// same form as the rest.
+	for _, line := range strings.Split(stderr, "\n") {
+		f.line([]byte(line))
+	}
+	// restic exits with 3 when it could not read some files, and saves a
+	// snapshot of the rest all the same.
 	var exit *ssh.ExitError
-	incomplete := errors.As(err, &exit) && exit.ExitStatus() == 3 && f.snapshotID != ""
-	if err != nil && !incomplete {
-		return nil, f.failure(stderr, err)
+	partial := errors.As(err, &exit) && exit.ExitStatus() == 3 && f.snapshotID != ""
+	if err != nil && !partial {
+		return nil, nil, f.failure(stderr, err)
 	}
 	if f.snapshotID == "" {
-		return nil, errors.New("restic finished without reporting a snapshot")
+		return nil, nil, errors.New("restic finished without reporting a snapshot")
 	}
-	if incomplete {
-		m.Log.Warn("snapshot saved with unreadable files", "org", org, "server", meta.Server, "errors", f.errors)
+	snap, err = m.get(ctx, org, f.snapshotID)
+	if err != nil {
+		return nil, nil, err
 	}
-	return m.get(ctx, org, f.snapshotID)
+	if partial {
+		detail := lastLine(stderr)
+		if len(f.errors) > 0 {
+			detail = strings.Join(f.errors, "; ")
+		}
+		incomplete = fmt.Errorf("%w: %s", ErrIncomplete, detail)
+	}
+	return snap, incomplete, nil
 }
 
 // Restore puts the server's files back to how a snapshot has them. Files

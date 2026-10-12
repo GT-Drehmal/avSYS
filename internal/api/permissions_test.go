@@ -64,6 +64,8 @@ func newPanel(t *testing.T) *panel {
 	cluster := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithIndex(&avsysv1.MinecraftServer{}, router.HostnameIndex, router.IndexHostname).
+		// As in a real cluster, status is written separately from the rest.
+		WithStatusSubresource(&avsysv1.MinecraftServer{}).
 		Build()
 
 	p := &panel{

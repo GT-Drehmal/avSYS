@@ -26,6 +26,11 @@ const (
 	// to hold its saves for a snapshot. A panel that starts and finds it set
 	// was interrupted before it could switch saving back on, and does so.
 	AnnotationSavingPaused = "avsys.dev/saving-paused"
+	// AnnotationRestoring is set, to the snapshot's ID, while a restore is
+	// putting a server's files back, and removed when it has finished. One
+	// that is still there with no restore running was cut short, and the
+	// files may be a mix of two states: the game is not started on them.
+	AnnotationRestoring = "avsys.dev/restoring"
 	// AnnotationRestart is copied to the pod template; changing it rolls the pod.
 	AnnotationRestart = "avsys.dev/restarted-at"
 )
