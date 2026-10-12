@@ -21,7 +21,7 @@ function InviteDialog({ org, myRole, onClose }: { org: string; myRole: Role; onC
   );
   if (created) {
     return (
-      <Modal open onOpenChange={onClose} title="Invite link" description="Send this link to the person you are inviting. Anyone who has it can use it.">
+      <Modal open onOpenChange={onClose} title="Invite link" description="Anyone who has this link can use it.">
         <div className="flex flex-col gap-4">
           <div className="rounded-md border border-line bg-bg px-3 py-2">
             <CopyText value={inviteURL(created.token)} className="text-xs" wrap />
@@ -36,7 +36,7 @@ function InviteDialog({ org, myRole, onClose }: { org: string; myRole: Role; onC
     );
   }
   return (
-    <Modal open onOpenChange={onClose} title="Invite people" description="Creates a link that adds whoever opens it to this organization.">
+    <Modal open onOpenChange={onClose} title="Invite people">
       <form
         className="flex flex-col gap-4"
         onSubmit={(e) => {

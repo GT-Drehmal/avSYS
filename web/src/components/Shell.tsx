@@ -47,7 +47,7 @@ export function NewOrgDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const create = useAction((body: { name: string; slug: string }) => api.post<Org>("/orgs", body), [keys.me]);
   const effectiveSlug = slug ?? slugify(name);
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title="New organization" description="An organization has its own members, servers and Kubernetes namespace.">
+    <Modal open={open} onOpenChange={onOpenChange} title="New organization">
       <form
         className="flex flex-col gap-4"
         onSubmit={(e) => {
@@ -66,7 +66,7 @@ export function NewOrgDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         }}
       >
         <Field label="Name">{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} placeholder="GT Drehmal" />}</Field>
-        <Field label="URL name" hint="Used in URLs, SSH targets and the namespace. It cannot be changed later.">
+        <Field label="URL name" hint="It cannot be changed later.">
           {(id) => <Input id={id} required value={effectiveSlug} onChange={(e) => setSlug(e.target.value)} className="font-mono" pattern="[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?" />}
         </Field>
         <div className="flex justify-end gap-2">

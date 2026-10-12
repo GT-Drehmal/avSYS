@@ -23,7 +23,7 @@ function Profile() {
           save.mutate(undefined, { onSuccess: () => toast.info("Profile saved") });
         }}
       >
-        <Field label="Username" hint="Shown in shells you open on servers. It cannot be changed.">
+        <Field label="Username" hint="It cannot be changed.">
           {(id) => <Input id={id} disabled value={me.user.username} className="font-mono" />}
         </Field>
         <Field label="Display name">{(id) => <Input id={id} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
@@ -51,7 +51,7 @@ function SSHKeys() {
   const importKeys = useAction(() => api.post<{ added: number }>("/me/ssh-keys/import", { githubUsername: githubUser }), [sshKeys]);
 
   return (
-    <Section title="SSH keys" description="These let you SSH into servers you have operator access to, and open them in VS Code. The matching private key never leaves your machine.">
+    <Section title="SSH keys" description="For SSH and VS Code access to servers.">
       {keysQuery.data && keysQuery.data.length > 0 ? (
         <ul className="overflow-hidden rounded-md border border-line bg-surface">
           {keysQuery.data.map((k) => (
@@ -101,7 +101,7 @@ function SSHKeys() {
           <Field label="Public key">
             {(id) => <Textarea id={id} required autoFocus rows={4} value={publicKey} onChange={(e) => setPublicKey(e.target.value)} placeholder="ssh-ed25519 AAAA… you@laptop" className="font-mono text-xs break-all" spellCheck={false} />}
           </Field>
-          <Field label="Name" hint="Optional. Defaults to the comment at the end of the key.">
+          <Field label="Name" hint="Optional.">
             {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="Laptop" />}
           </Field>
           <div className="flex justify-end gap-2">
@@ -125,11 +125,7 @@ function APITokens() {
   return (
     <Section
       title="API tokens"
-      description={
-        <>
-          For scripts and tools. A token acts as you: send it as <span className="font-mono">Authorization: Bearer …</span> to anything under <span className="font-mono">/api/v1</span>.
-        </>
-      }
+      description="For scripts and tools. A token acts as you."
     >
       {tokens.data && tokens.data.length > 0 && (
         <ul className="overflow-hidden rounded-md border border-line bg-surface">
@@ -182,7 +178,7 @@ function SignIn() {
   const change = useAction(() => api.post("/me/password", { current, new: next }));
   const linked = new Map(me.identities.map((i) => [i.provider, i.login]));
   return (
-    <Section title="Sign-in" description="Ways to get into this account.">
+    <Section title="Sign-in">
       {meta && meta.providers.length > 0 && (
         <ul className="overflow-hidden rounded-md border border-line bg-surface">
           {meta.providers.map((p) => (

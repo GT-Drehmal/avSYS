@@ -41,7 +41,7 @@ function ConnectDialog({ server, open, onOpenChange }: { server: Server; open: b
   const row = "flex flex-col gap-1.5";
   const box = "flex min-h-9 items-center rounded-md border border-line bg-bg px-3 py-1.5";
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title="Connect" description="Edit files and run commands from your own tools. Access follows your role here.">
+    <Modal open={open} onOpenChange={onOpenChange} title="Connect">
       <div className="flex flex-col gap-5">
         <div className={row}>
           <span className="label-mono">Players join at</span>
@@ -53,11 +53,11 @@ function ConnectDialog({ server, open, onOpenChange }: { server: Server; open: b
             <CopyText value={sshCommand(server, meta)} wrap />
           </div>
           <p className="text-xs leading-relaxed text-muted">
-            You sign in with an SSH key from{" "}
+            Uses an SSH key from{" "}
             <Link to="/account" className="text-accent hover:underline">
               your account
             </Link>
-            . The server directory is <span className="font-mono">/data</span>; scp, sftp and rsync work too.
+            .
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -185,7 +185,7 @@ export function ServerPage() {
               )
             }
           >
-            This server was started before its latest settings, or before the panel was last updated. Both apply on the next restart.
+            Restart to apply pending changes.
           </Notice>
         )}
       </div>

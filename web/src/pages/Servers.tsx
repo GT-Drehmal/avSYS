@@ -52,7 +52,7 @@ export function Servers() {
         <Empty title="Could not load servers">{servers.error.message}</Empty>
       ) : servers.data.length === 0 ? (
         <Empty title="No servers yet" action={newButton}>
-          {canCreate ? "Create one from a game version or a modpack. It will be running in about a minute." : "An admin of this organization can create one."}
+          {canCreate ? "Create one from a game version or a modpack." : "An admin of this organization can create one."}
         </Empty>
       ) : (
         <div className="overflow-hidden rounded-lg border border-line bg-surface">

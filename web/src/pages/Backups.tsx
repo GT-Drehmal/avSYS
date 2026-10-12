@@ -28,7 +28,7 @@ export function Backups() {
     return (
       <>
         {header}
-        <Notice>Snapshots are not available on this install: restic is not installed where the panel runs.</Notice>
+        <Notice>Snapshots are not available: restic is not installed on the panel.</Notice>
       </>
     );
   }
@@ -46,8 +46,7 @@ export function Backups() {
           <p className="text-[13px] text-muted">
             {snapshots.length === 0
               ? "No snapshots yet."
-              : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"} of ${groups.size} server${groups.size === 1 ? "" : "s"}, using ${bytes(usage?.bytes ?? 0)}.`}{" "}
-            Servers in an organization share one store, so files they have in common are kept once.
+              : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"} of ${groups.size} server${groups.size === 1 ? "" : "s"}, using ${bytes(usage?.bytes ?? 0)}.`}
           </p>
           <Notice tone="info">Snapshots are kept on this cluster only. If its storage is lost, they are lost with it.</Notice>
         </div>
@@ -55,7 +54,7 @@ export function Backups() {
           <OperationRow key={op.server} op={op} />
         ))}
         {snapshots.length === 0 && operations.length === 0 && (
-          <Empty title="Nothing saved yet">Take a snapshot from a server's Backups tab. A snapshot outlives its server: deleting a server leaves its history here, and a new server can be made from any of it.</Empty>
+          <Empty title="Nothing saved yet">Take one from a server's Backups tab.</Empty>
         )}
         {[...groups].map(([name, items]) => (
           <section key={name} className="flex flex-col gap-2.5">
