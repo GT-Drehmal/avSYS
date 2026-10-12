@@ -131,7 +131,7 @@ export function Settings() {
   const [draft, setDraft] = useState(saved);
   const versions = useGameVersions(draft.loader);
   // Known to be missing, as opposed to the list not having loaded.
-  const noBuild = draft.version !== "LATEST" && !!versions.data && !versions.isPlaceholderData && !versions.data.releases.includes(draft.version);
+  const noBuild = draft.version !== "LATEST" && !!versions.data && !versions.isPlaceholderData && !versions.data.all.has(draft.version);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const [deleting, setDeleting] = useState(false);
 

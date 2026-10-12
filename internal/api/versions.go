@@ -200,7 +200,7 @@ func (s *Server) supportedBy(ctx context.Context, loader avsysv1.Loader) (*suppo
 	return out, nil
 }
 
-// minecraftVersions lists game versions. With ?loader= it lists the releases
+// minecraftVersions lists game versions. With ?loader= it lists the ones
 // that kind of server has a build for, and its "latest" is the newest of
 // those rather than the newest there is.
 func (s *Server) minecraftVersions(w http.ResponseWriter, r *http.Request, _ *store.User) error {
@@ -217,10 +217,22 @@ func (s *Server) minecraftVersions(w http.ResponseWriter, r *http.Request, _ *st
 		if sup, err := s.supportedBy(r.Context(), loader); err != nil {
 			s.Log.Warn("listing the game versions a loader supports", "loader", loader, "error", err)
 		} else {
-			m.Versions = sup.releases
-			m.Latest = map[string]string{"release": ""}
-			if len(sup.releases) > 0 {
-				m.Latest["release"] = sup.releases[0].ID
+			// Pre-releases it has a build for are listed too, so that a
+			// server on one is not taken for one with no build.
+			all := m.Versions
+			m.Versions, m.Latest = nil, map[string]string{"release": "", "snapshot": ""}
+			for _, v := range all {
+				if !sup.all[v.ID] {
+					continue
+				}
+				m.Versions = append(m.Versions, v)
+				kind := "snapshot"
+				if v.Type == "release" {
+					kind = "release"
+				}
+				if m.Latest[kind] == "" {
+					m.Latest[kind] = v.ID
+				}
 			}
 		}
 	}
@@ -246,9 +258,13 @@ func (s *Server) latestRelease(ctx context.Context, loader avsysv1.Loader) strin
 // for: such a server would fail to install each time it started. Whatever
 // cannot be checked is let through.
 func (s *Server) checkVersion(ctx context.Context, spec *avsysv1.MinecraftServerSpec) error {
-	// A modpack names its own game version, and a build asked for by number
-	// may be one of the pre-release builds that are not counted here.
-	if spec.Modpack != nil || spec.LoaderVersion != "" || spec.Version == "" || spec.Version == "LATEST" {
+	// A modpack names its own game version.
+	if spec.Modpack != nil || spec.Version == "" || spec.Version == "LATEST" {
+		return nil
+	}
+	// A NeoForge build asked for by number may be one of the pre-release
+	// builds, which are not counted here and can be all a game version has.
+	if spec.Loader == avsysv1.LoaderNeoForge && spec.LoaderVersion != "" {
 		return nil
 	}
 	sup, err := s.supportedBy(ctx, spec.Loader)

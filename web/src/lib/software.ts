@@ -13,8 +13,8 @@ export const loaders: { id: Loader; name: string; blurb: string }[] = [
 ];
 
 /**
- * Released game versions, newest first. Given a kind of server, only the
- * ones it has a build for, and "latest" is the newest of those.
+ * Game versions, newest first. Given a kind of server, only the ones it has
+ * a build for, and "latest" is the newest release of those.
  */
 export function useGameVersions(loader?: Loader | null) {
   return useQuery({
@@ -23,7 +23,12 @@ export function useGameVersions(loader?: Loader | null) {
     staleTime: 10 * 60_000,
     // The list for the previous kind stays up while the next one loads.
     placeholderData: keepPreviousData,
-    select: (m) => ({ latest: m.latest.release, releases: m.versions.filter((v) => v.type === "release").map((v) => v.id) }),
+    select: (m) => ({
+      latest: m.latest.release,
+      releases: m.versions.filter((v) => v.type === "release").map((v) => v.id),
+      // Snapshots and pre-releases too, for telling whether a version has a build at all.
+      all: new Set(m.versions.map((v) => v.id)),
+    }),
   });
 }
 

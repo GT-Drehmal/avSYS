@@ -121,6 +121,12 @@ func TestVersionListFollowsTheLoader(t *testing.T) {
 	if list.Latest["release"] != "26.2" || len(list.Versions) != 2 {
 		t.Errorf("Folia's list is %+v, want 26.2 and 1.21.4 with 26.2 the latest", list)
 	}
+	// A pre-release with a build is listed, as what it is.
+	list = manifest{}
+	p.fetch("/catalog/minecraft/versions?loader=paper", &list)
+	if list.Latest["release"] != "26.3" || list.Latest["snapshot"] != "26.3-rc-1" || len(list.Versions) != 5 {
+		t.Errorf("Paper's list is %+v, want its four releases and 26.3-rc-1", list)
+	}
 	list = manifest{}
 	p.fetch("/catalog/minecraft/versions", &list)
 	if list.Latest["release"] != "26.3" || len(list.Versions) != 7 {
@@ -168,12 +174,15 @@ func TestCreateChecksTheVersion(t *testing.T) {
 		"neoforge-beta":  {`"loader":"neoforge","version":"26.1.1"`, 400},
 		"neoforge-build": {`"loader":"neoforge","version":"26.1.1","loaderVersion":"26.1.1.14-beta"`, 201},
 		"neoforge-ok":    {`"loader":"neoforge","version":"1.21"`, 201},
-		"forge-latest":   {`"loader":"forge","version":"26.3"`, 201},
-		"forge-none":     {`"loader":"forge","version":"26.2"`, 400},
-		"snapshot":       {`"version":"26.4-snapshot-1"`, 201},
-		"fabric-snap":    {`"loader":"fabric","version":"26.4-snapshot-1"`, 201},
-		"made-up":        {`"version":"99.9"`, 400},
-		"paper-rc":       {`"loader":"paper","version":"26.3-rc-1"`, 201},
+		// Only NeoForge has builds that are passed on and not counted.
+		"folia-build":  {`"loader":"folia","version":"26.3","loaderVersion":"7"`, 400},
+		"fabric-build": {`"loader":"fabric","version":"26.2","loaderVersion":"0.18.4"`, 400},
+		"forge-latest": {`"loader":"forge","version":"26.3"`, 201},
+		"forge-none":   {`"loader":"forge","version":"26.2"`, 400},
+		"snapshot":     {`"version":"26.4-snapshot-1"`, 201},
+		"fabric-snap":  {`"loader":"fabric","version":"26.4-snapshot-1"`, 201},
+		"made-up":      {`"version":"99.9"`, 400},
+		"paper-rc":     {`"loader":"paper","version":"26.3-rc-1"`, 201},
 	} {
 		if got, code := create(name, c.spec); got != c.want || (got == 400 && code != "invalid") {
 			t.Errorf("%s (%s): %d %s, want %d", name, c.spec, got, code, c.want)

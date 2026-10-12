@@ -71,7 +71,7 @@ export function Mods() {
   const [adding, setAdding] = useState(false);
   const [versioning, setVersioning] = useState<number | "modpack" | null>(null);
   const canEdit = atLeast(role, "admin");
-  const latest = useGameVersions().data?.latest;
+  const latest = useGameVersions(server.spec.modpack ? null : server.spec.loader).data?.latest;
   const mods = server.spec.mods ?? [];
   const modpack = server.spec.modpack;
 
