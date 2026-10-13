@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS users (
 	is_admin      INTEGER NOT NULL DEFAULT 0,
 	created_at    INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS minecraft_accounts (
+	user_id   TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	uuid      TEXT NOT NULL,
+	name      TEXT NOT NULL,
+	linked_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS identities (
 	provider TEXT NOT NULL,
 	subject  TEXT NOT NULL,

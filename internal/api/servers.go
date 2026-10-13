@@ -144,6 +144,11 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if rp := spec.ResourcePack; rp != nil && rp.URL != "" && !strings.HasPrefix(rp.URL, "http://") && !strings.HasPrefix(rp.URL, "https://") {
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
+	switch spec.AutoOp {
+	case "", "off", string(store.RoleOperator), string(store.RoleAdmin), string(store.RoleOwner):
+	default:
+		return errBadRequest("Operators in game go by role: operator, admin, owner, or off. %q is none of those.", spec.AutoOp)
+	}
 	if spec.Backups != nil {
 		// Held to the limits an organization's own schedule is.
 		if err := policyFor(defaultPolicy, spec).validate(); err != nil {
@@ -348,6 +353,11 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, previous.Mods, mc.Spec.Mods)
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
+	// From which role members are operators in game, acted on now and not
+	// with the next look.
+	if previous.AutoOp != mc.Spec.AutoOp {
+		s.syncOpsFor(a.Org, mc)
+	}
 	writeJSON(w, http.StatusOK, s.view(mc))
 	return nil
 }

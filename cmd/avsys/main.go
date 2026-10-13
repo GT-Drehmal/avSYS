@@ -332,6 +332,12 @@ func run(opts options, log *slog.Logger) error {
 	})); err != nil {
 		return err
 	}
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		server.RunOps(ctx)
+		return nil
+	})); err != nil {
+		return err
+	}
 
 	httpServer := &http.Server{Addr: opts.httpAddr, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {

@@ -135,12 +135,17 @@ type Member struct {
 	AvatarURL   string    `json:"avatarUrl"`
 	Role        Role      `json:"role"`
 	JoinedAt    time.Time `json:"joinedAt"`
+	// MinecraftName is the player they say they are in game, if they have
+	// said. It is as they gave it and is not proof of anything.
+	MinecraftName string `json:"minecraftName,omitempty"`
 }
 
 func (s *Store) Members(ctx context.Context, orgID string) ([]Member, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT u.id, u.username, u.display_name, u.avatar_url, m.role, m.created_at
-		 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.org_id = ? ORDER BY m.created_at`, orgID)
+		`SELECT u.id, u.username, u.display_name, u.avatar_url, m.role, m.created_at, COALESCE(a.name, '')
+		 FROM memberships m JOIN users u ON u.id = m.user_id
+		 LEFT JOIN minecraft_accounts a ON a.user_id = u.id
+		 WHERE m.org_id = ? ORDER BY m.created_at`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +154,7 @@ func (s *Store) Members(ctx context.Context, orgID string) ([]Member, error) {
 	for rows.Next() {
 		var m Member
 		var joined int64
-		if err := rows.Scan(&m.UserID, &m.Username, &m.DisplayName, &m.AvatarURL, &m.Role, &joined); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Username, &m.DisplayName, &m.AvatarURL, &m.Role, &joined, &m.MinecraftName); err != nil {
 			return nil, err
 		}
 		m.JoinedAt = unix(joined)

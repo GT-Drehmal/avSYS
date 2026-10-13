@@ -62,6 +62,7 @@ type Server struct {
 	ops        operations
 	schedule   schedule
 	offsite    offsite
+	autoOps    autoOps
 	// consoles holds one lock per server, taken to type at its console.
 	consoles sync.Map
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
@@ -264,6 +265,8 @@ func (s *Server) Handler() http.Handler {
 	api("GET /me", s.authed(s.getMe))
 	api("PATCH /me", s.authed(s.updateMe))
 	api("POST /me/password", s.authed(s.setPassword))
+	api("PUT /me/minecraft", s.authed(s.setMinecraftAccount))
+	api("DELETE /me/minecraft", s.authed(s.clearMinecraftAccount))
 	api("GET /me/ssh-keys", s.authed(s.listSSHKeys))
 	api("POST /me/ssh-keys", s.authed(s.addSSHKey))
 	api("POST /me/ssh-keys/import", s.authed(s.importSSHKeys))

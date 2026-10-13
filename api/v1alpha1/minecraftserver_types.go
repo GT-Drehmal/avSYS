@@ -36,6 +36,11 @@ const (
 	// it with nothing running never received all of its files. There is
 	// nothing in it worth keeping: it is deleted and made again.
 	AnnotationCreating = "avsys.dev/creating"
+	// AnnotationAutoOps lists the players the panel has made operators on a
+	// server for their role in its organization, separated by commas. Only
+	// these are ever taken off again by it: operators made any other way
+	// are not its to remove.
+	AnnotationAutoOps = "avsys.dev/auto-ops"
 	// AnnotationRestart is copied to the pod template; changing it rolls the pod.
 	AnnotationRestart = "avsys.dev/restarted-at"
 )
@@ -245,6 +250,11 @@ type MinecraftServerSpec struct {
 	Sleep     SleepSpec     `json:"sleep,omitempty"`
 	// Backups is the server's own schedule for snapshots, where it has one.
 	Backups *BackupSpec `json:"backups,omitempty"`
+	// AutoOp says which members of the organization are operators in game
+	// without anyone adding them: those with this role or a higher one who
+	// have linked a Minecraft account. Empty is "operator". "off" is nobody.
+	// +kubebuilder:validation:Enum="";operator;admin;owner;off
+	AutoOp string `json:"autoOp,omitempty"`
 
 	// Image overrides the server image. By default a tag of itzg/minecraft-server
 	// with the right Java for the game version is chosen.

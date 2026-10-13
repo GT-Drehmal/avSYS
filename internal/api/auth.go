@@ -323,9 +323,16 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request, u *store.User) er
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	me := map[string]any{
 		"user": u, "orgs": orgs, "identities": identities, "hasPassword": u.PasswordHash != "",
-	})
+	}
+	// Left out, not null, for someone who has linked none.
+	if account, err := s.Store.MinecraftAccount(r.Context(), u.ID); err == nil {
+		me["minecraft"] = account
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	writeJSON(w, http.StatusOK, me)
 	return nil
 }
 

@@ -94,6 +94,8 @@ export interface Me {
   orgs: Org[];
   identities: { provider: string; login: string }[];
   hasPassword: boolean;
+  /** The Minecraft account they have linked, if any. */
+  minecraft?: { uuid: string; name: string; linkedAt: string };
 }
 
 export type Phase = "Stopped" | "Stopping" | "Starting" | "Running" | "Sleeping" | "Error";
@@ -151,6 +153,8 @@ export interface ServerSpec {
   storage: { size: string; storageClassName?: string };
   expose: { type: ExposeType; hostname?: string; loadBalancerIP?: string; nodePort?: number };
   sleep: { enabled?: boolean; idleMinutes: number };
+  /** From which role members are operators in game: "" is operator, "off" is nobody. */
+  autoOp?: "" | "operator" | "admin" | "owner" | "off";
   /** Where the server's scheduled snapshots depart from its organization's. Absent, it follows them. */
   backups?: BackupOverride | null;
   image?: string;
@@ -280,6 +284,8 @@ export interface Member {
   avatarUrl: string;
   role: Role;
   joinedAt: string;
+  /** The player they say they are in game. */
+  minecraftName?: string;
 }
 
 export interface Invite {

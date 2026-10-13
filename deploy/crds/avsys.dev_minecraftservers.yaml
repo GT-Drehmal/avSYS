@@ -55,6 +55,18 @@ spec:
             type: object
           spec:
             properties:
+              autoOp:
+                description: |-
+                  AutoOp says which members of the organization are operators in game
+                  without anyone adding them: those with this role or a higher one who
+                  have linked a Minecraft account. Empty is "operator". "off" is nobody.
+                enum:
+                - ""
+                - operator
+                - admin
+                - owner
+                - "off"
+                type: string
               backups:
                 description: Backups is the server's own schedule for snapshots, where
                   it has one.

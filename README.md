@@ -165,6 +165,14 @@ For the shared router, point each server's hostname (an A or CNAME record) at th
 
 Instance administrators act as owner in every organization and are the only ones who can create organizations.
 
+### Operators in game
+
+Someone who runs a server in the panel should not have to op themselves on it. Link a Minecraft account under **Account**, and on every server of your organizations where your role is high enough you are an operator in game: when the server starts, and within seconds of linking, joining, or a change of role. Lose the role, leave, or unlink, and it is taken away again.
+
+- Each server sets from which role this applies, under **Settings → Players**: operators and above (the default), admins and above, owners, or nobody.
+- Only operators the panel made are ever removed by it. Players listed under Operators in a server's settings, or opped in game, are left alone.
+- Linking an account does not prove it is yours, and does not need to: a member with the operator role can already run `op` on any player from the console. Viewers get nothing from linking one.
+
 ## API
 
 The web UI is a client of the REST API, so anything it does can be scripted. Create a token under **Account → API tokens**:
