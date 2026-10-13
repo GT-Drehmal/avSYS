@@ -168,15 +168,20 @@ For the shared router, point each server's hostname (an A or CNAME record) at th
 
 Instance administrators act as owner in every organization and are the only ones who can create organizations.
 
-### Operators in game
+### Who can join, and who is an operator
 
-Someone who runs a server in the panel should not have to op themselves on it. Link a Minecraft account under **Account**, and on every server of your organizations where your role is high enough you are an operator in game: when the server starts, and within seconds of linking, joining, or a change of role. Lose the role, leave, or unlink, and it is taken away again.
+A new server made in the panel is for its organization: the whitelist is on, and every member who has linked a Minecraft account under **Account** is on it. Choose "Anyone with the address" on the form for a server with no whitelist.
 
-- Each server sets from which role this applies, under **Settings → Players**: operators and above (the default), admins and above, owners, or nobody.
-- Only operators the panel made are ever removed by it. Players listed under Operators in a server's settings are left alone, and so is anyone opped in game whom the panel never made one. To keep someone an operator whatever their role, list them under Operators: opping in game a player the panel already made one changes nothing it can see.
-- Which operators the panel made is kept with a server's snapshots, so restoring an old one does not hand operator back to someone who has since lost the role.
+Members are also made operators in game, from the operator role up. Neither needs doing by hand, and both keep up: when a server starts, and within seconds of someone linking an account, joining, leaving, or changing role.
+
+- **Each server sets both**, under **Settings → Players**: who is whitelisted by membership (every member, a role and above, or nobody) and who is an operator by role (operators and above by default).
+- **Someone taken off the whitelist is put out**, not only kept out: servers made this way also set the game's `enforce-whitelist`.
+- **Players you add yourself stay.** Friends who are not in the panel go in a server's Whitelisted players list, and extra operators in its Operators list. The panel only ever takes off players it put on.
+- To keep someone an operator whatever their role, list them under Operators: opping in game a player the panel already made one changes nothing it can see.
+- **A linked account is not proof of owning it.** For operators that does not matter: a member with the operator role can already op anyone from the console. For the whitelist it means each member has one place to give, to the one account they link, which is usually their own and need not be.
+- Which players the panel put on is kept with a server's snapshots, so restoring an old one does not hand a place or operator back to someone who has since left.
 - A linked account is followed by its UUID: if it is renamed, the panel picks up the new name within a few hours.
-- Linking an account does not prove it is yours, and does not need to: a member with the operator role can already run `op` on any player from the console. Viewers get nothing from linking one.
+- Servers made through the API are as before unless asked: no whitelist, and `autoWhitelist` off.
 
 ## API
 

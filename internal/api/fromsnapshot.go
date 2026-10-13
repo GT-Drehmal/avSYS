@@ -169,8 +169,10 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	}
 	// Its files come with operators in them, some of whom the panel made
 	// for their role in the organization as it was then.
-	if made := splitNames(record.AutoOps); len(made) > 0 {
-		mc.Annotations[avsysv1.AnnotationAutoOps] = strings.Join(made, ",")
+	for note, recorded := range record.roleListNotes() {
+		if made := splitNames(recorded); len(made) > 0 {
+			mc.Annotations[note] = strings.Join(made, ",")
+		}
 	}
 	if err := s.Client.Create(ctx, mc); err != nil {
 		s.ops.end(a.Namespace, name)

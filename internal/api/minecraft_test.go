@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -192,31 +193,137 @@ func TestRenamedAccountsAreFollowed(t *testing.T) {
 	}
 }
 
-// What a snapshot recorded of who was made an operator goes back on the
-// server with its files, less anything that is not a name.
-func TestNoteAutoOps(t *testing.T) {
+// What a snapshot recorded of whom the panel put on a server's lists goes
+// back on the server with its files, less anything that is not a name.
+func TestNoteRoleLists(t *testing.T) {
 	p := newPanel(t)
 	ctx := t.Context()
 	key := client.ObjectKey{Namespace: "mc-alpha", Name: "world"}
-	note := func() (string, bool) {
+	notes := func() map[string]string {
 		mc := &avsysv1.MinecraftServer{}
 		if err := p.srv.Client.Get(ctx, key, mc); err != nil {
 			t.Fatal(err)
 		}
-		v, ok := mc.Annotations[avsysv1.AnnotationAutoOps]
-		return v, ok
+		return mc.Annotations
 	}
-	if err := p.srv.noteAutoOps(ctx, key, "Ada, not a name,Otto"); err != nil {
+	record := &snapshotRecord{AutoOps: "Ada, not a name,Otto", AutoWhitelist: "Vera,Ada;stop"}
+	if err := p.srv.noteRoleLists(ctx, key, record.roleListNotes()); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := note(); got != "Ada,Otto" {
-		t.Errorf("the note put back: %q, want Ada,Otto", got)
+	if got := notes(); got[avsysv1.AnnotationAutoOps] != "Ada,Otto" || got[avsysv1.AnnotationAutoWhitelist] != "Vera" {
+		t.Errorf("the notes put back: %v, want Ada,Otto and Vera", got)
 	}
-	// A snapshot from before anyone was made one clears it.
-	if err := p.srv.noteAutoOps(ctx, key, ""); err != nil {
+	// A snapshot from before anyone was put on them clears both.
+	if err := p.srv.noteRoleLists(ctx, key, (&snapshotRecord{}).roleListNotes()); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := note(); ok {
-		t.Errorf("the note after restoring to none: %q, want it gone", got)
+	got := notes()
+	if _, ok := got[avsysv1.AnnotationAutoOps]; ok {
+		t.Errorf("the operators note after restoring to none: %v", got)
+	}
+	if _, ok := got[avsysv1.AnnotationAutoWhitelist]; ok {
+		t.Errorf("the whitelist note after restoring to none: %v", got)
+	}
+}
+
+// Who is on a server's whitelist for being a member: nobody unless the
+// server says from which role, and then also those who could not add anyone
+// themselves.
+func TestWhitelistByRole(t *testing.T) {
+	members := []store.Member{
+		{Username: "owner", Role: store.RoleOwner, MinecraftName: "Olive"},
+		{Username: "admin", Role: store.RoleAdmin, MinecraftName: "Ada"},
+		{Username: "operator", Role: store.RoleOperator, MinecraftName: "Otto"},
+		{Username: "viewer", Role: store.RoleViewer, MinecraftName: "Vera"},
+		{Username: "unlinked", Role: store.RoleViewer},
+	}
+	for setting, want := range map[string]string{
+		"":         "",
+		"off":      "",
+		"viewer":   "Ada Olive Otto Vera",
+		"operator": "Ada Olive Otto",
+		"admin":    "Ada Olive",
+		"owner":    "Olive",
+	} {
+		spec := &avsysv1.MinecraftServerSpec{AutoWhitelist: setting}
+		if got := wantedFrom(whitelistRole(spec), members); strings.Join(got, " ") != want {
+			t.Errorf("autoWhitelist %q: %q, want %q", setting, strings.Join(got, " "), want)
+		}
+	}
+	// The two lists go by their own settings and their own kept names.
+	spec := &avsysv1.MinecraftServerSpec{AutoOp: "owner", AutoWhitelist: "viewer", Ops: []string{"Steve"}, Whitelist: []string{"Friend"}}
+	for _, list := range roleLists {
+		wanted := wantedFrom(list.from(spec), members)
+		kept := list.kept(spec)
+		switch list.what {
+		case "operators":
+			if strings.Join(wanted, " ") != "Olive" || kept[0] != "Steve" || list.add != "op " || list.remove != "deop " {
+				t.Errorf("operators: wanted %v kept %v", wanted, kept)
+			}
+		case "whitelist":
+			if len(wanted) != 4 || kept[0] != "Friend" || list.add != "whitelist add " || list.remove != "whitelist remove " {
+				t.Errorf("whitelist: wanted %v kept %v", wanted, kept)
+			}
+		default:
+			t.Errorf("a list nobody has tested: %s", list.what)
+		}
+	}
+	// A friend added by hand stays when a member who gave the same name leaves.
+	if _, remove := opChanges([]string{"Friend", "Vera"}, nil, spec.Whitelist); len(remove) != 1 || remove[0] != "Vera" {
+		t.Errorf("taken off the whitelist: %v, want only Vera", remove)
+	}
+}
+
+func TestAutoWhitelistSetting(t *testing.T) {
+	p := newPanel(t)
+	for value, want := range map[string]int{"viewer": 200, "operator": 200, "admin": 200, "owner": 200, "off": 200, "everyone": 400, "member": 400} {
+		if got, code := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"autoWhitelist":"`+value+`"}}`); got != want {
+			t.Errorf("autoWhitelist %q: %d %s, want %d", value, got, code, want)
+		}
+	}
+}
+
+// The note of whom the panel put on a list stays true of the game when a
+// command fails part of the way: what went through is noted, what did not
+// is not.
+func TestApplyNamesNotesWhatWentThrough(t *testing.T) {
+	var ran []string
+	failAt := func(n int) func(string) error {
+		ran = nil
+		return func(command string) error {
+			ran = append(ran, command)
+			if len(ran) == n {
+				return errors.New("the server has gone")
+			}
+			return nil
+		}
+	}
+	made, add, remove, wanted := []string{"Ada", "Otto"}, []string{"Vera", "Olive"}, []string{"Otto"}, []string{"Ada", "Olive", "Vera"}
+
+	got, err := applyNames(made, add, remove, wanted, failAt(0), "whitelist add ", "whitelist remove ")
+	if err != nil || strings.Join(got, " ") != "Ada Olive Vera" {
+		t.Errorf("all through: %v, %v", got, err)
+	}
+	if strings.Join(ran, "; ") != "whitelist add Vera; whitelist add Olive; whitelist remove Otto" {
+		t.Errorf("commands: %v", ran)
+	}
+	// The second addition fails: the first is noted, the removal not made.
+	got, err = applyNames(made, add, remove, wanted, failAt(2), "whitelist add ", "whitelist remove ")
+	if err == nil || strings.Join(got, " ") != "Ada Otto Vera" {
+		t.Errorf("failing at the second command: %v, %v; want Ada Otto Vera noted", got, err)
+	}
+	// The removal fails: both additions are noted, and Otto still is.
+	got, err = applyNames(made, add, remove, wanted, failAt(3), "whitelist add ", "whitelist remove ")
+	if err == nil || strings.Join(got, " ") != "Ada Otto Vera Olive" {
+		t.Errorf("failing at the removal: %v, %v", got, err)
+	}
+	// The very first fails: nothing has changed.
+	got, err = applyNames(made, add, remove, wanted, failAt(1), "whitelist add ", "whitelist remove ")
+	if err == nil || strings.Join(got, " ") != "Ada Otto" {
+		t.Errorf("failing at once: %v, %v", got, err)
+	}
+	// What it was handed is not written over.
+	if strings.Join(made, " ") != "Ada Otto" {
+		t.Errorf("the note it started from was changed: %v", made)
 	}
 }

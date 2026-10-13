@@ -67,6 +67,21 @@ spec:
                 - owner
                 - "off"
                 type: string
+              autoWhitelist:
+                description: |-
+                  AutoWhitelist says which members of the organization are on the
+                  server's whitelist without anyone adding them: those with this role or
+                  a higher one who have linked a Minecraft account. "viewer" is every
+                  member. Empty and "off" are nobody. It lets nobody in by itself: the
+                  whitelist has to be switched on for it to be asked.
+                enum:
+                - ""
+                - viewer
+                - operator
+                - admin
+                - owner
+                - "off"
+                type: string
               backups:
                 description: Backups is the server's own schedule for snapshots, where
                   it has one.

@@ -331,6 +331,13 @@ type snapshotRecord struct {
 	// back on with the files, so that someone who was an operator then and
 	// has no claim to it now is taken off again.
 	AutoOps string `json:"autoOps,omitempty"`
+	// AutoWhitelist is the same for the whitelist.
+	AutoWhitelist string `json:"autoWhitelist,omitempty"`
+}
+
+// roleListNotes is the record's notes by the annotation each belongs on.
+func (r *snapshotRecord) roleListNotes() map[string]string {
+	return map[string]string{avsysv1.AnnotationAutoOps: r.AutoOps, avsysv1.AnnotationAutoWhitelist: r.AutoWhitelist}
 }
 
 func softwareOf(spec *avsysv1.MinecraftServerSpec) (version, loader string) {
@@ -522,7 +529,7 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 	recorded.Backups = nil
 	meta := backup.Meta{
 		Server: mc.Name, Trigger: trigger, By: by, Version: version, Loader: loader,
-		Record: snapshotRecord{Format: 1, Org: org, Server: mc.Name, Spec: recorded, AutoOps: mc.Annotations[avsysv1.AnnotationAutoOps]},
+		Record: snapshotRecord{Format: 1, Org: org, Server: mc.Name, Spec: recorded, AutoOps: mc.Annotations[avsysv1.AnnotationAutoOps], AutoWhitelist: mc.Annotations[avsysv1.AnnotationAutoWhitelist]},
 		// A scheduled snapshot of a server nothing has happened to is not
 		// taken, and neither is a final one or one to copy from: the last
 		// one is as good.
@@ -887,7 +894,7 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	}
 	// The operators in the files are the ones of then, and so is the note
 	// of which of them the panel made.
-	if err := s.noteAutoOps(ctx, key, record.AutoOps); err != nil {
+	if err := s.noteRoleLists(ctx, key, record.roleListNotes()); err != nil {
 		return undo, fmt.Errorf("the files and settings were restored, but the note of who was made an operator could not be put back; restore again: %w", err)
 	}
 	if err := s.markRestoring(ctx, key, ""); err != nil {

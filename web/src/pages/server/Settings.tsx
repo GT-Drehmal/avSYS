@@ -34,6 +34,7 @@ interface Draft {
   otherProperties: string;
   ops: string;
   autoOp: string;
+  autoWhitelist: string;
   whitelist: string;
   packURL: string;
   packSHA1: string;
@@ -73,6 +74,8 @@ function toDraft(spec: ServerSpec): Draft {
     ops: (spec.ops ?? []).join("\n"),
     // Not set is the same as "operator".
     autoOp: spec.autoOp || "operator",
+    // Not set is the same as "off".
+    autoWhitelist: spec.autoWhitelist || "off",
     whitelist: (spec.whitelist ?? []).join("\n"),
     packURL: spec.resourcePack?.url ?? "",
     packSHA1: spec.resourcePack?.sha1 ?? "",
@@ -109,6 +112,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     properties: properties as Record<string, string>,
     ops: lines(d.ops),
     autoOp: d.autoOp as ServerSpec["autoOp"],
+    autoWhitelist: d.autoWhitelist as ServerSpec["autoWhitelist"],
     whitelist: lines(d.whitelist),
     resourcePack: d.packURL.trim() ? { url: d.packURL.trim(), sha1: d.packSHA1.trim(), enforce: d.packEnforce, prompt: d.packPrompt } : null,
     env: lines(d.env).flatMap((line) => {
@@ -294,16 +298,36 @@ export function Settings() {
           <Field label="Whitelisted players">{(id) => <Textarea id={id} rows={4} {...text("whitelist")} className="font-mono" spellCheck={false} />}</Field>
           <Field label="Operators">{(id) => <Textarea id={id} rows={4} {...text("ops")} className="font-mono" spellCheck={false} />}</Field>
         </div>
-        <Field label="Operators by role" hint="Members with this role who have linked a Minecraft account are operators in game, as well as the players above." className="max-w-64">
-          {(id) => (
-            <Select id={id} {...text("autoOp")}>
-              <option value="operator">Operators and above</option>
-              <option value="admin">Admins and above</option>
-              <option value="owner">Owners</option>
-              <option value="off">Nobody</option>
-            </Select>
-          )}
-        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field
+            label="Whitelisted by membership"
+            hint={
+              draft.autoWhitelist !== "off" && draft.whitelistOn !== "true"
+                ? "Only matters with the whitelist on."
+                : "Members with this role who have linked a Minecraft account, as well as the players above."
+            }
+          >
+            {(id) => (
+              <Select id={id} {...text("autoWhitelist")}>
+                <option value="off">Nobody</option>
+                <option value="viewer">Every member</option>
+                <option value="operator">Operators and above</option>
+                <option value="admin">Admins and above</option>
+                <option value="owner">Owners</option>
+              </Select>
+            )}
+          </Field>
+          <Field label="Operators by role" hint="Members with this role who have linked a Minecraft account, as well as the players above.">
+            {(id) => (
+              <Select id={id} {...text("autoOp")}>
+                <option value="operator">Operators and above</option>
+                <option value="admin">Admins and above</option>
+                <option value="owner">Owners</option>
+                <option value="off">Nobody</option>
+              </Select>
+            )}
+          </Field>
+        </div>
       </Section>
 
       <Section title="Resource pack" description="The URL must be reachable by players.">

@@ -41,6 +41,9 @@ const (
 	// these are ever taken off again by it: operators made any other way
 	// are not its to remove.
 	AnnotationAutoOps = "avsys.dev/auto-ops"
+	// AnnotationAutoWhitelist is the same for the players the panel has put
+	// on a server's whitelist for being members of its organization.
+	AnnotationAutoWhitelist = "avsys.dev/auto-whitelist"
 	// AnnotationRestart is copied to the pod template; changing it rolls the pod.
 	AnnotationRestart = "avsys.dev/restarted-at"
 )
@@ -263,6 +266,13 @@ type MinecraftServerSpec struct {
 	// have linked a Minecraft account. Empty is "operator". "off" is nobody.
 	// +kubebuilder:validation:Enum="";operator;admin;owner;off
 	AutoOp string `json:"autoOp,omitempty"`
+	// AutoWhitelist says which members of the organization are on the
+	// server's whitelist without anyone adding them: those with this role or
+	// a higher one who have linked a Minecraft account. "viewer" is every
+	// member. Empty and "off" are nobody. It lets nobody in by itself: the
+	// whitelist has to be switched on for it to be asked.
+	// +kubebuilder:validation:Enum="";viewer;operator;admin;owner;off
+	AutoWhitelist string `json:"autoWhitelist,omitempty"`
 
 	// Image overrides the server image. By default a tag of itzg/minecraft-server
 	// with the right Java for the game version is chosen.
