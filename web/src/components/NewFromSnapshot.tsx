@@ -132,7 +132,8 @@ function optionsOf(spec: ServerSpec): Options {
  */
 function changesOf(now: Options, was: Options): Partial<ServerSpec> {
   const changes: Partial<ServerSpec> = {};
-  // A setting put back on its default is sent as null, which leaves it to the game.
+  // A setting put back on "Server default" is sent as null: the panel stops
+  // setting it, and the copied server.properties keeps what it has.
   const properties: Record<string, string | null> = {};
   const property = (name: string, value: string) => (properties[name] = value === "" ? null : value);
   if (now.version !== was.version) changes.version = now.version;
@@ -279,6 +280,7 @@ function Form({ org, source, taken, from, onClose }: FormProps) {
           <div className="grid grid-cols-2 gap-4">
             <GameplayFields value={options} onChange={option} />
           </div>
+          <p className="-mt-2 text-xs text-muted">Server default leaves server.properties as {detail.server} has it.</p>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Who can join" hint={options.join === "anyone" ? "No whitelist." : options.join === "list" ? "The players on its whitelist." : "Those who have linked a Minecraft account, and the players on its whitelist."}>
               {(id) => (

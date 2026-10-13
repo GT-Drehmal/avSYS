@@ -228,7 +228,8 @@ curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"backups":null}}' $
 curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-copy","fromSnapshot":"<id>","spec":{"state":"Stopped"}}' "$AVSYS/orgs/friends/servers?wait=true"
 # A copy of a server as it is now.
 curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-2","fromServer":"creative"}' "$AVSYS/orgs/friends/servers?wait=true"
-# A copy that differs: on another game version, with game settings laid over the original's (null leaves one to the game).
+# A copy that differs: on another game version, with game settings laid over the original's
+# (null stops the panel setting one, which leaves it as the original's server.properties has it).
 # Mods and the modpack always come from the original.
 curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-next","fromServer":"creative","spec":{"version":"1.21.5","properties":{"difficulty":"peaceful","pvp":null},"autoWhitelist":"off"}}' "$AVSYS/orgs/friends/servers?wait=true"
 ```

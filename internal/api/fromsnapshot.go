@@ -67,9 +67,10 @@ var errContentGiven = errBadRequest("A server made from a snapshot takes its mod
 // recorded it. given holds the settings the request named, which is how
 // sleep switched off is told from sleep not mentioned.
 //
-// Game settings are merged one by one: the request's over the snapshot's,
-// and one it gives as null is left to the game. The modpack and mods are
-// always the snapshot's.
+// Game settings are merged one by one: the request's over the snapshot's.
+// One it gives as null is no longer set by the panel, which leaves that
+// line of the copied server.properties as the snapshot has it. The modpack
+// and mods are always the snapshot's.
 //
 // Three things are the request's alone. Its address is its own. The image
 // and extra environment are never taken from the snapshot, for the reason
@@ -139,7 +140,8 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 
 // mergeProperties lays the game settings a request names over the recorded
 // ones. asked is the request's "properties" as it was sent: a setting given
-// as null is taken out, which leaves it to the game's own default.
+// as null is taken out of what the panel sets. The server's own
+// server.properties, which is copied with its other files, then decides.
 func mergeProperties(recorded map[string]string, asked json.RawMessage) map[string]string {
 	var changes map[string]*string
 	_ = json.Unmarshal(asked, &changes)
@@ -344,8 +346,15 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	}
 	// What the request asks for is held against the server as it is now,
 	// before the snapshot: a copy that could not be made is not worth one.
-	if _, err := s.specFromSnapshot(ctx, a, name, &requested, &mc.Spec, given); err != nil {
+	// That includes its mods having a build for the game version asked for.
+	wanted, err := s.specFromSnapshot(ctx, a, name, &requested, &mc.Spec, given)
+	if err != nil {
 		return err
+	}
+	if targetOf(&wanted) != targetOf(&mc.Spec) {
+		if err := s.resolveContent(ctx, &wanted, &mc.Spec); err != nil {
+			return err
+		}
 	}
 	if err := unfinished(mc); err != nil {
 		return err
