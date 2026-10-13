@@ -224,10 +224,13 @@ curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/offsite/run?
 curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"backups":{"keep":{"daily":30,"weekly":8,"monthly":24,"yearly":5}}}}' $AVSYS/orgs/friends/servers/survival
 curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"backups":null}}' $AVSYS/orgs/friends/servers/survival
 
-# Make a new server out of a snapshot. Its software and game settings come with it.
+# Make a new server out of a snapshot. Whatever the spec leaves out is as the snapshot has it.
 curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-copy","fromSnapshot":"<id>","spec":{"state":"Stopped"}}' "$AVSYS/orgs/friends/servers?wait=true"
 # A copy of a server as it is now.
 curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-2","fromServer":"creative"}' "$AVSYS/orgs/friends/servers?wait=true"
+# A copy that differs: on another game version, with game settings laid over the original's (null leaves one to the game).
+# Mods and the modpack always come from the original.
+curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-next","fromServer":"creative","spec":{"version":"1.21.5","properties":{"difficulty":"peaceful","pvp":null},"autoWhitelist":"off"}}' "$AVSYS/orgs/friends/servers?wait=true"
 ```
 
 Without `?wait=true` these answer at once and the work continues in the background; progress arrives on the event stream.

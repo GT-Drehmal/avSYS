@@ -53,31 +53,68 @@ func errNoRecord(err error) error {
 	return &Error{Status: http.StatusUnprocessableEntity, Code: "no_record", Message: fmt.Sprintf("This snapshot does not say what server it is of, so none can be made from it: %v", err)}
 }
 
-// softwareGiven reports whether a request names any of the settings that a
-// snapshot's files depend on.
-func softwareGiven(spec *avsysv1.MinecraftServerSpec) bool {
-	return spec.Version != "" || spec.Loader != "" || spec.LoaderVersion != "" ||
-		spec.Modpack != nil || len(spec.Mods) > 0 || spec.ResourcePack != nil ||
-		len(spec.Properties) > 0 || len(spec.Ops) > 0 || len(spec.Whitelist) > 0
+// contentGiven reports whether a request names the mods or the modpack of a
+// server made from a snapshot. Those stay as the snapshot has them: its files
+// include what they installed, and the uploaded ones exist nowhere else.
+func contentGiven(spec *avsysv1.MinecraftServerSpec) bool {
+	return spec.Modpack != nil || len(spec.Mods) > 0
 }
 
-// fromSnapshot builds the spec of a server made from a snapshot.
+var errContentGiven = errBadRequest("A server made from a snapshot takes its mods and modpack from it. Leave those out, and change them once the server exists.")
+
+// fromSnapshot builds the spec of a server made from a snapshot. What the
+// request names is used, and everything it leaves out is as the snapshot
+// recorded it. given holds the settings the request named, which is how
+// sleep switched off is told from sleep not mentioned.
 //
-// What the files depend on comes from the snapshot: game version, loader,
-// modpack, mods, resource pack, game properties, operators and whitelist.
-// How much memory and storage it gets, and whether it sleeps, come from the
-// snapshot too unless the request says otherwise. given holds the settings
-// the request named, which is how sleep switched off is told from sleep not
-// mentioned.
+// Game settings are merged one by one: the request's over the snapshot's,
+// and one it gives as null is left to the game. The modpack and mods are
+// always the snapshot's.
 //
-// Its address is its own. The image and extra environment are taken from
-// the request alone, for the reason given at restoreSoftware: the record is
-// read out of a repository the server itself could add to, and those two
-// decide what runs. Whoever asks can read them from the snapshot and send
-// them back, which makes it their decision.
+// Three things are the request's alone. Its address is its own. The image
+// and extra environment are never taken from the snapshot, for the reason
+// given at restoreSoftware: the record is read out of a repository the
+// server itself could add to, and those two decide what runs. Whoever asks
+// can read them from the snapshot and send them back, which makes it their
+// decision. And when it is snapshotted is not in the record at all.
 func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage) avsysv1.MinecraftServerSpec {
 	spec := *requested.DeepCopy()
-	restoreSoftware(&spec, recorded.DeepCopy())
+	recorded = recorded.DeepCopy()
+	said := func(setting string) bool { _, ok := given[setting]; return ok }
+
+	if !said("version") {
+		spec.Version = recorded.Version
+	}
+	if !said("loader") {
+		spec.Loader = recorded.Loader
+	}
+	// A build of the loader goes with the loader and game version it is for.
+	if !said("loaderVersion") && spec.Version == recorded.Version && spec.Loader == recorded.Loader {
+		spec.LoaderVersion = recorded.LoaderVersion
+	}
+	// What Java that version needs goes with it.
+	spec.GameJava = 0
+	if spec.Version == recorded.Version {
+		spec.GameJava = recorded.GameJava
+	}
+	spec.Modpack, spec.Mods = recorded.Modpack, recorded.Mods
+	if !said("resourcePack") {
+		spec.ResourcePack = recorded.ResourcePack
+	}
+	spec.Properties = mergeProperties(recorded.Properties, given["properties"])
+	if !said("ops") {
+		spec.Ops = recorded.Ops
+	}
+	if !said("whitelist") {
+		spec.Whitelist = recorded.Whitelist
+	}
+	if !said("autoOp") {
+		spec.AutoOp = recorded.AutoOp
+	}
+	if !said("autoWhitelist") {
+		spec.AutoWhitelist = recorded.AutoWhitelist
+	}
+
 	spec.EULA = spec.EULA || recorded.EULA
 	if spec.DisplayName == "" {
 		spec.DisplayName = recorded.DisplayName
@@ -94,10 +131,65 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 		own := *class
 		spec.Storage.StorageClassName = &own
 	}
-	if _, said := given["sleep"]; !said {
+	if !said("sleep") {
 		spec.Sleep = recorded.Sleep
 	}
 	return spec
+}
+
+// mergeProperties lays the game settings a request names over the recorded
+// ones. asked is the request's "properties" as it was sent: a setting given
+// as null is taken out, which leaves it to the game's own default.
+func mergeProperties(recorded map[string]string, asked json.RawMessage) map[string]string {
+	var changes map[string]*string
+	_ = json.Unmarshal(asked, &changes)
+	if len(recorded) == 0 && len(changes) == 0 {
+		return recorded
+	}
+	merged := make(map[string]string, len(recorded)+len(changes))
+	for name, value := range recorded {
+		merged[name] = value
+	}
+	for name, value := range changes {
+		if value == nil {
+			delete(merged, name)
+			continue
+		}
+		merged[name] = *value
+	}
+	return merged
+}
+
+// specFromSnapshot is fromSnapshot with what follows from it settled: the
+// defaults, whether the result is a server that can exist, and which Java a
+// changed game version needs.
+func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, requested, recorded *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage) (avsysv1.MinecraftServerSpec, error) {
+	spec := fromSnapshot(requested, recorded, given)
+	changed := spec.Version != recorded.Version || spec.Loader != recorded.Loader || spec.LoaderVersion != recorded.LoaderVersion
+	if changed && spec.Modpack != nil {
+		return spec, errBadRequest("This server runs a modpack, which decides its game version and loader. Change the modpack's version once the server exists.")
+	}
+	s.applyDefaults(a.Org.Slug, name, &spec)
+	// "Latest" is settled here, as for any new server.
+	if spec.Version == "LATEST" && spec.Modpack == nil {
+		if latest := s.latestRelease(ctx, spec.Loader); latest != "" {
+			spec.Version = latest
+		}
+	}
+	if err := s.validateSpec(ctx, a.Namespace, name, &spec); err != nil {
+		return spec, err
+	}
+	// Only a change of software is checked: a snapshot of a version that has
+	// since left its software's list can still be made a server of.
+	if changed {
+		if err := s.checkVersion(ctx, &spec); err != nil {
+			return spec, err
+		}
+	}
+	if spec.Version != recorded.Version {
+		s.resolveJava(ctx, &spec)
+	}
+	return spec, nil
 }
 
 // createFromSnapshot makes a new server out of a snapshot: of a server that
@@ -125,17 +217,23 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return snapshotError(err)
 	}
-	if softwareGiven(&requested) {
-		return errBadRequest("A server made from a snapshot takes its game version, loader, mods and game settings from it. Leave those out, and change them once the server exists.")
+	if contentGiven(&requested) {
+		return errContentGiven
 	}
 	record, err := s.recordOf(ctx, a.Org.Slug, snap.ID)
 	if err != nil {
 		return errNoRecord(err)
 	}
-	spec := fromSnapshot(&requested, &record.Spec, given)
-	s.applyDefaults(a.Org.Slug, name, &spec)
-	if err := s.validateSpec(ctx, a.Namespace, name, &spec); err != nil {
+	spec, err := s.specFromSnapshot(ctx, a, name, &requested, &record.Spec, given)
+	if err != nil {
 		return err
+	}
+	// Mods were picked to fit one game version and loader, and are picked
+	// again for another, as when a server's own version is changed.
+	if targetOf(&spec) != targetOf(&record.Spec) {
+		if err := s.resolveContent(ctx, &spec, &record.Spec); err != nil {
+			return err
+		}
 	}
 	if spec.Storage.Size.Value() < snap.Size {
 		return errBadRequest("The snapshot holds %s of files. Give the server more storage than that.", sizeOf(snap.Size))
@@ -233,11 +331,21 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
-	if softwareGiven(&requested) {
-		return errBadRequest("A copy takes its game version, loader, mods and game settings from the server it is of. Leave those out, and change them once the copy exists.")
+	if contentGiven(&requested) {
+		return errContentGiven
 	}
 	if st := requested.State; st != "" && st != avsysv1.StateRunning && st != avsysv1.StateStopped {
 		return errBadRequest("%q is not a state. A server is Running or Stopped.", st)
+	}
+	// When it is snapshotted is not recorded in a snapshot, so a copy takes
+	// that from the server itself unless the request says.
+	if _, said := given["backups"]; !said {
+		requested.Backups = mc.Spec.Backups.DeepCopy()
+	}
+	// What the request asks for is held against the server as it is now,
+	// before the snapshot: a copy that could not be made is not worth one.
+	if _, err := s.specFromSnapshot(ctx, a, name, &requested, &mc.Spec, given); err != nil {
+		return err
 	}
 	if err := unfinished(mc); err != nil {
 		return err

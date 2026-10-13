@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button, Confirm, Field, Input, Notice, Section, Select, Textarea, Toggle } from "../../components/ui";
 import { api, serverPath, type ExposeType, type Loader, type ServerSpec, type SpecPatch } from "../../lib/api";
-import { difficulties, gameModes, parseProperties, worldKeys } from "../../lib/properties";
+import { parseProperties, worldKeys } from "../../lib/properties";
 import { useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
+import { autoOpOptions, exposeOptions, GameplayFields, memberRoleOptions, triState } from "../../components/ServerFields";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -124,14 +125,6 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
   };
 }
 
-const triState = (
-  <>
-    <option value="">Server default</option>
-    <option value="true">On</option>
-    <option value="false">Off</option>
-  </>
-);
-
 export function Settings() {
   const { server } = useServerContext();
   const navigate = useNavigate();
@@ -240,38 +233,10 @@ export function Settings() {
 
       <Section title="Gameplay" description="Fields left on Default leave server.properties as it is.">
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Difficulty">
-            {(id) => (
-              <Select id={id} {...text("difficulty")}>
-                <option value="">Server default</option>
-                {difficulties.map(([v, label]) => (
-                  <option key={v} value={v}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Game mode">
-            {(id) => (
-              <Select id={id} {...text("gamemode")}>
-                <option value="">Server default</option>
-                {gameModes.map(([v, label]) => (
-                  <option key={v} value={v}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Player limit">{(id) => <Input id={id} type="number" min={1} {...text("maxPlayers")} placeholder="20" />}</Field>
-          <Field label="PvP">
-            {(id) => (
-              <Select id={id} {...text("pvp")}>
-                {triState}
-              </Select>
-            )}
-          </Field>
+          <GameplayFields
+            value={{ difficulty: draft.difficulty, gamemode: draft.gamemode, maxPlayers: draft.maxPlayers, pvp: draft.pvp }}
+            onChange={(key, value) => set(key, value)}
+          />
         </div>
         <Field
           label="Other properties"
@@ -316,20 +281,14 @@ export function Settings() {
             {(id) => (
               <Select id={id} {...text("autoWhitelist")}>
                 <option value="off">Nobody</option>
-                <option value="viewer">Every member</option>
-                <option value="operator">Operators and above</option>
-                <option value="admin">Admins and above</option>
-                <option value="owner">Owners</option>
+                {memberRoleOptions}
               </Select>
             )}
           </Field>
           <Field label="Operators by role" hint="Members with this role who have linked a Minecraft account, as well as the players above.">
             {(id) => (
               <Select id={id} {...text("autoOp")}>
-                <option value="operator">Operators and above</option>
-                <option value="admin">Admins and above</option>
-                <option value="owner">Owners</option>
-                <option value="off">Nobody</option>
+                {autoOpOptions}
               </Select>
             )}
           </Field>
@@ -367,10 +326,7 @@ export function Settings() {
         <Field label="Exposure">
           {(id) => (
             <Select id={id} value={draft.exposeType} onChange={(e) => set("exposeType", e.target.value as ExposeType)}>
-              <option value="Router">Shared address, routed by hostname</option>
-              <option value="LoadBalancer">Its own IP address (LoadBalancer)</option>
-              <option value="NodePort">A port on every node (NodePort)</option>
-              <option value="None">Inside the cluster only</option>
+              {exposeOptions}
             </Select>
           )}
         </Field>

@@ -83,21 +83,93 @@ func TestFromSnapshot(t *testing.T) {
 	}
 }
 
-func TestSoftwareGiven(t *testing.T) {
-	if softwareGiven(&avsysv1.MinecraftServerSpec{DisplayName: "x", EULA: true, Image: "y", Resources: avsysv1.ResourcesSpec{Memory: resource.MustParse("2Gi")}}) {
-		t.Error("a request that names no software was refused")
+// What a request says about the game itself is used too, and the rest of it
+// stays the snapshot's: a copy on the next game version, open to everyone.
+func TestFromSnapshotTakesWhatIsAsked(t *testing.T) {
+	recorded := &avsysv1.MinecraftServerSpec{
+		EULA: true, Version: "1.21.4", Loader: avsysv1.LoaderPaper, LoaderVersion: "232", GameJava: 21,
+		Mods:          []avsysv1.ContentRef{{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindPlugin, Project: "luckperms", Version: "abc"}},
+		ResourcePack:  &avsysv1.ResourcePackSpec{URL: "https://example.org/pack.zip"},
+		Properties:    map[string]string{"motd": "hello", "difficulty": "hard", "white-list": "true"},
+		Ops:           []string{"Steve"},
+		Whitelist:     []string{"Alex"},
+		AutoOp:        "off",
+		AutoWhitelist: "viewer",
+	}
+	given := func(body string) (*avsysv1.MinecraftServerSpec, map[string]json.RawMessage) {
+		t.Helper()
+		spec, named := &avsysv1.MinecraftServerSpec{}, map[string]json.RawMessage{}
+		if err := json.Unmarshal([]byte(body), spec); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(body), &named); err != nil {
+			t.Fatal(err)
+		}
+		return spec, named
+	}
+
+	// Nothing said: who is let in and made operator by role comes along.
+	got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil)
+	if got.AutoOp != "off" || got.AutoWhitelist != "viewer" {
+		t.Errorf("membership settings did not come from the snapshot: autoOp %q, autoWhitelist %q", got.AutoOp, got.AutoWhitelist)
+	}
+	if got.GameJava != 21 || got.ResourcePack == nil {
+		t.Errorf("java or resource pack did not come from the snapshot: %+v", got)
+	}
+
+	asked, named := given(`{"version":"1.21.5","properties":{"white-list":"false","difficulty":null,"pvp":"false"},"autoWhitelist":"off","autoOp":"","whitelist":[],"resourcePack":null}`)
+	got = fromSnapshot(asked, recorded, named)
+	if got.Version != "1.21.5" || got.Loader != avsysv1.LoaderPaper {
+		t.Errorf("the version asked for was not used, or the loader was lost: %s %s", got.Loader, got.Version)
+	}
+	// A build of the loader and the Java are those of the version left behind.
+	if got.LoaderVersion != "" || got.GameJava != 0 {
+		t.Errorf("the old version's loader build or Java was kept: %q %d", got.LoaderVersion, got.GameJava)
+	}
+	want := map[string]string{"motd": "hello", "white-list": "false", "pvp": "false"}
+	if len(got.Properties) != len(want) {
+		t.Errorf("properties: got %v, want %v", got.Properties, want)
+	}
+	for name, value := range want {
+		if got.Properties[name] != value {
+			t.Errorf("property %s: got %q, want %q", name, got.Properties[name], value)
+		}
+	}
+	if got.AutoWhitelist != "off" || got.AutoOp != "" || len(got.Whitelist) != 0 || got.ResourcePack != nil {
+		t.Errorf("what was asked for did not win: %+v", got)
+	}
+	// Not mentioned, so as recorded.
+	if len(got.Ops) != 1 || len(got.Mods) != 1 || got.Mods[0].Version != "abc" {
+		t.Errorf("what was not mentioned did not come from the snapshot: %+v", got)
+	}
+	if recorded.Properties["difficulty"] != "hard" || len(recorded.Properties) != 3 {
+		t.Error("merging the properties changed the record")
+	}
+
+	// A loader build is kept when it is asked for by name.
+	asked, named = given(`{"version":"1.21.5","loaderVersion":"7"}`)
+	if got = fromSnapshot(asked, recorded, named); got.LoaderVersion != "7" {
+		t.Errorf("loader build: got %q, want 7", got.LoaderVersion)
+	}
+}
+
+func TestContentGiven(t *testing.T) {
+	for name, spec := range map[string]avsysv1.MinecraftServerSpec{
+		"version":    {Version: "1.21.4", Loader: avsysv1.LoaderFabric},
+		"properties": {Properties: map[string]string{"motd": "x"}},
+		"players":    {Ops: []string{"Steve"}, Whitelist: []string{"Steve"}},
+		"pack":       {ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip"}},
+		"resources":  {DisplayName: "x", EULA: true, Image: "y", Resources: avsysv1.ResourcesSpec{Memory: resource.MustParse("2Gi")}},
+	} {
+		if contentGiven(&spec) {
+			t.Errorf("a request that sets the %s was refused", name)
+		}
 	}
 	for name, spec := range map[string]avsysv1.MinecraftServerSpec{
-		"version":    {Version: "1.21.4"},
-		"loader":     {Loader: avsysv1.LoaderFabric},
-		"modpack":    {Modpack: &avsysv1.ModpackSpec{Project: "x"}},
-		"mods":       {Mods: []avsysv1.ContentRef{{Project: "x"}}},
-		"properties": {Properties: map[string]string{"motd": "x"}},
-		"ops":        {Ops: []string{"Steve"}},
-		"whitelist":  {Whitelist: []string{"Steve"}},
-		"pack":       {ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip"}},
+		"modpack": {Modpack: &avsysv1.ModpackSpec{Project: "x"}},
+		"mods":    {Mods: []avsysv1.ContentRef{{Project: "x"}}},
 	} {
-		if !softwareGiven(&spec) {
+		if !contentGiven(&spec) {
 			t.Errorf("a request that sets the %s was let through", name)
 		}
 	}
@@ -393,7 +465,9 @@ func TestCreateFromServerRequests(t *testing.T) {
 	}{
 		"a server that is not there":    {`{"name":"copy","fromServer":"nobody"}`, 404, "not_found"},
 		"a name that is taken":          {`{"name":"world","fromServer":"world"}`, 409, "conflict"},
-		"software named again":          {`{"name":"copy","fromServer":"world","spec":{"version":"1.20.1"}}`, 400, "invalid"},
+		"mods named again":              {`{"name":"copy","fromServer":"world","spec":{"mods":[{"source":"modrinth","project":"lithium"}]}}`, 400, "invalid"},
+		"a setting that is not one":     {`{"name":"copy","fromServer":"world","spec":{"autoWhitelist":"everyone"}}`, 400, "invalid"},
+		"a game setting on two lines":   {`{"name":"copy","fromServer":"world","spec":{"properties":{"motd":"a\nb"}}}`, 400, "invalid"},
 		"a state that is not one":       {`{"name":"copy","fromServer":"world","spec":{"state":"Bogus"}}`, 400, "invalid"},
 		"another organization's server": {`{"name":"copy","fromServer":"theirs"}`, 404, "not_found"},
 	} {
