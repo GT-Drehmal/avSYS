@@ -11,9 +11,12 @@ dev: web
 web:
 	cd web && bun install && bun run build
 
-# Regenerate deepcopy code and the CRD after changing api/.
+# Regenerate deepcopy code and the CRD after changing api/. The generator is
+# a fixed version: CI checks that what is committed is what it produces, and
+# a new release of it must not be what fails that.
+CONTROLLER_GEN_VERSION ?= v0.22.0
 generate:
-	go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest object crd paths=./api/... output:crd:dir=deploy/crds
+	go run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) object crd paths=./api/... output:crd:dir=deploy/crds
 
 test:
 	go vet ./...

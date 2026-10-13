@@ -1,0 +1,30 @@
+# Keeps what the project is built from current: once a week, one pull request
+# per kind of dependency, so that updates arrive as a few things to look at
+# and not a stream. Each goes through the same checks as any other change.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      go:
+        patterns: ["*"]
+  - package-ecosystem: bun
+    directory: /web
+    schedule: { interval: weekly }
+    groups:
+      web:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions:
+        patterns: ["*"]
+  # The images the panel and the workspace are built from and copy restic out of.
+  - package-ecosystem: docker
+    directories: ["/", "/images/workspace"]
+    schedule: { interval: weekly }
+    groups:
+      images:
+        patterns: ["*"]
