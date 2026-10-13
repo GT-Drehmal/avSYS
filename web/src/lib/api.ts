@@ -212,6 +212,8 @@ export interface SnapshotDetail extends Snapshot {
     scheduled: boolean;
     /** Which rules of the schedule keep it. Absent for one the schedule removes at its next run. */
     kept?: ("daily" | "weekly" | "monthly" | "yearly")[];
+    /** The organization's daily snapshots are off: the rules only apply when they are run by hand or switched back on. */
+    paused?: boolean;
   };
 }
 

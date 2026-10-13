@@ -189,14 +189,21 @@ const listed = (words: string[]) => (words.length < 2 ? words.join("") : `${word
 
 /** How long a snapshot will be here, in a sentence. */
 function keptFor(detail: SnapshotDetail) {
-  const { scheduled, kept = [] } = detail.retention;
+  const { scheduled, kept = [], paused } = detail.retention;
   if (!scheduled) {
     return detail.trigger === "scheduled"
-      ? "Until it is deleted by hand: its server is gone, or no longer has scheduled snapshots."
+      ? "Until it is deleted by hand: its server is gone, or has been taken out of scheduled snapshots."
       : "Until it is deleted by hand. The schedule only removes snapshots it took itself.";
   }
+  const rules = listed(kept.map((k) => ruleNames[k]));
+  // Off is not the same as never: running the schedule by hand applies its rules.
+  if (paused) {
+    return kept.length === 0
+      ? "Daily snapshots are off, so it stays for now. It is past everything the schedule keeps, and is removed if they are run by hand or switched back on."
+      : `Daily snapshots are off, so it stays for now. If they are run by hand or switched back on, the schedule keeps it as the newest of its ${rules}.`;
+  }
   if (kept.length === 0) return "The schedule removes it the next time it runs: it is past everything the schedule keeps.";
-  return `Kept by the schedule, as the newest of its ${listed(kept.map((k) => ruleNames[k]))}.`;
+  return `Kept by the schedule, as the newest of its ${rules}.`;
 }
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
