@@ -44,6 +44,11 @@ func TestModrinthSearchParams(t *testing.T) {
 		t.Errorf("order and offset: %v", got)
 	}
 
+	// The last page that can be asked for.
+	if got, err := modrinthSearchParams(url.Values{"type": {"mod"}, "offset": {"9984"}}); err != nil || got.Get("offset") != "9984" {
+		t.Errorf("the last page: %v %v", got, err)
+	}
+
 	// Plugins and datapacks have no side to filter by.
 	got, _ = modrinthSearchParams(url.Values{"type": {"plugin"}, "loader": {"paper"}})
 	want = [][]string{{"project_type:plugin"}, {"categories:paper", "categories:spigot", "categories:bukkit"}}
@@ -57,6 +62,7 @@ func TestModrinthSearchParams(t *testing.T) {
 		"an unknown order":              {"type": {"mod"}, "sort": {"random"}},
 		"a category that is a filter":   {"type": {"mod"}, "categories": {`adventure"],["project_type:shader`}},
 		"a category with a colon in it": {"type": {"mod"}, "categories": {"versions:1.0"}},
+		"a page past the last one":      {"type": {"mod"}, "offset": {"10008"}},
 	} {
 		if _, err := modrinthSearchParams(q); err == nil {
 			t.Errorf("%s was let through", name)

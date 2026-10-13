@@ -31,6 +31,9 @@ const orders: [Order, string][] = [
   ["newest", "Newest"],
 ];
 
+/** The furthest into a search's results a page may start. */
+const lastOffset = 9_984;
+
 /** "world-generation" as "World generation". */
 const tagName = (tag: string) => (tag === "worldgen" ? "World generation" : tag.charAt(0).toUpperCase() + tag.slice(1).replace(/-/g, " "));
 
@@ -76,7 +79,11 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
     queryKey: ["modrinth", filters],
     queryFn: ({ pageParam }) => api.get<ModrinthResults>(`/catalog/modrinth/search?${qs({ ...filters, offset: pageParam || undefined })}`),
     initialPageParam: 0,
-    getNextPageParam: (last) => (last.offset + last.hits.length < last.total_hits && last.hits.length > 0 ? last.offset + last.hits.length : undefined),
+    getNextPageParam: (last) => {
+      const next = last.offset + last.hits.length;
+      // A search can be followed as far as its first ten thousand results.
+      return last.hits.length > 0 && next < last.total_hits && next <= lastOffset ? next : undefined;
+    },
     placeholderData: keepPreviousData,
     staleTime: 5 * 60_000,
   });
@@ -86,13 +93,15 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
   // More are fetched as the end of the list comes into view.
   const list = useRef<HTMLUListElement>(null);
   const end = useRef<HTMLLIElement>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = results;
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = results;
   useEffect(() => {
-    if (!end.current || !hasNextPage || isFetchingNextPage) return;
+    // After a failure the next try is asked for by hand: the end of the list
+    // is still in view, and would otherwise ask again without pause.
+    if (!end.current || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return;
     const seen = new IntersectionObserver((entries) => entries[0].isIntersecting && fetchNextPage(), { root: list.current, rootMargin: "200px" });
     seen.observe(end.current);
     return () => seen.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, hits.length]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage, hits.length]);
   // A different search starts from the top.
   const filterKey = JSON.stringify(filters);
   useEffect(() => list.current?.scrollTo({ top: 0 }), [filterKey]);
@@ -217,12 +226,20 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
         {results.data && hits.length === 0 && (
           <li className="px-2 py-8 text-center text-[13px] text-muted">Nothing on Modrinth matches that{fits ? ` for ${fits}` : " for this server"}.</li>
         )}
-        {results.isError && <li className="px-2 py-8 text-center text-[13px] text-danger">{results.error.message}</li>}
-        {hasNextPage && (
-          <li ref={end} className="flex justify-center py-3">
-            <Spinner />
-          </li>
-        )}
+        {results.isError && !isFetchNextPageError && <li className="px-2 py-8 text-center text-[13px] text-danger">{results.error.message}</li>}
+        {hasNextPage &&
+          (isFetchNextPageError ? (
+            <li className="flex items-center justify-center gap-3 py-3 text-xs text-muted">
+              More could not be loaded.
+              <Button size="sm" onClick={() => fetchNextPage()}>
+                Try again
+              </Button>
+            </li>
+          ) : (
+            <li ref={end} className="flex justify-center py-3">
+              <Spinner />
+            </li>
+          ))}
       </ul>
     </div>
   );
@@ -249,9 +266,13 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
     queryFn: () => api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(hit.project_id)}/versions?${qs({ loader, gameVersion })}`),
     staleTime: 5 * 60_000,
   });
-  // What the version that would be installed needs to have beside it.
+  // What its newest version for this server needs beside it. The panel
+  // installs that one unless it needs a newer Java than the server has.
   const newest = versions.data?.find((v) => v.version_type === "release") ?? versions.data?.[0];
-  const needed = [...new Set((newest?.dependencies ?? []).filter((d) => d.dependency_type === "required" && d.project_id).map((d) => d.project_id as string))];
+  const required = (newest?.dependencies ?? []).filter((d) => d.dependency_type === "required");
+  const needed = [...new Set(required.filter((d) => d.project_id).map((d) => d.project_id as string))];
+  // Some are given as a version of a project and not the project, and are not looked up by name.
+  const unnamed = required.filter((d) => !d.project_id).length;
   const needs = useQuery({
     queryKey: ["modrinth-projects", needed],
     queryFn: () => api.get<ModrinthProject[]>(`/catalog/modrinth/projects?${qs({ ids: needed.join(",") })}`),
@@ -315,10 +336,10 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
             </ul>
           )}
         </section>
-        {needed.length > 0 && (
+        {needed.length + unnamed > 0 && (
           <section className="flex flex-col gap-1.5">
             <h3 className="text-[13px] font-medium">Needs</h3>
-            <p className="text-xs text-muted">It does nothing without these. They are not added for you.</p>
+            <p className="text-xs text-muted">What its newest version{fits ? ` for ${fits}` : ""} does not work without. They are not added for you.</p>
             <ul className="flex flex-col gap-1.5">
               {needs.data?.map((p) => (
                 <li key={p.id} className="flex items-center gap-2 text-[13px]">
@@ -332,7 +353,13 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
                   )}
                 </li>
               ))}
-              {needs.isPending && <Spinner />}
+              {needed.length > 0 && needs.isPending && <Spinner />}
+              {unnamed > 0 && (
+                <li className="text-xs text-muted">
+                  {needed.length > 0 ? "And " : ""}
+                  {unnamed === 1 ? "one other project" : `${unnamed} other projects`}, named on its Modrinth page.
+                </li>
+              )}
               {needs.isError && <li className="text-xs text-muted">{needed.length === 1 ? "One other project" : `${needed.length} other projects`}, named on its Modrinth page.</li>}
             </ul>
           </section>

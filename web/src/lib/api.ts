@@ -376,7 +376,8 @@ export interface ModrinthVersion {
   game_versions: string[];
   loaders: string[];
   date_published: string;
-  dependencies?: { project_id: string | null; dependency_type: "required" | "optional" | "incompatible" | "embedded" }[];
+  /** What it needs or clashes with. One names a project, or only a version of one. */
+  dependencies?: { project_id: string | null; version_id?: string | null; dependency_type: "required" | "optional" | "incompatible" | "embedded" }[];
 }
 
 export interface MinecraftVersions {

@@ -167,6 +167,13 @@ func modrinthSearchParams(q url.Values) (url.Values, error) {
 		}
 		facets = append(facets, facet("categories", category))
 	}
+	// Past the last result that can be asked for there is nothing, and saying
+	// so is what ends a list that loads as it is scrolled: answering with the
+	// last page again would have it grow for ever.
+	offset := max(0, atoi(q.Get("offset")))
+	if offset > modrinthLastOffset {
+		return nil, errBadRequest("A search goes as far as its first %d results. Narrow it down to see others.", modrinthLastOffset+modrinthPage)
+	}
 	encoded, err := json.Marshal(facets)
 	if err != nil {
 		return nil, err
@@ -175,13 +182,17 @@ func modrinthSearchParams(q url.Values) (url.Values, error) {
 		"query":  {q.Get("q")},
 		"facets": {string(encoded)},
 		"limit":  {strconv.Itoa(modrinthPage)},
-		"offset": {strconv.Itoa(min(max(0, atoi(q.Get("offset"))), 10_000))},
+		"offset": {strconv.Itoa(offset)},
 		"index":  {order},
 	}, nil
 }
 
-// modrinthPage is how many results a search returns at a time.
-const modrinthPage = 24
+const (
+	// modrinthPage is how many results a search returns at a time.
+	modrinthPage = 24
+	// modrinthLastOffset is the furthest into a search's results a page may start.
+	modrinthLastOffset = 9_984
+)
 
 func (s *Server) modrinthSearch(w http.ResponseWriter, r *http.Request, _ *store.User) error {
 	params, err := modrinthSearchParams(r.URL.Query())
@@ -288,7 +299,9 @@ func atoi(v string) int {
 
 func (s *Server) modrinthVersions(w http.ResponseWriter, r *http.Request, _ *store.User) error {
 	q := r.URL.Query()
-	params := url.Values{}
+	// Nothing shown from this list is a changelog, and on a project with
+	// years of versions they are most of the answer.
+	params := url.Values{"include_changelog": {"false"}}
 	if loaders := modrinthLoaders[q.Get("loader")]; len(loaders) > 0 {
 		encoded, _ := json.Marshal(loaders)
 		params.Set("loaders", string(encoded))
