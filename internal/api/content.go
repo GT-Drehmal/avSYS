@@ -219,7 +219,7 @@ func targetOf(spec *avsysv1.MinecraftServerSpec) target {
 	if t.gameVersion == "LATEST" {
 		t.gameVersion = ""
 	}
-	t.java = controller.GameJava(t.gameVersion)
+	t.java = controller.GameJavaOf(spec)
 	return t
 }
 

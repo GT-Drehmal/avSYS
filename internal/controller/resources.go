@@ -70,13 +70,36 @@ func wantsMinecraft(mc *avsysv1.MinecraftServer) bool {
 
 // GameJava is the Java release a game version is built for, or 0 when that is
 // not known (LATEST, snapshots, versions newer than this code).
+// GameJavaOf is the Java a server's game version ships with: what the
+// version's name says, or where it does not, what was found out when the
+// version was chosen. 0 when neither is known.
+func GameJavaOf(spec *avsysv1.MinecraftServerSpec) int {
+	if java := GameJava(GameVersionOf(spec)); java > 0 {
+		return java
+	}
+	if spec.Modpack != nil {
+		return 0
+	}
+	return int(spec.GameJava)
+}
+
+func leadingDigits(s string) string {
+	for i, r := range s {
+		if r < '0' || r > '9' {
+			return s[:i]
+		}
+	}
+	return s
+}
+
 func GameJava(version string) int {
 	parts := strings.Split(version, ".")
 	if len(parts) < 2 {
 		return 0
 	}
+	// A pre-release says which release it is of: 26.3-rc-3, 1.21.11-pre5.
 	major, err1 := strconv.Atoi(parts[0])
-	minor, err2 := strconv.Atoi(parts[1])
+	minor, err2 := strconv.Atoi(leadingDigits(parts[1]))
 	if err1 != nil || err2 != nil {
 		return 0
 	}
@@ -89,7 +112,7 @@ func GameJava(version string) int {
 	}
 	patch := 0
 	if len(parts) > 2 {
-		patch, _ = strconv.Atoi(parts[2])
+		patch, _ = strconv.Atoi(leadingDigits(parts[2]))
 	}
 	switch {
 	case minor <= 16:
@@ -125,7 +148,7 @@ func GameVersionOf(spec *avsysv1.MinecraftServerSpec) string {
 // server actually runs on, which is higher when its content needs more. Both
 // are 0 when the game version is not known.
 func JavaOf(spec *avsysv1.MinecraftServerSpec) (game, effective int) {
-	game = GameJava(GameVersionOf(spec))
+	game = GameJavaOf(spec)
 	if game == 0 {
 		return 0, 0
 	}

@@ -42,6 +42,8 @@ Content is resolved when you add it, not when the server starts:
 - If nothing fits, or you pin a newer build yourself, the server's Java is raised to match. The server page shows the Java it runs on.
 - If a project has no build for the server's loader and game version, adding it fails with that message instead of a broken start.
 - Each loader is asked which **game versions** it has a build for, and only those are offered. A new game version usually reaches Vanilla first and the others days or weeks later. Asking for one a loader does not have yet fails with that message instead of a broken start.
+- **Snapshots and pre-releases** join the version list with the checkbox beside it: every one a server can be made of, each in its place between the releases. Versions Mojang never published a server for (everything before 1.2.5, and the alpha and beta versions) are not listed.
+- A snapshot named by the week it came out in, such as `24w14a`, runs on the Java of the release it led to.
 - "Latest release" is the newest version the chosen loader has a build for. It is settled to the actual version when a server is created, so a restart never upgrades a world on its own. A modpack's own game version decides its Java.
 - Uploaded files are kept on the server's volume under `.avsys/content` and installed like any other entry.
 

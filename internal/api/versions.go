@@ -9,12 +9,14 @@ import (
 	"time"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
 const mojangManifest = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
 
-// manifest is Mojang's list of game versions, newest first.
+// manifest is Mojang's list of game versions, newest first, less the ones
+// no server can be made of.
 type manifest struct {
 	Latest   map[string]string `json:"latest"`
 	Versions []gameVersion     `json:"versions"`
@@ -24,6 +26,8 @@ type gameVersion struct {
 	ID          string `json:"id"`
 	Type        string `json:"type"`
 	ReleaseTime string `json:"releaseTime"`
+	// Java is the Java the version ships with.
+	Java int `json:"java,omitempty"`
 }
 
 func (s *Server) manifest(ctx context.Context) (*manifest, error) {
@@ -35,7 +39,74 @@ func (s *Server) manifest(ctx context.Context) (*manifest, error) {
 	if err := json.Unmarshal(body, m); err != nil {
 		return nil, err
 	}
+	m.Versions = installable(m.Versions)
+	withJava(m.Versions)
 	return m, nil
+}
+
+// withJava says of each version what Java it ships with. A release and a
+// pre-release named after one say so by their name. A snapshot named by the
+// week it came out in, as most were before 2026, needs what the release it
+// led to needs, which is the next release after it. versions is newest
+// first, so that is the last release passed on the way down.
+func withJava(versions []gameVersion) {
+	next := 0
+	for i := range versions {
+		v := &versions[i]
+		v.Java = controller.GameJava(v.ID)
+		if v.Type == "release" && v.Java > 0 {
+			next = v.Java
+		}
+		if v.Java == 0 {
+			v.Java = next
+		}
+	}
+	// Ones newer than every release have none after them yet, and take
+	// that of the nearest version before them that has one.
+	for i := len(versions) - 2; i >= 0; i-- {
+		if versions[i].Java == 0 {
+			versions[i].Java = versions[i+1].Java
+		}
+	}
+}
+
+// resolveJava fills in the Java a server's game version ships with where
+// the version's name does not say, from where it stands in Mojang's list.
+func (s *Server) resolveJava(ctx context.Context, spec *avsysv1.MinecraftServerSpec) {
+	spec.GameJava = 0
+	if spec.Modpack != nil || spec.Version == "" || spec.Version == "LATEST" || controller.GameJava(spec.Version) > 0 {
+		return
+	}
+	m, err := s.manifest(ctx)
+	if err != nil {
+		return
+	}
+	for _, v := range m.Versions {
+		if v.ID == spec.Version {
+			spec.GameJava = int32(v.Java)
+			return
+		}
+	}
+}
+
+// firstServer is the oldest version Mojang publishes a server for. The list
+// goes back further, to versions that only ever had a client.
+const firstServer = "1.2.5"
+
+// installable drops the versions no server can be made of: everything
+// before the first one a server was published for, and the alpha and beta
+// versions, which have none either. versions is newest first.
+func installable(versions []gameVersion) []gameVersion {
+	out := make([]gameVersion, 0, len(versions))
+	for _, v := range versions {
+		if v.Type != "old_alpha" && v.Type != "old_beta" {
+			out = append(out, v)
+		}
+		if v.ID == firstServer {
+			break
+		}
+	}
+	return out
 }
 
 // builds is where each kind of server says which game versions it has a
@@ -184,8 +255,16 @@ func (s *Server) supportedBy(ctx context.Context, loader avsysv1.Loader) (*suppo
 		if err != nil {
 			return nil, err
 		}
+		// A loader can list a game version no server was ever published
+		// for, and a build of it for one is no use: Forge has them for 1.1.
+		installs := map[string]bool{}
+		for _, v := range m.Versions {
+			installs[v.ID] = true
+		}
 		for _, v := range versions {
-			out.all[v] = true
+			if installs[v] {
+				out.all[v] = true
+			}
 		}
 	} else {
 		for _, v := range m.Versions {
@@ -270,6 +349,10 @@ func (s *Server) checkVersion(ctx context.Context, spec *avsysv1.MinecraftServer
 	sup, err := s.supportedBy(ctx, spec.Loader)
 	if err != nil || sup.all[spec.Version] {
 		return nil
+	}
+	// For the game itself the list is of what a server exists for at all.
+	if spec.Loader == avsysv1.LoaderVanilla {
+		return errBadRequest("There is no server for Minecraft %s.", spec.Version)
 	}
 	name := loaderNames[string(spec.Loader)]
 	if len(sup.releases) == 0 {

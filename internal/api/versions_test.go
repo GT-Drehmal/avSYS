@@ -229,3 +229,115 @@ func TestUpdateChecksAChangeOfSoftware(t *testing.T) {
 		t.Errorf("moving to a supported pair: %d %s, want 200", got, code)
 	}
 }
+
+// What is listed is what a server can be made of. Mojang's list also has
+// versions that only ever had a client.
+func TestOnlyVersionsWithAServerAreListed(t *testing.T) {
+	list := func(ids ...gameVersion) []gameVersion { return ids }
+	all := list(
+		gameVersion{ID: "26.4-snapshot-1", Type: "snapshot"}, gameVersion{ID: "26.3", Type: "release"},
+		gameVersion{ID: "1.3.1", Type: "release"}, gameVersion{ID: "12w30e", Type: "snapshot"},
+		gameVersion{ID: "1.2.5", Type: "release"}, gameVersion{ID: "1.2.4", Type: "release"},
+		gameVersion{ID: "12w08a", Type: "snapshot"}, gameVersion{ID: "1.0", Type: "release"},
+		gameVersion{ID: "b1.8.1", Type: "old_beta"}, gameVersion{ID: "a1.2.6", Type: "old_alpha"},
+	)
+	var got []string
+	for _, v := range installable(all) {
+		got = append(got, v.ID)
+	}
+	if want := "26.4-snapshot-1 26.3 1.3.1 12w30e 1.2.5"; strings.Join(got, " ") != want {
+		t.Errorf("installable: %q, want %q", strings.Join(got, " "), want)
+	}
+
+	// And one that is not listed is not accepted either.
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = offline{mojangManifest: `{"latest":{"release":"26.3"},"versions":[
+		{"id":"26.3","type":"release"},{"id":"1.2.5","type":"release"},{"id":"1.2.4","type":"release"},{"id":"b1.7.3","type":"old_beta"}]}`}
+	// Nor on a loader that has a build for it: Forge lists 1.2.4.
+	transport := p.srv.catalog.http.Transport.(offline)
+	transport[builds[avsysv1.LoaderForge].url] = `{"promos":{"1.2.4-latest":"2.0.0.68","1.2.5-latest":"3.4.9.171","26.3-latest":"66.0.10"}}`
+	for version, want := range map[string]int{"26.3": 201, "1.2.5": 201, "1.2.4": 400} {
+		name := "f" + strings.NewReplacer(".", "-").Replace(version)
+		if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"`+name+`","spec":{"eula":true,"loader":"forge","version":"`+version+`"}}`); got != want {
+			t.Errorf("a Forge server on %s: %d %s, want %d", version, got, code, want)
+		}
+	}
+	var forge manifest
+	p.fetch("/catalog/minecraft/versions?loader=forge", &forge)
+	if len(forge.Versions) != 2 {
+		t.Errorf("Forge's list is %+v, want 26.3 and 1.2.5 only", forge.Versions)
+	}
+	for version, want := range map[string]int{"26.3": 201, "1.2.5": 201, "1.2.4": 400, "b1.7.3": 400} {
+		name := "v" + strings.NewReplacer(".", "-").Replace(version)
+		if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"`+name+`","spec":{"eula":true,"version":"`+version+`"}}`); got != want {
+			t.Errorf("a vanilla server on %s: %d %s, want %d", version, got, code, want)
+		}
+	}
+}
+
+// Each version says what Java it ships with: by its name, or for a snapshot
+// named by the week it came out in, that of the release it led to.
+func TestVersionsCarryTheirJava(t *testing.T) {
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = offline{mojangManifest: `{"latest":{"release":"26.3"},"versions":[
+		{"id":"26w40a","type":"snapshot"},{"id":"26.4-snapshot-1","type":"snapshot"},
+		{"id":"26.3","type":"release"},{"id":"26.3-rc-1","type":"snapshot"},
+		{"id":"1.21.11-pre5","type":"snapshot"},{"id":"1.20.5","type":"release"},{"id":"24w14a","type":"snapshot"},
+		{"id":"1.17","type":"release"},{"id":"21w19a","type":"snapshot"},
+		{"id":"1.16.5","type":"release"},{"id":"20w14infinite","type":"snapshot"},{"id":"3D Shareware v1.34","type":"snapshot"},
+		{"id":"1.2.5","type":"release"}]}`}
+	var list manifest
+	p.fetch("/catalog/minecraft/versions", &list)
+	got := map[string]int{}
+	for _, v := range list.Versions {
+		got[v.ID] = v.Java
+	}
+	for id, java := range map[string]int{
+		"26.4-snapshot-1": 25, "26.3": 25, "26.3-rc-1": 25, "1.21.11-pre5": 21, "1.20.5": 21, "1.17": 17, "1.16.5": 8, "1.2.5": 8,
+		// Named by the week: what the release after them needs.
+		"24w14a": 21, "21w19a": 17, "20w14infinite": 8, "3D Shareware v1.34": 8,
+		// Newer than any release: what the newest before it needs.
+		"26w40a": 25,
+	} {
+		if got[id] != java {
+			t.Errorf("%s: Java %d, want %d", id, got[id], java)
+		}
+	}
+
+	// A server on one whose name does not say is told, and one whose name
+	// does carries nothing extra. What a request says about it is ignored.
+	java := func(name string) (float64, float64) {
+		_, srv := p.get("viewer", "GET", "/orgs/alpha/servers/"+name, "")
+		spec, _ := srv["spec"].(map[string]any)
+		ran, _ := srv["java"].(map[string]any)
+		g, _ := spec["gameJava"].(float64)
+		e, _ := ran["effective"].(float64)
+		return g, e
+	}
+	for name, c := range map[string]struct {
+		version         string
+		noted, runsWith float64
+	}{
+		"weekly": {"24w14a", 21, 21}, "old": {"21w19a", 17, 17}, "named": {"26.3-rc-1", 0, 25}, "release": {"1.16.5", 0, 8},
+	} {
+		if code, _ := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"`+name+`","spec":{"eula":true,"gameJava":99,"version":"`+c.version+`"}}`); code != 201 {
+			t.Fatalf("a server on %s: %d", c.version, code)
+		}
+		if noted, runs := java(name); noted != c.noted || runs != c.runsWith {
+			t.Errorf("%s: noted Java %v and runs on %v, want %v and %v", c.version, noted, runs, c.noted, c.runsWith)
+		}
+	}
+	// Moved to another version, the note moves with it.
+	if code, _ := p.do("owner", "PATCH", "/orgs/alpha/servers/weekly", `{"spec":{"version":"20w14infinite"}}`); code != 200 {
+		t.Fatalf("changing version: %d", code)
+	}
+	if noted, runs := java("weekly"); noted != 8 || runs != 8 {
+		t.Errorf("after moving to 20w14infinite: noted %v, runs on %v, want 8 and 8", noted, runs)
+	}
+	if code, _ := p.do("owner", "PATCH", "/orgs/alpha/servers/weekly", `{"spec":{"version":"26.3","gameJava":8}}`); code != 200 {
+		t.Fatalf("changing version: %d", code)
+	}
+	if noted, runs := java("weekly"); noted != 0 || runs != 25 {
+		t.Errorf("after moving to 26.3: noted %v, runs on %v, want none and 25", noted, runs)
+	}
+}

@@ -14,21 +14,28 @@ import (
 
 func TestGameJava(t *testing.T) {
 	for version, want := range map[string]int{
-		"1.8.9":    8,
-		"1.12.2":   8,
-		"1.16.5":   8,
-		"1.17.1":   17,
-		"1.20.4":   17,
-		"1.20.5":   21,
-		"1.21":     21,
-		"1.21.4":   21,
-		"26.1":     25,
-		"26.3":     25,
-		"27.1":     0,
-		"LATEST":   0,
-		"24w14a":   0,
-		"SNAPSHOT": 0,
-		"":         0,
+		"1.8.9":  8,
+		"1.12.2": 8,
+		"1.16.5": 8,
+		"1.17.1": 17,
+		"1.20.4": 17,
+		"1.20.5": 21,
+		"1.21":   21,
+		"1.21.4": 21,
+		"26.1":   25,
+		"26.3":   25,
+		// A pre-release needs what its release does.
+		"26.3-rc-3":       25,
+		"26.4-snapshot-3": 25,
+		"1.21.11-pre5":    21,
+		"1.20.5-rc1":      21,
+		"1.20.4-rc1":      17,
+		"1.16-pre2":       8,
+		"27.1":            0,
+		"LATEST":          0,
+		"24w14a":          0,
+		"SNAPSHOT":        0,
+		"":                0,
 	} {
 		if got := GameJava(version); got != want {
 			t.Errorf("GameJava(%q) = %d, want %d", version, got, want)
@@ -340,5 +347,29 @@ func TestConsoleIsSharedWithTheWorkspace(t *testing.T) {
 	stopped := buildPod(server(func(mc *avsysv1.MinecraftServer) { mc.Spec.State = avsysv1.StateStopped }), Config{})
 	if !mounted(stopped, WorkspaceContainer) {
 		t.Error("a stopped server's workspace has no console directory, so its pod would differ in more than the game")
+	}
+}
+
+// Where a version's name does not say what Java it needs, what the panel
+// noted when it was chosen is used. A name that does say always wins.
+func TestGameJavaOf(t *testing.T) {
+	for name, c := range map[string]struct {
+		spec avsysv1.MinecraftServerSpec
+		want int
+	}{
+		"named":              {avsysv1.MinecraftServerSpec{Version: "1.21.4"}, 21},
+		"named, with a note": {avsysv1.MinecraftServerSpec{Version: "1.21.4", GameJava: 8}, 21},
+		"weekly, noted":      {avsysv1.MinecraftServerSpec{Version: "24w14a", GameJava: 21}, 21},
+		"weekly, not noted":  {avsysv1.MinecraftServerSpec{Version: "24w14a"}, 0},
+		"a modpack":          {avsysv1.MinecraftServerSpec{GameJava: 8, Modpack: &avsysv1.ModpackSpec{GameVersion: "1.20.1"}}, 17},
+		"a modpack unknown":  {avsysv1.MinecraftServerSpec{GameJava: 8, Modpack: &avsysv1.ModpackSpec{}}, 0},
+	} {
+		if got := GameJavaOf(&c.spec); got != c.want {
+			t.Errorf("%s: %d, want %d", name, got, c.want)
+		}
+	}
+	// And it is what decides the image.
+	if game, runs := JavaOf(&avsysv1.MinecraftServerSpec{Version: "21w19a", GameJava: 17}); game != 17 || runs != 17 {
+		t.Errorf("a weekly snapshot noted as 17: game %d, runs on %d", game, runs)
 	}
 }

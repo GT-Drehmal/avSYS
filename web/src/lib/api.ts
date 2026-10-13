@@ -340,7 +340,8 @@ export interface ModrinthVersion {
 
 export interface MinecraftVersions {
   latest: { release: string; snapshot: string };
-  versions: { id: string; type: string; releaseTime: string }[];
+  /** java is the Java a version ships with. */
+  versions: { id: string; type: string; releaseTime: string; java?: number }[];
 }
 
 export const serverPath = (org: string, name: string) => `/orgs/${org}/servers/${name}`;

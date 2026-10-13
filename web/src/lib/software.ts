@@ -26,10 +26,18 @@ export function useGameVersions(loader?: Loader | null) {
     select: (m) => ({
       latest: m.latest.release,
       releases: m.versions.filter((v) => v.type === "release").map((v) => v.id),
+      previews: previews(m.versions),
+      // Both, in the order they came out, newest first.
+      ordered: m.versions.map((v) => v.id),
       // Snapshots and pre-releases too, for telling whether a version has a build at all.
       all: new Set(m.versions.map((v) => v.id)),
     }),
   });
+}
+
+/** The snapshots, pre-releases and release candidates. */
+function previews(versions: MinecraftVersions["versions"]) {
+  return versions.filter((v) => v.type !== "release").map((v) => v.id);
 }
 
 /** Whole or half gigabytes from a Kubernetes quantity, for a number input. */
