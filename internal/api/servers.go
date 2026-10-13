@@ -149,6 +149,11 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	default:
 		return errBadRequest("Operators in game go by role: operator, admin, owner, or off. %q is none of those.", spec.AutoOp)
 	}
+	switch spec.AutoWhitelist {
+	case "", "off", string(store.RoleViewer), string(store.RoleOperator), string(store.RoleAdmin), string(store.RoleOwner):
+	default:
+		return errBadRequest("The whitelist goes by role: viewer for every member, operator, admin, owner, or off. %q is none of those.", spec.AutoWhitelist)
+	}
 	if spec.Backups != nil {
 		// Held to the limits an organization's own schedule is.
 		if err := policyFor(defaultPolicy, spec).validate(); err != nil {
@@ -369,7 +374,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
 	// From which role members are operators in game, acted on now and not
 	// with the next look.
-	if previous.AutoOp != mc.Spec.AutoOp {
+	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist {
 		s.syncOpsFor(a.Org, mc)
 	}
 	writeJSON(w, http.StatusOK, s.view(mc))

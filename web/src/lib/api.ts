@@ -155,6 +155,8 @@ export interface ServerSpec {
   sleep: { enabled?: boolean; idleMinutes: number };
   /** From which role members are operators in game: "" is operator, "off" is nobody. */
   autoOp?: "" | "operator" | "admin" | "owner" | "off";
+  /** From which role members are on the whitelist: "viewer" is every member; "" and "off" are nobody. */
+  autoWhitelist?: "" | "viewer" | "operator" | "admin" | "owner" | "off";
   /** Where the server's scheduled snapshots depart from its organization's. Absent, it follows them. */
   backups?: BackupOverride | null;
   image?: string;

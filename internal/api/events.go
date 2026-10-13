@@ -77,8 +77,11 @@ func (s *Server) WatchServers(informer ctrlcache.Informer) error {
 		s.Events.Publish(Event{Type: kind, Namespace: mc.Namespace, Data: s.view(mc)})
 	}
 	_, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj any) { publish("server.updated", obj) },
-		UpdateFunc: func(_, obj any) { publish("server.updated", obj) },
+		AddFunc: func(obj any) { publish("server.updated", obj) },
+		UpdateFunc: func(old, obj any) {
+			publish("server.updated", obj)
+			s.started(old, obj)
+		},
 		DeleteFunc: func(obj any) { publish("server.deleted", obj) },
 	})
 	return err

@@ -8,7 +8,7 @@ import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../co
 import { Button, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { api, ApiError, type ContentRef, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
-import { keys } from "../lib/queries";
+import { keys, useMe } from "../lib/queries";
 import { toast } from "../lib/toast";
 import { fromGigabytes, loaders, useGameVersions } from "../lib/software";
 
@@ -55,6 +55,9 @@ export function NewServer() {
   const [maxPlayers, setMaxPlayers] = useState("");
   const [pvp, setPvp] = useState("");
   const [otherProperties, setOtherProperties] = useState("");
+  // Who may join: the organization's members, or anyone who has the address.
+  const [access, setAccess] = useState<"members" | "anyone">("members");
+  const me = useMe().data;
   const [eula, setEula] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -95,6 +98,7 @@ export function NewServer() {
     if (hardcore) properties["hardcore"] = "true";
     if (maxPlayers) properties["max-players"] = maxPlayers;
     if (pvp) properties["pvp"] = pvp;
+    if (access === "members") properties["white-list"] = "true";
     const spec: Partial<ServerSpec> = {
       displayName,
       eula,
@@ -103,6 +107,8 @@ export function NewServer() {
       expose: { type: "Router", hostname: hostname.trim() },
       mods,
       properties,
+      // Every member who has linked a Minecraft account is let in.
+      ...(access === "members" ? { autoWhitelist: "viewer" as const } : {}),
       ...(kind === "modpack" ? { modpack } : { loader: loader ?? undefined, version }),
     };
     try {
@@ -315,6 +321,34 @@ export function NewServer() {
         <Field label="Hostname" hint="Optional. Point this name's DNS at the avSYS router.">
           {(id) => <Input id={id} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
         </Field>
+      </Section>
+
+      <Section title="Who can join">
+        <div role="radiogroup" aria-label="Who can join" className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
+          <button type="button" role="radio" aria-checked={access === "members"} className={segment(access === "members")} onClick={() => setAccess("members")}>
+            Members of this organization
+          </button>
+          <button type="button" role="radio" aria-checked={access === "anyone"} className={segment(access === "anyone")} onClick={() => setAccess("anyone")}>
+            Anyone with the address
+          </button>
+        </div>
+        {access === "members" ? (
+          <p className="text-xs leading-relaxed text-muted">
+            The whitelist is on, and members who have linked a Minecraft account are on it. Others can be added in the server's settings.
+            {me && !me.minecraft && (
+              <>
+                {" "}
+                You have not linked one yet, so you could not join it yourself:{" "}
+                <Link to="/account" className="text-accent hover:underline">
+                  link it under Account
+                </Link>
+                .
+              </>
+            )}
+          </p>
+        ) : (
+          <p className="text-xs leading-relaxed text-muted">No whitelist. Anyone who knows the address can join.</p>
+        )}
       </Section>
 
       <Section title="Minecraft EULA">

@@ -84,6 +84,33 @@ type autoOps struct {
 	locks sync.Map
 }
 
+// A roleList is one of the lists of players a server keeps that the panel
+// fills by role: its operators, and its whitelist.
+type roleList struct {
+	// what names it in the log.
+	what string
+	// note is the annotation recording which players the panel put on it.
+	note string
+	// add and remove are the commands, less the player's name.
+	add, remove string
+	// from is the role from which a member is on it, or "" for nobody.
+	from func(*avsysv1.MinecraftServerSpec) store.Role
+	// kept is who is on it by the server's own settings, whom the panel
+	// never takes off.
+	kept func(*avsysv1.MinecraftServerSpec) []string
+}
+
+var roleLists = []roleList{
+	{
+		what: "operators", note: avsysv1.AnnotationAutoOps, add: "op ", remove: "deop ", from: opRole,
+		kept: func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Ops },
+	},
+	{
+		what: "whitelist", note: avsysv1.AnnotationAutoWhitelist, add: "whitelist add ", remove: "whitelist remove ", from: whitelistRole,
+		kept: func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Whitelist },
+	},
+}
+
 // opRole is the role from which a server's members are operators in game,
 // or "" when nobody is made one for their role.
 func opRole(spec *avsysv1.MinecraftServerSpec) store.Role {
@@ -96,10 +123,25 @@ func opRole(spec *avsysv1.MinecraftServerSpec) store.Role {
 	return store.Role(spec.AutoOp)
 }
 
-// wantedOps is who should be an operator on a server for their role: the
-// linked players of every member at or above the server's role, by name.
-func wantedOps(spec *avsysv1.MinecraftServerSpec, members []store.Member) []string {
-	min := opRole(spec)
+// whitelistRole is the role from which a server's members are on its
+// whitelist, or "" when none are put there for being members.
+//
+// Unlike operators this reaches members who could not do it themselves: a
+// viewer cannot whitelist anyone. What it gives each of them is one place,
+// for the one account they have linked, which nothing proves is theirs. A
+// member can so let one other player in, in their own stead. That is why it
+// is off unless a server asks for it.
+func whitelistRole(spec *avsysv1.MinecraftServerSpec) store.Role {
+	switch spec.AutoWhitelist {
+	case "", "off":
+		return ""
+	}
+	return store.Role(spec.AutoWhitelist)
+}
+
+// wantedFrom is who should be on a list for their role: the linked players
+// of every member at or above min, by name. With no min it is nobody.
+func wantedFrom(min store.Role, members []store.Member) []string {
 	var out []string
 	if min == "" {
 		return out
@@ -114,6 +156,11 @@ func wantedOps(spec *avsysv1.MinecraftServerSpec, members []store.Member) []stri
 	}
 	sort.Strings(out)
 	return out
+}
+
+// wantedOps is who should be an operator on a server for their role.
+func wantedOps(spec *avsysv1.MinecraftServerSpec, members []store.Member) []string {
+	return wantedFrom(opRole(spec), members)
 }
 
 // splitNames reads a note of player names. Anything in it that could not
@@ -181,36 +228,40 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			return nil
 		}
 	}
-	made := splitNames(fresh.Annotations[avsysv1.AnnotationAutoOps])
-	wanted := wantedOps(&fresh.Spec, members)
-	add, remove := opChanges(made, wanted, fresh.Spec.Ops)
-	if len(add) == 0 && len(remove) == 0 {
+	orig := fresh.DeepCopy()
+	changed := false
+	for _, list := range roleLists {
+		made := splitNames(fresh.Annotations[list.note])
+		wanted := wantedFrom(list.from(&fresh.Spec), members)
+		add, remove := opChanges(made, wanted, list.kept(&fresh.Spec))
+		if len(add) == 0 && len(remove) == 0 {
+			continue
+		}
+		for _, name := range add {
+			if _, err := s.rcon(ctx, fresh, list.add+name); err != nil {
+				return err
+			}
+		}
+		for _, name := range remove {
+			if _, err := s.rcon(ctx, fresh, list.remove+name); err != nil {
+				return err
+			}
+		}
+		if fresh.Annotations == nil {
+			fresh.Annotations = map[string]string{}
+		}
+		if len(wanted) == 0 {
+			delete(fresh.Annotations, list.note)
+		} else {
+			fresh.Annotations[list.note] = strings.Join(wanted, ",")
+		}
+		changed = true
+		s.Log.Info(list.what+" brought in step with roles", "server", key.String(), "added", add, "removed", remove)
+	}
+	if !changed {
 		return nil
 	}
-	for _, name := range add {
-		if _, err := s.rcon(ctx, fresh, "op "+name); err != nil {
-			return err
-		}
-	}
-	for _, name := range remove {
-		if _, err := s.rcon(ctx, fresh, "deop "+name); err != nil {
-			return err
-		}
-	}
-	orig := fresh.DeepCopy()
-	if fresh.Annotations == nil {
-		fresh.Annotations = map[string]string{}
-	}
-	if len(wanted) == 0 {
-		delete(fresh.Annotations, avsysv1.AnnotationAutoOps)
-	} else {
-		fresh.Annotations[avsysv1.AnnotationAutoOps] = strings.Join(wanted, ",")
-	}
-	if err := s.Client.Patch(ctx, fresh, client.MergeFrom(orig)); err != nil {
-		return err
-	}
-	s.Log.Info("operators brought in step with roles", "server", key.String(), "added", add, "removed", remove)
-	return nil
+	return s.Client.Patch(ctx, fresh, client.MergeFrom(orig))
 }
 
 // syncOrgOps does syncOps for every server of an organization.
@@ -348,25 +399,65 @@ func (s *Server) opsTick(ctx context.Context) {
 	}
 }
 
-// noteAutoOps sets a server's note of which operators the panel made, to
-// what a snapshot recorded of it.
-func (s *Server) noteAutoOps(ctx context.Context, key client.ObjectKey, recorded string) error {
+// noteRoleLists sets a server's notes of which players the panel put on
+// its lists, to what a snapshot recorded of them. recorded is by annotation.
+func (s *Server) noteRoleLists(ctx context.Context, key client.ObjectKey, recorded map[string]string) error {
 	mc := &avsysv1.MinecraftServer{}
 	if err := s.Client.Get(ctx, key, mc); err != nil {
 		return err
-	}
-	made := strings.Join(splitNames(recorded), ",")
-	if mc.Annotations[avsysv1.AnnotationAutoOps] == made {
-		return nil
 	}
 	orig := mc.DeepCopy()
 	if mc.Annotations == nil {
 		mc.Annotations = map[string]string{}
 	}
-	if made == "" {
-		delete(mc.Annotations, avsysv1.AnnotationAutoOps)
-	} else {
-		mc.Annotations[avsysv1.AnnotationAutoOps] = made
+	changed := false
+	for _, list := range roleLists {
+		made := strings.Join(splitNames(recorded[list.note]), ",")
+		if mc.Annotations[list.note] == made {
+			continue
+		}
+		if made == "" {
+			delete(mc.Annotations, list.note)
+		} else {
+			mc.Annotations[list.note] = made
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
 	}
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// started brings a server's lists in step the moment it has come up, not
+// with the next look: someone who has just started a whitelisted server
+// wants to walk into it.
+func (s *Server) started(old, now any) {
+	was, _ := old.(*avsysv1.MinecraftServer)
+	mc, _ := now.(*avsysv1.MinecraftServer)
+	if was == nil || mc == nil || was.Status.Phase == avsysv1.PhaseRunning || mc.Status.Phase != avsysv1.PhaseRunning {
+		return
+	}
+	slug, ok := s.orgOfNamespace(mc.Namespace)
+	if !ok {
+		return
+	}
+	mc = mc.DeepCopy()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		org, err := s.Store.OrgBySlug(ctx, slug)
+		if err != nil {
+			return
+		}
+		members, err := s.Store.Members(ctx, org.ID)
+		if err != nil {
+			return
+		}
+		s.refreshNames(ctx, members)
+		if err := s.syncOps(ctx, mc, members); err != nil {
+			// The look that runs every minute tries again.
+			s.Log.Warn("could not set a started server's operators and whitelist", "server", mc.Name, "org", slug, "error", err)
+		}
+	}()
 }
