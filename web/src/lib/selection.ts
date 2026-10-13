@@ -10,6 +10,8 @@ export interface Selection {
   /** Selects everything, or nothing if everything already is. */
   toggleAll: () => void;
   clear: () => void;
+  /** Leaves only these selected, of the ones that are. */
+  keep: (ids: string[]) => void;
   /** Whether all, some or none of the list is selected. */
   all: boolean;
   some: boolean;
@@ -51,6 +53,7 @@ export function useSelection(ids: string[]): Selection {
     [order],
   );
   const clear = useCallback(() => setPicked(new Set()), []);
+  const keep = useCallback((ids: string[]) => setPicked((now) => new Set(ids.filter((id) => now.has(id)))), []);
   const all = order.length > 0 && order.every((id) => picked.has(id));
   const toggleAll = useCallback(() => setPicked(all ? new Set() : new Set(order)), [all, order]);
 
@@ -72,6 +75,7 @@ export function useSelection(ids: string[]): Selection {
     toggle,
     toggleAll,
     clear,
+    keep,
     all,
     some: count > 0 && !all,
   };

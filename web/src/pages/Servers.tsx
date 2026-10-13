@@ -65,7 +65,7 @@ const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
  * What can be done to several servers at once. Each is asked on its own, so
  * one that fails does not hold back the rest, and is named afterwards.
  */
-function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: Server[]; canAdmin: boolean; onDone: () => void }) {
+function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: Server[]; canAdmin: boolean; onDone: (failed: string[]) => void }) {
   const qc = useQueryClient();
   const meta = useMeta();
   const [running, setRunning] = useState<Act | null>(null);
@@ -83,12 +83,13 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
     await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), act === "delete" ? qc.invalidateQueries({ queryKey: keys.snapshots(org) }) : null]);
     setRunning(null);
     setDeleting(false);
-    const failed = results.flatMap((r, i) => (r.status === "rejected" ? [`${targets[i].name}: ${r.reason instanceof ApiError ? r.reason.message : "it could not be reached"}`] : []));
+    const failed = targets.filter((_, i) => results[i].status === "rejected");
+    const reasons = results.flatMap((r, i) => (r.status === "rejected" ? [`${targets[i].name}: ${r.reason instanceof ApiError ? r.reason.message : "it could not be reached"}`] : []));
     const succeeded = targets.length - failed.length;
     if (succeeded > 0) toast.info(`${done[act]} ${plural(succeeded, "server")}`);
-    if (failed.length > 0) toast.error(`${failed.length} of ${targets.length} failed. ${failed.join(" ")}`);
+    if (failed.length > 0) toast.error(`${failed.length} of ${targets.length} failed. ${reasons.join(" ")}`);
     // What failed stays selected, to be tried again or looked at.
-    if (failed.length === 0) onDone();
+    onDone(failed.map((s) => s.name));
   };
 
   const button = (act: Exclude<Act, "delete">, label: string, icon: React.ReactNode) => {
@@ -213,7 +214,7 @@ export function Servers() {
         </div>
       )}
       <SelectionBar count={selection.count} noun="server" onClear={selection.clear}>
-        <BulkActions org={org} chosen={chosen} canAdmin={canCreate} onDone={selection.clear} />
+        <BulkActions org={org} chosen={chosen} canAdmin={canCreate} onDone={selection.keep} />
       </SelectionBar>
     </>
   );
