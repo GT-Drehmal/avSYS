@@ -409,6 +409,7 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 		s.audit(r.Context(), u, a.Org, "server.delete", mc.Name, "")
+		s.serverIcons.forget(a.Namespace + "/" + mc.Name)
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
