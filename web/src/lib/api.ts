@@ -234,6 +234,22 @@ export interface BackupPolicy {
   next?: string;
 }
 
+/** How an organization's offsite copy of its snapshots stands. */
+export interface Offsite {
+  /** False when the install copies snapshots nowhere else; the rest is then absent. */
+  configured: boolean;
+  lastAttempt?: string;
+  /** When the last copy that went through began: what was here by then is there. */
+  lastSuccess?: string;
+  /** Why the last attempt failed. */
+  error?: string;
+  /** How many snapshots are offsite. */
+  snapshots?: number;
+  /** Something here has yet to be copied. */
+  pending: boolean;
+  running: boolean;
+}
+
 export interface SnapshotList {
   /** False when the panel has no restic and cannot take snapshots at all. */
   available: boolean;

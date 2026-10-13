@@ -194,6 +194,35 @@ expect "a run passes over it" "$(call -X POST "$RUN" | field "$outcome")" "[('pr
 expect "and it can follow the organization again" "$(call -X PATCH -d '{"spec":{"backups":null}}' "$SRV" | field "'backups' in d['spec']")" False
 expect "changing its schedule did not count as the server changing" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'unchanged', 0)]"
 
+step "offsite copy"
+OFFSITE=$API/orgs/$ORG/offsite
+if [ "$(call "$OFFSITE" | field "d['configured']")" = True ]; then
+  # The panel also copies on its own, a little after snapshots change, so a
+  # copy asked for here may find one going, or find its work already done.
+  # What is checked is where things stand afterwards.
+  copy_offsite() {
+    for _ in $(seq 1 60); do
+      out=$(call -X POST "$OFFSITE/run?wait=true")
+      case "$out" in *'"busy"'*) sleep 2 ;; *) echo "$out"; return ;; esac
+    done
+  }
+  here() { call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])"; }
+  there() { call "$OFFSITE/snapshots" | field "len(d['snapshots'])"; }
+  copy_offsite >/dev/null
+  expect "every snapshot is copied offsite" "$(there)" "$(here)"
+  expect "and nothing is left waiting" "$(call "$OFFSITE" | field "(d['pending'], 'error' in d)")" "(False, False)"
+  extra=$(call -X POST "$SRV/snapshots?wait=true" | field "d['id']") || fail "no snapshot was taken for the offsite check"
+  expect "a new one is waiting to be copied" "$(call "$OFFSITE" | field "d['pending']")" True
+  copy_offsite >/dev/null
+  expect "and is then there too" "$(there)" "$(here)"
+  expect "a snapshot can be deleted" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$extra?wait=true")" 204
+  copy_offsite >/dev/null
+  expect "one deleted here is removed there" "$(there)" "$(here)"
+  expect "snapshots are only brought back into an organization that has none" "$(call -X POST "$OFFSITE/fetch" | field "d['code']")" has_snapshots
+else
+  echo "skipped: this panel copies snapshots nowhere else"
+fi
+
 step "a new server from a snapshot"
 COPY=$API/orgs/$ORG/servers/copy
 expect "a snapshot says what its server was" "$(call "$API/orgs/$ORG/snapshots/$LAST" | field "(d['server'], d['spec']['version'], d['spec']['loader'])")" "('probe', '1.21.4', 'paper')"

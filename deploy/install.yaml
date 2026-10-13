@@ -130,6 +130,19 @@ spec:
               value: https://panel.example.com
             - name: AVSYS_BACKUP_DIR
               value: /backups
+            # An offsite copy of every organization's snapshots, in any place
+            # restic can reach without ssh: S3 and what speaks it (Backblaze
+            # B2, Cloudflare R2, Wasabi), Azure, Google Cloud, a rest-server.
+            # The bucket has to exist. Keep a copy of the password somewhere
+            # else: it is what opens the copy once this cluster is gone.
+            # - name: AVSYS_OFFSITE_REPOSITORY
+            #   value: s3:https://s3.us-west-004.backblazeb2.com/my-bucket/avsys
+            # - name: AVSYS_OFFSITE_PASSWORD
+            #   valueFrom: { secretKeyRef: { name: avsys-offsite, key: password } }
+            # - name: AWS_ACCESS_KEY_ID
+            #   valueFrom: { secretKeyRef: { name: avsys-offsite, key: access-key-id } }
+            # - name: AWS_SECRET_ACCESS_KEY
+            #   valueFrom: { secretKeyRef: { name: avsys-offsite, key: secret-access-key } }
             # Hostname shown in SSH instructions, if it differs from the panel's.
             # - name: AVSYS_SSH_PUBLIC_HOST
             #   value: ssh.example.com
