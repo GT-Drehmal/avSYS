@@ -244,6 +244,29 @@ call -d "{\"name\":\"stuck\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"nodeSelector
 expect "a server still waiting for its files is not started" "$(call -X POST "$API/orgs/$ORG/servers/stuck/start" | field "d['code']")" creating
 expect "deleting it calls the copy off" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/servers/stuck")" 204
 
+step "duplicating a server"
+TWIN=$API/orgs/$ORG/servers/twin
+echo "only in the original" | call -X PUT --data-binary @- "$SRV/files/content?path=/twin.txt" >/dev/null
+twin=$(call -d '{"name":"twin","fromServer":"probe","spec":{"state":"Stopped"}}' "$API/orgs/$ORG/servers?wait=true")
+case "$twin" in *'"spec"'*) ;; *) fail "the server was not duplicated: $twin" ;; esac
+expect "a copy has the original's software" "$(echo "$twin" | field "(d['spec']['version'], d['spec']['loader'], sorted(m['project'] for m in d['spec']['mods']))")" "('1.21.4', 'paper', ['luckperms', 'worldedit'])"
+expect "and its files as they were a moment ago" "$(call "$TWIN/files/content?path=/twin.txt")" "only in the original"
+copies="len([s for s in d['snapshots'] if s['trigger'] == 'copy'])"
+expect "it was made from a snapshot taken for it" "$(call "$SRV/snapshots" | field "$copies")" 1
+call -d '{"name":"twin-2","fromServer":"probe","spec":{"state":"Stopped"}}' "$API/orgs/$ORG/servers?wait=true" >/dev/null
+expect "a second copy with nothing changed needs no new one" "$(call "$SRV/snapshots" | field "$copies")" 1
+expect "the original is as it was" "$(call "$SRV" | field "(d['status']['phase'], d['spec']['expose']['hostname'])")" "('Stopped', '$HOST')"
+for name in twin twin-2; do
+  call -o /dev/null -X DELETE "$API/orgs/$ORG/servers/$name?snapshot=false"
+done
+for _ in $(seq 1 30); do
+  [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
+  sleep 2
+done
+# Removed again, so that what follows counts the snapshots it expects.
+copy=$(call "$SRV/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'copy'][0]")
+expect "the snapshot it was made from is an ordinary one" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$copy")" 204
+
 step "snapshots outlive the server"
 # Something that is in no snapshot yet. Deleting the server must not lose it.
 echo "written just before the end" | call -X PUT --data-binary @- "$SRV/files/content?path=/last.txt" >/dev/null

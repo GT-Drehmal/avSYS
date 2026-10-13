@@ -57,6 +57,7 @@ A snapshot is the server's whole directory, minus the workspace's own files and 
 - **What is never removed for you.** Retention only applies to scheduled snapshots of servers that exist. Snapshots taken by hand, the ones taken before a restore or a delete, and every snapshot of a server that has been deleted stay until someone deletes them.
 - **Restore.** Restoring puts a server back to one of its own snapshots: its world, configuration, game version and mods. The server is stopped while the files are put back, and what was there is snapshotted first, so a restore can be undone. Memory, storage, address and sleep settings are left as they are.
 - **New server from a snapshot.** Any snapshot can be made into a new server, from the **Backups** page or with the API. It gets the snapshot's files along with the game version, loader, mods and game settings they were made with, and its own name, address, memory and storage. Made from a snapshot of a server that was deleted, under the same name, it is that server back with its history. Made from one of a server that still exists, it is a copy, and the original is not touched. Until its files are all in, the new server cannot be started or changed; deleting it calls the copy off.
+- **Duplicating a server.** **Duplicate** on a server's page makes a copy of it as it is now, world included, under a name and address of its own. The original keeps running. A snapshot is taken for the copy to be made from, unless the server's newest one already has everything.
 - **Deleting a server.** A last snapshot is taken first, so a deleted server can be brought back exactly as it was. The delete dialog has a switch for it, and the API takes `?snapshot=false`. If that snapshot cannot be taken, the server is not deleted.
 - **Offsite copy.** Give the panel a second place and every organization's snapshots are copied there, a couple of minutes after they change and once after each start. It takes any [restic repository location](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html) that needs no ssh: S3 and what speaks it (Backblaze B2, Cloudflare R2, Wasabi), Azure, Google Cloud, or a [rest-server](https://github.com/restic/rest-server). See [Offsite copy](#offsite-copy) for setting it up and for getting snapshots back.
 - **History is kept.** Deleting a server does not delete its snapshots; they stay on the organization's **Backups** page until someone deletes them. Deleting an organization deletes its repository, and asks first.
@@ -201,6 +202,8 @@ curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"backups":null}}' $
 
 # Make a new server out of a snapshot. Its software and game settings come with it.
 curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-copy","fromSnapshot":"<id>","spec":{"state":"Stopped"}}' "$AVSYS/orgs/friends/servers?wait=true"
+# A copy of a server as it is now.
+curl -H "Authorization: Bearer $TOKEN" -d '{"name":"creative-2","fromServer":"creative"}' "$AVSYS/orgs/friends/servers?wait=true"
 ```
 
 Without `?wait=true` these answer at once and the work continues in the background; progress arrives on the event stream.

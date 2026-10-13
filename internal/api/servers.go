@@ -225,6 +225,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// FromSnapshot makes the server out of a snapshot: its files, and the
 		// software and game settings that go with them.
 		FromSnapshot string `json:"fromSnapshot"`
+		// FromServer makes the server a copy of another in the organization,
+		// as that one is now.
+		FromServer string `json:"fromServer"`
 	}
 	if err := decode(r, &raw); err != nil {
 		return err
@@ -241,11 +244,17 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if !serverNamePattern.MatchString(in.Name) {
 		return errBadRequest("Server names are up to 40 characters: lowercase letters, digits and dashes, starting with a letter.")
 	}
-	if raw.FromSnapshot != "" {
+	if raw.FromSnapshot != "" && raw.FromServer != "" {
+		return errBadRequest("A server is made from a snapshot or from another server, not both.")
+	}
+	if raw.FromSnapshot != "" || raw.FromServer != "" {
 		// Which settings the request names at all, as opposed to leaving
 		// out: "sleep off" and no word about sleep decode to the same thing.
 		given := map[string]json.RawMessage{}
 		_ = json.Unmarshal(raw.Spec, &given)
+		if raw.FromServer != "" {
+			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer)
+		}
 		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot)
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)

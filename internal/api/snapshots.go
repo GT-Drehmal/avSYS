@@ -519,8 +519,9 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 		Server: mc.Name, Trigger: trigger, By: by, Version: version, Loader: loader,
 		Record: snapshotRecord{Format: 1, Org: org, Server: mc.Name, Spec: recorded},
 		// A scheduled snapshot of a server nothing has happened to is not
-		// taken, and neither is a final one: the last one is as good.
-		SkipUnchanged: trigger == backup.TriggerScheduled || trigger == backup.TriggerFinal,
+		// taken, and neither is a final one or one to copy from: the last
+		// one is as good.
+		SkipUnchanged: trigger == backup.TriggerScheduled || trigger == backup.TriggerFinal || trigger == backup.TriggerCopy,
 	}
 	s.setOperation(mc.Namespace, op, "Copying files", 0)
 	last := time.Time{}
