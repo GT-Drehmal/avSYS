@@ -6,7 +6,7 @@
 "status" prints the server list response for the hostname; "join" attempts a
 login and prints what the router says back when it refuses one.
 """
-import socket, struct, json, sys
+import socket, struct, json, sys, base64, hashlib
 def varint(n):
     out=b''; n &= 0xffffffff
     while True:
@@ -31,7 +31,9 @@ def talk(host, state, addr):
     data=b''
     while len(data)<sl: data+=s.recv(sl-len(data))
     d=json.loads(data)
-    if isinstance(d,dict): d.pop('favicon',None)
+    # The picture itself is long and says nothing here; which one it is does.
+    if isinstance(d,dict) and 'favicon' in d:
+        d['icon']=hashlib.sha1(base64.b64decode(d.pop('favicon').split(',',1)[1])).hexdigest()
     return d
 addr=(sys.argv[3] if len(sys.argv)>3 else '127.0.0.1', int(sys.argv[4]) if len(sys.argv)>4 else 25565)
 print(json.dumps(talk(sys.argv[1], 1 if sys.argv[2]=='status' else 2, addr)))
