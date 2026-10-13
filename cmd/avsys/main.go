@@ -295,6 +295,7 @@ func run(opts options, log *slog.Logger) error {
 		},
 		Store:   st,
 		Client:  mgr.GetClient(),
+		Reader:  mgr.GetAPIReader(),
 		Kube:    clientset,
 		Dialer:  dialer,
 		Gateway: gateway,
@@ -328,6 +329,12 @@ func run(opts options, log *slog.Logger) error {
 	}
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		server.RunOffsite(ctx)
+		return nil
+	})); err != nil {
+		return err
+	}
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		server.RunOps(ctx)
 		return nil
 	})); err != nil {
 		return err

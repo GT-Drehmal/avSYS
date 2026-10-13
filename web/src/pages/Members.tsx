@@ -122,7 +122,10 @@ export function Members() {
                   {m.displayName || m.username}
                   {m.userId === me.user.id && <span className="ml-2 text-xs font-normal text-faint">you</span>}
                 </p>
-                <p className="truncate font-mono text-xs text-faint">{m.username}</p>
+                <p className="truncate font-mono text-xs text-faint">
+                  {m.username}
+                  {m.minecraftName && <span title="Minecraft account"> · {m.minecraftName} in game</span>}
+                </p>
               </div>
               <span className="text-xs text-faint max-sm:hidden">joined {ago(m.joinedAt)}</span>
               {editable ? (

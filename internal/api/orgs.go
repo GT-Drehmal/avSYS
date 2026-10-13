@@ -198,6 +198,8 @@ func (s *Server) updateMember(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "member.role", target, string(in.Role))
+	// Who is an operator in game goes by role.
+	s.syncOpsSoon(a.Org)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
@@ -220,6 +222,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "member.remove", target, "")
+	s.syncOpsSoon(a.Org)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
@@ -311,6 +314,7 @@ func (s *Server) acceptInvite(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.audit(r.Context(), u, org, "invite.accept", u.Username, "")
+	s.syncOpsSoon(org)
 	writeJSON(w, http.StatusOK, org)
 	return nil
 }

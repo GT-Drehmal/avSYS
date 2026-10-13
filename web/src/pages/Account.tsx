@@ -37,6 +37,44 @@ function Profile() {
   );
 }
 
+function Minecraft() {
+  const me = useMe().data!;
+  const [name, setName] = useState("");
+  const link = useAction(() => api.put("/me/minecraft", { name }), [keys.me]);
+  const unlink = useAction(() => api.del("/me/minecraft"), [keys.me]);
+  return (
+    <Section title="Minecraft account" description="Makes you an operator in game on servers where your role allows it.">
+      {me.minecraft ? (
+        <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5">
+          {/* Said in full: the name alone, under this heading, does not read as "the player you are". */}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px]">
+              In game you are <span className="font-mono font-medium">{me.minecraft.name}</span>
+            </p>
+            <p className="truncate text-xs text-faint">Not the name you play as? Unlink it and link the right one.</p>
+          </div>
+          <Button size="sm" loading={unlink.isPending} onClick={() => unlink.mutate(undefined)}>
+            Unlink
+          </Button>
+        </div>
+      ) : (
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            link.mutate(undefined, { onSuccess: () => setName("") });
+          }}
+        >
+          <Input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name in game" className="w-56" aria-label="Minecraft username" spellCheck={false} autoComplete="off" />
+          <Button type="submit" loading={link.isPending}>
+            Link
+          </Button>
+        </form>
+      )}
+    </Section>
+  );
+}
+
 function SSHKeys() {
   const me = useMe().data!;
   const keysQuery = useQuery({ queryKey: sshKeys, queryFn: () => api.get<SSHKey[]>("/me/ssh-keys") });
@@ -230,6 +268,7 @@ export function Account() {
     <>
       <PageHeader title="Account" />
       <Profile />
+      <Minecraft />
       <SSHKeys />
       <APITokens />
       <SignIn />

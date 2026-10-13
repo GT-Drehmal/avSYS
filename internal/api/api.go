@@ -44,9 +44,12 @@ type Config struct {
 }
 
 type Server struct {
-	Config  Config
-	Store   *store.Store
-	Client  client.Client
+	Config Config
+	Store  *store.Store
+	Client client.Client
+	// Reader reads the cluster as it is now, where Client may lag a change
+	// by a moment. It is optional: Client is used where there is none.
+	Reader  client.Reader
 	Kube    kubernetes.Interface
 	Dialer  kube.PodDialer
 	Gateway *sshgw.Gateway
@@ -62,6 +65,7 @@ type Server struct {
 	ops        operations
 	schedule   schedule
 	offsite    offsite
+	autoOps    autoOps
 	// consoles holds one lock per server, taken to type at its console.
 	consoles sync.Map
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
@@ -264,6 +268,8 @@ func (s *Server) Handler() http.Handler {
 	api("GET /me", s.authed(s.getMe))
 	api("PATCH /me", s.authed(s.updateMe))
 	api("POST /me/password", s.authed(s.setPassword))
+	api("PUT /me/minecraft", s.authed(s.setMinecraftAccount))
+	api("DELETE /me/minecraft", s.authed(s.clearMinecraftAccount))
 	api("GET /me/ssh-keys", s.authed(s.listSSHKeys))
 	api("POST /me/ssh-keys", s.authed(s.addSSHKey))
 	api("POST /me/ssh-keys/import", s.authed(s.importSSHKeys))
