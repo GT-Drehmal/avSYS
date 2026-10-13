@@ -9,6 +9,7 @@ import (
 	"time"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -25,6 +26,10 @@ type gameVersion struct {
 	ID          string `json:"id"`
 	Type        string `json:"type"`
 	ReleaseTime string `json:"releaseTime"`
+	// Java is the Java the version ships with, where its name tells. It
+	// does for a release and for a pre-release named after one, and not for
+	// the snapshots that were named by the week they came out in.
+	Java int `json:"java,omitempty"`
 }
 
 func (s *Server) manifest(ctx context.Context) (*manifest, error) {
@@ -37,6 +42,9 @@ func (s *Server) manifest(ctx context.Context) (*manifest, error) {
 		return nil, err
 	}
 	m.Versions = installable(m.Versions)
+	for i := range m.Versions {
+		m.Versions[i].Java = controller.GameJava(m.Versions[i].ID)
+	}
 	return m, nil
 }
 

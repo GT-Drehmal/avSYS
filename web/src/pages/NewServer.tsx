@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
-import { PreviewsHint, VersionOptions } from "../components/VersionOptions";
+import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { Button, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { api, ApiError, type ContentRef, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
@@ -163,11 +163,14 @@ export function NewServer() {
                 </p>
               )}
             </div>
-            <Field label="Game version" className="max-w-64" hint={<PreviewsHint versions={versions.data} previews={previews} onChange={setPreviews} selected={version} />}>
+            <Field label="Game version" hint={onPreview(versions.data, version) ? previewWarning : undefined}>
               {(id) => (
-                <Select id={id} value={version} onChange={(e) => setVersion(e.target.value)}>
-                  <VersionOptions versions={versions.data} previews={previews || !!versions.data?.previews.includes(version)} />
-                </Select>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <Select id={id} value={version} onChange={(e) => setVersion(e.target.value)} className="w-64">
+                    <VersionOptions versions={versions.data} previews={previews || onPreview(versions.data, version)} />
+                  </Select>
+                  <PreviewsToggle versions={versions.data} previews={previews} onChange={setPreviews} selected={version} />
+                </div>
               )}
             </Field>
           </>

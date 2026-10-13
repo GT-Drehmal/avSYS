@@ -6,7 +6,7 @@ import { difficulties, gameModes, parseProperties, worldKeys } from "../../lib/p
 import { useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
 import { toast } from "../../lib/toast";
-import { PreviewsHint, VersionOptions } from "../../components/VersionOptions";
+import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -199,22 +199,25 @@ export function Settings() {
             <Field
               label="Game version"
               hint={
-                noBuild ? (
-                  `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so the server cannot start. Its newest is ${versions.data?.latest}.`
-                ) : (
-                  <PreviewsHint versions={versions.data} previews={previews} onChange={setPreviews} selected={draft.version} />
-                )
+                noBuild
+                  ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so the server cannot start. Its newest is ${versions.data?.latest}.`
+                  : onPreview(versions.data, draft.version)
+                    ? previewWarning
+                    : undefined
               }
             >
               {(id) => (
-                <Select id={id} {...text("version")}>
-                  {/* Keeps the version it has selectable when the list could not be loaded, or does not have it. */}
-                  <VersionOptions
-                    versions={versions.data}
-                    previews={previews || !!versions.data?.previews.includes(draft.version)}
-                    keep={draft.version === "LATEST" ? undefined : { value: draft.version, label: noBuild ? `${draft.version} (no build)` : draft.version }}
-                  />
-                </Select>
+                <div className="flex flex-col gap-1">
+                  <Select id={id} {...text("version")}>
+                    {/* Keeps the version it has selectable when the list could not be loaded, or does not have it. */}
+                    <VersionOptions
+                      versions={versions.data}
+                      previews={previews || onPreview(versions.data, draft.version)}
+                      keep={draft.version === "LATEST" ? undefined : { value: draft.version, label: noBuild ? `${draft.version} (no build)` : draft.version }}
+                    />
+                  </Select>
+                  <PreviewsToggle versions={versions.data} previews={previews} onChange={setPreviews} selected={draft.version} />
+                </div>
               )}
             </Field>
           </div>

@@ -27,6 +27,8 @@ export function useGameVersions(loader?: Loader | null) {
       latest: m.latest.release,
       releases: m.versions.filter((v) => v.type === "release").map((v) => v.id),
       previews: previews(m.versions),
+      // Both, in the order they came out, newest first.
+      ordered: m.versions.filter((v) => v.type === "release" || (v.java ?? 0) > 0).map((v) => v.id),
       // Snapshots and pre-releases too, for telling whether a version has a build at all.
       all: new Set(m.versions.map((v) => v.id)),
     }),
@@ -34,20 +36,13 @@ export function useGameVersions(loader?: Loader | null) {
 }
 
 /**
- * The snapshots, pre-releases and release candidates worth offering: those
- * of the release to come and of the newest one. versions is newest first.
- * Older ones are in the list too, by the hundred, and are not what anyone
- * setting up a server is looking for.
+ * The snapshots, pre-releases and release candidates on offer: the ones
+ * named after the release they lead to, which is how the panel knows what
+ * Java to run them on. Before 2026 most snapshots were named by the week
+ * they came out in; those are left to the API.
  */
 function previews(versions: MinecraftVersions["versions"]) {
-  const out: string[] = [];
-  let releases = 0;
-  for (const v of versions) {
-    if (v.type === "release") {
-      if (++releases === 2) break;
-    } else out.push(v.id);
-  }
-  return out;
+  return versions.filter((v) => v.type !== "release" && (v.java ?? 0) > 0).map((v) => v.id);
 }
 
 /** Whole or half gigabytes from a Kubernetes quantity, for a number input. */

@@ -274,3 +274,25 @@ func TestOnlyVersionsWithAServerAreListed(t *testing.T) {
 		}
 	}
 }
+
+// Each version says what Java it ships with where its name tells, which is
+// what decides whether a pre-release is offered.
+func TestVersionsCarryTheirJava(t *testing.T) {
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = offline{mojangManifest: `{"latest":{"release":"26.3"},"versions":[
+		{"id":"26.4-snapshot-1","type":"snapshot"},{"id":"26.3","type":"release"},{"id":"26.3-rc-1","type":"snapshot"},
+		{"id":"1.21.11-pre5","type":"snapshot"},{"id":"25w14a","type":"snapshot"},{"id":"1.16.5","type":"release"},
+		{"id":"3D Shareware v1.34","type":"snapshot"},{"id":"1.2.5","type":"release"}]}`}
+	var list manifest
+	p.fetch("/catalog/minecraft/versions", &list)
+	got := map[string]int{}
+	for _, v := range list.Versions {
+		got[v.ID] = v.Java
+	}
+	want := map[string]int{"26.4-snapshot-1": 25, "26.3": 25, "26.3-rc-1": 25, "1.21.11-pre5": 21, "25w14a": 0, "1.16.5": 8, "3D Shareware v1.34": 0, "1.2.5": 8}
+	for id, java := range want {
+		if got[id] != java {
+			t.Errorf("%s: Java %d, want %d", id, got[id], java)
+		}
+	}
+}
