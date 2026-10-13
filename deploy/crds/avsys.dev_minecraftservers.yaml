@@ -545,6 +545,13 @@ spec:
                   or the server became ready.
                 format: date-time
                 type: string
+              maxPlayers:
+                description: |-
+                  MaxPlayers is how many players the game last said it takes. Unlike
+                  Players it is kept while the server is not running, for the server
+                  list to show of one that is asleep.
+                format: int32
+                type: integer
               message:
                 type: string
               node:

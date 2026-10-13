@@ -172,6 +172,19 @@ call -X POST "$SRV/stop" >/dev/null
 wait_phase Stopped
 expect "files reachable while stopped" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "router says offline" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "Offline"
+# Listed as a server the game will not let anyone into, not as an empty one.
+expect "and lists it as closed" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT" | field "(d['version']['name'], d['version']['protocol'] < 0)")" "('Offline', True)"
+# Its own icon is in the list while the game is not running to send it.
+python3 -c '
+import struct, sys, zlib
+w = h = 64
+rows = b"".join(b"\x00" + bytes((40, 180, 140)) * w for _ in range(h))
+chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+sys.stdout.buffer.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))' > "$WORK/icon.png"
+expect "a server is given an icon" "$(call -o /dev/null -w '%{http_code}' -X PUT --data-binary "@$WORK/icon.png" "$SRV/icon")" 204
+expect "which is written where the game looks for it" "$(call "$SRV/files/content?path=/server-icon.png" | python3 -c 'import struct, sys; d = sys.stdin.buffer.read(); print(d[1:4].decode(), struct.unpack(">II", d[16:24]))')" "PNG (64, 64)"
+shown=$(call "$SRV/icon" | python3 -c 'import hashlib, sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')
+expect "and shown in the server list though the server is off" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT" | field "d.get('icon')")" "$shown"
 stopped=$(call -X POST "$SRV/snapshots?wait=true")
 LAST=$(echo "$stopped" | field "d['id']") || fail "no snapshot was taken of the stopped server: $stopped"
 expect "a stopped server is snapshotted" "$(echo "$stopped" | field "d['trigger']")" manual
