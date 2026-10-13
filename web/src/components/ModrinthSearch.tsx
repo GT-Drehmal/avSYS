@@ -170,9 +170,12 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
             {categories.isError && <span className="text-xs text-muted">The categories could not be loaded.</span>}
           </div>
           {type === "mod" && (
-            <label className="flex w-fit items-center gap-2 text-xs text-muted">
-              <input type="checkbox" checked={clientToo} onChange={(e) => setClientToo(e.target.checked)} className="size-3.5 accent-(--color-accent)" />
-              Also show mods that only do something on the player's own game
+            <label className="flex w-fit items-start gap-2 text-xs">
+              <input type="checkbox" checked={clientToo} onChange={(e) => setClientToo(e.target.checked)} className="mt-0.5 size-3.5 accent-(--color-accent)" />
+              <span>
+                Include client-only mods
+                <span className="block text-muted">Mods such as minimaps and shaders, which run in each player's game and usually do nothing on a server. Hidden unless this is ticked.</span>
+              </span>
             </label>
           )}
           {narrowed > 0 && (
