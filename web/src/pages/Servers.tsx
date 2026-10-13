@@ -141,7 +141,7 @@ export function Servers() {
   const policy = useBackupPolicy(org);
   const canCreate = atLeast(membership?.role, "admin");
   const canOperate = atLeast(membership?.role, "operator");
-  const selection = useSelection(servers.data?.map((s) => s.name) ?? []);
+  const selection = useSelection(servers.data?.map((s) => s.name) ?? [], org);
   const chosen = servers.data?.filter((s) => selection.has(s.name)) ?? [];
 
   const newButton = canCreate && (
@@ -164,7 +164,8 @@ export function Servers() {
         </Empty>
       ) : (
         // Room for the bar that the selection brings up, so it covers nothing.
-        <div className={`overflow-hidden rounded-lg border border-line bg-surface ${selection.count > 0 ? "mb-16" : ""}`}>
+        // On a narrow screen its buttons wrap onto a second row.
+        <div className={`overflow-hidden rounded-lg border border-line bg-surface ${selection.count > 0 ? "mb-16 max-md:mb-28" : ""}`}>
           <div className={`${columns} label-mono relative hidden h-9 border-b border-line md:grid ${canOperate ? "pl-10" : ""}`}>
             {canOperate && (
               <label className="absolute inset-y-0 left-0 flex w-10 cursor-pointer items-center justify-center">

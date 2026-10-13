@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { CopyPlus, History, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api, type Operation, type Snapshot } from "../lib/api";
@@ -132,6 +133,9 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, select
   );
 }
 
+/** How many snapshots one request may delete. */
+const atOnce = 500;
+
 /**
  * What can be done to several snapshots at once, which is deleting them.
  * They go together or not at all, in one pass over the repository.
@@ -139,7 +143,21 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, select
 export function SnapshotSelectionBar({ org, snapshots, selection }: { org: string; snapshots: Snapshot[]; selection: Selection }) {
   const [confirming, setConfirming] = useState(false);
   const chosen = snapshots.filter((s) => selection.has(s.id));
-  const remove = useAction(() => api.del<{ deleted: number }>(`/orgs/${org}/snapshots`, { ids: chosen.map((s) => s.id) }), [keys.snapshots(org)]);
+  // One request takes so many; more than that go in as many requests as it
+  // takes, one after another. If one is refused, those before it are gone
+  // and the list, asked for again either way, shows what is left.
+  const qc = useQueryClient();
+  const remove = useAction(async () => {
+    let deleted = 0;
+    try {
+      for (let i = 0; i < chosen.length; i += atOnce) {
+        deleted += (await api.del<{ deleted: number }>(`/orgs/${org}/snapshots`, { ids: chosen.slice(i, i + atOnce).map((s) => s.id) })).deleted;
+      }
+    } finally {
+      await qc.invalidateQueries({ queryKey: keys.snapshots(org) });
+    }
+    return { deleted };
+  });
   // "3 of survival, 1 of creative"
   const perServer = new Map<string, number>();
   for (const s of chosen) perServer.set(s.server, (perServer.get(s.server) ?? 0) + 1);

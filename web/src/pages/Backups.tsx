@@ -19,7 +19,7 @@ export function Backups() {
   // One selection across every server's list, in the order the page shows them.
   const shown = new Map<string, Snapshot[]>();
   for (const s of list.data?.snapshots ?? []) shown.set(s.server, [...(shown.get(s.server) ?? []), s]);
-  const selection = useSelection([...shown.values()].flat().map((s) => s.id));
+  const selection = useSelection([...shown.values()].flat().map((s) => s.id), org);
 
   if (list.isPending) return <Loading />;
   const header = <PageHeader title="Backups" description={membership?.name} />;

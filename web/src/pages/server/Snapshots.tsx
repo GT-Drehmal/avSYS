@@ -26,7 +26,7 @@ export function Snapshots() {
   const snapshot = useAction(() => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots`));
   const restore = useAction((id: string) => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots/${id}/restore`));
 
-  const selection = useSelection(list.data?.snapshots.map((s) => s.id) ?? []);
+  const selection = useSelection(list.data?.snapshots.map((s) => s.id) ?? [], `${server.org}/${server.name}`);
 
   if (list.isPending) return <Loading />;
   if (!list.data) return <Notice tone="danger">The snapshots could not be loaded.</Notice>;

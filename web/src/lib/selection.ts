@@ -20,11 +20,20 @@ export interface Selection {
 /**
  * Which rows of a list are ticked. ids is the list as shown, in order: a
  * row that leaves it is no longer selected, and a range runs along it.
+ * scope says whose list it is, such as the organization: a selection does
+ * not carry over to another's, even where two rows there share a name.
  * Escape clears the selection.
  */
-export function useSelection(ids: string[]): Selection {
+export function useSelection(ids: string[], scope: string): Selection {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const last = useRef<string | null>(null);
+  const [scoped, setScoped] = useState(scope);
+  // Cleared while rendering, so that not one frame shows the other list's rows ticked.
+  if (scoped !== scope) {
+    setScoped(scope);
+    setPicked(new Set());
+    last.current = null;
+  }
   const key = ids.join("\n");
   const order = useMemo(() => ids, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
