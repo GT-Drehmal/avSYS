@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
+import { PreviewsHint, VersionOptions } from "../components/VersionOptions";
 import { Button, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { api, ApiError, type ContentRef, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
@@ -29,9 +30,10 @@ export function NewServer() {
   const softwareRef = useRef<HTMLDivElement>(null);
   const [version, setVersion] = useState("LATEST");
   const versions = useGameVersions(kind === "game" ? loader : null);
+  const [previews, setPreviews] = useState(false);
   // A version picked for one kind of server may have no build for the next.
   useEffect(() => {
-    if (version === "LATEST" || !versions.data || versions.isPlaceholderData || versions.data.releases.includes(version)) return;
+    if (version === "LATEST" || !versions.data || versions.isPlaceholderData || versions.data.all.has(version)) return;
     toast.info(`${loaders.find((l) => l.id === loader)?.name ?? "This software"} has no build for ${version} yet`);
     setVersion("LATEST");
   }, [version, versions.data, versions.isPlaceholderData, loader]);
@@ -161,15 +163,10 @@ export function NewServer() {
                 </p>
               )}
             </div>
-            <Field label="Game version" className="max-w-64">
+            <Field label="Game version" className="max-w-64" hint={<PreviewsHint versions={versions.data} previews={previews} onChange={setPreviews} selected={version} />}>
               {(id) => (
                 <Select id={id} value={version} onChange={(e) => setVersion(e.target.value)}>
-                  <option value="LATEST">Latest release{versions.data ? ` (${versions.data.latest})` : ""}</option>
-                  {versions.data?.releases.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
+                  <VersionOptions versions={versions.data} previews={previews || !!versions.data?.previews.includes(version)} />
                 </Select>
               )}
             </Field>

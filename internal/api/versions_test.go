@@ -229,3 +229,34 @@ func TestUpdateChecksAChangeOfSoftware(t *testing.T) {
 		t.Errorf("moving to a supported pair: %d %s, want 200", got, code)
 	}
 }
+
+// What is listed is what a server can be made of. Mojang's list also has
+// versions that only ever had a client.
+func TestOnlyVersionsWithAServerAreListed(t *testing.T) {
+	list := func(ids ...gameVersion) []gameVersion { return ids }
+	all := list(
+		gameVersion{ID: "26.4-snapshot-1", Type: "snapshot"}, gameVersion{ID: "26.3", Type: "release"},
+		gameVersion{ID: "1.3.1", Type: "release"}, gameVersion{ID: "12w30e", Type: "snapshot"},
+		gameVersion{ID: "1.2.5", Type: "release"}, gameVersion{ID: "1.2.4", Type: "release"},
+		gameVersion{ID: "12w08a", Type: "snapshot"}, gameVersion{ID: "1.0", Type: "release"},
+		gameVersion{ID: "b1.8.1", Type: "old_beta"}, gameVersion{ID: "a1.2.6", Type: "old_alpha"},
+	)
+	var got []string
+	for _, v := range installable(all) {
+		got = append(got, v.ID)
+	}
+	if want := "26.4-snapshot-1 26.3 1.3.1 12w30e 1.2.5"; strings.Join(got, " ") != want {
+		t.Errorf("installable: %q, want %q", strings.Join(got, " "), want)
+	}
+
+	// And one that is not listed is not accepted either.
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = offline{mojangManifest: `{"latest":{"release":"26.3"},"versions":[
+		{"id":"26.3","type":"release"},{"id":"1.2.5","type":"release"},{"id":"1.2.4","type":"release"},{"id":"b1.7.3","type":"old_beta"}]}`}
+	for version, want := range map[string]int{"26.3": 201, "1.2.5": 201, "1.2.4": 400, "b1.7.3": 400} {
+		name := "v" + strings.NewReplacer(".", "-").Replace(version)
+		if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"`+name+`","spec":{"eula":true,"version":"`+version+`"}}`); got != want {
+			t.Errorf("a vanilla server on %s: %d %s, want %d", version, got, code, want)
+		}
+	}
+}

@@ -14,21 +14,28 @@ import (
 
 func TestGameJava(t *testing.T) {
 	for version, want := range map[string]int{
-		"1.8.9":    8,
-		"1.12.2":   8,
-		"1.16.5":   8,
-		"1.17.1":   17,
-		"1.20.4":   17,
-		"1.20.5":   21,
-		"1.21":     21,
-		"1.21.4":   21,
-		"26.1":     25,
-		"26.3":     25,
-		"27.1":     0,
-		"LATEST":   0,
-		"24w14a":   0,
-		"SNAPSHOT": 0,
-		"":         0,
+		"1.8.9":  8,
+		"1.12.2": 8,
+		"1.16.5": 8,
+		"1.17.1": 17,
+		"1.20.4": 17,
+		"1.20.5": 21,
+		"1.21":   21,
+		"1.21.4": 21,
+		"26.1":   25,
+		"26.3":   25,
+		// A pre-release needs what its release does.
+		"26.3-rc-3":       25,
+		"26.4-snapshot-3": 25,
+		"1.21.11-pre5":    21,
+		"1.20.5-rc1":      21,
+		"1.20.4-rc1":      17,
+		"1.16-pre2":       8,
+		"27.1":            0,
+		"LATEST":          0,
+		"24w14a":          0,
+		"SNAPSHOT":        0,
+		"":                0,
 	} {
 		if got := GameJava(version); got != want {
 			t.Errorf("GameJava(%q) = %d, want %d", version, got, want)

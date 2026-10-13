@@ -26,10 +26,28 @@ export function useGameVersions(loader?: Loader | null) {
     select: (m) => ({
       latest: m.latest.release,
       releases: m.versions.filter((v) => v.type === "release").map((v) => v.id),
+      previews: previews(m.versions),
       // Snapshots and pre-releases too, for telling whether a version has a build at all.
       all: new Set(m.versions.map((v) => v.id)),
     }),
   });
+}
+
+/**
+ * The snapshots, pre-releases and release candidates worth offering: those
+ * of the release to come and of the newest one. versions is newest first.
+ * Older ones are in the list too, by the hundred, and are not what anyone
+ * setting up a server is looking for.
+ */
+function previews(versions: MinecraftVersions["versions"]) {
+  const out: string[] = [];
+  let releases = 0;
+  for (const v of versions) {
+    if (v.type === "release") {
+      if (++releases === 2) break;
+    } else out.push(v.id);
+  }
+  return out;
 }
 
 /** Whole or half gigabytes from a Kubernetes quantity, for a number input. */

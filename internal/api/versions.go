@@ -14,7 +14,8 @@ import (
 
 const mojangManifest = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
 
-// manifest is Mojang's list of game versions, newest first.
+// manifest is Mojang's list of game versions, newest first, less the ones
+// no server can be made of.
 type manifest struct {
 	Latest   map[string]string `json:"latest"`
 	Versions []gameVersion     `json:"versions"`
@@ -35,7 +36,28 @@ func (s *Server) manifest(ctx context.Context) (*manifest, error) {
 	if err := json.Unmarshal(body, m); err != nil {
 		return nil, err
 	}
+	m.Versions = installable(m.Versions)
 	return m, nil
+}
+
+// firstServer is the oldest version Mojang publishes a server for. The list
+// goes back further, to versions that only ever had a client.
+const firstServer = "1.2.5"
+
+// installable drops the versions no server can be made of: everything
+// before the first one a server was published for, and the alpha and beta
+// versions, which have none either. versions is newest first.
+func installable(versions []gameVersion) []gameVersion {
+	out := make([]gameVersion, 0, len(versions))
+	for _, v := range versions {
+		if v.Type != "old_alpha" && v.Type != "old_beta" {
+			out = append(out, v)
+		}
+		if v.ID == firstServer {
+			break
+		}
+	}
+	return out
 }
 
 // builds is where each kind of server says which game versions it has a
@@ -270,6 +292,10 @@ func (s *Server) checkVersion(ctx context.Context, spec *avsysv1.MinecraftServer
 	sup, err := s.supportedBy(ctx, spec.Loader)
 	if err != nil || sup.all[spec.Version] {
 		return nil
+	}
+	// For the game itself the list is of what a server exists for at all.
+	if spec.Loader == avsysv1.LoaderVanilla {
+		return errBadRequest("There is no server for Minecraft %s.", spec.Version)
 	}
 	name := loaderNames[string(spec.Loader)]
 	if len(sup.releases) == 0 {

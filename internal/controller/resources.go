@@ -70,13 +70,23 @@ func wantsMinecraft(mc *avsysv1.MinecraftServer) bool {
 
 // GameJava is the Java release a game version is built for, or 0 when that is
 // not known (LATEST, snapshots, versions newer than this code).
+func leadingDigits(s string) string {
+	for i, r := range s {
+		if r < '0' || r > '9' {
+			return s[:i]
+		}
+	}
+	return s
+}
+
 func GameJava(version string) int {
 	parts := strings.Split(version, ".")
 	if len(parts) < 2 {
 		return 0
 	}
+	// A pre-release says which release it is of: 26.3-rc-3, 1.21.11-pre5.
 	major, err1 := strconv.Atoi(parts[0])
-	minor, err2 := strconv.Atoi(parts[1])
+	minor, err2 := strconv.Atoi(leadingDigits(parts[1]))
 	if err1 != nil || err2 != nil {
 		return 0
 	}
@@ -89,7 +99,7 @@ func GameJava(version string) int {
 	}
 	patch := 0
 	if len(parts) > 2 {
-		patch, _ = strconv.Atoi(parts[2])
+		patch, _ = strconv.Atoi(leadingDigits(parts[2]))
 	}
 	switch {
 	case minor <= 16:
