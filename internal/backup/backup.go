@@ -480,18 +480,9 @@ func (m *Manager) DeleteMany(ctx context.Context, org string, ids []string) erro
 // are not considered, and neither are other servers'. The space is not given
 // back until Prune.
 func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (int, error) {
-	if !tagPattern.MatchString(server) {
-		return 0, fmt.Errorf("%q cannot name a snapshot", server)
-	}
-	args := []string{"forget", "--json", "--host", server, "--tag", "trigger=" + TriggerScheduled, "--group-by", "host"}
-	for flag, n := range map[string]int{"--keep-daily": keep.Daily, "--keep-weekly": keep.Weekly, "--keep-monthly": keep.Monthly, "--keep-yearly": keep.Yearly} {
-		if n > 0 {
-			args = append(args, flag, fmt.Sprint(n))
-		}
-	}
-	// With nothing to keep restic would be asked to forget all of them.
-	if keep.Daily+keep.Weekly+keep.Monthly+keep.Yearly <= 0 {
-		return 0, errors.New("a retention policy has to keep something")
+	args, err := forgetArgs(server, keep)
+	if err != nil {
+		return 0, err
 	}
 	if !m.exists(org) {
 		return 0, nil
@@ -514,6 +505,73 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (in
 	}
 	gone, err := m.forgetting(ctx, org, args...)
 	return len(gone), err
+}
+
+// forgetArgs is the forget that applies a policy to one server's scheduled
+// snapshots, and to nothing else.
+func forgetArgs(server string, keep Keep) ([]string, error) {
+	if !tagPattern.MatchString(server) {
+		return nil, fmt.Errorf("%q cannot name a snapshot", server)
+	}
+	// With nothing to keep restic would be asked to forget all of them.
+	if keep.Daily+keep.Weekly+keep.Monthly+keep.Yearly <= 0 {
+		return nil, errors.New("a retention policy has to keep something")
+	}
+	args := []string{"forget", "--json", "--host", server, "--tag", "trigger=" + TriggerScheduled, "--group-by", "host"}
+	for flag, n := range map[string]int{"--keep-daily": keep.Daily, "--keep-weekly": keep.Weekly, "--keep-monthly": keep.Monthly, "--keep-yearly": keep.Yearly} {
+		if n > 0 {
+			args = append(args, flag, fmt.Sprint(n))
+		}
+	}
+	return args, nil
+}
+
+// Kept says, for each of a server's scheduled snapshots that the policy
+// keeps, which of its rules keep it: "daily", "weekly", "monthly", "yearly".
+// One that is not in the answer would be removed the next time the policy is
+// applied. Nothing is changed.
+func (m *Manager) Kept(ctx context.Context, org, server string, keep Keep) (map[string][]string, error) {
+	args, err := forgetArgs(server, keep)
+	if err != nil {
+		return nil, err
+	}
+	kept := map[string][]string{}
+	if !m.exists(org) {
+		return kept, nil
+	}
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	// Only asked what it would do, which needs no lock on the repository
+	// and so does not wait for, or hold up, a snapshot being taken.
+	out, err := m.restic(ctx, org, append(args, "--dry-run", "--no-lock")...)
+	if err != nil {
+		return nil, err
+	}
+	// restic prints nothing at all when no snapshot matched.
+	if len(bytes.TrimSpace(out)) == 0 {
+		return kept, nil
+	}
+	var groups []struct {
+		Reasons []struct {
+			Snapshot resticSnapshot `json:"snapshot"`
+			Matches  []string       `json:"matches"`
+		} `json:"reasons"`
+	}
+	if err := json.Unmarshal(out, &groups); err != nil {
+		return nil, fmt.Errorf("reading what the policy keeps: %w", err)
+	}
+	for _, g := range groups {
+		for _, r := range g.Reasons {
+			rules := []string{}
+			for _, match := range r.Matches {
+				// "daily snapshot", "weekly snapshot", ...
+				rules = append(rules, strings.TrimSuffix(match, " snapshot"))
+			}
+			kept[r.Snapshot.ID] = rules
+		}
+	}
+	return kept, nil
 }
 
 // forgetting runs a forget and returns the lineages of what it removed, or

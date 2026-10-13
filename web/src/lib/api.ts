@@ -205,7 +205,14 @@ export interface Snapshot {
 
 /** A snapshot with the settings its server had when it was taken. */
 export interface SnapshotDetail extends Snapshot {
+  /** Without the image and extra environment for those who could not make a server of it. */
   spec: ServerSpec;
+  retention: {
+    /** Whether its server's schedule looks after it. Anything else stays until it is deleted by hand. */
+    scheduled: boolean;
+    /** Which rules of the schedule keep it. Absent for one the schedule removes at its next run. */
+    kept?: ("daily" | "weekly" | "monthly" | "yearly")[];
+  };
 }
 
 /** A snapshot or restore under way on a server, or a new server receiving its files. */

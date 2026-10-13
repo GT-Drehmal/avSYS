@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -589,6 +590,32 @@ func TestForgetKeepsWhatThePolicySays(t *testing.T) {
 	if _, err := m.Forget(ctx, "alpha", "probe", Keep{}); err == nil {
 		t.Fatal("a policy that keeps nothing was carried out")
 	}
+	// Asking which rule keeps what changes nothing, and names only the
+	// scheduled snapshots of that server that the policy keeps.
+	before, err := m.List(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rulesFor, err := m.Kept(ctx, "alpha", "probe", Keep{Daily: 3, Monthly: 1})
+	if err != nil {
+		t.Fatalf("which rules keep what: %v", err)
+	}
+	var why []string
+	for _, snap := range before {
+		if rules, ok := rulesFor[snap.ID]; ok {
+			why = append(why, snap.Server+" "+snap.Trigger+" "+snap.Time.UTC().Format("01-02")+" "+strings.Join(rules, "+"))
+		}
+	}
+	if want := []string{"probe scheduled 09-10 daily+monthly", "probe scheduled 09-09 daily", "probe scheduled 09-08 daily"}; !reflect.DeepEqual(why, want) {
+		t.Errorf("kept by the policy:\n%v\nwant:\n%v", why, want)
+	}
+	if after, _ := m.List(ctx, "alpha"); len(after) != len(before) {
+		t.Errorf("asking removed something: %d snapshots, then %d", len(before), len(after))
+	}
+	if _, err := m.Kept(ctx, "alpha", "probe", Keep{}); err == nil {
+		t.Error("a policy that keeps nothing was answered for")
+	}
+
 	removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3})
 	if err != nil || removed != 7 {
 		t.Fatalf("forget keeping three days: removed %d, %v; want 7", removed, err)

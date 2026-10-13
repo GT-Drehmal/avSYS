@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
 // A server made from a snapshot runs what the snapshot's files were made
@@ -515,5 +516,32 @@ func TestFromSnapshotKeepsTheStorageClass(t *testing.T) {
 	*got.Storage.StorageClassName = "changed"
 	if fast != "fast" {
 		t.Error("the new server's storage class is the record's own variable")
+	}
+}
+
+// What a snapshot recorded of its server is shown to every member, but what
+// decides which code runs, and may hold secrets, only to those who could
+// make a server out of it.
+func TestRecordFor(t *testing.T) {
+	spec := avsysv1.MinecraftServerSpec{
+		Version: "1.21.4", Image: "example.org/custom", Properties: map[string]string{"motd": "hello"},
+		Env: []corev1.EnvVar{{Name: "SECRET_TOKEN", Value: "do-not-show"}},
+	}
+	for _, role := range []store.Role{store.RoleViewer, store.RoleOperator} {
+		got := recordFor(role, spec)
+		if got.Image != "" || got.Env != nil {
+			t.Errorf("a %s was shown the image or environment: %q %v", role, got.Image, got.Env)
+		}
+		if got.Version != "1.21.4" || got.Properties["motd"] != "hello" {
+			t.Errorf("a %s was not shown the rest: %+v", role, got)
+		}
+	}
+	for _, role := range []store.Role{store.RoleAdmin, store.RoleOwner} {
+		if got := recordFor(role, spec); got.Image != "example.org/custom" || len(got.Env) != 1 {
+			t.Errorf("an %s was not shown the image and environment: %+v", role, got)
+		}
+	}
+	if spec.Image == "" || len(spec.Env) != 1 {
+		t.Error("showing the record to a viewer changed it")
 	}
 }
