@@ -30,11 +30,15 @@ export function ServerActions({ server, compact }: { server: Server; compact?: b
           Wake
         </Button>
       )}
-      {!compact && !asleep && (
-        <Button size={size} icon={<RotateCw className="size-3.5" />} loading={pending === "restart"} onClick={run("restart")}>
-          Restart
-        </Button>
-      )}
+      {!asleep &&
+        (compact ? (
+          // In a list there is room for the icon alone.
+          <Button size={size} icon={<RotateCw className="size-3.5" />} loading={pending === "restart"} onClick={run("restart")} aria-label={`Restart ${server.name}`} title="Restart" />
+        ) : (
+          <Button size={size} icon={<RotateCw className="size-3.5" />} loading={pending === "restart"} onClick={run("restart")}>
+            Restart
+          </Button>
+        ))}
       {!(compact && asleep) && (
         <Button size={size} icon={<Square className="size-3" />} loading={pending === "stop"} onClick={run("stop")}>
           Stop

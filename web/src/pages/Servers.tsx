@@ -40,7 +40,7 @@ function BackupMark({ server, scheduled }: { server: Server; scheduled: boolean 
   return <span className="text-warn"> · {backups?.lastRun ? `last backup ${ago(backups.lastRun)}` : "never backed up"}</span>;
 }
 
-const columns = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_72px_minmax(0,1.3fr)_88px] items-center gap-4 px-4";
+const columns = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_72px_minmax(0,1.3fr)_112px] items-center gap-4 px-4";
 
 export function Servers() {
   const { org = "" } = useParams();
