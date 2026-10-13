@@ -206,8 +206,16 @@ func (s *Server) supportedBy(ctx context.Context, loader avsysv1.Loader) (*suppo
 		if err != nil {
 			return nil, err
 		}
+		// A loader can list a game version no server was ever published
+		// for, and a build of it for one is no use: Forge has them for 1.1.
+		installs := map[string]bool{}
+		for _, v := range m.Versions {
+			installs[v.ID] = true
+		}
 		for _, v := range versions {
-			out.all[v] = true
+			if installs[v] {
+				out.all[v] = true
+			}
 		}
 	} else {
 		for _, v := range m.Versions {

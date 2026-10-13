@@ -253,6 +253,20 @@ func TestOnlyVersionsWithAServerAreListed(t *testing.T) {
 	p := newPanel(t)
 	p.srv.catalog.http.Transport = offline{mojangManifest: `{"latest":{"release":"26.3"},"versions":[
 		{"id":"26.3","type":"release"},{"id":"1.2.5","type":"release"},{"id":"1.2.4","type":"release"},{"id":"b1.7.3","type":"old_beta"}]}`}
+	// Nor on a loader that has a build for it: Forge lists 1.2.4.
+	transport := p.srv.catalog.http.Transport.(offline)
+	transport[builds[avsysv1.LoaderForge].url] = `{"promos":{"1.2.4-latest":"2.0.0.68","1.2.5-latest":"3.4.9.171","26.3-latest":"66.0.10"}}`
+	for version, want := range map[string]int{"26.3": 201, "1.2.5": 201, "1.2.4": 400} {
+		name := "f" + strings.NewReplacer(".", "-").Replace(version)
+		if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"`+name+`","spec":{"eula":true,"loader":"forge","version":"`+version+`"}}`); got != want {
+			t.Errorf("a Forge server on %s: %d %s, want %d", version, got, code, want)
+		}
+	}
+	var forge manifest
+	p.fetch("/catalog/minecraft/versions?loader=forge", &forge)
+	if len(forge.Versions) != 2 {
+		t.Errorf("Forge's list is %+v, want 26.3 and 1.2.5 only", forge.Versions)
+	}
 	for version, want := range map[string]int{"26.3": 201, "1.2.5": 201, "1.2.4": 400, "b1.7.3": 400} {
 		name := "v" + strings.NewReplacer(".", "-").Replace(version)
 		if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"`+name+`","spec":{"eula":true,"version":"`+version+`"}}`); got != want {
