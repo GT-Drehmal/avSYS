@@ -155,7 +155,8 @@ export function Shell() {
     qc.clear();
     navigate("/login");
   };
-  // Outside an organization (the account page), nav falls back to the last one used.
+  // Outside an organization (the account page), the one last used stays the
+  // current one: it is what the switcher shows and where the links lead.
   const navOrg = org ?? me.orgs.find((o) => o.slug === lastOrg()) ?? me.orgs[0];
 
   return (
@@ -164,7 +165,7 @@ export function Shell() {
         <Link to="/" className="flex h-8 items-center px-1.5">
           <Wordmark />
         </Link>
-        <OrgSwitcher current={org} />
+        <OrgSwitcher current={navOrg} />
         {navOrg && (
           <nav className="flex gap-0.5 md:flex-col">
             <NavItem to={`/o/${navOrg.slug}`} end icon={<Server />}>
