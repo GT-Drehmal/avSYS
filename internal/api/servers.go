@@ -463,6 +463,8 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.ops.end(a.Namespace, mc.Name)
 	s.Events.Publish(Event{Type: "operation.done", Namespace: a.Namespace, Data: operationDone{Kind: "delete", Org: a.Org.Slug, Server: mc.Name}})
 	s.audit(ctx, u, a.Org, "server.delete", mc.Name, detail)
+	// A server made under this name later is another server.
+	s.serverIcons.forget(a.Namespace + "/" + mc.Name)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

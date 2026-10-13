@@ -279,3 +279,19 @@ func TestSquarePNGTurnsPhotosTheRightWayUp(t *testing.T) {
 		}
 	}
 }
+
+// A server's icon is remembered for a while, and not past the server: one
+// made later under the same name is another server.
+func TestDeletingAServerForgetsItsIcon(t *testing.T) {
+	p := newPanel(t)
+	p.srv.serverIcons.set("mc-alpha/world", []byte("an icon"))
+	if _, fresh := p.srv.serverIcons.get("mc-alpha/world"); !fresh {
+		t.Fatal("the icon was not remembered")
+	}
+	if code, name := p.do("admin", "DELETE", "/orgs/alpha/servers/world?snapshot=false", ""); code != 204 {
+		t.Fatalf("deleting the server: %d %s", code, name)
+	}
+	if _, fresh := p.srv.serverIcons.get("mc-alpha/world"); fresh {
+		t.Error("a deleted server's icon is still remembered")
+	}
+}
