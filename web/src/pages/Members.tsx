@@ -3,7 +3,8 @@ import { Link2, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useParams } from "react-router";
 import { useOrg } from "../components/Shell";
-import { Avatar, Button, Chip, Confirm, CopyText, Field, Input, Modal, PageHeader, Select, Loading } from "../components/ui";
+import { Picture } from "../components/Picture";
+import { Button, Chip, Confirm, CopyText, Field, Input, Modal, PageHeader, Select, Loading } from "../components/ui";
 import { api, atLeast, roles, roleSummary, type Invite, type Member, type Role } from "../lib/api";
 import { ago } from "../lib/format";
 import { keys, useAction, useMe } from "../lib/queries";
@@ -116,7 +117,7 @@ export function Members() {
           const editable = canManage && (isOwner || m.role !== "owner");
           return (
             <li key={m.userId} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
-              <Avatar name={m.username} url={m.avatarUrl} size={28} />
+              <Picture name={m.username} url={m.avatarUrl || undefined} size={28} shape="round" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium">
                   {m.displayName || m.username}

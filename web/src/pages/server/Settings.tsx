@@ -7,6 +7,7 @@ import { useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
+import { PicturePicker } from "../../components/Picture";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -184,6 +185,11 @@ export function Settings() {
     <>
     <form onSubmit={save} className="pb-20">
       <Section title="General">
+        <PicturePicker
+          name={server.spec.displayName || server.name}
+          path={`${serverPath(server.org, server.name)}/icon`}
+          hint="Shown to players in their server list, from the next restart on."
+        />
         <Field label="Display name">{(id) => <Input id={id} {...text("displayName")} placeholder={server.name} />}</Field>
         <Field label="Message of the day">{(id) => <Input id={id} {...text("motd")} placeholder="A Minecraft Server" />}</Field>
       </Section>

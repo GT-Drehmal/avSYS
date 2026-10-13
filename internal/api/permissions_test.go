@@ -215,6 +215,11 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET /orgs/{org}/backup-policy", "", "", store.RoleViewer, 200},
 		{"PUT /orgs/{org}/backup-policy", "", `{"enabled":true,"minute":540,"keep":{"daily":7,"weekly":4,"monthly":12,"yearly":2}}`, store.RoleAdmin, 200},
 		{"POST /orgs/{org}/backup-policy/run", "", "", store.RoleAdmin, 503},
+		// 404: allowed, and it has no picture. 400: allowed, and what was
+		// sent is not one.
+		{"GET /orgs/{org}/icon", "", "", store.RoleViewer, 404},
+		{"PUT /orgs/{org}/icon", "", "not a picture", store.RoleAdmin, 400},
+		{"DELETE /orgs/{org}/icon", "", "", store.RoleAdmin, 204},
 		{"GET /orgs/{org}/offsite", "", "", store.RoleViewer, 200},
 		{"POST /orgs/{org}/offsite/run", "", "", store.RoleAdmin, 503},
 		// The two below are in rootOnly.
@@ -241,6 +246,9 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET " + server + "/snapshots", "", "", store.RoleViewer, 200},
 		{"POST " + server + "/snapshots", "", "", store.RoleOperator, 503},
 		{"POST " + server + "/snapshots/{id}/restore", "", "", store.RoleAdmin, 503},
+		{"GET " + server + "/icon", "", "", store.RoleViewer, 0},
+		{"PUT " + server + "/icon", "", "not a picture", store.RoleAdmin, 400},
+		{"DELETE " + server + "/icon", "", "", store.RoleAdmin, 0},
 		{"GET " + server + "/terminal", "", "", store.RoleOperator, 0},
 		{"PUT " + server + "/content", "", "x", store.RoleAdmin, 0},
 		{"GET " + server + "/files", "", "", store.RoleOperator, 0},

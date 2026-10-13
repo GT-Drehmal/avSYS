@@ -1,5 +1,7 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { PicturePicker } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { Button, Confirm, Field, Input, PageHeader, Section } from "../components/ui";
 import { api } from "../lib/api";
@@ -20,6 +22,7 @@ export function OrgSettings() {
   const listed = useOrgSnapshots(org);
   const snapshots = listed.data?.available ? listed.data.snapshots.length : undefined;
   const remove = useAction(() => api.del(`/orgs/${org}?snapshots=delete`), [keys.me]);
+  const qc = useQueryClient();
   if (!membership) return null;
 
   return (
@@ -33,6 +36,7 @@ export function OrgSettings() {
             rename.mutate(undefined, { onSuccess: () => toast.info("Organization renamed") });
           }}
         >
+          <PicturePicker name={membership.name} path={`/orgs/${org}/icon`} has={membership.hasIcon} onChange={() => qc.invalidateQueries({ queryKey: keys.me })} />
           <Field label="Name">{(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
           <Field label="Short name" hint="Used in links and SSH logins. It cannot be changed.">
             {(id) => <Input id={id} disabled value={membership.slug} className="font-mono" />}

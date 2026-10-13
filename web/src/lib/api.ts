@@ -87,7 +87,14 @@ export interface Org {
   slug: string;
   name: string;
   role: Role;
+  /** Whether it has a picture of its own, at /orgs/{slug}/icon. */
+  hasIcon: boolean;
 }
+
+/** Where an organization's picture is, if it has one. */
+export const orgIcon = (o: Pick<Org, "slug" | "hasIcon">) => (o.hasIcon ? `/api/v1/orgs/${o.slug}/icon` : undefined);
+/** Where a server's icon is. Whether it has one is only known by asking. */
+export const serverIcon = (s: Pick<Server, "org" | "name">) => `/api/v1/orgs/${s.org}/servers/${s.name}/icon`;
 
 export interface Me {
   user: User;
