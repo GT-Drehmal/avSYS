@@ -386,6 +386,22 @@ func (s *Server) readServerIcon(ctx context.Context, namespace, name string) ([]
 	return data, nil
 }
 
+// ServerIcon returns a server's icon as a 64 pixel PNG, or nil if it has
+// none or its files cannot be reached just now. It is what the game's own
+// server list is given while the game is not running to give it.
+func (s *Server) ServerIcon(ctx context.Context, namespace, name string) []byte {
+	key := namespace + "/" + name
+	if icon, fresh := s.serverIcons.get(key); fresh {
+		return icon.data
+	}
+	data, err := s.readServerIcon(ctx, namespace, name)
+	if err != nil {
+		return nil
+	}
+	s.serverIcons.set(key, data)
+	return data
+}
+
 // getServerIcon serves the icon the game shows for a server in its
 // multiplayer list.
 func (s *Server) getServerIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {

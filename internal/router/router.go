@@ -6,6 +6,7 @@ package router
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -42,6 +43,39 @@ type Router struct {
 	Client client.Client
 	Dialer kube.PodDialer
 	Log    *slog.Logger
+	// Icon returns a server's icon as a 64 pixel PNG, or nil for none. It
+	// is optional. A running server sends its own; this is for the entries
+	// the router answers itself.
+	Icon func(ctx context.Context, namespace, name string) []byte
+}
+
+// iconWait is how long a server list is kept waiting for an icon that has
+// to be read out of the server's files. One that takes longer is left out
+// this time and is there the next.
+const iconWait = 800 * time.Millisecond
+
+// favicon is a server's icon in the form the server list takes it, or ""
+// for none.
+func (r *Router) favicon(ctx context.Context, mc *avsysv1.MinecraftServer) string {
+	if r.Icon == nil {
+		return ""
+	}
+	found := make(chan []byte, 1)
+	go func() {
+		// Seen through whoever is waiting, so that it is remembered.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancel()
+		found <- r.Icon(ctx, mc.Namespace, mc.Name)
+	}()
+	select {
+	case png := <-found:
+		if len(png) == 0 {
+			return ""
+		}
+		return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	case <-time.After(iconWait):
+		return ""
+	}
 }
 
 func (r *Router) Serve(ctx context.Context, ln net.Listener) error {
@@ -110,6 +144,13 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 		name = mc.Name
 	}
 
+	// Its own icon is shown in the list whatever state it is in. Only asked
+	// for when it is the list that is asking.
+	icon := ""
+	if hs.NextState == mcproto.NextStatus && mc.Status.Phase != avsysv1.PhaseRunning {
+		icon = r.favicon(ctx, mc)
+	}
+
 	switch mc.Status.Phase {
 	case avsysv1.PhaseRunning:
 		r.proxy(ctx, conn, br, hs, mc)
@@ -117,7 +158,7 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 		if hs.NextState == mcproto.NextStatus {
 			// Listed as a server one can join, because joining is what
 			// wakes it.
-			answer(entry{title: name, detail: "Asleep. Join to wake it up.", max: maxPlayers(mc)})
+			answer(entry{title: name, detail: "Asleep. Join to wake it up.", max: maxPlayers(mc), icon: icon})
 			return
 		}
 		if err := controller.SetAsleep(ctx, r.Client, mc, false); err != nil {
@@ -128,9 +169,9 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 		r.Log.Info("woken by join", "server", client.ObjectKeyFromObject(mc))
 		answer(entry{title: name, detail: "Waking up. Join again in a minute."})
 	case avsysv1.PhaseStarting:
-		answer(entry{title: name, detail: "Starting up. Try again in a moment.", closed: "Starting"})
+		answer(entry{title: name, detail: "Starting up. Try again in a moment.", closed: "Starting", icon: icon})
 	default:
-		answer(entry{title: name, detail: "Offline.", closed: "Offline"})
+		answer(entry{title: name, detail: "Offline.", closed: "Offline", icon: icon})
 	}
 }
 
@@ -144,6 +185,8 @@ type entry struct {
 	closed string
 	// max is how many players it takes, for one that can be joined.
 	max int
+	// icon is its own picture, as the list takes one, if it has one.
+	icon string
 }
 
 // status is the entry as the server list is told it.
@@ -159,6 +202,7 @@ func (e entry) status(protocol int) mcproto.Status {
 		Version:     mcproto.Version{Name: "avSYS", Protocol: protocol},
 		Players:     mcproto.Players{Max: e.max},
 		Description: motd(e.title, e.detail),
+		Favicon:     e.icon,
 	}
 	if e.closed != "" {
 		// No client speaks this version.

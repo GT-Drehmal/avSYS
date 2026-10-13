@@ -1,9 +1,12 @@
 package router
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -41,4 +44,42 @@ func TestMaxPlayers(t *testing.T) {
 			t.Errorf("max-players %q: %d, want %d", set, got, want)
 		}
 	}
+}
+
+// A server's own icon is in its entry whether or not it can be joined, as
+// long as it turns up in time.
+func TestFavicon(t *testing.T) {
+	mc := &avsysv1.MinecraftServer{}
+	mc.Namespace, mc.Name = "mc-alpha", "world"
+	png := []byte("\x89PNG not really")
+
+	r := &Router{}
+	if got := r.favicon(t.Context(), mc); got != "" {
+		t.Errorf("with nowhere to ask: %q", got)
+	}
+	r.Icon = func(_ context.Context, namespace, name string) []byte {
+		if namespace != "mc-alpha" || name != "world" {
+			t.Errorf("asked for %s/%s", namespace, name)
+		}
+		return png
+	}
+	want := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	if got := r.favicon(t.Context(), mc); got != want {
+		t.Errorf("an icon: %q, want %q", got, want)
+	}
+	if st := (entry{title: "world", detail: "Offline.", closed: "Offline", icon: want}).status(767); st.Favicon != want {
+		t.Errorf("a stopped server's entry carries %q", st.Favicon)
+	}
+	r.Icon = func(context.Context, string, string) []byte { return nil }
+	if got := r.favicon(t.Context(), mc); got != "" {
+		t.Errorf("a server with none: %q", got)
+	}
+	// One that is slow to read does not hold the list up.
+	release := make(chan struct{})
+	r.Icon = func(context.Context, string, string) []byte { <-release; return png }
+	began := time.Now()
+	if got := r.favicon(t.Context(), mc); got != "" || time.Since(began) > 3*iconWait {
+		t.Errorf("a slow icon: %q after %v, want none and no long wait", got, time.Since(began))
+	}
+	close(release)
 }

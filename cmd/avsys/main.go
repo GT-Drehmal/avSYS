@@ -361,7 +361,7 @@ func run(opts options, log *slog.Logger) error {
 		}
 	}
 	if opts.routerAddr != "" {
-		rt := &router.Router{Client: mgr.GetClient(), Dialer: dialer, Log: log.With("component", "router")}
+		rt := &router.Router{Client: mgr.GetClient(), Dialer: dialer, Log: log.With("component", "router"), Icon: server.ServerIcon}
 		if err := mgr.Add(listener("minecraft router", opts.routerAddr, log, rt.Serve)); err != nil {
 			return err
 		}
