@@ -295,6 +295,17 @@ spec:
                     - None
                     type: string
                 type: object
+              gameJava:
+                description: |-
+                  GameJava is the Java the game version ships with, where the version's
+                  name does not say: a snapshot named by the week it came out in needs
+                  what the release it led to needs. The panel fills it in when the
+                  version is chosen. It is 0 where the name says, and where it is not
+                  known.
+                format: int32
+                maximum: 99
+                minimum: 0
+                type: integer
               image:
                 description: |-
                   Image overrides the server image. By default a tag of itzg/minecraft-server

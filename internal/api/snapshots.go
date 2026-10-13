@@ -743,6 +743,8 @@ func (s *Server) finish(ctx context.Context, namespace, server, kind string, sub
 // admin's call and not something to take from a file.
 func restoreSoftware(dst, src *avsysv1.MinecraftServerSpec) {
 	dst.Version, dst.Loader, dst.LoaderVersion = src.Version, src.Loader, src.LoaderVersion
+	// What Java that version needs goes with it.
+	dst.GameJava = src.GameJava
 	dst.Modpack, dst.Mods, dst.ResourcePack = src.Modpack, src.Mods, src.ResourcePack
 	dst.Properties, dst.Ops, dst.Whitelist = src.Properties, src.Ops, src.Whitelist
 }

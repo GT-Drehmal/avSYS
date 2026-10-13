@@ -349,3 +349,27 @@ func TestConsoleIsSharedWithTheWorkspace(t *testing.T) {
 		t.Error("a stopped server's workspace has no console directory, so its pod would differ in more than the game")
 	}
 }
+
+// Where a version's name does not say what Java it needs, what the panel
+// noted when it was chosen is used. A name that does say always wins.
+func TestGameJavaOf(t *testing.T) {
+	for name, c := range map[string]struct {
+		spec avsysv1.MinecraftServerSpec
+		want int
+	}{
+		"named":              {avsysv1.MinecraftServerSpec{Version: "1.21.4"}, 21},
+		"named, with a note": {avsysv1.MinecraftServerSpec{Version: "1.21.4", GameJava: 8}, 21},
+		"weekly, noted":      {avsysv1.MinecraftServerSpec{Version: "24w14a", GameJava: 21}, 21},
+		"weekly, not noted":  {avsysv1.MinecraftServerSpec{Version: "24w14a"}, 0},
+		"a modpack":          {avsysv1.MinecraftServerSpec{GameJava: 8, Modpack: &avsysv1.ModpackSpec{GameVersion: "1.20.1"}}, 17},
+		"a modpack unknown":  {avsysv1.MinecraftServerSpec{GameJava: 8, Modpack: &avsysv1.ModpackSpec{}}, 0},
+	} {
+		if got := GameJavaOf(&c.spec); got != c.want {
+			t.Errorf("%s: %d, want %d", name, got, c.want)
+		}
+	}
+	// And it is what decides the image.
+	if game, runs := JavaOf(&avsysv1.MinecraftServerSpec{Version: "21w19a", GameJava: 17}); game != 17 || runs != 17 {
+		t.Errorf("a weekly snapshot noted as 17: game %d, runs on %d", game, runs)
+	}
+}

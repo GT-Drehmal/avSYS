@@ -228,6 +228,14 @@ type MinecraftServerSpec struct {
 	// +kubebuilder:default=vanilla
 	Loader        Loader `json:"loader,omitempty"`
 	LoaderVersion string `json:"loaderVersion,omitempty"`
+	// GameJava is the Java the game version ships with, where the version's
+	// name does not say: a snapshot named by the week it came out in needs
+	// what the release it led to needs. The panel fills it in when the
+	// version is chosen. It is 0 where the name says, and where it is not
+	// known.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=99
+	GameJava int32 `json:"gameJava,omitempty"`
 
 	Modpack      *ModpackSpec      `json:"modpack,omitempty"`
 	Mods         []ContentRef      `json:"mods,omitempty"`

@@ -28,21 +28,16 @@ export function useGameVersions(loader?: Loader | null) {
       releases: m.versions.filter((v) => v.type === "release").map((v) => v.id),
       previews: previews(m.versions),
       // Both, in the order they came out, newest first.
-      ordered: m.versions.filter((v) => v.type === "release" || (v.java ?? 0) > 0).map((v) => v.id),
+      ordered: m.versions.map((v) => v.id),
       // Snapshots and pre-releases too, for telling whether a version has a build at all.
       all: new Set(m.versions.map((v) => v.id)),
     }),
   });
 }
 
-/**
- * The snapshots, pre-releases and release candidates on offer: the ones
- * named after the release they lead to, which is how the panel knows what
- * Java to run them on. Before 2026 most snapshots were named by the week
- * they came out in; those are left to the API.
- */
+/** The snapshots, pre-releases and release candidates. */
 function previews(versions: MinecraftVersions["versions"]) {
-  return versions.filter((v) => v.type !== "release" && (v.java ?? 0) > 0).map((v) => v.id);
+  return versions.filter((v) => v.type !== "release").map((v) => v.id);
 }
 
 /** Whole or half gigabytes from a Kubernetes quantity, for a number input. */

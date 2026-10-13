@@ -340,7 +340,7 @@ export interface ModrinthVersion {
 
 export interface MinecraftVersions {
   latest: { release: string; snapshot: string };
-  /** java is the Java a version ships with, absent where its name does not tell. */
+  /** java is the Java a version ships with. */
   versions: { id: string; type: string; releaseTime: string; java?: number }[];
 }
 

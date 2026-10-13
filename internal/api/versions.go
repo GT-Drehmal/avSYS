@@ -26,9 +26,7 @@ type gameVersion struct {
 	ID          string `json:"id"`
 	Type        string `json:"type"`
 	ReleaseTime string `json:"releaseTime"`
-	// Java is the Java the version ships with, where its name tells. It
-	// does for a release and for a pre-release named after one, and not for
-	// the snapshots that were named by the week they came out in.
+	// Java is the Java the version ships with.
 	Java int `json:"java,omitempty"`
 }
 
@@ -42,10 +40,53 @@ func (s *Server) manifest(ctx context.Context) (*manifest, error) {
 		return nil, err
 	}
 	m.Versions = installable(m.Versions)
-	for i := range m.Versions {
-		m.Versions[i].Java = controller.GameJava(m.Versions[i].ID)
-	}
+	withJava(m.Versions)
 	return m, nil
+}
+
+// withJava says of each version what Java it ships with. A release and a
+// pre-release named after one say so by their name. A snapshot named by the
+// week it came out in, as most were before 2026, needs what the release it
+// led to needs, which is the next release after it. versions is newest
+// first, so that is the last release passed on the way down.
+func withJava(versions []gameVersion) {
+	next := 0
+	for i := range versions {
+		v := &versions[i]
+		v.Java = controller.GameJava(v.ID)
+		if v.Type == "release" && v.Java > 0 {
+			next = v.Java
+		}
+		if v.Java == 0 {
+			v.Java = next
+		}
+	}
+	// Ones newer than every release have none after them yet, and take
+	// that of the nearest version before them that has one.
+	for i := len(versions) - 2; i >= 0; i-- {
+		if versions[i].Java == 0 {
+			versions[i].Java = versions[i+1].Java
+		}
+	}
+}
+
+// resolveJava fills in the Java a server's game version ships with where
+// the version's name does not say, from where it stands in Mojang's list.
+func (s *Server) resolveJava(ctx context.Context, spec *avsysv1.MinecraftServerSpec) {
+	spec.GameJava = 0
+	if spec.Modpack != nil || spec.Version == "" || spec.Version == "LATEST" || controller.GameJava(spec.Version) > 0 {
+		return
+	}
+	m, err := s.manifest(ctx)
+	if err != nil {
+		return
+	}
+	for _, v := range m.Versions {
+		if v.ID == spec.Version {
+			spec.GameJava = int32(v.Java)
+			return
+		}
+	}
 }
 
 // firstServer is the oldest version Mojang publishes a server for. The list

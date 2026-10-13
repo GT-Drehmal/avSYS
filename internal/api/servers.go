@@ -264,6 +264,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := s.checkVersion(r.Context(), &in.Spec); err != nil {
 		return err
 	}
+	s.resolveJava(r.Context(), &in.Spec)
 	if err := s.resolveContent(r.Context(), &in.Spec, nil); err != nil {
 		return err
 	}
@@ -323,6 +324,10 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if err := s.checkVersion(r.Context(), &spec); err != nil {
 			return err
 		}
+	}
+	// What Java the version needs is the panel's to say, not the request's.
+	if spec.Version != mc.Spec.Version || spec.GameJava != mc.Spec.GameJava {
+		s.resolveJava(r.Context(), &spec)
 	}
 	// Setting the state to Running here is starting the server by another
 	// route, and is held to the same rules as the start action.
