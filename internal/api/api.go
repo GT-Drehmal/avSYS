@@ -66,6 +66,8 @@ type Server struct {
 	schedule   schedule
 	offsite    offsite
 	autoOps    autoOps
+	// serverIcons holds each server's icon for a short while.
+	serverIcons serverIcons
 	// consoles holds one lock per server, taken to type at its console.
 	consoles sync.Map
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
@@ -270,6 +272,9 @@ func (s *Server) Handler() http.Handler {
 	api("POST /me/password", s.authed(s.setPassword))
 	api("PUT /me/minecraft", s.authed(s.setMinecraftAccount))
 	api("DELETE /me/minecraft", s.authed(s.clearMinecraftAccount))
+	api("PUT /me/avatar", s.authed(s.putAvatar))
+	api("DELETE /me/avatar", s.authed(s.deleteAvatar))
+	api("GET /users/{user}/avatar", s.authed(s.getAvatar))
 	api("GET /me/ssh-keys", s.authed(s.listSSHKeys))
 	api("POST /me/ssh-keys", s.authed(s.addSSHKey))
 	api("POST /me/ssh-keys/import", s.authed(s.importSSHKeys))
@@ -296,6 +301,9 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/backup-policy", s.authed(s.getBackupPolicy))
 	api("PUT /orgs/{org}/backup-policy", s.authed(s.putBackupPolicy))
 	api("POST /orgs/{org}/backup-policy/run", s.authed(s.runBackupPolicy))
+	api("GET /orgs/{org}/icon", s.authed(s.getOrgIcon))
+	api("PUT /orgs/{org}/icon", s.authed(s.putOrgIcon))
+	api("DELETE /orgs/{org}/icon", s.authed(s.deleteOrgIcon))
 	api("GET /orgs/{org}/offsite", s.authed(s.getOffsite))
 	api("POST /orgs/{org}/offsite/run", s.authed(s.runOffsite))
 	api("GET /orgs/{org}/offsite/snapshots", s.authed(s.offsiteSnapshots))
@@ -317,6 +325,9 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
 	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))
 	api("GET /orgs/{org}/servers/{server}/terminal", s.authed(s.terminal))
+	api("GET /orgs/{org}/servers/{server}/icon", s.authed(s.getServerIcon))
+	api("PUT /orgs/{org}/servers/{server}/icon", s.authed(s.putServerIcon))
+	api("DELETE /orgs/{org}/servers/{server}/icon", s.authed(s.deleteServerIcon))
 	api("GET /orgs/{org}/servers/{server}/files", s.authed(s.listFiles))
 	api("DELETE /orgs/{org}/servers/{server}/files", s.authed(s.deleteFile))
 	api("GET /orgs/{org}/servers/{server}/files/content", s.authed(s.readFile))

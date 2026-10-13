@@ -2,9 +2,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, ChevronsUpDown, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useMatch, useNavigate } from "react-router";
-import { api, atLeast, type Org } from "../lib/api";
+import { orgIcon, api, atLeast, type Org } from "../lib/api";
 import { keys, useAction, useLiveServers, useMe, useMeta } from "../lib/queries";
-import { Avatar, Button, cx, Field, Input, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
+import { Picture } from "./Picture";
+import { Button, cx, Field, Input, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
 
 export function Wordmark({ className }: { className?: string }) {
   return (
@@ -89,6 +90,7 @@ function OrgSwitcher({ current }: { current?: Org }) {
       <Menu>
         <MenuTrigger asChild>
           <button className="flex h-9 w-full items-center gap-2 rounded-md border border-line-strong bg-raised px-2.5 text-left text-[13px] font-medium hover:bg-hover">
+            {current && <Picture name={current.name} url={orgIcon(current)} size={20} />}
             <span className="flex-1 truncate">{current?.name ?? "Select organization"}</span>
             <ChevronsUpDown className="size-3.5 text-faint" />
           </button>
@@ -97,7 +99,10 @@ function OrgSwitcher({ current }: { current?: Org }) {
           <MenuLabel>Organizations</MenuLabel>
           {me.orgs.map((o) => (
             <MenuItem key={o.id} onSelect={() => navigate(`/o/${o.slug}`)} icon={o.slug === current?.slug ? <Check /> : null}>
-              {o.name}
+              <span className="flex items-center gap-2">
+                <Picture name={o.name} url={orgIcon(o)} size={18} />
+                {o.name}
+              </span>
             </MenuItem>
           ))}
           {me.user.isAdmin && (
@@ -188,7 +193,7 @@ export function Shell() {
           <Menu>
             <MenuTrigger asChild>
               <button className="flex h-10 w-full items-center gap-2.5 rounded-md px-1.5 text-left hover:bg-raised">
-                <Avatar name={me.user.username} url={me.user.avatarUrl} />
+                <Picture name={me.user.username} url={me.user.avatarUrl || undefined} shape="round" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] leading-tight font-medium">{me.user.displayName || me.user.username}</span>
                   {me.user.displayName && <span className="block truncate font-mono text-[11px] leading-tight text-faint">{me.user.username}</span>}

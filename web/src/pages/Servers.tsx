@@ -1,10 +1,11 @@
 import { Plus } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { scheduleOf } from "../components/BackupSchedule";
+import { Picture } from "../components/Picture";
 import { ServerActions } from "../components/ServerActions";
 import { useOrg } from "../components/Shell";
 import { CopyText, Empty, PageHeader, StatusDot, Loading } from "../components/ui";
-import { atLeast, type Server } from "../lib/api";
+import { atLeast, serverIcon, type Server } from "../lib/api";
 import { ago, describeSoftware, displayName } from "../lib/format";
 import { useBackupPolicy, useServers } from "../lib/queries";
 
@@ -83,6 +84,7 @@ export function Servers() {
                 <Link to={`s/${s.name}`} className={`${columns} min-h-14 py-2.5 text-[13px] transition-colors hover:bg-raised max-md:grid-cols-[minmax(0,1fr)_auto]`}>
                   <span className="flex min-w-0 items-center gap-3">
                     <StatusDot phase={s.status.phase} />
+                    <Picture name={displayName(s)} url={serverIcon(s)} size={32} retryKey={s.status.phase} />
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{displayName(s)}</span>
                       <span className="block truncate text-xs text-muted">

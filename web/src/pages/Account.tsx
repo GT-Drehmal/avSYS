@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
+import { PicturePicker } from "../components/Picture";
 import { Button, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
 import { ago } from "../lib/format";
@@ -12,6 +13,7 @@ const apiTokens = ["api-tokens"] as const;
 
 function Profile() {
   const me = useMe().data!;
+  const qc = useQueryClient();
   const [displayName, setDisplayName] = useState(me.user.displayName);
   const save = useAction(() => api.patch("/me", { displayName }), [keys.me]);
   return (
@@ -23,6 +25,7 @@ function Profile() {
           save.mutate(undefined, { onSuccess: () => toast.info("Profile saved") });
         }}
       >
+        <PicturePicker name={me.user.username} shape="round" path="/me/avatar" has={me.user.avatarUrl === `/api/v1/users/${me.user.id}/avatar`} url={me.user.avatarUrl || undefined} onChange={() => qc.invalidateQueries({ queryKey: keys.me })} />
         <Field label="Username" hint="It cannot be changed.">
           {(id) => <Input id={id} disabled value={me.user.username} className="font-mono" />}
         </Field>

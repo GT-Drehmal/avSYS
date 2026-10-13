@@ -182,6 +182,13 @@ Members are also made operators in game, from the operator role up. Neither need
 - Which players the panel put on is kept with a server's snapshots, so restoring an old one does not hand a place or operator back to someone who has since left.
 - A linked account is followed by its UUID: if it is renamed, the panel picks up the new name within a few hours.
 - Servers made through the API are as before unless asked: no whitelist, and `autoWhitelist` off.
+## Pictures
+
+- **A server's icon** is the one the game shows players in their server list: `server-icon.png` in the server's files. Upload any picture under the server's **Settings** and the panel crops it square and writes it at the 64 pixels the game wants. One put there by hand shows in the panel too. Players see a new icon after the server's next restart.
+- **An organization's picture** is set in its settings by an owner, and **your own** under Account. A picture that came with a GitHub, Discord or Google sign-in is kept aside while one you uploaded stands in for it, and comes back if you remove yours.
+- Phone photos come out the right way up.
+- Where there is none, a tile with the first letter stands in.
+- Whatever is uploaded is redrawn by the panel as a small PNG before it is stored or served, so what a browser is given is never the file someone sent. PNG, JPEG and GIF up to 4 MB are accepted.
 
 ## API
 

@@ -438,15 +438,3 @@ export function Notice({ tone = "warn", children, action }: { tone?: "warn" | "d
     </div>
   );
 }
-
-export function Avatar({ name, url, size = 24 }: { name: string; url?: string; size?: number }) {
-  if (url) return <img src={url} alt="" width={size} height={size} className="shrink-0 rounded-full bg-raised" style={{ width: size, height: size }} />;
-  return (
-    <span
-      className="flex shrink-0 items-center justify-center rounded-full bg-accent-wash font-mono font-medium text-accent uppercase"
-      style={{ width: size, height: size, fontSize: size * 0.42 }}
-    >
-      {name.slice(0, 1)}
-    </span>
-  );
-}

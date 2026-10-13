@@ -37,6 +37,8 @@ type Org struct {
 	Slug      string    `json:"slug"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
+	// HasIcon says whether the organization has a picture of its own.
+	HasIcon bool `json:"hasIcon"`
 }
 
 // CreateOrg creates an organization owned by ownerID.
@@ -59,10 +61,13 @@ func (s *Store) CreateOrg(ctx context.Context, o *Org, ownerID string) error {
 	return tx.Commit()
 }
 
+// orgColumns are what scanOrg reads, from a table named o.
+const orgColumns = `o.id, o.slug, o.name, o.created_at, EXISTS(SELECT 1 FROM images WHERE key = 'org:' || o.id)`
+
 func scanOrg(row interface{ Scan(...any) error }) (*Org, error) {
 	var o Org
 	var created int64
-	if err := row.Scan(&o.ID, &o.Slug, &o.Name, &created); err != nil {
+	if err := row.Scan(&o.ID, &o.Slug, &o.Name, &created, &o.HasIcon); err != nil {
 		return nil, mapErr(err)
 	}
 	o.CreatedAt = unix(created)
@@ -70,11 +75,11 @@ func scanOrg(row interface{ Scan(...any) error }) (*Org, error) {
 }
 
 func (s *Store) OrgBySlug(ctx context.Context, slug string) (*Org, error) {
-	return scanOrg(s.db.QueryRowContext(ctx, `SELECT id, slug, name, created_at FROM orgs WHERE slug = ?`, slug))
+	return scanOrg(s.db.QueryRowContext(ctx, `SELECT `+orgColumns+` FROM orgs o WHERE slug = ?`, slug))
 }
 
 func (s *Store) OrgByID(ctx context.Context, id string) (*Org, error) {
-	return scanOrg(s.db.QueryRowContext(ctx, `SELECT id, slug, name, created_at FROM orgs WHERE id = ?`, id))
+	return scanOrg(s.db.QueryRowContext(ctx, `SELECT `+orgColumns+` FROM orgs o WHERE id = ?`, id))
 }
 
 func (s *Store) RenameOrg(ctx context.Context, id, name string) error {
@@ -83,6 +88,10 @@ func (s *Store) RenameOrg(ctx context.Context, id, name string) error {
 }
 
 func (s *Store) DeleteOrg(ctx context.Context, id string) error {
+	// Its picture goes with it.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM images WHERE key = ?`, OrgImage(id)); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM orgs WHERE id = ?`, id)
 	return err
 }
@@ -96,10 +105,10 @@ type OrgMembership struct {
 // OrgsForUser lists the organizations a user belongs to. Instance admins see
 // every organization, as owner.
 func (s *Store) OrgsForUser(ctx context.Context, u *User) ([]OrgMembership, error) {
-	q := `SELECT o.id, o.slug, o.name, o.created_at, m.role FROM orgs o
+	q := `SELECT ` + orgColumns + `, m.role FROM orgs o
 	      JOIN memberships m ON m.org_id = o.id AND m.user_id = ? ORDER BY o.name`
 	if u.IsAdmin {
-		q = `SELECT o.id, o.slug, o.name, o.created_at, COALESCE(m.role, 'owner') FROM orgs o
+		q = `SELECT ` + orgColumns + `, COALESCE(m.role, 'owner') FROM orgs o
 		     LEFT JOIN memberships m ON m.org_id = o.id AND m.user_id = ? ORDER BY o.name`
 	}
 	rows, err := s.db.QueryContext(ctx, q, u.ID)
@@ -111,7 +120,7 @@ func (s *Store) OrgsForUser(ctx context.Context, u *User) ([]OrgMembership, erro
 	for rows.Next() {
 		var m OrgMembership
 		var created int64
-		if err := rows.Scan(&m.ID, &m.Slug, &m.Name, &created, &m.Role); err != nil {
+		if err := rows.Scan(&m.ID, &m.Slug, &m.Name, &created, &m.HasIcon, &m.Role); err != nil {
 			return nil, err
 		}
 		m.CreatedAt = unix(created)
@@ -277,7 +286,7 @@ func (s *Store) AcceptInvite(ctx context.Context, token, userID string) (*Org, e
 	if !inv.Usable() {
 		return nil, ErrInviteUnusable
 	}
-	org, err := scanOrg(tx.QueryRowContext(ctx, `SELECT id, slug, name, created_at FROM orgs WHERE id = ?`, inv.OrgID))
+	org, err := scanOrg(tx.QueryRowContext(ctx, `SELECT `+orgColumns+` FROM orgs o WHERE id = ?`, inv.OrgID))
 	if err != nil {
 		return nil, err
 	}
