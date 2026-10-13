@@ -12,9 +12,11 @@ permissions:
   contents: read
 
 # A pull request that is pushed to again does not need its earlier run
-# finished. Runs on main and on tags are always seen through.
+# finished. Runs on main and on tags each get a group of their own, so that
+# several merges in a row are tested side by side and not one after another;
+# only publishing takes turns, further down.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Actions are named by the commit they are, with the release that is in a
@@ -86,6 +88,16 @@ jobs:
     needs: [test, e2e]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # Publishes of main take turns, so that two builds do not write :edge at
+    # once. Of several waiting, GitHub keeps the newest and drops the rest:
+    # a commit that another has already followed onto main is then not
+    # published under its own tag, which nothing needs.
+    #
+    # A release is never one of several: each has a group to itself, so
+    # that none is dropped for another arriving.
+    concurrency:
+      group: publish-${{ github.ref_type == 'tag' && github.ref_name || 'main' }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -102,7 +114,17 @@ jobs:
             echo "moving=latest" >> "$GITHUB_OUTPUT"
           else
             echo "version=sha-$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
-            echo "moving=edge" >> "$GITHUB_OUTPUT"
+            # Taking turns puts publishes in the order their tests finished,
+            # which need not be the order of the commits. :edge is only
+            # moved by the commit main is at right now: an older one that
+            # gets here late publishes under its own tag and leaves :edge
+            # where the newer one put it, or will.
+            tip=$(git ls-remote origin refs/heads/main | cut -f1)
+            if [ "$tip" = "$GITHUB_SHA" ]; then
+              echo "moving=edge" >> "$GITHUB_OUTPUT"
+            else
+              echo "main has moved on to $tip; publishing $GITHUB_SHA under its own tag only"
+            fi
           fi
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -122,7 +144,7 @@ jobs:
           push: true
           tags: |
             ${{ env.WORKSPACE }}:${{ steps.version.outputs.version }}
-            ${{ env.WORKSPACE }}:${{ steps.version.outputs.moving }}
+            ${{ steps.version.outputs.moving && format('{0}:{1}', env.WORKSPACE, steps.version.outputs.moving) || '' }}
           cache-from: type=gha,scope=workspace
           cache-to: type=gha,scope=workspace,mode=max
       - name: Panel image
@@ -134,6 +156,6 @@ jobs:
           build-args: VERSION=${{ steps.version.outputs.version }}
           tags: |
             ${{ env.PANEL }}:${{ steps.version.outputs.version }}
-            ${{ env.PANEL }}:${{ steps.version.outputs.moving }}
+            ${{ steps.version.outputs.moving && format('{0}:{1}', env.PANEL, steps.version.outputs.moving) || '' }}
           cache-from: type=gha,scope=panel
           cache-to: type=gha,scope=panel,mode=max
