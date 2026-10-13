@@ -104,7 +104,11 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
   }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage, hits.length]);
   // A different search starts from the top.
   const filterKey = JSON.stringify(filters);
-  useEffect(() => list.current?.scrollTo({ top: 0 }), [filterKey]);
+  // In braces: Chromium's scrollTo returns a promise, and whatever an effect
+  // returns is called when it is cleaned up.
+  useEffect(() => {
+    list.current?.scrollTo({ top: 0 });
+  }, [filterKey]);
 
   const isPicked = (hit: ModrinthHit) => !!(picked?.has(hit.project_id) || picked?.has(hit.slug));
   if (looking) {
