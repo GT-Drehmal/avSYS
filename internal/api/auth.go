@@ -96,8 +96,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if in.Invite != "" {
-		if _, err := s.Store.AcceptInvite(r.Context(), in.Invite, u.ID); err != nil {
+		if org, err := s.Store.AcceptInvite(r.Context(), in.Invite, u.ID); err != nil {
 			s.Log.Warn("accepting invite at signup", "error", err)
+		} else {
+			s.syncOpsSoon(org)
 		}
 	}
 	if err := s.startSession(w, r, u.ID); err != nil {
@@ -272,8 +274,12 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if invite != "" {
-		if _, err := s.Store.AcceptInvite(r.Context(), invite, user.ID); err != nil {
+		if org, err := s.Store.AcceptInvite(r.Context(), invite, user.ID); err != nil {
 			s.Log.Warn("accepting invite at sign-in", "error", err)
+		} else {
+			// Someone who already has an account, and may have a player
+			// linked to it, has just joined.
+			s.syncOpsSoon(org)
 		}
 	}
 	if err := s.startSession(w, r, user.ID); err != nil {

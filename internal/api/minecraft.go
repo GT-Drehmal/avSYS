@@ -116,10 +116,14 @@ func wantedOps(spec *avsysv1.MinecraftServerSpec, members []store.Member) []stri
 	return out
 }
 
+// splitNames reads a note of player names. Anything in it that could not
+// be a player's name is dropped: these end up in commands typed at a
+// server's console, and the note travels with snapshots, which a server's
+// own workspace can write.
 func splitNames(s string) []string {
 	var out []string
 	for _, name := range strings.Split(s, ",") {
-		if name = strings.TrimSpace(name); name != "" {
+		if name = strings.TrimSpace(name); minecraftNamePattern.MatchString(name) {
 			out = append(out, name)
 		}
 	}
@@ -164,11 +168,19 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	lock.(*sync.Mutex).Lock()
 	defer lock.(*sync.Mutex).Unlock()
 
-	// Worked on as it was handed over, not read again: what is read here
-	// lags a change by a moment, and the caller that has just made one
-	// holds the newer of the two. Acting on an old view at worst repeats a
-	// command the game has already carried out.
+	// As it is now that the lock is held: another look may have changed
+	// the note of who was made an operator while this one waited. Read from
+	// the cluster itself, since what Client has lags a change by a moment
+	// and the caller may have just made one.
 	fresh := mc.DeepCopy()
+	if s.Reader != nil {
+		if err := s.Reader.Get(ctx, key, fresh); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if fresh.Status.Phase != avsysv1.PhaseRunning {
+			return nil
+		}
+	}
 	made := splitNames(fresh.Annotations[avsysv1.AnnotationAutoOps])
 	wanted := wantedOps(&fresh.Spec, members)
 	add, remove := opChanges(made, wanted, fresh.Spec.Ops)
@@ -216,11 +228,39 @@ func (s *Server) syncOrgOps(ctx context.Context, org *store.Org) {
 		s.Log.Error("listing members to set operators", "org", org.Slug, "error", err)
 		return
 	}
+	s.refreshNames(ctx, members)
 	for i := range servers.Items {
 		if err := s.syncOps(ctx, &servers.Items[i], members); err != nil {
 			// Tried again with the next look.
 			s.Log.Warn("could not set a server's operators", "server", servers.Items[i].Name, "org", org.Slug, "error", err)
 		}
+	}
+}
+
+// refreshNames brings each member's linked player up to its current name.
+// An account keeps its UUID when it is renamed, and the game's commands go
+// by name: the old one would stop meaning that player, and may come to mean
+// someone else. Mojang is asked a few times a day per account at most, and
+// a name that cannot be looked up is left as it is.
+func (s *Server) refreshNames(ctx context.Context, members []store.Member) {
+	for i := range members {
+		m := &members[i]
+		if m.MinecraftUUID == "" {
+			continue
+		}
+		body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(m.MinecraftUUID), 6*time.Hour)
+		if err != nil {
+			continue
+		}
+		var profile struct{ Name string }
+		if json.Unmarshal(body, &profile) != nil || !minecraftNamePattern.MatchString(profile.Name) || profile.Name == m.MinecraftName {
+			continue
+		}
+		if err := s.Store.RenameMinecraftAccount(ctx, m.UserID, profile.Name); err != nil {
+			continue
+		}
+		s.Log.Info("a linked Minecraft account was renamed", "user", m.Username, "from", m.MinecraftName, "to", profile.Name)
+		m.MinecraftName = profile.Name
 	}
 }
 
@@ -306,4 +346,27 @@ func (s *Server) opsTick(ctx context.Context) {
 		}
 		s.syncOrgOps(ctx, org)
 	}
+}
+
+// noteAutoOps sets a server's note of which operators the panel made, to
+// what a snapshot recorded of it.
+func (s *Server) noteAutoOps(ctx context.Context, key client.ObjectKey, recorded string) error {
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, mc); err != nil {
+		return err
+	}
+	made := strings.Join(splitNames(recorded), ",")
+	if mc.Annotations[avsysv1.AnnotationAutoOps] == made {
+		return nil
+	}
+	orig := mc.DeepCopy()
+	if mc.Annotations == nil {
+		mc.Annotations = map[string]string{}
+	}
+	if made == "" {
+		delete(mc.Annotations, avsysv1.AnnotationAutoOps)
+	} else {
+		mc.Annotations[avsysv1.AnnotationAutoOps] = made
+	}
+	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }

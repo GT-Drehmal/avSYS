@@ -295,6 +295,7 @@ func run(opts options, log *slog.Logger) error {
 		},
 		Store:   st,
 		Client:  mgr.GetClient(),
+		Reader:  mgr.GetAPIReader(),
 		Kube:    clientset,
 		Dialer:  dialer,
 		Gateway: gateway,

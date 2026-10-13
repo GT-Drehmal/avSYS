@@ -170,7 +170,9 @@ Instance administrators act as owner in every organization and are the only ones
 Someone who runs a server in the panel should not have to op themselves on it. Link a Minecraft account under **Account**, and on every server of your organizations where your role is high enough you are an operator in game: when the server starts, and within seconds of linking, joining, or a change of role. Lose the role, leave, or unlink, and it is taken away again.
 
 - Each server sets from which role this applies, under **Settings → Players**: operators and above (the default), admins and above, owners, or nobody.
-- Only operators the panel made are ever removed by it. Players listed under Operators in a server's settings, or opped in game, are left alone.
+- Only operators the panel made are ever removed by it. Players listed under Operators in a server's settings are left alone, and so is anyone opped in game whom the panel never made one. To keep someone an operator whatever their role, list them under Operators: opping in game a player the panel already made one changes nothing it can see.
+- Which operators the panel made is kept with a server's snapshots, so restoring an old one does not hand operator back to someone who has since lost the role.
+- A linked account is followed by its UUID: if it is renamed, the panel picks up the new name within a few hours.
 - Linking an account does not prove it is yours, and does not need to: a member with the operator role can already run `op` on any player from the console. Viewers get nothing from linking one.
 
 ## API

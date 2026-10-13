@@ -43,6 +43,13 @@ func (s *Store) SetMinecraftAccount(ctx context.Context, userID string, a *Minec
 	return err
 }
 
+// RenameMinecraftAccount records that a user's linked account is now called
+// something else. It is still the same account.
+func (s *Store) RenameMinecraftAccount(ctx context.Context, userID, name string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE minecraft_accounts SET name = ? WHERE user_id = ?`, name, userID)
+	return err
+}
+
 // ClearMinecraftAccount unlinks a user's account, if they have one.
 func (s *Store) ClearMinecraftAccount(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM minecraft_accounts WHERE user_id = ?`, userID)

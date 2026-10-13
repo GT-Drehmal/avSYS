@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
@@ -137,4 +139,84 @@ func (p *panel) members(org string) map[string]string {
 		out[m.Username] = m.MinecraftName
 	}
 	return out
+}
+
+// The note of who was made an operator is typed into a server's console
+// name by name, and travels with snapshots. Only what could be a player's
+// name is read out of it.
+func TestSplitNamesDropsWhatIsNotAName(t *testing.T) {
+	got := splitNames("Ada, Otto ,, bad name,x\nstop,@a,Steve;stop,ok_1")
+	if want := "Ada Otto ok_1"; strings.Join(got, " ") != want {
+		t.Errorf("names read: %q, want %q", strings.Join(got, " "), want)
+	}
+}
+
+// An account that was renamed is followed by its UUID.
+func TestRenamedAccountsAreFollowed(t *testing.T) {
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = offline{
+		"https://api.mojang.com/users/profiles/minecraft/steve":                                       `{"id":"8667ba71b85a4004af54457a9734eed7","name":"Steve"}`,
+		"https://sessionserver.mojang.com/session/minecraft/profile/8667ba71b85a4004af54457a9734eed7": `{"id":"8667ba71b85a4004af54457a9734eed7","name":"Stefan"}`,
+	}
+	if code, _ := p.do("operator", "PUT", "/me/minecraft", `{"name":"steve"}`); code != 200 {
+		t.Fatalf("linking: %d", code)
+	}
+	if code, _ := p.do("admin", "PUT", "/me/minecraft", `{"name":"steve"}`); code != 200 {
+		t.Fatalf("linking: %d", code)
+	}
+	ctx := t.Context()
+	alpha, err := p.srv.Store.OrgBySlug(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := p.srv.Store.Members(ctx, alpha.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.srv.refreshNames(ctx, members)
+	for _, m := range members {
+		if m.Username == "operator" && m.MinecraftName != "Stefan" {
+			t.Errorf("the member in hand is still %q", m.MinecraftName)
+		}
+	}
+	if got := p.members("alpha")["operator"]; got != "Stefan" {
+		t.Errorf("the link as stored: %q, want Stefan", got)
+	}
+	// With Mojang not answering, the name is left as it is.
+	p.srv.catalog.http.Transport = offline{}
+	p.srv.catalog.entries = map[string]cacheEntry{}
+	members, _ = p.srv.Store.Members(ctx, alpha.ID)
+	p.srv.refreshNames(ctx, members)
+	if got := p.members("alpha")["operator"]; got != "Stefan" {
+		t.Errorf("after a failed lookup: %q, want it unchanged", got)
+	}
+}
+
+// What a snapshot recorded of who was made an operator goes back on the
+// server with its files, less anything that is not a name.
+func TestNoteAutoOps(t *testing.T) {
+	p := newPanel(t)
+	ctx := t.Context()
+	key := client.ObjectKey{Namespace: "mc-alpha", Name: "world"}
+	note := func() (string, bool) {
+		mc := &avsysv1.MinecraftServer{}
+		if err := p.srv.Client.Get(ctx, key, mc); err != nil {
+			t.Fatal(err)
+		}
+		v, ok := mc.Annotations[avsysv1.AnnotationAutoOps]
+		return v, ok
+	}
+	if err := p.srv.noteAutoOps(ctx, key, "Ada, not a name,Otto"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := note(); got != "Ada,Otto" {
+		t.Errorf("the note put back: %q, want Ada,Otto", got)
+	}
+	// A snapshot from before anyone was made one clears it.
+	if err := p.srv.noteAutoOps(ctx, key, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := note(); ok {
+		t.Errorf("the note after restoring to none: %q, want it gone", got)
+	}
 }
