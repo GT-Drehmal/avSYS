@@ -964,6 +964,89 @@ func (s *Server) waitPhase(ctx context.Context, key client.ObjectKey, want avsys
 	}
 }
 
+// snapshotByID finds the snapshot an ID, or the start of one, names, if it
+// names exactly one.
+func snapshotByID(list []backup.Snapshot, id string) *backup.Snapshot {
+	if len(id) < 8 {
+		return nil
+	}
+	var found *backup.Snapshot
+	for i := range list {
+		if strings.HasPrefix(list[i].ID, id) {
+			if found != nil {
+				return nil
+			}
+			found = &list[i]
+		}
+	}
+	return found
+}
+
+// maxSnapshotsAtOnce is how many snapshots one request may delete.
+const maxSnapshotsAtOnce = 500
+
+// deleteSnapshots removes several snapshots at once: all of them, or, if any
+// is unknown or in use, none. They go in one pass over the repository,
+// where deleting them one by one would go through all of it for each.
+func (s *Server) deleteSnapshots(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	a, err := s.org(r, u, store.RoleAdmin)
+	if err != nil {
+		return err
+	}
+	if !s.Backups.Available() {
+		return errNoBackups
+	}
+	var in struct{ IDs []string }
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	if len(in.IDs) == 0 {
+		return errBadRequest("Name the snapshots to delete: send {\"ids\": [...]}.")
+	}
+	if len(in.IDs) > maxSnapshotsAtOnce {
+		return errBadRequest("At most %d snapshots can be deleted at once.", maxSnapshotsAtOnce)
+	}
+	// Looked up in one listing, not one for each.
+	list, err := s.Backups.List(r.Context(), a.Org.Slug)
+	if err != nil {
+		return snapshotError(err)
+	}
+	snaps := make([]*backup.Snapshot, 0, len(in.IDs))
+	seen := map[string]bool{}
+	for _, id := range in.IDs {
+		snap := snapshotByID(list, id)
+		if snap == nil {
+			return &Error{Status: http.StatusNotFound, Code: "not_found", Message: fmt.Sprintf("There is no snapshot %q. Nothing was deleted.", id)}
+		}
+		if !seen[snap.ID] {
+			seen[snap.ID] = true
+			snaps = append(snaps, snap)
+		}
+	}
+	ids := make([]string, len(snaps))
+	for i, snap := range snaps {
+		release, ok := s.ops.remove(a.Namespace, snap.ID)
+		if !ok {
+			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("A server is being restored to the snapshot of %s from %s. Nothing was deleted; wait for that to finish.", snap.Server, snap.Time.Format("2 Jan 15:04"))}
+		}
+		defer release()
+		ids[i] = snap.ID
+	}
+	if err := s.Backups.DeleteMany(context.WithoutCancel(r.Context()), a.Org.Slug, ids); err != nil {
+		return snapshotError(err)
+	}
+	servers := map[string]bool{}
+	for _, snap := range snaps {
+		s.audit(r.Context(), u, a.Org, "snapshot.delete", snap.Server, snap.ID)
+		if !servers[snap.Server] {
+			servers[snap.Server] = true
+			s.Events.Publish(Event{Type: "operation.done", Namespace: a.Namespace, Data: operationDone{Kind: "delete", Org: a.Org.Slug, Server: snap.Server}})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"deleted": len(snaps)})
+	return nil
+}
+
 // deleteSnapshot removes one snapshot for good. Nothing else ever removes a
 // snapshot of a server that has been deleted.
 func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store.User) error {

@@ -4,7 +4,9 @@ import { api, type Operation, type Snapshot } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { keys, useAction } from "../lib/queries";
 import { NewFromSnapshot } from "./NewFromSnapshot";
-import { Button, Chip, Confirm, CopyText } from "./ui";
+import type { Selection } from "../lib/selection";
+import { toast } from "../lib/toast";
+import { Button, Chip, Confirm, CopyText, RowCheckbox, SelectionBar } from "./ui";
 
 const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
@@ -60,10 +62,12 @@ interface RowsProps {
   /** True while something is running on the server, which rules out a restore. */
   busy?: boolean;
   onRestore?: (snapshot: Snapshot) => void;
+  /** Lets admins tick rows, to act on several at once. Shared by every list on a page. */
+  selection?: Selection;
 }
 
 /** A list of snapshots, newest first, as rows of one bordered box. */
-export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: RowsProps) {
+export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, selection }: RowsProps) {
   const [deleting, setDeleting] = useState<Snapshot | null>(null);
   const [creating, setCreating] = useState<Snapshot | null>(null);
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
@@ -71,7 +75,16 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: Rows
     <>
       <ul className="overflow-hidden rounded-lg border border-line bg-surface">
         {snapshots.map((s) => (
-          <li key={s.id} className="flex items-center gap-4 border-b border-line px-4 py-2.5 last:border-b-0">
+          <li key={s.id} className={`group flex items-center gap-4 border-b border-line px-4 py-2.5 last:border-b-0 ${selection?.has(s.id) ? "bg-accent-wash" : ""}`}>
+            {canAdmin && selection && (
+              <RowCheckbox
+                checked={selection.has(s.id)}
+                quiet={selection.count === 0}
+                label={`Select the snapshot of ${s.server} from ${ago(s.time)}`}
+                onChange={(range) => selection.toggle(s.id, range)}
+                className="-mr-1"
+              />
+            )}
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-medium" title={new Date(s.time).toLocaleString()}>
                 {ago(s.time)}
@@ -114,6 +127,47 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore }: Rows
         action="Delete snapshot"
         loading={remove.isPending}
         onConfirm={() => deleting && remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}
+      />
+    </>
+  );
+}
+
+/**
+ * What can be done to several snapshots at once, which is deleting them.
+ * They go together or not at all, in one pass over the repository.
+ */
+export function SnapshotSelectionBar({ org, snapshots, selection }: { org: string; snapshots: Snapshot[]; selection: Selection }) {
+  const [confirming, setConfirming] = useState(false);
+  const chosen = snapshots.filter((s) => selection.has(s.id));
+  const remove = useAction(() => api.del<{ deleted: number }>(`/orgs/${org}/snapshots`, { ids: chosen.map((s) => s.id) }), [keys.snapshots(org)]);
+  // "3 of survival, 1 of creative"
+  const perServer = new Map<string, number>();
+  for (const s of chosen) perServer.set(s.server, (perServer.get(s.server) ?? 0) + 1);
+  const breakdown = [...perServer].map(([server, n]) => `${n} of ${server}`).join(", ");
+  const many = `${chosen.length} snapshot${chosen.length === 1 ? "" : "s"}`;
+  return (
+    <>
+      <SelectionBar count={selection.count} noun="snapshot" onClear={selection.clear}>
+        <Button size="sm" variant="danger" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirming(true)}>
+          Delete
+        </Button>
+      </SelectionBar>
+      <Confirm
+        open={confirming}
+        onOpenChange={(open) => !remove.isPending && setConfirming(open)}
+        title={`Delete ${many}?`}
+        description={`${breakdown}. They are removed for good.`}
+        action={`Delete ${many}`}
+        loading={remove.isPending}
+        onConfirm={() =>
+          remove.mutate(undefined, {
+            onSuccess: ({ deleted }) => {
+              setConfirming(false);
+              selection.clear();
+              toast.info(`Deleted ${deleted} snapshot${deleted === 1 ? "" : "s"}`);
+            },
+          })
+        }
       />
     </>
   );

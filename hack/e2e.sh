@@ -278,7 +278,9 @@ for _ in $(seq 1 30); do
 done
 # Removed again, so that what follows counts the snapshots it expects.
 copy=$(call "$SRV/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'copy'][0]")
-expect "the snapshot it was made from is an ordinary one" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$copy")" 204
+# Several snapshots go in one request: all of them, or none if one is not there.
+expect "deleting several stops at one that is unknown" "$(call -o /dev/null -w '%{http_code}' -X DELETE -d "{\"ids\":[\"$copy\",\"0000000000000000\"]}" "$API/orgs/$ORG/snapshots")" 404
+expect "the snapshot it was made from is an ordinary one" "$(call -X DELETE -d "{\"ids\":[\"$copy\"]}" "$API/orgs/$ORG/snapshots" | field "d['deleted']")" 1
 
 step "snapshots outlive the server"
 # Something that is in no snapshot yet. Deleting the server must not lose it.

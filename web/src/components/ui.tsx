@@ -366,7 +366,8 @@ export const MenuLabel = ({ children }: { children: ReactNode }) => <Dropdown.La
 export function Toaster() {
   const toasts = useToasts();
   return (
-    <div className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-80 flex-col gap-2" role="status" aria-live="polite">
+    // Above a bar along the bottom of the page, where there is one, and not over its buttons.
+    <div className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-80 flex-col gap-2 [body:has([data-bottom-bar])_&]:bottom-18" role="status" aria-live="polite">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -390,6 +391,67 @@ export function Toaster() {
 }
 
 /** A page's title row. */
+interface RowCheckboxProps {
+  checked: boolean;
+  /** Some but not all of what it stands for is selected. */
+  partial?: boolean;
+  /** Called with whether Shift was held, which selects a range. */
+  onChange: (range: boolean) => void;
+  label: string;
+  /** Stays out of sight until its row is pointed at or something is selected. */
+  quiet?: boolean;
+  className?: string;
+}
+
+/** The tick box at the start of a row that can be selected with others. */
+export function RowCheckbox({ checked, partial, onChange, label, quiet, className }: RowCheckboxProps) {
+  return (
+    <input
+      type="checkbox"
+      aria-label={label}
+      checked={checked}
+      ref={(el) => {
+        if (el) el.indeterminate = !!partial && !checked;
+      }}
+      // The click says whether Shift was held; the change event does not.
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange(e.shiftKey);
+      }}
+      onChange={() => {}}
+      className={cx(
+        "size-3.5 shrink-0 cursor-pointer accent-(--color-accent) transition-opacity",
+        quiet && !checked && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
+        className,
+      )}
+    />
+  );
+}
+
+/**
+ * The bar that appears along the bottom while rows are selected, with what
+ * can be done to them.
+ */
+export function SelectionBar({ count, noun, onClear, children }: { count: number; noun: string; onClear: () => void; children: ReactNode }) {
+  if (count === 0) return null;
+  return (
+    <div role="region" aria-label="Selection" data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3 md:px-10">
+        <p className="flex items-center gap-3 text-[13px]">
+          <span className="font-medium" aria-live="polite">
+            {count} {noun}
+            {count === 1 ? "" : "s"} selected
+          </span>
+          <button type="button" onClick={onClear} className="text-muted hover:text-fg">
+            Clear
+          </button>
+        </p>
+        <div className="flex flex-wrap gap-2">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export function PageHeader({ title, description, actions }: { title: ReactNode; description?: ReactNode; actions?: ReactNode }) {
   return (
     <header className="flex flex-wrap items-end justify-between gap-4 pb-6">

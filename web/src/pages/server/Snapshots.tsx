@@ -2,11 +2,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Camera } from "lucide-react";
 import { useState } from "react";
 import { ServerSchedule } from "../../components/BackupSchedule";
-import { OperationRow, SnapshotRows } from "../../components/Snapshots";
+import { OperationRow, SnapshotRows, SnapshotSelectionBar } from "../../components/Snapshots";
 import { Button, Empty, Loading, Modal, Notice } from "../../components/ui";
 import { api, atLeast, serverPath, type Operation, type Snapshot } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { keys, useAction, useServerSnapshots } from "../../lib/queries";
+import { useSelection } from "../../lib/selection";
 import { useServerContext } from "./ServerPage";
 
 export function Snapshots() {
@@ -25,6 +26,8 @@ export function Snapshots() {
   const snapshot = useAction(() => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots`));
   const restore = useAction((id: string) => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots/${id}/restore`));
 
+  const selection = useSelection(list.data?.snapshots.map((s) => s.id) ?? []);
+
   if (list.isPending) return <Loading />;
   if (!list.data) return <Notice tone="danger">The snapshots could not be loaded.</Notice>;
   if (!list.data.available) {
@@ -35,7 +38,7 @@ export function Snapshots() {
   const failure = server.status.snapshots?.error;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className={`flex flex-col gap-4 ${selection.count > 0 ? "pb-16" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] text-muted">
           {snapshots.length === 0 ? "No snapshots yet." : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"}, the newest from ${ago(snapshots[0].time)}.`}
@@ -56,8 +59,9 @@ export function Snapshots() {
           </Empty>
         )
       ) : (
-        <SnapshotRows org={server.org} snapshots={snapshots} canAdmin={canAdmin} busy={!!op} onRestore={setRestoring} />
+        <SnapshotRows org={server.org} snapshots={snapshots} canAdmin={canAdmin} busy={!!op} onRestore={setRestoring} selection={selection} />
       )}
+      {canAdmin && <SnapshotSelectionBar org={server.org} snapshots={snapshots} selection={selection} />}
 
       <Modal
         open={!!restoring}

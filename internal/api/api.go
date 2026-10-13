@@ -310,6 +310,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/offsite/fetch", s.authed(s.fetchOffsite))
 	api("GET /orgs/{org}/snapshots", s.authed(s.listOrgSnapshots))
 	api("GET /orgs/{org}/snapshots/{id}", s.authed(s.getSnapshot))
+	api("DELETE /orgs/{org}/snapshots", s.authed(s.deleteSnapshots))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
 
 	api("GET /orgs/{org}/servers", s.authed(s.listServers))
