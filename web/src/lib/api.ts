@@ -172,7 +172,7 @@ export interface ServerStatus {
   snapshots?: { lastTime?: string; lastID?: string; error?: string; /** When the daily snapshot last completed, whether or not anything had changed. */ lastRun?: string } | null;
 }
 
-export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore" | "final";
+export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore" | "final" | "copy";
 
 /** One saved state of a server. */
 export interface Snapshot {

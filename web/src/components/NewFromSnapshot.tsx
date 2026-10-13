@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { api, ApiError, type Server, type ServerSpec, type Snapshot, type SnapshotDetail } from "../lib/api";
-import { ago, loaderNames } from "../lib/format";
+import { ago, describeSoftware, loaderNames } from "../lib/format";
 import { keys, useServers } from "../lib/queries";
 import { fromGigabytes, toGigabytes } from "../lib/software";
 import { Button, Field, Input, Loading, Modal, Notice, Toggle } from "./ui";
@@ -48,7 +48,14 @@ export function NewFromSnapshot({ org, snapshot, onClose }: Props) {
       {detail.isPending || servers.isPending ? (
         <Loading />
       ) : detail.data && servers.data ? (
-        <Form key={detail.data.id} org={org} detail={detail.data} taken={new Set(servers.data.map((s) => s.name))} onClose={onClose} />
+        <Form
+          key={detail.data.id}
+          org={org}
+          source={{ name: detail.data.server, spec: detail.data.spec, size: detail.data.size }}
+          taken={new Set(servers.data.map((s) => s.name))}
+          from={{ fromSnapshot: detail.data.id }}
+          onClose={onClose}
+        />
       ) : (
         <Notice tone="danger">{detail.error instanceof ApiError ? detail.error.message : "The snapshot could not be read."}</Notice>
       )}
@@ -56,15 +63,53 @@ export function NewFromSnapshot({ org, snapshot, onClose }: Props) {
   );
 }
 
-function Form({ org, detail, taken, onClose }: { org: string; detail: SnapshotDetail; taken: Set<string>; onClose: () => void }) {
+/**
+ * Makes a copy of a server as it is now. A snapshot of it is taken first,
+ * unless its newest one already has everything.
+ */
+export function DuplicateServer({ server, open, onClose }: { server: Server; open: boolean; onClose: () => void }) {
+  const servers = useServers(server.org);
+  return (
+    <Modal open={open} onOpenChange={(o) => !o && onClose()} title={`Duplicate ${server.name}`} description={describeSoftware(server)}>
+      {!servers.data ? (
+        <Loading />
+      ) : (
+        <Form
+          org={server.org}
+          // How large its files are is not known here; its storage is at least that.
+          source={{ name: server.name, spec: server.spec, size: 0 }}
+          taken={new Set(servers.data.map((s) => s.name))}
+          from={{ fromServer: server.name }}
+          onClose={onClose}
+        />
+      )}
+    </Modal>
+  );
+}
+
+interface FormProps {
+  org: string;
+  /** The server the new one is made of: its name, its settings, and how large its files are. */
+  source: { name: string; spec: ServerSpec; size: number };
+  taken: Set<string>;
+  /** What it is made from: a snapshot, or the server as it is now. */
+  from: { fromSnapshot: string } | { fromServer: string };
+  onClose: () => void;
+}
+
+function Form({ org, source, taken, from, onClose }: FormProps) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { spec } = detail;
+  const { spec } = source;
+  const detail = { server: source.name, size: source.size };
+  const duplicating = "fromServer" in from;
   // A server that still exists is being copied; one that is gone gets its name back.
   const copying = taken.has(detail.server);
   // Whole gigabytes that hold the snapshot's files with some room to spare.
   const leastStorage = Math.max(1, Math.ceil((detail.size * 1.2) / GiB));
   const custom = !!spec.image || (spec.env?.length ?? 0) > 0;
+  // Whether it gets a hostname of its own, which is how the router finds it.
+  const exposed = (spec.expose?.type ?? "Router") === "Router";
 
   const [displayName, setDisplayName] = useState((spec.displayName || detail.server) + (copying ? " copy" : ""));
   const [name, setName] = useState(freeName(copying ? `${detail.server}-copy` : detail.server, taken));
@@ -85,11 +130,14 @@ function Form({ org, detail, taken, onClose }: { org: string; detail: SnapshotDe
       state: start ? "Running" : "Stopped",
       resources: { memory: fromGigabytes(memory) },
       storage: { size: fromGigabytes(storage) },
-      expose: { type: "Router", hostname: hostname.trim() },
+      // Reached the way the original is: a server that is not exposed at all
+      // is not given an address because it was copied. A fixed address or
+      // port is the original's own and is not taken along.
+      expose: exposed ? { type: "Router", hostname: hostname.trim() } : { type: spec.expose.type },
       ...(keepCustom ? { image: spec.image, env: spec.env } : {}),
     };
     try {
-      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, fromSnapshot: detail.id, spec: request });
+      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, spec: request });
       await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
       onClose();
       // Its Backups tab is where the copying is shown.
@@ -103,7 +151,11 @@ function Form({ org, detail, taken, onClose }: { org: string; detail: SnapshotDe
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
       <p className="text-[13px] leading-relaxed text-muted">
-        {copying ? `A copy of ${detail.server} as it was then. ${detail.server} itself is not touched.` : `Brings ${detail.server} back as it was then.`}
+        {duplicating
+          ? `A copy of ${detail.server} as it is now. ${detail.server} itself is not touched.`
+          : copying
+            ? `A copy of ${detail.server} as it was then. ${detail.server} itself is not touched.`
+            : `Brings ${detail.server} back as it was then.`}
       </p>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
@@ -113,9 +165,11 @@ function Form({ org, detail, taken, onClose }: { org: string; detail: SnapshotDe
         <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={memory} onChange={(e) => setMemory(e.target.value)} />}</Field>
         <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={storage} onChange={(e) => setStorage(e.target.value)} />}</Field>
       </div>
-      <Field label="Hostname" hint="Optional.">
-        {(id) => <Input id={id} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
-      </Field>
+      {exposed && (
+        <Field label="Hostname" hint="Optional.">
+          {(id) => <Input id={id} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
+        </Field>
+      )}
       <Toggle checked={start} onChange={setStart} label="Start it when its files are in place" />
       {custom && (
         <Toggle
@@ -142,7 +196,7 @@ function Form({ org, detail, taken, onClose }: { org: string; detail: SnapshotDe
       <div className="flex justify-end gap-2">
         <Button onClick={onClose}>Cancel</Button>
         <Button type="submit" variant="primary" loading={busy}>
-          Create server
+          {duplicating ? "Duplicate" : "Create server"}
         </Button>
       </div>
     </form>

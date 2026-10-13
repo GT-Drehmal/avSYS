@@ -10,6 +10,7 @@ const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
   if (s.trigger === "pre-restore") return "Before a restore";
   if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
+  if (s.trigger === "copy") return s.by ? `For a copy ${s.by} made` : "For a copy";
   return s.by ? `By ${s.by}` : "Manual";
 };
 

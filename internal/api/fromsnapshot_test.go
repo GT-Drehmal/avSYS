@@ -366,3 +366,80 @@ func TestAServerBeingDeletedIsHeld(t *testing.T) {
 		t.Errorf("deleting a server that is being deleted: got %d %q, want 409 deleting", got, code)
 	}
 }
+
+// A copy of a server is asked for through the same route, and everything
+// that can be refused is refused before the snapshot it is made from.
+func TestCreateFromServerRequests(t *testing.T) {
+	p := newPanel(t)
+	p.addServer("beta", "theirs", "")
+	post := func(who, body string) (int, string) { return p.do(who, "POST", "/orgs/alpha/servers", body) }
+
+	if got, code := post("owner", `{"name":"copy","fromServer":"world","fromSnapshot":"abcdef12"}`); got != 400 || code != "invalid" {
+		t.Errorf("from a server and a snapshot at once: got %d %q, want 400 invalid", got, code)
+	}
+	if got, code := post("owner", `{"name":"copy","fromServer":"world"}`); got != 503 || code != "backups_unavailable" {
+		t.Errorf("without restic: got %d %q, want 503 backups_unavailable", got, code)
+	}
+	// As any other way of making a server, it is for admins.
+	if got, code := post("operator", `{"name":"copy","fromServer":"world"}`); got != 403 {
+		t.Errorf("an operator copying a server: got %d %q, want 403", got, code)
+	}
+
+	p.srv.Backups.Restic = "true"
+	for name, c := range map[string]struct {
+		body string
+		want int
+		code string
+	}{
+		"a server that is not there":    {`{"name":"copy","fromServer":"nobody"}`, 404, "not_found"},
+		"a name that is taken":          {`{"name":"world","fromServer":"world"}`, 409, "conflict"},
+		"software named again":          {`{"name":"copy","fromServer":"world","spec":{"version":"1.20.1"}}`, 400, "invalid"},
+		"a state that is not one":       {`{"name":"copy","fromServer":"world","spec":{"state":"Bogus"}}`, 400, "invalid"},
+		"another organization's server": {`{"name":"copy","fromServer":"theirs"}`, 404, "not_found"},
+	} {
+		if got, code := post("owner", c.body); got != c.want || code != c.code {
+			t.Errorf("%s: got %d %q, want %d %s", name, got, code, c.want, c.code)
+		}
+	}
+	// None of that took a snapshot of the original, or left anything behind.
+	if p.srv.ops.current("mc-alpha", "world") != nil {
+		t.Error("a refused copy left the original claimed")
+	}
+	if got, _ := p.do("owner", "GET", "/orgs/alpha/servers/copy", ""); got != 404 {
+		t.Errorf("a server was left behind by a refused request: %d", got)
+	}
+
+	// One that is in the middle of a restore is not copied as it is.
+	world := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: "mc-alpha", Name: "world"}, world); err != nil {
+		t.Fatal(err)
+	}
+	world.Annotations = map[string]string{avsysv1.AnnotationRestoring: "aaaa1111"}
+	if err := p.srv.Client.Update(context.Background(), world); err != nil {
+		t.Fatal(err)
+	}
+	if got, code := post("owner", `{"name":"copy","fromServer":"world"}`); got != 409 {
+		t.Errorf("copying a server whose restore did not finish: got %d %q, want 409", got, code)
+	}
+}
+
+// A server made from a snapshot is put on the kind of storage the original
+// was on unless the request names one: where a cluster has no default kind,
+// a volume asked for without one is never provided.
+func TestFromSnapshotKeepsTheStorageClass(t *testing.T) {
+	fast, slow := "fast", "slow"
+	recorded := &avsysv1.MinecraftServerSpec{Storage: avsysv1.StorageSpec{Size: resource.MustParse("20Gi"), StorageClassName: &fast}}
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil); got.Storage.StorageClassName == nil || *got.Storage.StorageClassName != "fast" {
+		t.Errorf("with none asked for: %v, want the original's", got.Storage.StorageClassName)
+	}
+	asked := &avsysv1.MinecraftServerSpec{Storage: avsysv1.StorageSpec{Size: resource.MustParse("30Gi"), StorageClassName: &slow}}
+	if got := fromSnapshot(asked, recorded, nil); *got.Storage.StorageClassName != "slow" || got.Storage.Size.String() != "30Gi" {
+		t.Errorf("with one asked for: %v %s, want slow and 30Gi", *got.Storage.StorageClassName, got.Storage.Size.String())
+	}
+	// And it is its own copy, not the record's to change through.
+	got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil)
+	*got.Storage.StorageClassName = "changed"
+	if fast != "fast" {
+		t.Error("the new server's storage class is the record's own variable")
+	}
+}

@@ -1,6 +1,7 @@
-import { ChevronLeft, Code2, Plug } from "lucide-react";
+import { ChevronLeft, Code2, Copy, Plug } from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router";
+import { DuplicateServer } from "../../components/NewFromSnapshot";
 import { ServerActions } from "../../components/ServerActions";
 import { useOrg } from "../../components/Shell";
 import { Button, CopyText, cx, Empty, Modal, Notice, Status, Loading } from "../../components/ui";
@@ -101,6 +102,8 @@ export function ServerPage() {
   const { data: server, isPending } = useServer(org, name);
   const action = useServerAction(org, name);
   const [connecting, setConnecting] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const meta = useMeta().data;
 
   if (isPending) return <Loading />;
   if (!server || !membership) {
@@ -131,6 +134,12 @@ export function ServerPage() {
             <Button icon={<Plug className="size-3.5" />} onClick={() => setConnecting(true)}>
               Connect
             </Button>
+            {/* A copy is made from a snapshot, and making a server is for admins. */}
+            {atLeast(role, "admin") && meta?.snapshots && (
+              <Button icon={<Copy className="size-3.5" />} onClick={() => setDuplicating(true)}>
+                Duplicate
+              </Button>
+            )}
             <ServerActions server={server} />
           </div>
         )}
@@ -204,6 +213,7 @@ export function ServerPage() {
         <Outlet context={{ server, role } satisfies ServerContext} />
       </div>
       <ConnectDialog server={server} open={connecting} onOpenChange={setConnecting} />
+      <DuplicateServer server={server} open={duplicating} onClose={() => setDuplicating(false)} />
     </div>
   );
 }

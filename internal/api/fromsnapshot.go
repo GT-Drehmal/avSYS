@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -85,6 +86,12 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	}
 	if spec.Storage.Size.IsZero() {
 		spec.Storage.Size = recorded.Storage.Size
+	}
+	// The kind of storage it was on, too: where there is no default kind, a
+	// volume asked for without one is never provided.
+	if class := recorded.Storage.StorageClassName; spec.Storage.StorageClassName == nil && class != nil {
+		own := *class
+		spec.Storage.StorageClassName = &own
 	}
 	if _, said := given["sleep"]; !said {
 		spec.Sleep = recorded.Sleep
@@ -192,6 +199,80 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	}
 	writeJSON(w, http.StatusCreated, s.view(mc))
 	return nil
+}
+
+// createFromServer makes a copy of a server as it is now: a snapshot of it
+// is taken, unless its newest one already has everything, and the new server
+// is made from that. The original keeps running and is not touched.
+//
+// The request waits for the snapshot. What follows is as for any server made
+// from a snapshot: it exists once this answers, and its files follow.
+func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string) error {
+	ctx := r.Context()
+	if !s.Backups.Available() {
+		return errNoBackups
+	}
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: source}, mc); apierrors.IsNotFound(err) {
+		return &Error{Status: http.StatusNotFound, Code: "not_found", Message: fmt.Sprintf("There is no server named %s to copy.", source)}
+	} else if err != nil {
+		return err
+	}
+	// Said before the snapshot, which is the slow part and would be for
+	// nothing. They are checked again when the server is made.
+	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &avsysv1.MinecraftServer{}); err == nil {
+		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if softwareGiven(&requested) {
+		return errBadRequest("A copy takes its game version, loader, mods and game settings from the server it is of. Leave those out, and change them once the copy exists.")
+	}
+	if st := requested.State; st != "" && st != avsysv1.StateRunning && st != avsysv1.StateStopped {
+		return errBadRequest("%q is not a state. A server is Running or Stopped.", st)
+	}
+	if err := unfinished(mc); err != nil {
+		return err
+	}
+	if err := settled(mc); err != nil {
+		return err
+	}
+	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot, "")
+	if !ok {
+		return errBusy
+	}
+	// The caller hanging up does not stop the snapshot once it has begun.
+	working, cancel := context.WithTimeout(context.WithoutCancel(ctx), operationTimeout)
+	defer cancel()
+	snap, err := s.takeSnapshot(working, a.Org.Slug, mc, op, backup.TriggerCopy, u.Username)
+	if errors.Is(err, backup.ErrUnchanged) {
+		// Nothing has changed since its newest snapshot, which is then what
+		// the copy is made from.
+		snap, err = s.newestOf(working, a.Org.Slug, mc.Name)
+	}
+	s.finishOperation(working, a.Namespace, mc.Name, kindSnapshot, snap, snap, err)
+	if err != nil {
+		return operationFailed(err)
+	}
+	s.audit(ctx, u, a.Org, "server.copy", mc.Name, "to "+name)
+	// The snapshot was seen through although the caller may have hung up
+	// meanwhile, and so is making the server from it: otherwise a dropped
+	// connection would leave the snapshot and nothing to show for it.
+	return s.createFromSnapshot(w, r.WithContext(context.WithoutCancel(ctx)), u, a, name, requested, given, snap.ID)
+}
+
+// newestOf returns a server's newest snapshot.
+func (s *Server) newestOf(ctx context.Context, org, server string) (*backup.Snapshot, error) {
+	list, err := s.Backups.List(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if list[i].Server == server {
+			return &list[i], nil
+		}
+	}
+	return nil, errors.New("the server has no snapshot to copy from")
 }
 
 // populate copies a snapshot's files into a server that has just been

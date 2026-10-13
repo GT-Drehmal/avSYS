@@ -58,6 +58,8 @@ const (
 	TriggerPreRestore = "pre-restore"
 	// TriggerFinal is the snapshot taken of a server as it is deleted.
 	TriggerFinal = "final"
+	// TriggerCopy is the snapshot a copy of a server is made from.
+	TriggerCopy = "copy"
 )
 
 var (
