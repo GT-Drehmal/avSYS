@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,13 +114,32 @@ func facet(prefix string, values ...string) []string {
 	return out
 }
 
-func (s *Server) modrinthSearch(w http.ResponseWriter, r *http.Request, _ *store.User) error {
-	q := r.URL.Query()
+// modrinthOrder maps the orders the panel offers to Modrinth's names for them.
+var modrinthOrder = map[string]string{
+	"":          "relevance",
+	"relevance": "relevance",
+	"downloads": "downloads",
+	"follows":   "follows",
+	"newest":    "newest",
+	"updated":   "updated",
+}
+
+// tagPattern is what a category is named like. They go into a search
+// filter, so nothing that could be read as part of one is let through.
+var tagPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+_-]{0,39}$`)
+
+// modrinthSearchParams turns a search as the panel is asked for it into one
+// Modrinth understands.
+func modrinthSearchParams(q url.Values) (url.Values, error) {
 	kind := q.Get("type")
 	switch kind {
 	case "mod", "plugin", "datapack", "modpack", "resourcepack":
 	default:
-		return errBadRequest("Unknown content type.")
+		return nil, errBadRequest("Unknown content type.")
+	}
+	order, ok := modrinthOrder[q.Get("sort")]
+	if !ok {
+		return nil, errBadRequest("Results are sorted by relevance, downloads, follows, newest or updated.")
 	}
 	facets := [][]string{facet("project_type", kind)}
 	// A datapack is loader-independent, and a resource pack is not installed
@@ -128,28 +149,135 @@ func (s *Server) modrinthSearch(w http.ResponseWriter, r *http.Request, _ *store
 			facets = append(facets, facet("categories", loaders...))
 		}
 	}
-	if kind == "mod" || kind == "modpack" {
+	// Mods that only do something on the player's own game are left out,
+	// unless they are asked for.
+	if (kind == "mod" || kind == "modpack") && q.Get("side") != "any" {
 		facets = append(facets, facet("server_side", "required", "optional"))
 	}
 	if v := q.Get("gameVersion"); v != "" && v != "LATEST" {
 		facets = append(facets, facet("versions", v))
 	}
+	// Each category narrows the search further: a result has all of them.
+	for _, category := range strings.Split(q.Get("categories"), ",") {
+		if category == "" {
+			continue
+		}
+		if !tagPattern.MatchString(category) {
+			return nil, errBadRequest("%q is not a category.", category)
+		}
+		facets = append(facets, facet("categories", category))
+	}
 	encoded, err := json.Marshal(facets)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	params := url.Values{
+	return url.Values{
 		"query":  {q.Get("q")},
 		"facets": {string(encoded)},
-		"limit":  {"24"},
-		"offset": {strconv.Itoa(max(0, atoi(q.Get("offset"))))},
-		"index":  {"relevance"},
+		"limit":  {strconv.Itoa(modrinthPage)},
+		"offset": {strconv.Itoa(min(max(0, atoi(q.Get("offset"))), 10_000))},
+		"index":  {order},
+	}, nil
+}
+
+// modrinthPage is how many results a search returns at a time.
+const modrinthPage = 24
+
+func (s *Server) modrinthSearch(w http.ResponseWriter, r *http.Request, _ *store.User) error {
+	params, err := modrinthSearchParams(r.URL.Query())
+	if err != nil {
+		return err
 	}
 	body, err := s.catalog.get(r.Context(), "https://api.modrinth.com/v2/search?"+params.Encode(), 5*time.Minute)
 	if err != nil {
 		return err
 	}
 	writeRawJSON(w, body, time.Minute)
+	return nil
+}
+
+// modrinthTagType is the kind of project Modrinth files a kind of content's
+// categories under: mods, plugins and datapacks share one list.
+var modrinthTagType = map[string]string{
+	"mod": "mod", "plugin": "mod", "datapack": "mod",
+	"modpack": "modpack", "resourcepack": "resourcepack",
+}
+
+// modrinthCategories lists the categories a kind of content is sorted into,
+// as Modrinth has them today.
+func (s *Server) modrinthCategories(w http.ResponseWriter, r *http.Request, _ *store.User) error {
+	tagType, ok := modrinthTagType[r.URL.Query().Get("type")]
+	if !ok {
+		return errBadRequest("Unknown content type.")
+	}
+	body, err := s.catalog.get(r.Context(), "https://api.modrinth.com/v2/tag/category", time.Hour)
+	if err != nil {
+		return err
+	}
+	names, err := categoriesOf(body, tagType)
+	if err != nil {
+		return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Modrinth's list of categories could not be read."}
+	}
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	writeJSON(w, http.StatusOK, names)
+	return nil
+}
+
+// categoriesOf picks one kind of project's categories out of Modrinth's list
+// of all tags. Its other groups, such as a resource pack's resolution, are
+// left out, as are the loaders, which Modrinth also counts as categories.
+func categoriesOf(body []byte, tagType string) ([]string, error) {
+	var tags []struct {
+		Name        string `json:"name"`
+		ProjectType string `json:"project_type"`
+		Header      string `json:"header"`
+	}
+	if err := json.Unmarshal(body, &tags); err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, t := range tags {
+		if t.ProjectType == tagType && t.Header == "categories" && tagPattern.MatchString(t.Name) {
+			names = append(names, t.Name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// modrinthIDPattern is what a Modrinth project ID looks like.
+var modrinthIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// modrinthProjects names several projects at once, which is how what a mod
+// depends on is shown by name: a version only lists the IDs.
+func (s *Server) modrinthProjects(w http.ResponseWriter, r *http.Request, _ *store.User) error {
+	ids := strings.Split(r.URL.Query().Get("ids"), ",")
+	if len(ids) > 50 {
+		return errBadRequest("At most 50 projects at a time.")
+	}
+	for _, id := range ids {
+		if !modrinthIDPattern.MatchString(id) {
+			return errBadRequest("%q is not a project.", id)
+		}
+	}
+	sort.Strings(ids)
+	encoded, _ := json.Marshal(ids)
+	body, err := s.catalog.get(r.Context(), "https://api.modrinth.com/v2/projects?"+url.Values{"ids": {string(encoded)}}.Encode(), 5*time.Minute)
+	if err != nil {
+		return err
+	}
+	var projects []struct {
+		ID          string  `json:"id"`
+		Slug        string  `json:"slug"`
+		Title       string  `json:"title"`
+		IconURL     *string `json:"icon_url"`
+		ProjectType string  `json:"project_type"`
+	}
+	if err := json.Unmarshal(body, &projects); err != nil {
+		return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Modrinth's answer could not be read."}
+	}
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	writeJSON(w, http.StatusOK, projects)
 	return nil
 }
 

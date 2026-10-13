@@ -341,6 +341,31 @@ export interface ModrinthHit {
   author: string;
   project_type: string;
   categories: string[];
+  /** The categories without the loaders, which Modrinth counts among them. */
+  display_categories?: string[];
+  follows?: number;
+  date_modified?: string;
+  /** An SPDX identifier, or a name where there is none. */
+  license?: string;
+  client_side?: string;
+  server_side?: string;
+}
+
+/** A page of search results. */
+export interface ModrinthResults {
+  hits: ModrinthHit[];
+  offset: number;
+  limit: number;
+  total_hits: number;
+}
+
+/** A project as far as naming it goes. */
+export interface ModrinthProject {
+  id: string;
+  slug: string;
+  title: string;
+  icon_url: string | null;
+  project_type: string;
 }
 
 export interface ModrinthVersion {
@@ -351,6 +376,7 @@ export interface ModrinthVersion {
   game_versions: string[];
   loaders: string[];
   date_published: string;
+  dependencies?: { project_id: string | null; dependency_type: "required" | "optional" | "incompatible" | "embedded" }[];
 }
 
 export interface MinecraftVersions {
