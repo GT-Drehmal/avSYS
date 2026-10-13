@@ -98,7 +98,11 @@ export function NewServer() {
     if (hardcore) properties["hardcore"] = "true";
     if (maxPlayers) properties["max-players"] = maxPlayers;
     if (pvp) properties["pvp"] = pvp;
-    if (access === "members") properties["white-list"] = "true";
+    if (access === "members") {
+      properties["white-list"] = "true";
+      // Whoever is taken off the whitelist is put out, not only kept out.
+      properties["enforce-whitelist"] = "true";
+    }
     const spec: Partial<ServerSpec> = {
       displayName,
       eula,

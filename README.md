@@ -175,6 +175,7 @@ A new server made in the panel is for its organization: the whitelist is on, and
 Members are also made operators in game, from the operator role up. Neither needs doing by hand, and both keep up: when a server starts, and within seconds of someone linking an account, joining, leaving, or changing role.
 
 - **Each server sets both**, under **Settings → Players**: who is whitelisted by membership (every member, a role and above, or nobody) and who is an operator by role (operators and above by default).
+- **Someone taken off the whitelist is put out**, not only kept out: servers made this way also set the game's `enforce-whitelist`.
 - **Players you add yourself stay.** Friends who are not in the panel go in a server's Whitelisted players list, and extra operators in its Operators list. The panel only ever takes off players it put on.
 - To keep someone an operator whatever their role, list them under Operators: opping in game a player the panel already made one changes nothing it can see.
 - **A linked account is not proof of owning it.** For operators that does not matter: a member with the operator role can already op anyone from the console. For the whitelist it means each member has one place to give, to the one account they link, which is usually their own and need not be.

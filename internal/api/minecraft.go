@@ -229,7 +229,11 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 		}
 	}
 	orig := fresh.DeepCopy()
+	if fresh.Annotations == nil {
+		fresh.Annotations = map[string]string{}
+	}
 	changed := false
+	var failed error
 	for _, list := range roleLists {
 		made := splitNames(fresh.Annotations[list.note])
 		wanted := wantedFrom(list.from(&fresh.Spec), members)
@@ -237,31 +241,57 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 		if len(add) == 0 && len(remove) == 0 {
 			continue
 		}
-		for _, name := range add {
-			if _, err := s.rcon(ctx, fresh, list.add+name); err != nil {
-				return err
-			}
-		}
-		for _, name := range remove {
-			if _, err := s.rcon(ctx, fresh, list.remove+name); err != nil {
-				return err
-			}
-		}
-		if fresh.Annotations == nil {
-			fresh.Annotations = map[string]string{}
-		}
-		if len(wanted) == 0 {
+		// The note follows each command as it is carried out, so that a
+		// failure part of the way leaves it true of the game. A player put
+		// on a list and not noted would never be taken off again.
+		done, err := applyNames(made, add, remove, wanted, func(command string) error {
+			_, err := s.rcon(ctx, fresh, command)
+			return err
+		}, list.add, list.remove)
+		if note := strings.Join(done, ","); note == "" {
 			delete(fresh.Annotations, list.note)
 		} else {
-			fresh.Annotations[list.note] = strings.Join(wanted, ",")
+			fresh.Annotations[list.note] = note
 		}
 		changed = true
+		if err != nil {
+			failed = err
+			break
+		}
 		s.Log.Info(list.what+" brought in step with roles", "server", key.String(), "added", add, "removed", remove)
 	}
-	if !changed {
-		return nil
+	if changed {
+		if err := s.Client.Patch(ctx, fresh, client.MergeFrom(orig)); err != nil {
+			return err
+		}
 	}
-	return s.Client.Patch(ctx, fresh, client.MergeFrom(orig))
+	return failed
+}
+
+// applyNames carries out the additions and removals of one list with run,
+// and returns who the panel has put on it afterwards: wanted, if everything
+// went through, and otherwise made as changed by the commands that did.
+func applyNames(made, add, remove, wanted []string, run func(command string) error, adding, removing string) ([]string, error) {
+	now := append([]string{}, made...)
+	for _, name := range add {
+		if err := run(adding + name); err != nil {
+			return now, err
+		}
+		now = append(now, name)
+	}
+	for _, name := range remove {
+		if err := run(removing + name); err != nil {
+			return now, err
+		}
+		kept := now[:0]
+		for _, n := range now {
+			if !strings.EqualFold(n, name) {
+				kept = append(kept, n)
+			}
+		}
+		now = kept
+	}
+	return wanted, nil
 }
 
 // syncOrgOps does syncOps for every server of an organization.
@@ -454,7 +484,9 @@ func (s *Server) started(old, now any) {
 		if err != nil {
 			return
 		}
-		s.refreshNames(ctx, members)
+		// With the names as they are known, at once. Asking Mojang whether
+		// any has changed can take a while and is left to the next look: a
+		// server that has just come up is being let into already.
 		if err := s.syncOps(ctx, mc, members); err != nil {
 			// The look that runs every minute tries again.
 			s.Log.Warn("could not set a started server's operators and whitelist", "server", mc.Name, "org", slug, "error", err)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -279,5 +280,50 @@ func TestAutoWhitelistSetting(t *testing.T) {
 		if got, code := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"autoWhitelist":"`+value+`"}}`); got != want {
 			t.Errorf("autoWhitelist %q: %d %s, want %d", value, got, code, want)
 		}
+	}
+}
+
+// The note of whom the panel put on a list stays true of the game when a
+// command fails part of the way: what went through is noted, what did not
+// is not.
+func TestApplyNamesNotesWhatWentThrough(t *testing.T) {
+	var ran []string
+	failAt := func(n int) func(string) error {
+		ran = nil
+		return func(command string) error {
+			ran = append(ran, command)
+			if len(ran) == n {
+				return errors.New("the server has gone")
+			}
+			return nil
+		}
+	}
+	made, add, remove, wanted := []string{"Ada", "Otto"}, []string{"Vera", "Olive"}, []string{"Otto"}, []string{"Ada", "Olive", "Vera"}
+
+	got, err := applyNames(made, add, remove, wanted, failAt(0), "whitelist add ", "whitelist remove ")
+	if err != nil || strings.Join(got, " ") != "Ada Olive Vera" {
+		t.Errorf("all through: %v, %v", got, err)
+	}
+	if strings.Join(ran, "; ") != "whitelist add Vera; whitelist add Olive; whitelist remove Otto" {
+		t.Errorf("commands: %v", ran)
+	}
+	// The second addition fails: the first is noted, the removal not made.
+	got, err = applyNames(made, add, remove, wanted, failAt(2), "whitelist add ", "whitelist remove ")
+	if err == nil || strings.Join(got, " ") != "Ada Otto Vera" {
+		t.Errorf("failing at the second command: %v, %v; want Ada Otto Vera noted", got, err)
+	}
+	// The removal fails: both additions are noted, and Otto still is.
+	got, err = applyNames(made, add, remove, wanted, failAt(3), "whitelist add ", "whitelist remove ")
+	if err == nil || strings.Join(got, " ") != "Ada Otto Vera Olive" {
+		t.Errorf("failing at the removal: %v, %v", got, err)
+	}
+	// The very first fails: nothing has changed.
+	got, err = applyNames(made, add, remove, wanted, failAt(1), "whitelist add ", "whitelist remove ")
+	if err == nil || strings.Join(got, " ") != "Ada Otto" {
+		t.Errorf("failing at once: %v, %v", got, err)
+	}
+	// What it was handed is not written over.
+	if strings.Join(made, " ") != "Ada Otto" {
+		t.Errorf("the note it started from was changed: %v", made)
 	}
 }
