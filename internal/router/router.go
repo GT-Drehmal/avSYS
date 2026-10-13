@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -90,21 +91,18 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// answer replies without involving a backend: a status line for the server
-	// list, or a reason shown when a join is refused.
-	answer := func(title, detail string) {
+	// answer replies without involving a backend: a line for the server list,
+	// or a reason shown when a join is refused.
+	answer := func(e entry) {
 		if hs.NextState == mcproto.NextStatus {
-			_ = mcproto.ServeStatus(conn, br, mcproto.Status{
-				Version:     mcproto.Version{Name: "avSYS", Protocol: hs.Protocol},
-				Description: motd(title, detail),
-			})
+			_ = mcproto.ServeStatus(conn, br, e.status(hs.Protocol))
 			return
 		}
-		_ = mcproto.Disconnect(conn, mcproto.Text{Text: title + "\n\n", Extra: []mcproto.Text{{Text: detail, Color: "gray"}}})
+		_ = mcproto.Disconnect(conn, mcproto.Text{Text: e.title + "\n\n", Extra: []mcproto.Text{{Text: e.detail, Color: "gray"}}})
 	}
 
 	if mc == nil {
-		answer("Unknown server", "Nothing is hosted at "+host+".")
+		answer(entry{title: "Unknown server", detail: "Nothing is hosted at " + host + ".", closed: "Offline"})
 		return
 	}
 	name := mc.Spec.DisplayName
@@ -117,21 +115,65 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 		r.proxy(ctx, conn, br, hs, mc)
 	case avsysv1.PhaseSleeping:
 		if hs.NextState == mcproto.NextStatus {
-			answer(name, "Asleep. Join to wake it up.")
+			// Listed as a server one can join, because joining is what
+			// wakes it.
+			answer(entry{title: name, detail: "Asleep. Join to wake it up.", max: maxPlayers(mc)})
 			return
 		}
 		if err := controller.SetAsleep(ctx, r.Client, mc, false); err != nil {
 			r.Log.Error("waking server", "server", client.ObjectKeyFromObject(mc), "error", err)
-			answer(name, "This server could not be woken. Tell an admin.")
+			answer(entry{title: name, detail: "This server could not be woken. Tell an admin."})
 			return
 		}
 		r.Log.Info("woken by join", "server", client.ObjectKeyFromObject(mc))
-		answer(name, "Waking up. Join again in a minute.")
+		answer(entry{title: name, detail: "Waking up. Join again in a minute."})
 	case avsysv1.PhaseStarting:
-		answer(name, "Starting up. Try again in a moment.")
+		answer(entry{title: name, detail: "Starting up. Try again in a moment.", closed: "Starting"})
 	default:
-		answer(name, "Offline.")
+		answer(entry{title: name, detail: "Offline.", closed: "Offline"})
 	}
+}
+
+// entry is what the router says of a server it is not connecting a player
+// to: two lines of text, and whether it can be joined at all.
+type entry struct {
+	title, detail string
+	// closed is set for a server that cannot be joined just now, to the one
+	// word that says why. The game shows it in red where the number of
+	// players would be, with a cross in place of the signal bars.
+	closed string
+	// max is how many players it takes, for one that can be joined.
+	max int
+}
+
+// status is the entry as the server list is told it.
+//
+// The game has no way to be told "this server is off". What it does have is
+// a server on a version it cannot join, which it shows as exactly that: the
+// version's name in red and no signal. So a server that is off answers as
+// one on a version called "Offline". Answering as an ordinary server with
+// nobody on it showed green bars and "0/0", which reads as a server one
+// could walk into.
+func (e entry) status(protocol int) mcproto.Status {
+	st := mcproto.Status{
+		Version:     mcproto.Version{Name: "avSYS", Protocol: protocol},
+		Players:     mcproto.Players{Max: e.max},
+		Description: motd(e.title, e.detail),
+	}
+	if e.closed != "" {
+		// No client speaks this version.
+		st.Version = mcproto.Version{Name: e.closed, Protocol: -1}
+	}
+	return st
+}
+
+// maxPlayers is how many players a server is set to take, or the game's own
+// default where it is not set.
+func maxPlayers(mc *avsysv1.MinecraftServer) int {
+	if n, err := strconv.Atoi(mc.Spec.Properties["max-players"]); err == nil && n > 0 {
+		return n
+	}
+	return 20
 }
 
 func (r *Router) proxy(ctx context.Context, conn net.Conn, br *bufio.Reader, hs mcproto.Handshake, mc *avsysv1.MinecraftServer) {

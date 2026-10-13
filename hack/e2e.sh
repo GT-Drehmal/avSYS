@@ -172,6 +172,8 @@ call -X POST "$SRV/stop" >/dev/null
 wait_phase Stopped
 expect "files reachable while stopped" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "router says offline" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "Offline"
+# Listed as a server the game will not let anyone into, not as an empty one.
+expect "and lists it as closed" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT" | field "(d['version']['name'], d['version']['protocol'] < 0)")" "('Offline', True)"
 stopped=$(call -X POST "$SRV/snapshots?wait=true")
 LAST=$(echo "$stopped" | field "d['id']") || fail "no snapshot was taken of the stopped server: $stopped"
 expect "a stopped server is snapshotted" "$(echo "$stopped" | field "d['trigger']")" manual
