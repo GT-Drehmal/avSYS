@@ -150,11 +150,26 @@ func TestAvatar(t *testing.T) {
 
 	// A picture that came with a sign-in from elsewhere is not the panel's
 	// to take away.
-	if err := p.srv.Store.SetAvatarURL(context.Background(), p.users["admin"].ID, "https://example.com/a.png"); err != nil {
+	const theirs = "https://example.com/a.png"
+	if err := p.srv.Store.SetAvatarURL(context.Background(), p.users["admin"].ID, theirs); err != nil {
 		t.Fatal(err)
 	}
-	if rec := p.send("admin", "DELETE", "/me/avatar", nil); rec.Code != 204 || avatarOf("admin") != "https://example.com/a.png" {
+	if rec := p.send("admin", "DELETE", "/me/avatar", nil); rec.Code != 204 || avatarOf("admin") != theirs {
 		t.Errorf("removing a picture that was never uploaded: %d, then %q", rec.Code, avatarOf("admin"))
+	}
+	// One uploaded over it stands in for it, and it comes back when that
+	// one is removed.
+	if rec := p.send("admin", "PUT", "/me/avatar", asPNG(t, picture(64, 64))); rec.Code != 204 || avatarOf("admin") == theirs {
+		t.Errorf("uploading over it: %d, then %q", rec.Code, avatarOf("admin"))
+	}
+	if rec := p.send("admin", "PUT", "/me/avatar", asPNG(t, picture(32, 32))); rec.Code != 204 {
+		t.Errorf("uploading a second time: %d", rec.Code)
+	}
+	if rec := p.send("admin", "DELETE", "/me/avatar", nil); rec.Code != 204 || avatarOf("admin") != theirs {
+		t.Errorf("removing the upload: %d, then %q, want the one from before", rec.Code, avatarOf("admin"))
+	}
+	if _, err := p.srv.Store.Setting(context.Background(), providerAvatarKey(p.users["admin"].ID)); err != store.ErrNotFound {
+		t.Errorf("the address kept aside was left behind: %v", err)
 	}
 }
 
@@ -170,8 +185,12 @@ func TestOrgIcon(t *testing.T) {
 	if rec := p.send("operator", "PUT", "/orgs/alpha/icon", asPNG(t, picture(64, 64))); rec.Code != 403 {
 		t.Errorf("an operator setting it: %d, want 403", rec.Code)
 	}
-	if rec := p.send("admin", "PUT", "/orgs/alpha/icon", asPNG(t, picture(64, 64))); rec.Code != 204 {
-		t.Fatalf("an admin setting it: %d %s", rec.Code, rec.Body)
+	// Like its name, it is its owners' to change.
+	if rec := p.send("admin", "PUT", "/orgs/alpha/icon", asPNG(t, picture(64, 64))); rec.Code != 403 {
+		t.Errorf("an admin setting it: %d, want 403", rec.Code)
+	}
+	if rec := p.send("owner", "PUT", "/orgs/alpha/icon", asPNG(t, picture(64, 64))); rec.Code != 204 {
+		t.Fatalf("an owner setting it: %d %s", rec.Code, rec.Body)
 	}
 	if hasIcon("viewer") != true {
 		t.Error("the organization does not say it has a picture")
@@ -201,7 +220,62 @@ func TestOrgIcon(t *testing.T) {
 	if _, _, err := p.srv.Store.Image(context.Background(), store.OrgImage(beta.ID)); err != store.ErrNotFound {
 		t.Errorf("a deleted organization's picture was left behind: %v", err)
 	}
-	if rec := p.send("admin", "DELETE", "/orgs/alpha/icon", nil); rec.Code != 204 || hasIcon("viewer") != false {
+	if rec := p.send("owner", "DELETE", "/orgs/alpha/icon", nil); rec.Code != 204 || hasIcon("viewer") != false {
 		t.Errorf("removing it: %d, then hasIcon %v", rec.Code, hasIcon("viewer"))
+	}
+}
+
+// withOrientation gives a JPEG the EXIF note a camera writes to say which
+// way up the photo is.
+func withOrientation(jpg []byte, turn byte) []byte {
+	tiff := []byte{'M', 'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, turn, 0, 0, 0, 0, 0, 0}
+	exif := append([]byte("Exif\x00\x00"), tiff...)
+	seg := append([]byte{0xFF, 0xE1, byte((len(exif) + 2) >> 8), byte(len(exif) + 2)}, exif...)
+	return append(append(append([]byte{}, jpg[:2]...), seg...), jpg[2:]...)
+}
+
+// A photo is stored as the camera's sensor saw it, with a note of which way
+// is up. What comes out is the right way up.
+func TestSquarePNGTurnsPhotosTheRightWayUp(t *testing.T) {
+	var plain bytes.Buffer
+	// Red on the left, blue on the right, as stored.
+	if err := jpeg.Encode(&plain, picture(400, 400), &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatal(err)
+	}
+	if got := jpegOrientation(plain.Bytes()); got != 1 {
+		t.Errorf("a JPEG that does not say: %d, want 1", got)
+	}
+	red := func(c color.Color) bool { n := color.NRGBAModel.Convert(c).(color.NRGBA); return n.R > 200 && n.B < 60 }
+	for turn, where := range map[byte]string{1: "left", 2: "right", 3: "right", 4: "left", 5: "top", 6: "top", 7: "bottom", 8: "bottom"} {
+		data := withOrientation(plain.Bytes(), turn)
+		if got := jpegOrientation(data); got != int(turn) {
+			t.Errorf("orientation read back: %d, want %d", got, turn)
+			continue
+		}
+		out, err := squarePNG(bytes.NewReader(data), 64)
+		if err != nil {
+			t.Fatalf("orientation %d: %v", turn, err)
+		}
+		img, _, _ := image.Decode(bytes.NewReader(out))
+		// The four corners say which half is red: top left, top right,
+		// bottom left, bottom right.
+		got := [4]bool{red(img.At(16, 16)), red(img.At(48, 16)), red(img.At(16, 48)), red(img.At(48, 48))}
+		want := map[string][4]bool{
+			"left": {true, false, true, false}, "right": {false, true, false, true},
+			"top": {true, true, false, false}, "bottom": {false, false, true, true},
+		}[where]
+		if got != want {
+			t.Errorf("orientation %d: red corners %v, want red on the %s %v", turn, got, where, want)
+		}
+	}
+	// A note that is cut short or says nonsense is no note.
+	for name, data := range map[string][]byte{
+		"cut short":  withOrientation(plain.Bytes(), 6)[:20],
+		"nonsense":   withOrientation(plain.Bytes(), 9),
+		"not a JPEG": []byte("hello"),
+	} {
+		if got := jpegOrientation(data); got != 1 {
+			t.Errorf("%s: %d, want 1", name, got)
+		}
 	}
 }

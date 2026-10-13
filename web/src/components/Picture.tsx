@@ -25,16 +25,24 @@ interface PictureProps {
   shape?: "round" | "square";
   /** Told whether there turned out to be a picture at url. */
   onFound?: (found: boolean) => void;
+  /**
+   * Something that changes when a picture that was not there may have come
+   * to be: a server's icon cannot be read while it restarts, and is asked
+   * for again once this changes.
+   */
+  retryKey?: string;
 }
 
 /** The picture of a server, an organization or a person, or a tile with its initial. */
-export function Picture({ name, url, size = 24, shape = "square", onFound }: PictureProps) {
+export function Picture({ name, url, size = 24, shape = "square", onFound, retryKey = "" }: PictureProps) {
   const version = usePictureVersion();
   // Only the panel's own pictures change under the same address.
   const src = url && (url.startsWith("/") ? `${url}${url.includes("?") ? "&" : "?"}v=${version}` : url);
   // Which address turned out to have a picture, and which to have none.
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  // A failure only counts for as long as nothing has changed since.
+  const attempt = `${src}|${retryKey}`;
   const radius = shape === "round" ? "rounded-full" : size > 32 ? "rounded-lg" : "rounded-md";
   const shown = !!src && loaded === src;
   return (
@@ -45,8 +53,10 @@ export function Picture({ name, url, size = 24, shape = "square", onFound }: Pic
           {name.slice(0, 1)}
         </span>
       )}
-      {src && failed !== src && (
+      {src && failed !== attempt && (
         <img
+          // Made anew when asked for again, so that the browser fetches it again.
+          key={attempt}
           src={src}
           alt=""
           width={size}
@@ -58,7 +68,7 @@ export function Picture({ name, url, size = 24, shape = "square", onFound }: Pic
             onFound?.(true);
           }}
           onError={() => {
-            setFailed(src);
+            setFailed(attempt);
             onFound?.(false);
           }}
         />
@@ -106,11 +116,12 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint }: P
       <Picture name={name} url={url ?? (has === false ? undefined : `/api/v1${path}`)} size={56} shape={shape} onFound={setFound} />
       <div className="flex flex-col gap-1.5">
         <div className="flex gap-2">
-          <Button size="sm" loading={busy === "upload"} onClick={() => input.current?.click()}>
+          {/* One at a time: a replace and a remove under way together end in whichever lands last. */}
+          <Button size="sm" loading={busy === "upload"} disabled={busy !== null} onClick={() => input.current?.click()}>
             {exists ? "Replace" : "Upload"}
           </Button>
           {exists && (
-            <Button size="sm" variant="ghost" loading={busy === "remove"} onClick={() => run("remove", () => api.del(path))}>
+            <Button size="sm" variant="ghost" loading={busy === "remove"} disabled={busy !== null} onClick={() => run("remove", () => api.del(path))}>
               Remove
             </Button>
           )}

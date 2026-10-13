@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"image"
-	"image/draw"
+	"image/color"
 	_ "image/gif" // pictures may be given as GIF, JPEG or PNG
 	_ "image/jpeg"
 	"image/png"
@@ -36,10 +37,15 @@ const (
 
 var errNotAPicture = errBadRequest("That is not a picture the panel can read. Use a PNG, JPEG or GIF of up to 4 MB.")
 
+// decoding lets a few pictures be unpacked at a time. One of the largest
+// accepted takes some tens of megabytes while it is, and anyone signed in
+// can send one.
+var decoding = make(chan struct{}, 2)
+
 // squarePNG turns an uploaded picture into a square PNG of the given side:
-// the middle of it, scaled. Whatever was uploaded is decoded and drawn anew,
-// so what is stored and served is always an image made here, never the
-// bytes someone sent.
+// the middle of it, scaled, the right way up. Whatever was uploaded is
+// decoded and drawn anew, so what is stored and served is always an image
+// made here, never the bytes someone sent.
 func squarePNG(r io.Reader, side int) ([]byte, error) {
 	raw, err := io.ReadAll(io.LimitReader(r, maxPictureBytes+1))
 	if err != nil {
@@ -48,43 +54,76 @@ func squarePNG(r io.Reader, side int) ([]byte, error) {
 	if len(raw) > maxPictureBytes {
 		return nil, &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Pictures are up to 4 MB."}
 	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(raw))
 	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
 		return nil, errNotAPicture
 	}
 	if cfg.Width > maxPictureSide || cfg.Height > maxPictureSide {
 		return nil, errBadRequest("Pictures are up to %d pixels a side.", maxPictureSide)
 	}
-	decoded, _, err := image.Decode(bytes.NewReader(raw))
+	decoding <- struct{}{}
+	defer func() { <-decoding }()
+	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, errNotAPicture
 	}
-	// Into a known layout first, so that scaling reads plain bytes.
-	bounds := decoded.Bounds()
-	src := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
-	draw.Draw(src, src.Bounds(), decoded, bounds.Min, draw.Src)
+	// A camera stores a photo as its sensor saw it and says separately
+	// which way is up. Decoding gives the former.
+	turn := 1
+	if format == "jpeg" {
+		turn = jpegOrientation(raw)
+	}
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if turn >= 5 {
+		// Those are the ones on their side.
+		w, h = h, w
+	}
+	// at reads the pixel at (x, y) of the picture the right way up.
+	at := func(x, y int) color.NRGBA {
+		sx, sy := x, y
+		switch turn {
+		case 2:
+			sx = w - 1 - x
+		case 3:
+			sx, sy = w-1-x, h-1-y
+		case 4:
+			sy = h - 1 - y
+		case 5:
+			sx, sy = y, x
+		case 6:
+			sx, sy = y, w-1-x
+		case 7:
+			sx, sy = h-1-y, w-1-x
+		case 8:
+			sx, sy = h-1-y, x
+		}
+		return color.NRGBAModel.Convert(src.At(bounds.Min.X+sx, bounds.Min.Y+sy)).(color.NRGBA)
+	}
 
 	// The largest square in the middle.
-	crop := min(bounds.Dx(), bounds.Dy())
-	x0, y0 := (bounds.Dx()-crop)/2, (bounds.Dy()-crop)/2
+	crop := min(w, h)
+	x0, y0 := (w-crop)/2, (h-crop)/2
 	dst := image.NewNRGBA(image.Rect(0, 0, side, side))
 	for y := range side {
 		for x := range side {
-			// Each pixel is the average of the block of the original it
-			// covers, which is at least one pixel of it.
-			sx0, sx1 := x0+x*crop/side, x0+(x+1)*crop/side
-			sy0, sy1 := y0+y*crop/side, y0+(y+1)*crop/side
-			sx1, sy1 = max(sx1, sx0+1), max(sy1, sy0+1)
+			// Each pixel is the average of points spread over the block of
+			// the original it covers: all of them where the block is small,
+			// a grid of them where it is large. The original is read where
+			// it lies and never copied whole.
+			bx0, bx1 := x0+x*crop/side, x0+(x+1)*crop/side
+			by0, by1 := y0+y*crop/side, y0+(y+1)*crop/side
+			nx, ny := min(max(bx1-bx0, 1), samplesPerSide), min(max(by1-by0, 1), samplesPerSide)
 			var r, g, b, a, n uint32
-			for sy := sy0; sy < sy1; sy++ {
-				for sx := sx0; sx < sx1; sx++ {
-					i := src.PixOffset(sx, sy)
-					alpha := uint32(src.Pix[i+3])
-					// Weighted by how solid each pixel is, so that
+			for j := range ny {
+				for i := range nx {
+					c := at(bx0+(2*i+1)*max(bx1-bx0, 1)/(2*nx), by0+(2*j+1)*max(by1-by0, 1)/(2*ny))
+					alpha := uint32(c.A)
+					// Weighted by how solid each point is, so that
 					// see-through ones do not darken an edge.
-					r += uint32(src.Pix[i]) * alpha
-					g += uint32(src.Pix[i+1]) * alpha
-					b += uint32(src.Pix[i+2]) * alpha
+					r += uint32(c.R) * alpha
+					g += uint32(c.G) * alpha
+					b += uint32(c.B) * alpha
 					a += alpha
 					n++
 				}
@@ -101,6 +140,66 @@ func squarePNG(r io.Reader, side int) ([]byte, error) {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// samplesPerSide is how many points across and down are read of the part
+// of the original that becomes one pixel.
+const samplesPerSide = 4
+
+// jpegOrientation reads which way up a JPEG says it is: 1 to 8 as EXIF
+// numbers them, and 1, as stored, when it does not say or cannot be read.
+func jpegOrientation(raw []byte) int {
+	// Segments follow the two-byte start marker, each a marker, a length
+	// that counts itself, and that much data.
+	for i := 2; i+4 <= len(raw) && raw[i] == 0xFF; {
+		marker, size := raw[i+1], int(raw[i+2])<<8|int(raw[i+3])
+		if size < 2 || i+2+size > len(raw) {
+			return 1
+		}
+		seg := raw[i+4 : i+2+size]
+		if marker == 0xE1 && len(seg) >= 14 && string(seg[:6]) == "Exif\x00\x00" {
+			return tiffOrientation(seg[6:])
+		}
+		if marker == 0xDA {
+			// The picture itself begins: no more headers.
+			return 1
+		}
+		i += 2 + size
+	}
+	return 1
+}
+
+func tiffOrientation(tiff []byte) int {
+	if len(tiff) < 8 {
+		return 1
+	}
+	var order binary.ByteOrder
+	switch string(tiff[:2]) {
+	case "II":
+		order = binary.LittleEndian
+	case "MM":
+		order = binary.BigEndian
+	default:
+		return 1
+	}
+	dir := int(order.Uint32(tiff[4:8]))
+	if dir < 8 || dir+2 > len(tiff) {
+		return 1
+	}
+	entries := int(order.Uint16(tiff[dir : dir+2]))
+	for e := range entries {
+		at := dir + 2 + e*12
+		if at+12 > len(tiff) {
+			return 1
+		}
+		if order.Uint16(tiff[at:at+2]) == 0x0112 {
+			if v := int(order.Uint16(tiff[at+8 : at+10])); v >= 1 && v <= 8 {
+				return v
+			}
+			return 1
+		}
+	}
+	return 1
 }
 
 // servePicture answers with a PNG the panel made. It is revalidated on every
@@ -137,8 +236,10 @@ func (s *Server) getOrgIcon(w http.ResponseWriter, r *http.Request, u *store.Use
 	return s.serveStored(w, r, store.OrgImage(a.Org.ID))
 }
 
+// putOrgIcon sets the organization's picture. Like its name, that is its
+// owners' to change.
 func (s *Server) putOrgIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, err := s.org(r, u, store.RoleAdmin)
+	a, err := s.org(r, u, store.RoleOwner)
 	if err != nil {
 		return err
 	}
@@ -155,7 +256,7 @@ func (s *Server) putOrgIcon(w http.ResponseWriter, r *http.Request, u *store.Use
 }
 
 func (s *Server) deleteOrgIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, err := s.org(r, u, store.RoleAdmin)
+	a, err := s.org(r, u, store.RoleOwner)
 	if err != nil {
 		return err
 	}
@@ -175,10 +276,20 @@ func (s *Server) getAvatar(w http.ResponseWriter, r *http.Request, _ *store.User
 	return s.serveStored(w, r, store.UserImage(r.PathValue("user")))
 }
 
+// providerAvatarKey is where the address of the picture a user had from
+// signing in elsewhere is kept while one they uploaded stands in for it.
+func providerAvatarKey(userID string) string { return "provider-avatar/" + userID }
+
 func (s *Server) putAvatar(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	data, err := squarePNG(r.Body, avatarSide)
 	if err != nil {
 		return err
+	}
+	// Kept aside, to go back to when the upload is removed.
+	if u.AvatarURL != "" && u.AvatarURL != avatarURL(u.ID) {
+		if err := s.Store.SetSetting(r.Context(), providerAvatarKey(u.ID), u.AvatarURL); err != nil {
+			return err
+		}
 	}
 	if err := s.Store.SetImage(r.Context(), store.UserImage(u.ID), data); err != nil {
 		return err
@@ -195,9 +306,16 @@ func (s *Server) deleteAvatar(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	// Only a picture that was uploaded is taken away. One that came with a
-	// sign-in from elsewhere is that account's, and stays.
+	// sign-in from elsewhere is that account's: it stays, or comes back.
 	if u.AvatarURL == avatarURL(u.ID) {
-		if err := s.Store.SetAvatarURL(r.Context(), u.ID, ""); err != nil {
+		before, err := s.Store.Setting(r.Context(), providerAvatarKey(u.ID))
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		if err := s.Store.SetAvatarURL(r.Context(), u.ID, before); err != nil {
+			return err
+		}
+		if err := s.Store.DeleteSetting(r.Context(), providerAvatarKey(u.ID)); err != nil {
 			return err
 		}
 	}

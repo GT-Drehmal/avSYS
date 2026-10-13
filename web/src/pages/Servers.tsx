@@ -84,7 +84,7 @@ export function Servers() {
                 <Link to={`s/${s.name}`} className={`${columns} min-h-14 py-2.5 text-[13px] transition-colors hover:bg-raised max-md:grid-cols-[minmax(0,1fr)_auto]`}>
                   <span className="flex min-w-0 items-center gap-3">
                     <StatusDot phase={s.status.phase} />
-                    <Picture name={displayName(s)} url={serverIcon(s)} size={32} />
+                    <Picture name={displayName(s)} url={serverIcon(s)} size={32} retryKey={s.status.phase} />
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{displayName(s)}</span>
                       <span className="block truncate text-xs text-muted">

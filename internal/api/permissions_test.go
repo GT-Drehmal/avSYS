@@ -218,8 +218,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		// 404: allowed, and it has no picture. 400: allowed, and what was
 		// sent is not one.
 		{"GET /orgs/{org}/icon", "", "", store.RoleViewer, 404},
-		{"PUT /orgs/{org}/icon", "", "not a picture", store.RoleAdmin, 400},
-		{"DELETE /orgs/{org}/icon", "", "", store.RoleAdmin, 204},
+		{"PUT /orgs/{org}/icon", "", "not a picture", store.RoleOwner, 400},
+		{"DELETE /orgs/{org}/icon", "", "", store.RoleOwner, 204},
 		{"GET /orgs/{org}/offsite", "", "", store.RoleViewer, 200},
 		{"POST /orgs/{org}/offsite/run", "", "", store.RoleAdmin, 503},
 		// The two below are in rootOnly.
