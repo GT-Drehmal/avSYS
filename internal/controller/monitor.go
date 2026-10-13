@@ -88,6 +88,9 @@ func (m *Monitor) check(ctx context.Context, mc *avsysv1.MinecraftServer) {
 		players.Names = append(players.Names, p.Name)
 	}
 	mc.Status.Players = players
+	if players.Max > 0 {
+		mc.Status.MaxPlayers = players.Max
+	}
 	mc.Status.Version = st.Version.Name
 
 	now := metav1.Now()

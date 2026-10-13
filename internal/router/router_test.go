@@ -44,6 +44,18 @@ func TestMaxPlayers(t *testing.T) {
 			t.Errorf("max-players %q: %d, want %d", set, got, want)
 		}
 	}
+	// A limit set by hand in server.properties is in no setting, and is
+	// known from what the game last said.
+	mc := &avsysv1.MinecraftServer{}
+	mc.Status.MaxPlayers = 64
+	if got := maxPlayers(mc); got != 64 {
+		t.Errorf("with only what the game last said: %d, want 64", got)
+	}
+	// A setting that has since been made is what it will take when it wakes.
+	mc.Spec.Properties = map[string]string{"max-players": "10"}
+	if got := maxPlayers(mc); got != 10 {
+		t.Errorf("with a setting as well: %d, want 10", got)
+	}
 }
 
 // A server's own icon is in its entry whether or not it can be joined, as

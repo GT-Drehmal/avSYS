@@ -322,6 +322,10 @@ type MinecraftServerStatus struct {
 	// Version is the game version the running server reports.
 	Version string         `json:"version,omitempty"`
 	Players *PlayersStatus `json:"players,omitempty"`
+	// MaxPlayers is how many players the game last said it takes. Unlike
+	// Players it is kept while the server is not running, for the server
+	// list to show of one that is asleep.
+	MaxPlayers int32 `json:"maxPlayers,omitempty"`
 	// Node is the cluster node the server runs on.
 	Node string `json:"node,omitempty"`
 	// LastActive is the last time a player was seen online, or the server became ready.

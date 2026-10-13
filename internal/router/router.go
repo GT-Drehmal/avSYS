@@ -56,6 +56,11 @@ const iconWait = 800 * time.Millisecond
 
 // favicon is a server's icon in the form the server list takes it, or ""
 // for none.
+//
+// Anyone can ask for a server list, signed in or not. Icon is expected to
+// do at most one read per server at a time however often it is asked, and
+// to give up on one that does not finish: what is started here per ask is
+// only the wait for it.
 func (r *Router) favicon(ctx context.Context, mc *avsysv1.MinecraftServer) string {
 	if r.Icon == nil {
 		return ""
@@ -63,9 +68,7 @@ func (r *Router) favicon(ctx context.Context, mc *avsysv1.MinecraftServer) strin
 	found := make(chan []byte, 1)
 	go func() {
 		// Seen through whoever is waiting, so that it is remembered.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
-		defer cancel()
-		found <- r.Icon(ctx, mc.Namespace, mc.Name)
+		found <- r.Icon(context.WithoutCancel(ctx), mc.Namespace, mc.Name)
 	}()
 	select {
 	case png := <-found:
@@ -211,11 +214,16 @@ func (e entry) status(protocol int) mcproto.Status {
 	return st
 }
 
-// maxPlayers is how many players a server is set to take, or the game's own
-// default where it is not set.
+// maxPlayers is how many players a server that is not running will take
+// once it is: what its settings say, else what the game itself last said,
+// which covers a limit set by hand in server.properties, else the game's
+// own default.
 func maxPlayers(mc *avsysv1.MinecraftServer) int {
 	if n, err := strconv.Atoi(mc.Spec.Properties["max-players"]); err == nil && n > 0 {
 		return n
+	}
+	if mc.Status.MaxPlayers > 0 {
+		return int(mc.Status.MaxPlayers)
 	}
 	return 20
 }

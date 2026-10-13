@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -10,7 +11,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
@@ -294,4 +298,120 @@ func TestDeletingAServerForgetsItsIcon(t *testing.T) {
 	if _, fresh := p.srv.serverIcons.get("mc-alpha/world"); fresh {
 		t.Error("a deleted server's icon is still remembered")
 	}
+}
+
+// However many ask for a server's icon at once, it is read once; a read
+// that fails is not repeated straight away; and one that began before the
+// icon was changed does not put the old one back.
+func TestServerIconsLoad(t *testing.T) {
+	ctx := t.Context()
+	var c serverIcons
+	var reads atomic.Int32
+	release := make(chan struct{})
+	slow := func(context.Context) ([]byte, error) {
+		reads.Add(1)
+		<-release
+		return []byte("old"), nil
+	}
+
+	// Many at once: one read.
+	var wg sync.WaitGroup
+	results := make([]string, 8)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			data, _ := c.load(ctx, "ns/world", slow)
+			results[i] = string(data)
+		}()
+	}
+	for reads.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if n := reads.Load(); n != 1 {
+		t.Errorf("%d reads for eight asking at once, want 1", n)
+	}
+	for i, got := range results {
+		if got != "old" {
+			t.Errorf("asker %d got %q", i, got)
+		}
+	}
+	// Remembered: no read at all.
+	if data, ok := c.load(ctx, "ns/world", func(context.Context) ([]byte, error) { t.Error("read again"); return nil, nil }); !ok || string(data) != "old" {
+		t.Errorf("asked again: %q %v", data, ok)
+	}
+
+	// A read that fails is remembered as that for a little while.
+	failing := 0
+	fail := func(context.Context) ([]byte, error) { failing++; return nil, errors.New("workspace unreachable") }
+	if data, ok := c.load(ctx, "ns/down", fail); ok || data != nil {
+		t.Errorf("a failed read: %q %v", data, ok)
+	}
+	if _, ok := c.load(ctx, "ns/down", fail); ok || failing != 1 {
+		t.Errorf("asked again straight after a failure: ok %v after %d reads, want no second read", ok, failing)
+	}
+
+	// Set while an older read is under way: the read's answer is not kept.
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	got := make(chan string, 1)
+	go func() {
+		data, _ := c.load(ctx, "ns/changing", func(context.Context) ([]byte, error) {
+			close(started)
+			<-gate
+			return []byte("before"), nil
+		})
+		got <- string(data)
+	}()
+	<-started
+	c.set("ns/changing", []byte("after"))
+	close(gate)
+	if v := <-got; v != "after" {
+		t.Errorf("the asker waiting through a change got %q, want what was set", v)
+	}
+	if icon, _ := c.get("ns/changing"); string(icon.data) != "after" {
+		t.Errorf("remembered after the old read finished: %q, want what was set", icon.data)
+	}
+
+	// Removed while a read is under way: what it found is not put back.
+	gate, started = make(chan struct{}), make(chan struct{})
+	calls := 0
+	go func() {
+		data, _ := c.load(ctx, "ns/removed", func(context.Context) ([]byte, error) {
+			calls++
+			if calls == 1 {
+				close(started)
+				<-gate
+				return []byte("was there"), nil
+			}
+			return nil, nil
+		})
+		got <- string(data)
+	}()
+	<-started
+	c.forget("ns/removed")
+	close(gate)
+	if v := <-got; v != "" {
+		t.Errorf("after a removal during the read the asker got %q, want none", v)
+	}
+
+	// Someone who stops waiting is let go, and the read goes on without them.
+	hold := make(chan struct{})
+	impatient, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	if data, ok := c.load(impatient, "ns/stalled", func(context.Context) ([]byte, error) { <-hold; return []byte("late"), nil }); ok || data != nil || time.Since(began) > time.Second {
+		t.Errorf("an asker whose time ran out: %q %v after %v", data, ok, time.Since(began))
+	}
+	close(hold)
+	for range 100 {
+		if icon, fresh := c.get("ns/stalled"); fresh && string(icon.data) == "late" {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Error("the read nobody waited for was not remembered")
 }

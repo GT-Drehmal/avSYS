@@ -324,81 +324,186 @@ func (s *Server) deleteAvatar(w http.ResponseWriter, r *http.Request, u *store.U
 }
 
 // serverIcons remembers each server's icon for a little while. Reading one
-// means reaching into the server's workspace, and a list of servers asks
-// for all of them at once.
+// means reaching into the server's workspace, a list of servers asks for all
+// of them at once, and the game's server list asks without being signed in.
 type serverIcons struct {
 	mu    sync.Mutex
 	icons map[string]serverIcon
+	// reading holds, for each server whose icon is being read right now, a
+	// channel that is closed when that read is over. Whoever else wants it
+	// waits for that one read.
+	reading map[string]chan struct{}
+	// changes counts how often each server's icon was set or removed here.
+	// A read that began before a change knows nothing of it and is not
+	// kept.
+	changes map[string]int
 }
 
 type serverIcon struct {
 	// data is nil for a server that has no icon.
 	data []byte
 	at   time.Time
+	// failed marks one that could not be read, which is asked again sooner.
+	failed bool
 }
 
-const serverIconFor = 2 * time.Minute
+const (
+	serverIconFor = 2 * time.Minute
+	// serverIconRetry is how long a server whose icon could not be read is
+	// left alone before it is tried again.
+	serverIconRetry = 20 * time.Second
+	// serverIconRead bounds one read.
+	serverIconRead = 15 * time.Second
+)
+
+func (c *serverIcons) init() {
+	if c.icons == nil {
+		c.icons, c.reading, c.changes = map[string]serverIcon{}, map[string]chan struct{}{}, map[string]int{}
+	}
+}
+
+func (c *serverIcons) fresh(key string) (serverIcon, bool) {
+	icon, ok := c.icons[key]
+	keep := serverIconFor
+	if icon.failed {
+		keep = serverIconRetry
+	}
+	return icon, ok && time.Since(icon.at) < keep
+}
 
 func (c *serverIcons) get(key string) (serverIcon, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	icon, ok := c.icons[key]
-	return icon, ok && time.Since(icon.at) < serverIconFor
+	return c.fresh(key)
 }
 
+// set records an icon that was just written, in place of whatever a read
+// under way may come back with.
 func (c *serverIcons) set(key string, data []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.icons == nil {
-		c.icons = map[string]serverIcon{}
-	}
+	c.init()
+	c.changes[key]++
 	c.icons[key] = serverIcon{data: data, at: time.Now()}
 }
 
+// forget drops what is remembered of a server, after its icon was removed
+// or the server was.
 func (c *serverIcons) forget(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.init()
+	c.changes[key]++
 	delete(c.icons, key)
+}
+
+// load returns a server's icon, reading it with read if it is not
+// remembered. However many ask at once, one read is made; the rest wait for
+// it, or stop waiting when their own ctx ends. ok is false when it could
+// not be read.
+func (c *serverIcons) load(ctx context.Context, key string, read func(context.Context) ([]byte, error)) (data []byte, ok bool) {
+	for {
+		c.mu.Lock()
+		c.init()
+		if icon, fresh := c.fresh(key); fresh {
+			c.mu.Unlock()
+			return icon.data, !icon.failed
+		}
+		wait, busy := c.reading[key]
+		if !busy {
+			wait = make(chan struct{})
+			c.reading[key] = wait
+			seen := c.changes[key]
+			c.mu.Unlock()
+			// On its own, so that it is seen through and remembered even
+			// if nobody waits for it, and bounded, so that a workspace that
+			// does not answer cannot hold it for ever.
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), serverIconRead)
+				defer cancel()
+				data, err := read(ctx)
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				// Not kept if the icon was set or removed meanwhile: this
+				// is what was there before.
+				if c.changes[key] == seen {
+					c.icons[key] = serverIcon{data: data, at: time.Now(), failed: err != nil}
+				}
+				delete(c.reading, key)
+				close(wait)
+			}()
+		} else {
+			c.mu.Unlock()
+		}
+		select {
+		case <-wait:
+			// Round again for what it found, or for what was set meanwhile.
+			c.mu.Lock()
+			icon, fresh := c.fresh(key)
+			c.mu.Unlock()
+			if fresh {
+				return icon.data, !icon.failed
+			}
+			// Changed while it was read, and not remembered: read again.
+		case <-ctx.Done():
+			return nil, false
+		}
+	}
 }
 
 // readServerIcon reads server-icon.png out of a server's files and makes
 // the panel's own PNG of it. nil means the server has none, or none that is
 // a picture.
 func (s *Server) readServerIcon(ctx context.Context, namespace, name string) ([]byte, error) {
-	sc, err := s.workspaces.get(ctx, namespace, name)
-	if err != nil {
-		return nil, err
+	type result struct {
+		data []byte
+		err  error
 	}
-	f, err := sc.Open(serverIconPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+	done := make(chan result, 1)
+	go func() {
+		sc, err := s.workspaces.get(ctx, namespace, name)
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		f, err := sc.Open(serverIconPath)
+		if errors.Is(err, fs.ErrNotExist) {
+			done <- result{}
+			return
+		}
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		defer f.Close()
+		// The file is the server's, which anyone with a shell there can put
+		// anything into. It is redrawn like any upload before it is served.
+		data, err := squarePNG(f, serverIconSide)
+		if err != nil {
+			// Not a picture: the same as none.
+			done <- result{}
+			return
+		}
+		done <- result{data: data}
+	}()
+	// Reading a file there cannot be called off, so it is not waited for
+	// past ctx. serverIcons makes one such read per server at a time, which
+	// is the most that can be left hanging on a workspace that has stalled.
+	select {
+	case r := <-done:
+		return r.data, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	// The file is the server's, which anyone with a shell there can put
-	// anything into. It is redrawn like any upload before it is served.
-	data, err := squarePNG(f, serverIconSide)
-	if err != nil {
-		return nil, nil
-	}
-	return data, nil
 }
 
 // ServerIcon returns a server's icon as a 64 pixel PNG, or nil if it has
 // none or its files cannot be reached just now. It is what the game's own
 // server list is given while the game is not running to give it.
 func (s *Server) ServerIcon(ctx context.Context, namespace, name string) []byte {
-	key := namespace + "/" + name
-	if icon, fresh := s.serverIcons.get(key); fresh {
-		return icon.data
-	}
-	data, err := s.readServerIcon(ctx, namespace, name)
-	if err != nil {
-		return nil
-	}
-	s.serverIcons.set(key, data)
+	data, _ := s.serverIcons.load(ctx, namespace+"/"+name, func(ctx context.Context) ([]byte, error) {
+		return s.readServerIcon(ctx, namespace, name)
+	})
 	return data
 }
 
@@ -409,22 +514,13 @@ func (s *Server) getServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 	if err != nil {
 		return err
 	}
-	key := a.Namespace + "/" + mc.Name
-	icon, fresh := s.serverIcons.get(key)
-	if !fresh {
-		data, err := s.readServerIcon(r.Context(), a.Namespace, mc.Name)
-		if err != nil {
-			// Its workspace is not reachable just now. That is not worth
-			// more than a missing picture, and is asked again soon.
-			return errNotFound
-		}
-		s.serverIcons.set(key, data)
-		icon.data = data
-	}
-	if icon.data == nil {
+	// One that cannot be read just now is not worth more than a missing
+	// picture, and is asked again soon.
+	data := s.ServerIcon(r.Context(), a.Namespace, mc.Name)
+	if data == nil {
 		return errNotFound
 	}
-	servePicture(w, r, icon.data)
+	servePicture(w, r, data)
 	return nil
 }
 
