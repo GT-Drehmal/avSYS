@@ -174,7 +174,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
               <input type="checkbox" checked={clientToo} onChange={(e) => setClientToo(e.target.checked)} className="mt-0.5 size-3.5 accent-(--color-accent)" />
               <span>
                 Include client-only mods
-                <span className="block text-muted">Mods such as minimaps and shaders, which run in each player's game and usually do nothing on a server. Hidden unless this is ticked.</span>
+                <span className="block text-muted">Mods such as Sodium and Mod Menu, which run in each player's game and usually do nothing on a server. Hidden unless this is ticked.</span>
               </span>
             </label>
           )}
