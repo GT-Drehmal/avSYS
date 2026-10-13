@@ -422,3 +422,24 @@ func TestCreateFromServerRequests(t *testing.T) {
 		t.Errorf("copying a server whose restore did not finish: got %d %q, want 409", got, code)
 	}
 }
+
+// A server made from a snapshot is put on the kind of storage the original
+// was on unless the request names one: where a cluster has no default kind,
+// a volume asked for without one is never provided.
+func TestFromSnapshotKeepsTheStorageClass(t *testing.T) {
+	fast, slow := "fast", "slow"
+	recorded := &avsysv1.MinecraftServerSpec{Storage: avsysv1.StorageSpec{Size: resource.MustParse("20Gi"), StorageClassName: &fast}}
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil); got.Storage.StorageClassName == nil || *got.Storage.StorageClassName != "fast" {
+		t.Errorf("with none asked for: %v, want the original's", got.Storage.StorageClassName)
+	}
+	asked := &avsysv1.MinecraftServerSpec{Storage: avsysv1.StorageSpec{Size: resource.MustParse("30Gi"), StorageClassName: &slow}}
+	if got := fromSnapshot(asked, recorded, nil); *got.Storage.StorageClassName != "slow" || got.Storage.Size.String() != "30Gi" {
+		t.Errorf("with one asked for: %v %s, want slow and 30Gi", *got.Storage.StorageClassName, got.Storage.Size.String())
+	}
+	// And it is its own copy, not the record's to change through.
+	got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil)
+	*got.Storage.StorageClassName = "changed"
+	if fast != "fast" {
+		t.Error("the new server's storage class is the record's own variable")
+	}
+}

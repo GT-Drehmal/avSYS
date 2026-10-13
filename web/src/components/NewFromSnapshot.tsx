@@ -108,6 +108,8 @@ function Form({ org, source, taken, from, onClose }: FormProps) {
   // Whole gigabytes that hold the snapshot's files with some room to spare.
   const leastStorage = Math.max(1, Math.ceil((detail.size * 1.2) / GiB));
   const custom = !!spec.image || (spec.env?.length ?? 0) > 0;
+  // Whether it gets a hostname of its own, which is how the router finds it.
+  const exposed = (spec.expose?.type ?? "Router") === "Router";
 
   const [displayName, setDisplayName] = useState((spec.displayName || detail.server) + (copying ? " copy" : ""));
   const [name, setName] = useState(freeName(copying ? `${detail.server}-copy` : detail.server, taken));
@@ -128,7 +130,10 @@ function Form({ org, source, taken, from, onClose }: FormProps) {
       state: start ? "Running" : "Stopped",
       resources: { memory: fromGigabytes(memory) },
       storage: { size: fromGigabytes(storage) },
-      expose: { type: "Router", hostname: hostname.trim() },
+      // Reached the way the original is: a server that is not exposed at all
+      // is not given an address because it was copied. A fixed address or
+      // port is the original's own and is not taken along.
+      expose: exposed ? { type: "Router", hostname: hostname.trim() } : { type: spec.expose.type },
       ...(keepCustom ? { image: spec.image, env: spec.env } : {}),
     };
     try {
@@ -160,9 +165,11 @@ function Form({ org, source, taken, from, onClose }: FormProps) {
         <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={memory} onChange={(e) => setMemory(e.target.value)} />}</Field>
         <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={storage} onChange={(e) => setStorage(e.target.value)} />}</Field>
       </div>
-      <Field label="Hostname" hint="Optional.">
-        {(id) => <Input id={id} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
-      </Field>
+      {exposed && (
+        <Field label="Hostname" hint="Optional.">
+          {(id) => <Input id={id} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
+        </Field>
+      )}
       <Toggle checked={start} onChange={setStart} label="Start it when its files are in place" />
       {custom && (
         <Toggle

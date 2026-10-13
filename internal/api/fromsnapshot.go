@@ -87,6 +87,12 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	if spec.Storage.Size.IsZero() {
 		spec.Storage.Size = recorded.Storage.Size
 	}
+	// The kind of storage it was on, too: where there is no default kind, a
+	// volume asked for without one is never provided.
+	if class := recorded.Storage.StorageClassName; spec.Storage.StorageClassName == nil && class != nil {
+		own := *class
+		spec.Storage.StorageClassName = &own
+	}
 	if _, said := given["sleep"]; !said {
 		spec.Sleep = recorded.Sleep
 	}
@@ -249,7 +255,10 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 		return operationFailed(err)
 	}
 	s.audit(ctx, u, a.Org, "server.copy", mc.Name, "to "+name)
-	return s.createFromSnapshot(w, r, u, a, name, requested, given, snap.ID)
+	// The snapshot was seen through although the caller may have hung up
+	// meanwhile, and so is making the server from it: otherwise a dropped
+	// connection would leave the snapshot and nothing to show for it.
+	return s.createFromSnapshot(w, r.WithContext(context.WithoutCancel(ctx)), u, a, name, requested, given, snap.ID)
 }
 
 // newestOf returns a server's newest snapshot.
