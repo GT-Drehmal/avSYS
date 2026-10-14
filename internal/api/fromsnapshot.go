@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -184,6 +185,9 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	}
 	if spec.Resources.Memory.IsZero() {
 		spec.Resources.Memory = recorded.Resources.Memory
+	}
+	if spec.Resources.CPU == nil {
+		spec.Resources.CPU = recorded.Resources.CPU
 	}
 	if spec.Storage.Size.IsZero() {
 		spec.Storage.Size = recorded.Storage.Size
@@ -401,11 +405,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	if st := requested.State; st != "" && st != avsysv1.StateRunning && st != avsysv1.StateStopped {
 		return errBadRequest("%q is not a state. A server is Running or Stopped.", st)
 	}
-	// When it is snapshotted is not recorded in a snapshot, so a copy takes
-	// that from the server itself unless the request says.
-	if _, said := given["backups"]; !said {
-		requested.Backups = mc.Spec.Backups.DeepCopy()
-	}
+	fromLive(&requested, given, &mc.Spec)
 	// What the request asks for is held against the server as it is now,
 	// before the snapshot: a copy that could not be made is not worth one.
 	// That includes its mods having a build for the game version asked for.
@@ -446,6 +446,20 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	// meanwhile, and so is making the server from it: otherwise a dropped
 	// connection would leave the snapshot and nothing to show for it.
 	return s.createFromSnapshot(w, r.WithContext(context.WithoutCancel(ctx)), u, a, name, requested, given, snap.ID)
+}
+
+// fromLive fills in what a copy of a server takes from the server itself
+// rather than from the snapshot it is made from, unless the request says.
+// When it is snapshotted is not recorded in a snapshot. The nodes it is kept
+// to are not taken from a record, which the server could have written; a
+// server kept to some nodes on purpose is copied onto them.
+func fromLive(requested *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, live *avsysv1.MinecraftServerSpec) {
+	if _, said := given["backups"]; !said {
+		requested.Backups = live.Backups.DeepCopy()
+	}
+	if _, said := given["nodeSelector"]; !said {
+		requested.NodeSelector = maps.Clone(live.NodeSelector)
+	}
 }
 
 // newestOf returns a server's newest snapshot.
