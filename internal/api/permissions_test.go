@@ -227,7 +227,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST /orgs/{org}/offsite/fetch", "", "", store.RoleViewer, 503},
 		{"GET /orgs/{org}/snapshots", "", "", store.RoleViewer, 200},
 		// 503 below: allowed, and then told that this panel has no restic.
-		{"GET /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},
+		{"GET /orgs/{org}/snapshots/{id}", "", "", store.RoleViewer, 503},
 		{"DELETE /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},
 		{"DELETE /orgs/{org}/snapshots", "", `{"ids":["aaaa1111"]}`, store.RoleAdmin, 503},
 

@@ -20,17 +20,35 @@ import (
 )
 
 // snapshotDetail is one snapshot with the settings its server had when it
-// was taken.
+// was taken, and how long it will be here.
 type snapshotDetail struct {
 	backup.Snapshot
-	Spec avsysv1.MinecraftServerSpec `json:"spec"`
+	Spec      avsysv1.MinecraftServerSpec `json:"spec"`
+	Retention snapshotRetention           `json:"retention"`
+}
+
+// snapshotRetention says what, if anything, will remove a snapshot.
+type snapshotRetention struct {
+	// Scheduled is true for a snapshot that its server's schedule looks
+	// after. Anything else stays until someone deletes it: one taken by hand
+	// or for a restore, a copy or a delete, and any snapshot of a server
+	// that is gone or has itself been taken out of scheduled snapshots.
+	Scheduled bool `json:"scheduled"`
+	// Kept is which rules of the schedule keep it: daily, weekly, monthly,
+	// yearly. Empty for one the schedule removes the next time it runs.
+	Kept []string `json:"kept,omitempty"`
+	// Paused is true while the daily snapshots are switched off for its
+	// server's organization. The rules are then only applied when someone
+	// runs the schedule by hand, or switches it back on.
+	Paused bool `json:"paused,omitempty"`
 }
 
 // getSnapshot returns a snapshot and what it recorded of its server. That
-// record includes the server's extra environment, which may hold secrets, so
-// it is for those who could make a server out of it.
+// record includes the server's image and extra environment, which decide
+// what runs and may hold secrets, so those two are only shown to those who
+// could make a server out of it.
 func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, err := s.org(r, u, store.RoleAdmin)
+	a, err := s.org(r, u, store.RoleViewer)
 	if err != nil {
 		return err
 	}
@@ -45,8 +63,52 @@ func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err != nil {
 		return errNoRecord(err)
 	}
-	writeJSON(w, http.StatusOK, snapshotDetail{Snapshot: *snap, Spec: record.Spec})
+	writeJSON(w, http.StatusOK, snapshotDetail{Snapshot: *snap, Spec: recordFor(a.Role, record.Spec), Retention: s.retentionOf(r.Context(), a, snap)})
 	return nil
+}
+
+// recordFor is what a snapshot recorded of its server, as someone with this
+// role is shown it: without the image and extra environment unless they
+// could make a server out of it.
+func recordFor(role store.Role, spec avsysv1.MinecraftServerSpec) avsysv1.MinecraftServerSpec {
+	if !role.AtLeast(store.RoleAdmin) {
+		spec.Image, spec.Env = "", nil
+	}
+	return spec
+}
+
+// retentionOf works out what will remove a snapshot. Where that cannot be
+// found out it is reported as kept by nothing in particular, which is the
+// safe way round: nobody is told a snapshot is safe that is not.
+func (s *Server) retentionOf(ctx context.Context, a *access, snap *backup.Snapshot) snapshotRetention {
+	if snap.Trigger != backup.TriggerScheduled {
+		return snapshotRetention{}
+	}
+	// The schedule is applied server by server, as each one's run completes.
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: snap.Server}, mc); err != nil {
+		return snapshotRetention{}
+	}
+	policy, err := s.policyOf(ctx, a.Org)
+	if err != nil {
+		return snapshotRetention{Scheduled: true}
+	}
+	// A server taken out of scheduled snapshots is passed over even by a run
+	// asked for by hand, so nothing removes what it has.
+	if switchedOff(&mc.Spec) {
+		return snapshotRetention{}
+	}
+	// With the organization's daily snapshots off the rules still stand: a
+	// run asked for by hand applies them.
+	policy = policyFor(policy, &mc.Spec)
+	retention := snapshotRetention{Scheduled: true, Paused: !policy.Enabled}
+	kept, err := s.Backups.Kept(ctx, a.Org.Slug, snap.Server, policy.Keep)
+	if err != nil {
+		s.Log.Warn("could not work out which rule keeps a snapshot", "org", a.Org.Slug, "snapshot", snap.ID, "error", err)
+		return retention
+	}
+	retention.Kept = kept[snap.ID]
+	return retention
 }
 
 func errNoRecord(err error) error {
