@@ -73,6 +73,8 @@ type Server struct {
 	autoOps    autoOps
 	// serverIcons holds each server's icon for a short while.
 	serverIcons serverIcons
+	// snapshotIcons holds the icons read out of snapshots, which never change.
+	snapshotIcons snapshotIcons
 	// consoles holds one lock per server, taken to type at its console.
 	consoles sync.Map
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
@@ -318,6 +320,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/offsite/fetch", s.authed(s.fetchOffsite))
 	api("GET /orgs/{org}/snapshots", s.authed(s.listOrgSnapshots))
 	api("GET /orgs/{org}/snapshots/{id}", s.authed(s.getSnapshot))
+	api("GET /orgs/{org}/snapshots/{id}/icon", s.authed(s.getSnapshotIcon))
 	api("DELETE /orgs/{org}/snapshots", s.authed(s.deleteSnapshots))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
 

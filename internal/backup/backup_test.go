@@ -650,3 +650,43 @@ func TestForgetKeepsWhatThePolicySays(t *testing.T) {
 		t.Errorf("forget in an organization with no repository: %d, %v", removed, err)
 	}
 }
+
+// One file can be read out of a snapshot; one it does not have is nothing,
+// and one larger than asked for is refused.
+func TestFile(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := m.ensure(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	files := t.TempDir()
+	if err := os.WriteFile(filepath.Join(files, "server-icon.png"), []byte("a picture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("restic", "--repo", m.repoDir("alpha"), "--password-file", m.keyFile("alpha"),
+		"backup", files, "--host", "probe", "--tag", "avsys", "--tag", "trigger=manual").CombinedOutput(); err != nil {
+		t.Fatalf("taking a snapshot: %v: %s", err, out)
+	}
+	list, err := m.List(ctx, "alpha")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("listing: %v %v", list, err)
+	}
+	id := list[0].ID
+
+	if got, err := m.File(ctx, "alpha", id, filepath.Join(files, "server-icon.png"), 100); err != nil || string(got) != "a picture" {
+		t.Errorf("a file it has: %q %v", got, err)
+	}
+	if got, err := m.File(ctx, "alpha", id, filepath.Join(files, "nothing.png"), 100); err != nil || got != nil {
+		t.Errorf("a file it does not have: %q %v", got, err)
+	}
+	if _, err := m.File(ctx, "alpha", id, filepath.Join(files, "server-icon.png"), 4); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("a file larger than asked for: %v", err)
+	}
+	if _, err := m.File(ctx, "alpha", "deadbeef", filepath.Join(files, "server-icon.png"), 100); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a snapshot that is not there: %v", err)
+	}
+}

@@ -49,7 +49,7 @@ test("everything a server can be given later can be given when it is made", asyn
   // first starts: the server is made stopped, and the panel starts it when
   // the picture is in place. Nothing runs behind this panel, so that part is
   // answered for it, and the server stays as it was made.
-  await page.getByLabel("Picture for Lobby").setInputFiles({ name: "icon.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64") });
+  await page.getByLabel("Picture for Lobby").setInputFiles({ name: "icon.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGM4oREFRAwQCgAl3gUpEzqvXwAAAABJRU5ErkJggg==", "base64") });
   await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
   let pictured = "";
   await page.route(`**/api/v1/orgs/${slug}/servers/lobby/icon?wait=true&start=true`, async (route) => {
@@ -166,6 +166,39 @@ test("a copy can be given other content before it is made", async ({ page, as })
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   const body = (await sent).postDataJSON();
   expect(body.spec.mods).toEqual([{ source: "url", kind: "plugin", project: "https://example.org/chunky-1.4.jar", title: "chunky-1.4.jar" }]);
+});
+
+test("a server made from a snapshot shows the picture the snapshot holds", async ({ page, as }) => {
+  await as("owner");
+  const id = "abcd1234";
+  const icon = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const asked: string[] = [];
+  await page.route(`**/api/v1/orgs/friends/snapshots/${id}`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id, time: new Date(Date.now() - 3600_000).toISOString(), server: "survival", trigger: "manual", size: 1 << 20, added: 1024, files: 10,
+        spec: { displayName: "Survival", version: "1.21.4", loader: "paper", eula: true, resources: { memory: "4Gi" }, storage: { size: "10Gi" }, mods: [] },
+        retention: { scheduled: true, kept: ["daily"] },
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/orgs/friends/snapshots/${id}/icon*`, (route) => {
+    asked.push(route.request().url());
+    return route.fulfill({ contentType: "image/png", body: icon });
+  });
+  // The server's picture as it is now is not what the snapshot holds.
+  await page.route("**/api/v1/orgs/friends/servers/survival/icon*", (route) => route.abort());
+
+  await page.goto(`/o/friends/new?from=snapshot:${id}`);
+  await expect(page.getByRole("heading", { name: "New server from a snapshot of survival" })).toBeVisible();
+  // On the starting point, and next to the name.
+  await expect(page.locator(`img[src*="/snapshots/${id}/icon"]`)).toHaveCount(2);
+  for (const img of await page.locator(`img[src*="/snapshots/${id}/icon"]`).all()) await expect(img).toBeVisible();
+  expect(asked.length).toBeGreaterThan(0);
 });
 
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
