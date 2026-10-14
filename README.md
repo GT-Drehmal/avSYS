@@ -265,7 +265,7 @@ Needs Go, [Bun](https://bun.sh), Docker, [restic](https://restic.net) and a clus
 
 ```sh
 make dev        # builds everything and runs the panel on http://localhost:8080
-make test       # unit tests and type checks
+make test       # unit tests, static checks, type checks and lint
 make test-snapshots  # the snapshot engine against a real workspace container
 make test-browser    # the web UI in Chromium and WebKit, against a panel with nothing behind it
 make e2e        # creates a real server through a running panel and checks it end to end
