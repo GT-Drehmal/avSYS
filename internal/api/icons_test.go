@@ -543,11 +543,7 @@ func TestSnapshotIcon(t *testing.T) {
 		}
 	}
 	// A snapshot never changes, so what was read of it is kept.
-	snap, err := p.srv.Backups.Get(context.Background(), "alpha", pictured)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := p.srv.snapshotIcons.get("alpha/" + snap.ID); !ok {
+	if _, ok := p.srv.snapshotIcons.get("alpha/" + pictured); !ok {
 		t.Error("what was read of the snapshot was not kept")
 	}
 }

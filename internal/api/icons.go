@@ -596,13 +596,15 @@ func (s *Server) getSnapshotIcon(w http.ResponseWriter, r *http.Request, u *stor
 	if !s.Backups.Available() {
 		return errNoBackups
 	}
-	snap, err := s.Backups.Get(r.Context(), a.Org.Slug, r.PathValue("id"))
-	if err != nil {
-		return snapshotError(err)
-	}
-	key := a.Org.Slug + "/" + snap.ID
+	// Looked up by the name it was asked for, before the repository is: a
+	// snapshot never changes, and listing them takes restic a while.
+	key := a.Org.Slug + "/" + r.PathValue("id")
 	data, ok := s.snapshotIcons.get(key)
 	if !ok {
+		snap, err := s.Backups.Get(r.Context(), a.Org.Slug, r.PathValue("id"))
+		if err != nil {
+			return snapshotError(err)
+		}
 		raw, err := s.Backups.File(r.Context(), a.Org.Slug, snap.ID, serverIconPath, snapshotIconLimit)
 		switch {
 		case errors.Is(err, backup.ErrTooLarge):
