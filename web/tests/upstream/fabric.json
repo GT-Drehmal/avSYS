@@ -1,0 +1,22 @@
+[
+ {
+  "version": "26.4-snapshot-1",
+  "stable": false
+ },
+ {
+  "version": "26.3",
+  "stable": true
+ },
+ {
+  "version": "26.2",
+  "stable": true
+ },
+ {
+  "version": "1.21.5",
+  "stable": true
+ },
+ {
+  "version": "1.21.4",
+  "stable": true
+ }
+]

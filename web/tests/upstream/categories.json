@@ -1,0 +1,62 @@
+[
+ {
+  "name": "adventure",
+  "project_type": "mod",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "decoration",
+  "project_type": "mod",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "magic",
+  "project_type": "mod",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "optimization",
+  "project_type": "mod",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "utility",
+  "project_type": "mod",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "worldgen",
+  "project_type": "mod",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "adventure",
+  "project_type": "modpack",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "quests",
+  "project_type": "modpack",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "technology",
+  "project_type": "modpack",
+  "header": "categories",
+  "icon": ""
+ },
+ {
+  "name": "16x",
+  "project_type": "resourcepack",
+  "header": "resolutions",
+  "icon": ""
+ }
+]

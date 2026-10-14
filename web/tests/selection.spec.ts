@@ -1,0 +1,89 @@
+import { expect, test } from "./panel";
+
+test("several servers are selected and acted on together", async ({ page, as, org, api }) => {
+  const slug = await org(["alpha", "bravo", "charlie"]);
+  const states = async () => Object.fromEntries((await api("owner").get(`/orgs/${slug}/servers`)).map((s: any) => [s.name, s.spec.state]));
+  await as("owner");
+  await page.goto(`/o/${slug}`);
+  const bar = page.getByRole("region", { name: "Selection" });
+  await expect(bar).toHaveCount(0);
+
+  // A range, with Shift.
+  await page.getByLabel("Select alpha").click();
+  await page.getByLabel("Select charlie").click({ modifiers: ["Shift"] });
+  await expect(bar).toContainText("3 servers selected");
+  await bar.getByRole("button", { name: "Start", exact: true }).click();
+  await expect(bar).toHaveCount(0);
+  expect(await states()).toEqual({ alpha: "Running", bravo: "Running", charlie: "Running" });
+
+  // An action says how many of the selected it applies to.
+  await page.getByLabel("Select bravo").click();
+  await bar.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect(bar).toHaveCount(0);
+  await page.getByLabel("Select every server").click();
+  await expect(bar.getByRole("button", { name: "Stop 2 of 3" })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Start 1 of 3" })).toBeVisible();
+
+  // Escape lets go of them.
+  await page.keyboard.press("Escape");
+  await expect(bar).toHaveCount(0);
+  await expect(page.getByLabel("Select alpha")).not.toBeChecked();
+});
+
+test("deleting several servers is typed to confirm, and names them", async ({ page, as, org, api }) => {
+  const slug = await org(["alpha", "bravo", "charlie"]);
+  await as("owner");
+  await page.goto(`/o/${slug}`);
+  await page.getByLabel("Select bravo").click();
+  await page.getByLabel("Select charlie").click();
+  await page.getByRole("region", { name: "Selection" }).getByRole("button", { name: "Delete", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("bravo, charlie");
+  const confirm = dialog.getByRole("button", { name: "Delete 2 servers" });
+  await expect(confirm).toBeDisabled();
+  // Nothing runs behind this panel, so there is nothing to take a last snapshot of.
+  await dialog.getByRole("switch", { name: /final snapshot/ }).click();
+  await dialog.getByRole("textbox").fill("delete 2 servers");
+  await confirm.click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers`)).map((s: any) => s.name)).toEqual(["alpha"]);
+});
+
+test("a selection does not follow you into another organization", async ({ page, as }) => {
+  // Both of the seeded organizations have a server called survival.
+  await as("owner");
+  await page.goto("/o/club");
+  await expect(page.getByLabel("Select survival")).toBeVisible();
+  await page.getByRole("button", { name: /Build Club/ }).click();
+  await page.getByRole("menuitem", { name: /Friends/ }).click();
+  await expect(page).toHaveURL(/\/o\/friends$/);
+  await page.getByLabel("Select survival").click();
+  await expect(page.getByRole("region", { name: "Selection" })).toBeVisible();
+  await page.getByRole("button", { name: /Friends/ }).click();
+  await page.getByRole("menuitem", { name: /Build Club/ }).click();
+  await expect(page).toHaveURL(/\/o\/club$/);
+  await expect(page.getByRole("region", { name: "Selection" })).toHaveCount(0);
+  await expect(page.getByLabel("Select survival")).not.toBeChecked();
+});
+
+test("what each role may do to the list", async ({ page, as }) => {
+  await as("viewer");
+  await page.goto("/o/friends");
+  await expect(page.getByRole("listitem").filter({ hasText: "Survival" })).toBeVisible();
+  await expect(page.getByLabel("Select survival")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "New server" })).toHaveCount(0);
+
+  await as("operator");
+  await page.reload();
+  await page.getByLabel("Select survival").click();
+  const bar = page.getByRole("region", { name: "Selection" });
+  await expect(bar.getByRole("button", { name: /^Stop/ })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "New server" })).toHaveCount(0);
+
+  await as("admin");
+  await page.reload();
+  await page.getByLabel("Select survival").click();
+  await expect(bar.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "New server" })).toBeVisible();
+});

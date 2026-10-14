@@ -37,9 +37,10 @@ func TestStaticFallsBackOnlyForPages(t *testing.T) {
 			continue
 		}
 		if c.status != http.StatusOK {
-			// Nothing that would be kept: the same name may exist in a later build.
-			if cache := w.Header().Get("Cache-Control"); strings.Contains(cache, "immutable") {
-				t.Errorf("%s: a missing file is to be kept for good: %q", c.path, cache)
+			// Not to be kept at all: a browser that remembered the answer
+			// would not ask again once the file is there.
+			if cache := w.Header().Get("Cache-Control"); cache != "no-store" {
+				t.Errorf("%s: a missing file may be kept: Cache-Control %q", c.path, cache)
 			}
 			continue
 		}

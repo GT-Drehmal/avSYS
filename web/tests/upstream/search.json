@@ -1,0 +1,535 @@
+{
+ "hits": [
+  {
+   "project_id": "P0000000",
+   "slug": "lithium",
+   "title": "Lithium",
+   "description": "Lithium, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 5000000,
+   "follows": 20000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "optimization"
+   ],
+   "display_categories": [
+    "optimization"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000001",
+   "slug": "ferritecore",
+   "title": "FerriteCore",
+   "description": "FerriteCore, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 4850000,
+   "follows": 19500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "optimization"
+   ],
+   "display_categories": [
+    "optimization"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000002",
+   "slug": "krypton",
+   "title": "Krypton",
+   "description": "Krypton, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 4700000,
+   "follows": 19000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "optimization"
+   ],
+   "display_categories": [
+    "optimization"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000003",
+   "slug": "chunky",
+   "title": "Chunky",
+   "description": "Chunky, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 4550000,
+   "follows": 18500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "optimization"
+   ],
+   "display_categories": [
+    "optimization"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000004",
+   "slug": "spark",
+   "title": "Spark",
+   "description": "Spark, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 4400000,
+   "follows": 18000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "optimization"
+   ],
+   "display_categories": [
+    "optimization"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000005",
+   "slug": "carpet",
+   "title": "Carpet",
+   "description": "Carpet, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 4250000,
+   "follows": 17500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "optimization"
+   ],
+   "display_categories": [
+    "optimization"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000006",
+   "slug": "fabric-api",
+   "title": "Fabric API",
+   "description": "Fabric API, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 4100000,
+   "follows": 17000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "optimization"
+   ],
+   "display_categories": [
+    "optimization"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000007",
+   "slug": "cloth-config",
+   "title": "Cloth Config",
+   "description": "Cloth Config, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 3950000,
+   "follows": 16500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "optimization"
+   ],
+   "display_categories": [
+    "optimization"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000008",
+   "slug": "architectury",
+   "title": "Architectury",
+   "description": "Architectury, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 3800000,
+   "follows": 16000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000009",
+   "slug": "collective",
+   "title": "Collective",
+   "description": "Collective, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 3650000,
+   "follows": 15500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000010",
+   "slug": "balm",
+   "title": "Balm",
+   "description": "Balm, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 3500000,
+   "follows": 15000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000011",
+   "slug": "waystones",
+   "title": "Waystones",
+   "description": "Waystones, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 3350000,
+   "follows": 14500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000012",
+   "slug": "storage-drawers",
+   "title": "Storage Drawers",
+   "description": "Storage Drawers, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 3200000,
+   "follows": 14000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000013",
+   "slug": "farmers-delight",
+   "title": "Farmer's Delight",
+   "description": "Farmer's Delight, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 3050000,
+   "follows": 13500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000014",
+   "slug": "create",
+   "title": "Create",
+   "description": "Create, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 2900000,
+   "follows": 13000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000015",
+   "slug": "terralith",
+   "title": "Terralith",
+   "description": "Terralith, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 2750000,
+   "follows": 12500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000016",
+   "slug": "tectonic",
+   "title": "Tectonic",
+   "description": "Tectonic, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 2600000,
+   "follows": 12000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000017",
+   "slug": "nullscape",
+   "title": "Nullscape",
+   "description": "Nullscape, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 2450000,
+   "follows": 11500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000018",
+   "slug": "incendium",
+   "title": "Incendium",
+   "description": "Incendium, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 2300000,
+   "follows": 11000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000019",
+   "slug": "yungs-better-dungeons",
+   "title": "YUNG's Better Dungeons",
+   "description": "YUNG's Better Dungeons, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 2150000,
+   "follows": 10500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000020",
+   "slug": "dungeons-and-taverns",
+   "title": "Dungeons and Taverns",
+   "description": "Dungeons and Taverns, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 2000000,
+   "follows": 10000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000021",
+   "slug": "clumps",
+   "title": "Clumps",
+   "description": "Clumps, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 1850000,
+   "follows": 9500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000022",
+   "slug": "modernfix",
+   "title": "ModernFix",
+   "description": "ModernFix, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 1700000,
+   "follows": 9000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000023",
+   "slug": "noisium",
+   "title": "Noisium",
+   "description": "Noisium, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 1550000,
+   "follows": 8500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  }
+ ],
+ "offset": 0,
+ "limit": 24,
+ "total_hits": 30
+}
