@@ -169,7 +169,7 @@ export function Servers() {
           <div className={`${columns} label-mono relative hidden h-9 border-b border-line md:grid ${canOperate ? "pl-10" : ""}`}>
             {canOperate && (
               <label className="absolute inset-y-0 left-0 flex w-10 cursor-pointer items-center justify-center">
-                <RowCheckbox checked={selection.all} partial={selection.some} label="Select every server" onChange={selection.toggleAll} />
+                <RowCheckbox checked={selection.all} partial={selection.some} quiet={selection.count === 0} label="Select every server" onChange={selection.toggleAll} />
               </label>
             )}
             <span>Server</span>

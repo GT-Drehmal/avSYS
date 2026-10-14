@@ -398,7 +398,7 @@ interface RowCheckboxProps {
   /** Called with whether Shift was held, which selects a range. */
   onChange: (range: boolean) => void;
   label: string;
-  /** Stays out of sight until its row is pointed at or something is selected. */
+  /** Faint until its row is pointed at or something is selected. */
   quiet?: boolean;
   className?: string;
 }
@@ -421,7 +421,8 @@ export function RowCheckbox({ checked, partial, onChange, label, quiet, classNam
       onChange={() => {}}
       className={cx(
         "size-3.5 shrink-0 cursor-pointer accent-(--color-accent) transition-opacity",
-        quiet && !checked && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
+        // Always there, so the column is never an unexplained gap, but out of the way of a list that is mostly read.
+        quiet && !checked && "opacity-40 group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100",
         className,
       )}
     />
