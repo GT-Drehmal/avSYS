@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { difficulties, gameModes } from "../lib/properties";
 import { Field, Input, Select } from "./ui";
 
@@ -99,3 +100,30 @@ export const exposeOptions = (
     <option value="None">Inside the cluster only</option>
   </>
 );
+
+/** Who may join: anyone, the organization's members from a role up, or only who is on the whitelist. */
+export type Join = "anyone" | "viewer" | "operator" | "admin" | "owner" | "list";
+
+/** What "who can join" says under its control. */
+export const joinHint = (join: Join) =>
+  join === "anyone" ? "No whitelist." : join === "list" ? "The players on its whitelist." : "Those who have linked a Minecraft account, and the players on its whitelist.";
+
+/** The choices for who can join. */
+export const joinOptions = (
+  <>
+    <option value="anyone">Anyone with the address</option>
+    {memberRoleOptions}
+    <option value="list">Only its whitelist</option>
+  </>
+);
+
+/** A part of a form that is closed until asked for, and says how much in it was changed. */
+export function More({ label, changed = 0, open, onToggle }: { label: string; changed?: number; open: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-fit items-center gap-1 text-[13px] text-muted hover:text-fg">
+      {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+      {label}
+      {changed > 0 && <span className="text-accent">· {changed} changed</span>}
+    </button>
+  );
+}

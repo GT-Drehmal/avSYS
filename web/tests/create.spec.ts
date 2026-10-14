@@ -18,9 +18,71 @@ test("a new server is made from the form", async ({ page, as, org, api }) => {
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/weekend-world$`));
 
+  // Left alone, it is its organization's own: members are let in, and it
+  // follows the organization's snapshots.
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/weekend-world`);
-  expect(spec).toMatchObject({ loader: "paper", version: "1.21.4", displayName: "Weekend World", autoWhitelist: "viewer" });
-  expect(spec.properties).toMatchObject({ difficulty: "hard", "white-list": "true" });
+  expect(spec).toMatchObject({ loader: "paper", version: "1.21.4", displayName: "Weekend World", autoWhitelist: "viewer", expose: { type: "Router" } });
+  expect(spec.properties).toMatchObject({ difficulty: "hard", "white-list": "true", "enforce-whitelist": "true" });
+  expect(spec.properties).not.toHaveProperty("motd");
+  expect(spec).not.toHaveProperty("backups");
+  expect(spec.sleep.enabled ?? false).toBe(false);
+});
+
+test("everything a server can be given later can be given when it is made", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
+  await page.getByLabel("Display name").fill("Lobby");
+  await page.getByLabel("Message of the day").fill("Come on in");
+  await page.getByLabel("Who can join").selectOption("admin");
+  await page.getByLabel("Operators by role").selectOption("owner");
+  await page.getByRole("button", { name: /How it is reached, and sleep/ }).click();
+  await page.getByRole("switch", { name: /Sleep when empty/ }).click();
+  await page.getByLabel("After minutes with no players").fill("5");
+  await page.getByLabel("Scheduled snapshots").selectOption("off");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+
+  // A picture, which goes to the server once it exists. Nothing runs behind
+  // this panel, so where it would go is answered for it.
+  await page.getByLabel("Picture for Lobby").setInputFiles({ name: "icon.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64") });
+  await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
+  let pictured = "";
+  await page.route(`**/api/v1/orgs/${slug}/servers/lobby/icon?wait=true`, async (route) => {
+    // What was sent is not looked into: WebKit does not show a test the body of a file.
+    pictured = `${route.request().method()} ${route.request().headers()["content-type"] ?? ""}`;
+    await route.fulfill({ status: 204 });
+  });
+
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/lobby$`));
+  await expect(page.getByText("Lobby has its picture")).toBeVisible();
+  expect(pictured).toBe("PUT image/png");
+
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/lobby`);
+  expect(spec).toMatchObject({ loader: "vanilla", autoWhitelist: "admin", autoOp: "owner", sleep: { enabled: true, idleMinutes: 5 }, backups: { enabled: false } });
+  expect(spec.properties).toMatchObject({ motd: "Come on in", "white-list": "true" });
+});
+
+test("a server open to anyone has no whitelist, and one that is not routed does not sleep", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
+  await page.getByLabel("Display name").fill("Open");
+  await page.getByLabel("Who can join").selectOption("anyone");
+  await page.getByRole("button", { name: /How it is reached, and sleep/ }).click();
+  await page.getByRole("switch", { name: /Sleep when empty/ }).click();
+  await page.getByLabel("How it is reached").selectOption("NodePort");
+  await expect(page.getByRole("switch", { name: /Sleep when empty/ })).toBeDisabled();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/open$`));
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/open`);
+  expect(spec.expose.type).toBe("NodePort");
+  expect(spec.sleep.enabled ?? false).toBe(false);
+  expect(spec).not.toHaveProperty("autoWhitelist");
+  expect(spec.properties ?? {}).not.toHaveProperty("white-list");
 });
 
 test("the game versions offered are the ones the server type has", async ({ page, as }) => {

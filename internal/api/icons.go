@@ -31,6 +31,10 @@ const (
 	avatarSide = 128
 	// serverIconSide is the only size the game shows for a server.
 	serverIconSide = 64
+	// newServerIconWait is how long a picture waits for a new server's
+	// volume. Provisioning one and pulling the workspace image on a node
+	// that has never run one is the slow case.
+	newServerIconWait = 3 * time.Minute
 	// serverIconPath is where the game looks for it.
 	serverIconPath = dataRoot + "/server-icon.png"
 )
@@ -541,6 +545,21 @@ func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 		return err
 	}
 	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
+	// A server that was made a moment ago has nowhere to put a picture until
+	// its volume is there. With ?wait=true that is waited for, which is how
+	// a picture chosen while making a server gets to it.
+	if err != nil && r.URL.Query().Get("wait") == "true" {
+		waiting, cancel := context.WithTimeout(r.Context(), newServerIconWait)
+		defer cancel()
+		for err != nil {
+			select {
+			case <-waiting.Done():
+				return &Error{Status: http.StatusGatewayTimeout, Code: "not_ready", Message: "The server's storage was not ready in time to take its picture. Set it in the server's settings."}
+			case <-time.After(2 * time.Second):
+			}
+			sc, err = s.workspaces.get(waiting, a.Namespace, mc.Name)
+		}
+	}
 	if err != nil {
 		return err
 	}

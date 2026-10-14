@@ -1,12 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
+import { ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
+import { PictureChoice } from "../components/Picture";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, More, type Join } from "../components/ServerFields";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { Button, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
-import { api, ApiError, type ContentRef, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
+import { api, ApiError, serverPath, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
 import { keys, useMe } from "../lib/queries";
 import { toast } from "../lib/toast";
@@ -55,8 +57,17 @@ export function NewServer() {
   const [maxPlayers, setMaxPlayers] = useState("");
   const [pvp, setPvp] = useState("");
   const [otherProperties, setOtherProperties] = useState("");
-  // Who may join: the organization's members, or anyone who has the address.
-  const [access, setAccess] = useState<"members" | "anyone">("members");
+  // Who may join. A new server is its organization's own unless said otherwise.
+  const [join, setJoin] = useState<Join>("viewer");
+  const [autoOp, setAutoOp] = useState("operator");
+  const [motd, setMotd] = useState("");
+  const [picture, setPicture] = useState<File | null>(null);
+  const [exposeType, setExposeType] = useState<ExposeType>("Router");
+  const [sleep, setSleep] = useState(false);
+  const [idleMinutes, setIdleMinutes] = useState("15");
+  const [schedule, setSchedule] = useState<"org" | "off">("org");
+  const [moreNetwork, setMoreNetwork] = useState(false);
+  const routed = exposeType === "Router";
   const me = useMe().data;
   const [eula, setEula] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +109,8 @@ export function NewServer() {
     if (hardcore) properties["hardcore"] = "true";
     if (maxPlayers) properties["max-players"] = maxPlayers;
     if (pvp) properties["pvp"] = pvp;
-    if (access === "members") {
+    if (motd.trim()) properties["motd"] = motd.trim();
+    if (join !== "anyone") {
       properties["white-list"] = "true";
       // Whoever is taken off the whitelist is put out, not only kept out.
       properties["enforce-whitelist"] = "true";
@@ -108,16 +120,30 @@ export function NewServer() {
       eula,
       resources: { memory: fromGigabytes(memory) },
       storage: { size: fromGigabytes(storage) },
-      expose: { type: "Router", hostname: hostname.trim() },
+      expose: exposeType === "None" ? { type: "None" } : { type: exposeType, hostname: hostname.trim() },
       mods,
       properties,
-      // Every member who has linked a Minecraft account is let in.
-      ...(access === "members" ? { autoWhitelist: "viewer" as const } : {}),
+      // Members from this role up who have linked a Minecraft account are let in.
+      ...(join !== "anyone" && join !== "list" ? { autoWhitelist: join } : {}),
+      ...(autoOp !== "operator" ? { autoOp: autoOp as ServerSpec["autoOp"] } : {}),
+      ...(sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(idleMinutes) || 15 } } : {}),
+      ...(schedule === "off" ? { backups: { enabled: false } } : {}),
       ...(kind === "modpack" ? { modpack } : { loader: loader ?? undefined, version }),
     };
     try {
       const server = await api.post<Server>(`/orgs/${org}/servers`, { name, spec });
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
+      // Its picture goes onto its volume, which is not there yet. The panel
+      // waits for it; this page does not, and says how it went.
+      if (picture) {
+        api
+          .putRaw(`${serverPath(org, server.name)}/icon?wait=true`, picture)
+          .then(() => {
+            qc.setQueryData(["picture-version"], Date.now());
+            toast.info(`${displayName || server.name} has its picture`);
+          })
+          .catch((err) => toast.error(err instanceof ApiError ? `The picture was not set: ${err.message}` : "The picture was not set. Set it in the server's settings."));
+      }
       navigate(`/o/${org}/s/${server.name}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create the server.");
@@ -207,6 +233,17 @@ export function NewServer() {
         )}
       </Section>
 
+      <Section title="Name and picture" description="How it appears in the panel and in a player's server list.">
+        <PictureChoice name={displayName} file={picture} onChange={setPicture} hint="Optional. Shown to players in their server list." />
+        <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
+        <Field label="Short name" hint="It cannot be changed later.">
+          {(id) => <Input id={id} required value={name} onChange={(e) => setCustomName(e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
+        </Field>
+        <Field label="Message of the day" hint="Optional. The line under its name in a player's server list.">
+          {(id) => <Input id={id} value={motd} onChange={(e) => setMotd(e.target.value)} placeholder="A Minecraft Server" />}
+        </Field>
+      </Section>
+
       <Section
         title="Content"
         description={
@@ -228,13 +265,6 @@ export function NewServer() {
             onClose={() => setAddingMods(false)}
           />
         )}
-      </Section>
-
-      <Section title="Name">
-        <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
-        <Field label="Short name" hint="It cannot be changed later.">
-          {(id) => <Input id={id} required value={name} onChange={(e) => setCustomName(e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
-        </Field>
       </Section>
 
       <Section
@@ -269,10 +299,7 @@ export function NewServer() {
             )}
           </Field>
         </div>
-        <button type="button" aria-expanded={moreWorld} onClick={() => setMoreWorld(!moreWorld)} className="flex w-fit items-center gap-1 text-[13px] text-muted hover:text-fg">
-          {moreWorld ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          World options and more
-        </button>
+        <More label="World options and more" open={moreWorld} onToggle={() => setMoreWorld(!moreWorld)} />
         {moreWorld && (
           <>
             <div className="flex flex-col gap-4 rounded-md border border-line p-4">
@@ -314,6 +341,34 @@ export function NewServer() {
         )}
       </Section>
 
+      <Section title="Players">
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Who can join" hint={joinHint(join)}>
+            {(id) => (
+              <Select id={id} value={join} onChange={(e) => setJoin(e.target.value as Join)}>
+                {joinOptions}
+              </Select>
+            )}
+          </Field>
+          <Field label="Operators by role" hint="Members with this role who have linked a Minecraft account are operators in game.">
+            {(id) => (
+              <Select id={id} value={autoOp} onChange={(e) => setAutoOp(e.target.value)}>
+                {autoOpOptions}
+              </Select>
+            )}
+          </Field>
+        </div>
+        {join !== "anyone" && join !== "list" && me && !me.minecraft && (
+          <p className="text-xs leading-relaxed text-muted">
+            You have not linked a Minecraft account yet, so you could not join it yourself:{" "}
+            <Link to="/account" className="text-accent hover:underline">
+              link it under Account
+            </Link>
+            .
+          </p>
+        )}
+      </Section>
+
       <Section title="Resources" description={kind === "modpack" ? "Large modpacks usually want 6 GB or more." : "4 GB suits a small server."}>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={memory} onChange={(e) => setMemory(e.target.value)} />}</Field>
@@ -321,38 +376,45 @@ export function NewServer() {
         </div>
       </Section>
 
-      <Section title="Address">
+      <Section title="Network">
         <Field label="Hostname" hint="Optional. Point this name's DNS at the avSYS router.">
-          {(id) => <Input id={id} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
+          {(id) => <Input id={id} value={hostname} disabled={exposeType === "None"} onChange={(e) => setHostname(e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
         </Field>
+        <More label="How it is reached, and sleep" changed={(exposeType !== "Router" ? 1 : 0) + (sleep && routed ? 1 : 0)} open={moreNetwork} onToggle={() => setMoreNetwork(!moreNetwork)} />
+        {moreNetwork && (
+          <>
+            <Field label="How it is reached">
+              {(id) => (
+                <Select id={id} value={exposeType} onChange={(e) => setExposeType(e.target.value as ExposeType)}>
+                  {exposeOptions}
+                </Select>
+              )}
+            </Field>
+            <Toggle
+              checked={sleep && routed}
+              disabled={!routed}
+              onChange={setSleep}
+              label="Sleep when empty"
+              hint={routed ? "Stops the game while nobody is playing. The first player to join wakes it and is asked to rejoin once it is up." : "Needs the shared address."}
+            />
+            {sleep && routed && (
+              <Field label="After minutes with no players">
+                {(id) => <Input id={id} type="number" min={1} value={idleMinutes} onChange={(e) => setIdleMinutes(e.target.value)} className="max-w-32" />}
+              </Field>
+            )}
+          </>
+        )}
       </Section>
 
-      <Section title="Who can join">
-        <div role="radiogroup" aria-label="Who can join" className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
-          <button type="button" role="radio" aria-checked={access === "members"} className={segment(access === "members")} onClick={() => setAccess("members")}>
-            Members of this organization
-          </button>
-          <button type="button" role="radio" aria-checked={access === "anyone"} className={segment(access === "anyone")} onClick={() => setAccess("anyone")}>
-            Anyone with the address
-          </button>
-        </div>
-        {access === "members" ? (
-          <p className="text-xs leading-relaxed text-muted">
-            The whitelist is on, and members who have linked a Minecraft account are on it. Others can be added in the server's settings.
-            {me && !me.minecraft && (
-              <>
-                {" "}
-                You have not linked one yet, so you could not join it yourself:{" "}
-                <Link to="/account" className="text-accent hover:underline">
-                  link it under Account
-                </Link>
-                .
-              </>
-            )}
-          </p>
-        ) : (
-          <p className="text-xs leading-relaxed text-muted">No whitelist. Anyone who knows the address can join.</p>
-        )}
+      <Section title="Backups">
+        <Field label="Scheduled snapshots" hint={schedule === "org" ? "Taken daily with the rest of the organization's servers." : "Only snapshotted by hand."}>
+          {(id) => (
+            <Select id={id} value={schedule} onChange={(e) => setSchedule(e.target.value as "org" | "off")}>
+              <option value="org">Same as the organization</option>
+              <option value="off">Off</option>
+            </Select>
+          )}
+        </Field>
       </Section>
 
       <Section title="Minecraft EULA">

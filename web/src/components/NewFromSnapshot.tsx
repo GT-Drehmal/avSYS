@@ -1,12 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { api, ApiError, type BackupOverride, type ExposeType, type Server, type ServerSpec, type Snapshot, type SnapshotDetail } from "../lib/api";
 import { ago, describeSoftware, loaderNames } from "../lib/format";
 import { keys, useServers } from "../lib/queries";
 import { fromGigabytes, toGigabytes, useGameVersions } from "../lib/software";
-import { autoOpOptions, exposeOptions, GameplayFields, gameplayKeys, gameplayOf, memberRoleOptions, type Gameplay } from "./ServerFields";
+import { autoOpOptions, exposeOptions, GameplayFields, gameplayKeys, gameplayOf, joinHint, joinOptions, More, type Gameplay, type Join } from "./ServerFields";
 import { Button, Field, Input, Loading, Modal, Notice, Select, Toggle } from "./ui";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "./VersionOptions";
 
@@ -89,9 +88,6 @@ export function DuplicateServer({ server, open, onClose }: { server: Server; ope
     </Modal>
   );
 }
-
-/** Who may join: anyone, the organization's members from a role up, or only who is on the whitelist. */
-type Join = "anyone" | "viewer" | "operator" | "admin" | "owner" | "list";
 
 /** When it is snapshotted: as its organization, as the server it is a copy of, or not. */
 type Schedule = "org" | "own" | "off";
@@ -255,11 +251,7 @@ function Form({ org, source, taken, from, onClose }: FormProps) {
         </Field>
       )}
       <Toggle checked={start} onChange={setStart} label="Start it when its files are in place" />
-      <button type="button" aria-expanded={more} onClick={() => setMore(!more)} className="flex w-fit items-center gap-1 text-[13px] text-muted hover:text-fg">
-        {more ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        More options
-        {changed > 0 && <span className="text-accent">· {changed} changed</span>}
-      </button>
+      <More label="More options" changed={changed} open={more} onToggle={() => setMore(!more)} />
       {more && (
         <div className="flex flex-col gap-4 rounded-md border border-line p-4">
           <p className="text-xs text-muted">As {detail.server} has them. Anything else can be changed in the new server's settings.</p>
@@ -282,12 +274,10 @@ function Form({ org, source, taken, from, onClose }: FormProps) {
           </div>
           <p className="-mt-2 text-xs text-muted">Server default leaves server.properties as {detail.server} has it.</p>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Who can join" hint={options.join === "anyone" ? "No whitelist." : options.join === "list" ? "The players on its whitelist." : "Those who have linked a Minecraft account, and the players on its whitelist."}>
+            <Field label="Who can join" hint={joinHint(options.join)}>
               {(id) => (
                 <Select id={id} value={options.join} onChange={(e) => option("join", e.target.value as Join)}>
-                  <option value="anyone">Anyone with the address</option>
-                  {memberRoleOptions}
-                  <option value="list">Only its whitelist</option>
+                  {joinOptions}
                 </Select>
               )}
             </Field>
