@@ -32,10 +32,18 @@ case "$me" in
     ;;
   apt|apt-get)
     # Looking is fine; only what would change the system is turned away.
+    # The command is the first word that is not an option, nor the value
+    # of one that takes a value.
+    skip=
     for arg in "$@"; do
+      if [ -n "$skip" ]; then
+        skip=
+        continue
+      fi
       case "$arg" in
-        -*) continue ;;
-        install|remove|purge|update|upgrade|full-upgrade|dist-upgrade|autoremove|reinstall)
+        -o|-c|-t|--option|--config-file|--target-release|--default-release) skip=1 ;;
+        -*) ;;
+        install|reinstall|remove|purge|autoremove|autopurge|update|upgrade|full-upgrade|dist-upgrade|dselect-upgrade|satisfy|build-dep|edit-sources|clean|autoclean|distclean|markauto|unmarkauto)
           explain
           exit 1
           ;;
