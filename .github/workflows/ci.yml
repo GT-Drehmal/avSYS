@@ -88,16 +88,12 @@ jobs:
     needs: [test, e2e]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    # Publishes of main take turns, so that two builds do not write :edge at
-    # once. Of several waiting, GitHub keeps the newest and drops the rest:
-    # a commit that another has already followed onto main is then not
-    # published under its own tag, which nothing needs.
-    #
-    # A release is never one of several: each has a group to itself, so
-    # that none is dropped for another arriving.
-    concurrency:
-      group: publish-${{ github.ref_type == 'tag' && github.ref_name || 'main' }}
-      cancel-in-progress: false
+    # Every merge is published under its own tag, by itself: nothing waits
+    # for another, and so nothing is dropped for another arriving. (Taking
+    # turns was tried. GitHub keeps one waiting job to a group and cancels
+    # the rest, which left merges unpublished and their runs marked
+    # cancelled although every test had passed.) What two of them could
+    # collide on is :edge, which is moved in a step of its own below.
     permissions:
       contents: read
       packages: write
@@ -114,17 +110,6 @@ jobs:
             echo "moving=latest" >> "$GITHUB_OUTPUT"
           else
             echo "version=sha-$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
-            # Taking turns puts publishes in the order their tests finished,
-            # which need not be the order of the commits. :edge is only
-            # moved by the commit main is at right now: an older one that
-            # gets here late publishes under its own tag and leaves :edge
-            # where the newer one put it, or will.
-            tip=$(git ls-remote origin refs/heads/main | cut -f1)
-            if [ "$tip" = "$GITHUB_SHA" ]; then
-              echo "moving=edge" >> "$GITHUB_OUTPUT"
-            else
-              echo "main has moved on to $tip; publishing $GITHUB_SHA under its own tag only"
-            fi
           fi
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -159,3 +144,27 @@ jobs:
             ${{ steps.version.outputs.moving && format('{0}:{1}', env.PANEL, steps.version.outputs.moving) || '' }}
           cache-from: type=gha,scope=panel
           cache-to: type=gha,scope=panel,mode=max
+      # :edge is whatever main is at. Publishes finish in the order their
+      # tests did, which need not be the order of the commits, so each one
+      # asks where main is and points :edge at that commit's images if they
+      # are there. An older commit arriving late then leaves :edge on the
+      # newer one, or moves it there; one whose newer neighbour is not
+      # published yet leaves it alone, and the neighbour moves it when it
+      # arrives. Asked twice, because main can move while this runs.
+      - name: Move edge
+        if: github.ref_type != 'tag'
+        run: |
+          for attempt in 1 2; do
+            tip=$(git ls-remote origin refs/heads/main | cut -f1)
+            tag=sha-$(echo "$tip" | cut -c1-7)
+            if ! docker buildx imagetools inspect "$PANEL:$tag" >/dev/null 2>&1 ||
+               ! docker buildx imagetools inspect "$WORKSPACE:$tag" >/dev/null 2>&1; then
+              echo "main is at $tip, which is not published yet: its own run moves edge"
+              exit 0
+            fi
+            # The workspace first, as above.
+            docker buildx imagetools create -t "$WORKSPACE:edge" "$WORKSPACE:$tag"
+            docker buildx imagetools create -t "$PANEL:edge" "$PANEL:$tag"
+            echo "edge is $tag"
+            [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$tip" ] && exit 0
+          done
