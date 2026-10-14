@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -305,14 +306,60 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 			if cs.RestartCount != 1 {
 				restarts = fmt.Sprintf("%d restarts", cs.RestartCount)
 			}
+			if phase, message, ok := startFailure(cs.LastTerminationState.Terminated, cs.RestartCount); ok {
+				return phase, message
+			}
 			return avsysv1.PhaseError, fmt.Sprintf("The server keeps crashing (%s). Check the console for the cause.", restarts)
 		default:
 			return avsysv1.PhaseError, fmt.Sprintf("%s: %s", w.Reason, w.Message)
 		}
 	case cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0:
+		if phase, message, ok := startFailure(cs.State.Terminated, cs.RestartCount); ok {
+			return phase, message
+		}
 		return avsysv1.PhaseError, fmt.Sprintf("The server exited with code %d.", cs.State.Terminated.ExitCode)
 	}
 	return avsysv1.PhaseStarting, ""
+}
+
+// lookupRetries is how many times a game that could not look up a name is
+// started again before that is called an error. The cluster waits longer
+// between each, so five is about five minutes.
+const lookupRetries = 5
+
+// Lines in a game's log that say a name could not be looked up, with the name.
+// The Java ones are the game's own downloads and the image's helper; the
+// others are curl and Go, which the image also uses to fetch things.
+var lookupFailed = []*regexp.Regexp{
+	regexp.MustCompile(`UnknownHostException: ([A-Za-z0-9.-]+)`),
+	regexp.MustCompile(`DnsNameResolver\w*Exception: .*\(([A-Za-z0-9.-]+?)\.? IN `),
+	regexp.MustCompile(`Could not resolve host: ([A-Za-z0-9.-]+)`),
+	regexp.MustCompile(`dial tcp: lookup ([A-Za-z0-9.-]+?)\.? on `),
+}
+
+// startFailure says whether a game stopped because a name it downloads from
+// could not be looked up, from the end of its log that the cluster kept. That
+// is nearly always the network or the cluster's DNS for a moment, and the
+// game is started again by itself, so it is reported as starting, with why,
+// rather than as a crash. If it goes on, it becomes an error.
+func startFailure(t *corev1.ContainerStateTerminated, restarts int32) (avsysv1.Phase, string, bool) {
+	if t == nil || t.ExitCode == 0 {
+		return "", "", false
+	}
+	host := ""
+	for _, re := range lookupFailed {
+		if m := re.FindAllStringSubmatch(t.Message, -1); m != nil {
+			host = m[len(m)-1][1]
+			break
+		}
+	}
+	if host == "" {
+		return "", "", false
+	}
+	if restarts > lookupRetries {
+		return avsysv1.PhaseError, fmt.Sprintf("The game could not look up %s to download what it runs, and has been started again %d times without that working. Check that the cluster can reach the internet and resolve names.", host, restarts), true
+	}
+	return avsysv1.PhaseStarting, fmt.Sprintf("The game could not look up %s to download what it runs, and is being started again.", host), true
 }
 
 func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServer, pod *corev1.Pod, svc *corev1.Service, pending bool) error {

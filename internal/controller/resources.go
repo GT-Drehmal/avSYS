@@ -437,6 +437,14 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 	// Hashed before the node is filled in: where a server runs is not a
 	// setting whose change should ask for a restart.
 	annotations := map[string]string{annotationSpecHash: hashOf(spec)}
+	// Also after the hash, so that servers already running are not asked to
+	// restart for it: the end of the game's log is kept when it fails, and
+	// that is how the status can say why it stopped (see startFailure).
+	for i := range spec.Containers {
+		if spec.Containers[i].Name == MinecraftContainer {
+			spec.Containers[i].TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
+		}
+	}
 	spec.NodeSelector = mc.Spec.NodeSelector
 	if node := mc.Annotations[avsysv1.AnnotationNode]; len(spec.NodeSelector) == 0 && node != "" {
 		spec.NodeSelector = map[string]string{corev1.LabelHostname: node}

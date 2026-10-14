@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -264,6 +266,78 @@ func TestPhaseOf(t *testing.T) {
 		if got, _ := phaseOf(c.mc, c.pod); got != c.want {
 			t.Errorf("%s: phase = %s, want %s", c.name, got, c.want)
 		}
+	}
+}
+
+// A game that could not look up where it downloads from is starting again,
+// and says so, until it has failed that way too many times. The logs are the
+// ends of two real ones, as the cluster keeps them: Fabric's installer on a
+// home cluster, and the image's helper fetching Paper in CI.
+func TestPhaseOfLookupFailure(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	backingOff := func(log string, restarts int32) *corev1.Pod {
+		pod := buildPod(server(nil), Config{})
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name:                 MinecraftContainer,
+			RestartCount:         restarts,
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: log}},
+		}}
+		return pod
+	}
+	justExited := func(log string) *corev1.Pod {
+		pod := buildPod(server(nil), Config{})
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name:  MinecraftContainer,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: log}},
+		}}
+		return pod
+	}
+
+	cases := []struct {
+		name    string
+		pod     *corev1.Pod
+		want    avsysv1.Phase
+		message string
+	}{
+		{"fabric, backing off", backingOff(read("fabric-unknown-host.log"), 1), avsysv1.PhaseStarting, "could not look up piston-data.mojang.com"},
+		{"fabric, just exited", justExited(read("fabric-unknown-host.log")), avsysv1.PhaseStarting, "piston-data.mojang.com"},
+		{"paper", backingOff(read("paper-dns-timeout.log"), 2), avsysv1.PhaseStarting, "could not look up fill.papermc.io "},
+		{"curl", backingOff("curl: (6) Could not resolve host: cdn.modrinth.com\n", 0), avsysv1.PhaseStarting, "cdn.modrinth.com"},
+		{"go", backingOff(`Get "https://meta.fabricmc.net/v2": dial tcp: lookup meta.fabricmc.net. on 10.43.0.10:53: no such host`, 0), avsysv1.PhaseStarting, "meta.fabricmc.net "},
+		{"going on", backingOff(read("fabric-unknown-host.log"), lookupRetries+1), avsysv1.PhaseError, "Check that the cluster can reach the internet"},
+		{"a crash", backingOff("Exception in thread \"main\" java.lang.NoClassDefFoundError: foo\n", 1), avsysv1.PhaseError, "keeps crashing"},
+		{"a pod from before the log was kept", backingOff("", 1), avsysv1.PhaseError, "keeps crashing"},
+	}
+	for _, c := range cases {
+		phase, message := phaseOf(server(nil), c.pod)
+		if phase != c.want || !strings.Contains(message, c.message) {
+			t.Errorf("%s: %s %q, want %s and %q", c.name, phase, message, c.want, c.message)
+		}
+	}
+}
+
+// The game keeps the end of its log when it fails, and adding that does not
+// ask servers that are already running to restart.
+func TestGameKeepsItsLogWithoutARestart(t *testing.T) {
+	pod := buildPod(server(nil), Config{})
+	for _, c := range pod.Spec.Containers {
+		if c.Name == MinecraftContainer && c.TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
+			t.Errorf("the game's termination message policy is %q", c.TerminationMessagePolicy)
+		}
+	}
+	for i := range pod.Spec.Containers {
+		pod.Spec.Containers[i].TerminationMessagePolicy = ""
+	}
+	pod.Spec.NodeSelector = nil
+	if hashOf(pod.Spec) != pod.Annotations[annotationSpecHash] {
+		t.Error("the hash covers the termination message policy")
 	}
 }
 
