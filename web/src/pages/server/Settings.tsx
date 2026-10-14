@@ -371,7 +371,7 @@ export function Settings() {
       </Section>
 
       {dirty && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+        <div data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-3 md:px-10">
             <p className="text-[13px] text-muted">Unsaved changes{server.status.phase === "Running" ? ". Most apply at the next restart." : "."}</p>
             <div className="flex gap-2">

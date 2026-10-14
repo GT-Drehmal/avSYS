@@ -2,11 +2,12 @@ import { Link, useParams } from "react-router";
 import { useOrg } from "../components/Shell";
 import { BackupSchedule } from "../components/BackupSchedule";
 import { OffsiteCopy } from "../components/OffsiteCopy";
-import { OperationRow, SnapshotRows } from "../components/Snapshots";
+import { OperationRow, SnapshotRows, SnapshotSelectionBar } from "../components/Snapshots";
 import { Chip, Empty, Loading, Notice, PageHeader } from "../components/ui";
 import { atLeast, type Snapshot } from "../lib/api";
 import { ago, bytes } from "../lib/format";
 import { useOrgSnapshots, useServers } from "../lib/queries";
+import { useSelection } from "../lib/selection";
 
 /** Every snapshot in the organization, grouped by the server it is of. */
 export function Backups() {
@@ -15,6 +16,10 @@ export function Backups() {
   const list = useOrgSnapshots(org);
   const servers = useServers(org);
   const canAdmin = atLeast(membership?.role, "admin");
+  // One selection across every server's list, in the order the page shows them.
+  const shown = new Map<string, Snapshot[]>();
+  for (const s of list.data?.snapshots ?? []) shown.set(s.server, [...(shown.get(s.server) ?? []), s]);
+  const selection = useSelection([...shown.values()].flat().map((s) => s.id), org);
 
   if (list.isPending) return <Loading />;
   const header = <PageHeader title="Backups" description={membership?.name} />;
@@ -37,13 +42,12 @@ export function Backups() {
   const { snapshots, operations, usage } = list.data;
   const existing = new Set(servers.data?.map((s) => s.name));
   // Newest first within a server, and servers in order of their newest.
-  const groups = new Map<string, Snapshot[]>();
-  for (const s of snapshots) groups.set(s.server, [...(groups.get(s.server) ?? []), s]);
+  const groups = shown;
 
   return (
     <>
       {header}
-      <div className="flex flex-col gap-6">
+      <div className={`flex flex-col gap-6 ${selection.count > 0 ? "pb-16" : ""}`}>
         <div className="flex flex-col gap-2">
           <p className="text-[13px] text-muted">
             {snapshots.length === 0
@@ -74,10 +78,11 @@ export function Backups() {
               )}
               <span className="font-normal text-faint">newest {ago(items[0].time)}</span>
             </h2>
-            <SnapshotRows org={org} snapshots={items} canAdmin={canAdmin} />
+            <SnapshotRows org={org} snapshots={items} canAdmin={canAdmin} selection={selection} />
           </section>
         ))}
       </div>
+      {canAdmin && <SnapshotSelectionBar org={org} snapshots={snapshots} selection={selection} />}
     </>
   );
 }

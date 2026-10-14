@@ -211,6 +211,9 @@ curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"resources":{"memor
 curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/creative/snapshots?wait=true"
 curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/creative/snapshots/<id>/restore?wait=true"
 curl -H "Authorization: Bearer $TOKEN" $AVSYS/orgs/friends/snapshots
+# Delete one snapshot, or several in one pass: all of them, or none if any is unknown or in use.
+curl -H "Authorization: Bearer $TOKEN" -X DELETE $AVSYS/orgs/friends/snapshots/<id>
+curl -H "Authorization: Bearer $TOKEN" -X DELETE -d '{"ids":["<id>","<id>"]}' $AVSYS/orgs/friends/snapshots
 
 # The organization's daily snapshots: read the policy, change it, or run it now.
 # "minute" is the time of day they begin, in minutes after midnight UTC.

@@ -250,6 +250,30 @@ func TestSnapshotAndRestoreThroughAWorkspace(t *testing.T) {
 	if list, _ := m.List(ctx, "alpha"); len(list) != 1 || list[0].ID != first.ID {
 		t.Errorf("list after delete: %+v", list)
 	}
+
+	// Several go at once, or none does: one that is not there stops all of it.
+	var more []string
+	for _, line := range []string{"three", "four"} {
+		sh(t, ws, `echo `+line+` > /data/world/level.dat`)
+		snap, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerManual, Record: record}, nil)
+		if err != nil {
+			t.Fatalf("snapshot %s: %v", line, err)
+		}
+		more = append(more, snap.ID)
+	}
+	if err := m.DeleteMany(ctx, "alpha", append([]string{strings.Repeat("0", 64)}, more...)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("deleting several with an unknown one among them: %v", err)
+	}
+	if list, _ := m.List(ctx, "alpha"); len(list) != 3 {
+		t.Errorf("a refused delete removed something: %d snapshots left, want 3", len(list))
+	}
+	// One named twice is deleted once.
+	if err := m.DeleteMany(ctx, "alpha", append(more, more[0])); err != nil {
+		t.Fatalf("deleting several: %v", err)
+	}
+	if list, _ := m.List(ctx, "alpha"); len(list) != 1 || list[0].ID != first.ID {
+		t.Errorf("list after deleting several: %+v", list)
+	}
 }
 
 // A snapshot of one server can be put into another, which is how a deleted

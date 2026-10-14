@@ -421,27 +421,57 @@ func (m *Manager) Record(ctx context.Context, org, id string) ([]byte, error) {
 	return m.restic(ctx, org, "dump", "--no-lock", snap.ID, RecordPath)
 }
 
-// Delete removes a snapshot and reclaims the space only it used.
+// Delete removes one snapshot and the data only it referred to.
 func (m *Manager) Delete(ctx context.Context, org, id string) error {
-	snap, err := m.Get(ctx, org, id)
-	if err != nil {
-		return err
+	return m.DeleteMany(ctx, org, []string{id})
+}
+
+// DeleteMany removes several snapshots, and the data only they referred to,
+// in one pass over the repository: taking them one at a time would go
+// through all of it once for each. Either all of them are there to be
+// removed or none is.
+func (m *Manager) DeleteMany(ctx context.Context, org string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
 	}
 	lock := m.lock(org)
 	lock.Lock()
 	defer lock.Unlock()
+	list, err := m.list(ctx, org)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]*Snapshot, len(list))
+	for i := range list {
+		byID[list[i].ID] = &list[i]
+	}
+	args := []string{"forget", "--prune"}
+	lineages := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		snap := byID[id]
+		if snap == nil {
+			return fmt.Errorf("%w: %s", ErrNotFound, id)
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		args = append(args, snap.ID)
+		lineages = append(lineages, snap.Lineage)
+	}
 	// Holding the lock alone means nothing the panel started is using the
 	// repository, so any lock still in it was left by a snapshot that was cut
 	// short, and would only make this fail.
 	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
 		return err
 	}
-	// Noted first: once the snapshot is gone, so is the only record of which
+	// Noted first: once a snapshot is gone, so is the only record of which
 	// copy offsite was its.
-	if err := m.removing(org, snap.Lineage); err != nil {
+	if err := m.removing(org, lineages...); err != nil {
 		return err
 	}
-	_, err = m.restic(ctx, org, "forget", "--prune", snap.ID)
+	_, err = m.restic(ctx, org, args...)
 	return err
 }
 

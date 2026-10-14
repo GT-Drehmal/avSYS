@@ -229,6 +229,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		// 503 below: allowed, and then told that this panel has no restic.
 		{"GET /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},
 		{"DELETE /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},
+		{"DELETE /orgs/{org}/snapshots", "", `{"ids":["aaaa1111"]}`, store.RoleAdmin, 503},
 
 		{"GET /orgs/{org}/servers", "", "", store.RoleViewer, 200},
 		{"POST /orgs/{org}/servers", "", `{"name":"by-{who}","spec":{"eula":true,"version":"1.21.4"}}`, store.RoleAdmin, 201},

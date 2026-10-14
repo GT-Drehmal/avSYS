@@ -40,7 +40,7 @@ export const api = {
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
-  del: <T = void>(path: string) => request<T>("DELETE", path),
+  del: <T = void>(path: string, body?: unknown) => request<T>("DELETE", path, body),
   putRaw: <T = void>(path: string, data: BodyInit) => request<T>("PUT", path, undefined, data),
 };
 
