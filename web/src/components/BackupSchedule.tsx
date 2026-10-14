@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type BackupOverride, type BackupPolicy, type Server } from "../lib/api";
+import { ago } from "../lib/format";
 import { keys, useAction, useBackupPolicy, useUpdateServer } from "../lib/queries";
 import { toast } from "../lib/toast";
 import { Button, Input, Select, Toggle } from "./ui";
@@ -79,6 +80,25 @@ function ScheduleFields({ value, onChange }: { value: When; onChange: (patch: Pa
 }
 
 /** The schedule a server's snapshots follow: its organization's, with what it sets for itself in its place. */
+const overdueAfter = 36 * 60 * 60 * 1000;
+
+/** What about a server's backups needs looking at, if anything: the last one failed, or the daily one has not happened. */
+export function backupConcern(server: Server, scheduled: boolean): { tone: "danger" | "warn"; text: string } | null {
+  const backups = server.status.snapshots;
+  if (backups?.error) return { tone: "danger", text: "backup failed" };
+  if (!scheduled) return null;
+  const last = backups?.lastRun ?? server.createdAt;
+  if (Date.now() - new Date(last).getTime() < overdueAfter) return null;
+  return { tone: "warn", text: backups?.lastRun ? `last backup ${ago(backups.lastRun)}` : "never backed up" };
+}
+
+/** Says so, after other words on a line, when a server's backups need looking at. */
+export function BackupMark({ server, scheduled }: { server: Server; scheduled: boolean }) {
+  const concern = backupConcern(server, scheduled);
+  if (!concern) return null;
+  return <span className={concern.tone === "danger" ? "text-danger" : "text-warn"}> · {concern.text}</span>;
+}
+
 export function scheduleOf(policy: BackupPolicy, own: BackupOverride | null | undefined): BackupPolicy {
   return { enabled: own?.enabled ?? policy.enabled, minute: own?.minute ?? policy.minute, keep: own?.keep ?? policy.keep };
 }

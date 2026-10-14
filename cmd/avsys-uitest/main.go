@@ -106,9 +106,9 @@ func run(listen, webDir, upstreamDir, readyFile string) error {
 		Gateway: gateway,
 		Events:  api.NewHub(),
 		Log:     log,
-		// A restic that does nothing and says it went well: enough for the
-		// pages about snapshots to be drawn, with none to show.
-		Backups:  &backup.Manager{Dir: filepath.Join(dir, "backups"), Restic: "true", Log: log},
+		// A restic that answers from files (see seedSnapshots): enough for
+		// the pages about snapshots to be drawn and looked through.
+		Backups:  &backup.Manager{Dir: filepath.Join(dir, "backups"), Restic: filepath.Join(dir, "restic"), Log: log},
 		Static:   os.DirFS(webDir),
 		Upstream: up,
 	}
@@ -156,9 +156,9 @@ func run(listen, webDir, upstreamDir, readyFile string) error {
 	// Servers in each state a list has to draw.
 	players := &avsysv1.PlayersStatus{Online: 2, Max: 20, Names: []string{"Steve", "Alex"}}
 	for _, s := range []seed{
-		{org: "friends", name: "survival", display: "Survival", loader: avsysv1.LoaderPaper, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseRunning, players: players,
+		{org: "friends", name: "survival", display: "Survival", loader: avsysv1.LoaderPaper, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseRunning, players: players, lastBackup: 3 * time.Hour,
 			mods: []avsysv1.ContentRef{{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindPlugin, Project: "luckperms", Title: "LuckPerms", Version: "lp1", VersionName: "v5.5.0"}}},
-		{org: "friends", name: "creative", display: "Creative", loader: avsysv1.LoaderFabric, version: "1.21.4", state: avsysv1.StateStopped, phase: avsysv1.PhaseStopped},
+		{org: "friends", name: "creative", display: "Creative", loader: avsysv1.LoaderFabric, version: "1.21.4", state: avsysv1.StateStopped, phase: avsysv1.PhaseStopped, lastBackup: 50 * time.Hour},
 		{org: "friends", name: "lobby", display: "Lobby", loader: avsysv1.LoaderVanilla, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseSleeping, sleep: true},
 		{org: "friends", name: "broken", display: "Broken", loader: avsysv1.LoaderPaper, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseError, message: "The server exited with code 1."},
 		{org: "club", name: "survival", display: "Survival", loader: avsysv1.LoaderVanilla, version: "1.21.4", state: avsysv1.StateStopped, phase: avsysv1.PhaseStopped},
@@ -180,9 +180,17 @@ func run(listen, webDir, upstreamDir, readyFile string) error {
 		if s.phase == avsysv1.PhaseRunning {
 			mc.Status.Version = "Paper " + s.version
 		}
+		if s.lastBackup > 0 {
+			at := metav1.NewTime(time.Now().Add(-s.lastBackup))
+			mc.Status.Snapshots = &avsysv1.SnapshotStatus{LastRun: &at}
+		}
 		if err := cluster.Status().Update(ctx, mc); err != nil {
 			return err
 		}
+	}
+
+	if err := seedSnapshots(dir); err != nil {
+		return err
 	}
 
 	ln, err := net.Listen("tcp", listen)
@@ -197,6 +205,104 @@ func run(listen, webDir, upstreamDir, readyFile string) error {
 		}
 	}
 	return http.Serve(ln, srv.Handler())
+}
+
+// resticStandIn is what the panel runs as restic here. It answers the
+// questions the panel asks of a repository out of files beside it, and
+// agrees to everything else. Its arguments are as the panel gives them:
+// --repo DIR --password-file FILE --no-cache COMMAND ...
+const resticStandIn = `#!/bin/sh
+repo=$2
+case "$6" in
+  snapshots) cat "$repo/snapshots.json" 2>/dev/null || echo '[]' ;;
+  stats) echo '{"total_size": 734003200, "snapshots_count": 6}' ;;
+  dump) cat "$repo/record-$8.json" 2>/dev/null || exit 1 ;;
+  forget) cat "$repo/forget.json" 2>/dev/null ;;
+esac
+`
+
+// seedSnapshots gives the first organization a repository with snapshots in
+// it: several of a server that runs every day, one of another, and the last
+// one of a server that has since been deleted.
+func seedSnapshots(dir string) error {
+	if err := os.WriteFile(filepath.Join(dir, "restic"), []byte(resticStandIn), 0o755); err != nil {
+		return err
+	}
+	repo := filepath.Join(dir, "backups", "friends")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		return err
+	}
+	// What makes a directory a repository, as far as the panel looks.
+	if err := os.WriteFile(filepath.Join(repo, "config"), nil, 0o600); err != nil {
+		return err
+	}
+	type summary struct {
+		Bytes int64 `json:"total_bytes_processed"`
+		Files int64 `json:"total_files_processed"`
+		Added int64 `json:"data_added_packed"`
+	}
+	type snapshot struct {
+		ID       string    `json:"id"`
+		Time     time.Time `json:"time"`
+		Hostname string    `json:"hostname"`
+		Tags     []string  `json:"tags"`
+		Summary  summary   `json:"summary"`
+	}
+	type reason struct {
+		Snapshot snapshot `json:"snapshot"`
+		Matches  []string `json:"matches"`
+	}
+	now := time.Now().UTC()
+	id := func(n int) string { return fmt.Sprintf("%02x", n) + strings.Repeat("a1b2c3d4", 8)[2:] }
+	taken := []struct {
+		server, trigger, by string
+		ago                 time.Duration
+	}{
+		{"survival", "scheduled", "", 3 * time.Hour},
+		{"survival", "manual", "owner", 20 * time.Hour},
+		{"survival", "scheduled", "", 27 * time.Hour},
+		{"survival", "scheduled", "", 51 * time.Hour},
+		{"creative", "scheduled", "", 3 * time.Hour},
+		{"oldworld", "final", "owner", 240 * time.Hour},
+	}
+	var list []snapshot
+	var reasons []reason
+	for i, t := range taken {
+		tags := []string{"avsys", "trigger=" + t.trigger, "loader=paper", "version=1.21.4"}
+		if t.by != "" {
+			tags = append(tags, "by="+t.by)
+		}
+		snap := snapshot{ID: id(i + 1), Time: now.Add(-t.ago), Hostname: t.server, Tags: tags, Summary: summary{Bytes: 350 << 20, Files: 625, Added: int64(4+i) << 20}}
+		list = append(list, snap)
+		// The schedule keeps the newest of each day, so all three of these.
+		if t.server == "survival" && t.trigger == "scheduled" {
+			reasons = append(reasons, reason{Snapshot: snap, Matches: []string{"daily snapshot"}})
+		}
+		record, err := json.Marshal(map[string]any{"format": 1, "org": "friends", "server": t.server, "spec": avsysv1.MinecraftServerSpec{
+			EULA: true, DisplayName: t.server, Version: "1.21.4", Loader: avsysv1.LoaderPaper,
+			Resources:  avsysv1.ResourcesSpec{Memory: resource.MustParse("4Gi")},
+			Storage:    avsysv1.StorageSpec{Size: resource.MustParse("10Gi")},
+			Properties: map[string]string{"difficulty": "hard"},
+			Mods:       []avsysv1.ContentRef{{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindPlugin, Project: "luckperms", Title: "LuckPerms", Version: "lp1", VersionName: "v5.5.0"}},
+		}})
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(repo, "record-"+snap.ID+".json"), record, 0o600); err != nil {
+			return err
+		}
+	}
+	write := func(name string, v any) error {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(repo, name), data, 0o600)
+	}
+	if err := write("snapshots.json", list); err != nil {
+		return err
+	}
+	return write("forget.json", []map[string]any{{"reasons": reasons}})
 }
 
 // noPods is the way into servers' pods where there are none.
@@ -216,6 +322,8 @@ type seed struct {
 	players            *avsysv1.PlayersStatus
 	mods               []avsysv1.ContentRef
 	sleep              bool
+	// lastBackup is how long ago its scheduled snapshot last ran, if it has.
+	lastBackup time.Duration
 }
 
 // upstream answers what the panel would ask other services, from files.
