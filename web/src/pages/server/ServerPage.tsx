@@ -1,6 +1,6 @@
 import { ChevronLeft, Code2, Copy, Plug } from "lucide-react";
 import { useState } from "react";
-import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router";
+import { Link, NavLink, Outlet, useLocation, useOutletContext, useParams } from "react-router";
 import { DuplicateServer } from "../../components/NewFromSnapshot";
 import { Picture } from "../../components/Picture";
 import { ServerActions } from "../../components/ServerActions";
@@ -9,6 +9,7 @@ import { Button, CopyText, cx, Empty, Modal, Notice, Status, Loading } from "../
 import { atLeast, serverIcon, type Meta, type Role, type Server } from "../../lib/api";
 import { describeSoftware, displayName, quantity } from "../../lib/format";
 import { useMe, useMeta, useServer, useServerAction } from "../../lib/queries";
+import { ErrorBoundary } from "../../components/ErrorBoundary";
 
 export interface ServerContext {
   server: Server;
@@ -98,6 +99,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 }
 
 export function ServerPage() {
+  const { pathname } = useLocation();
   const { org = "", server: name = "" } = useParams();
   const membership = useOrg();
   const { data: server, isPending } = useServer(org, name);
@@ -212,7 +214,10 @@ export function ServerPage() {
         {atLeast(role, "admin") && <Tab to="settings">Settings</Tab>}
       </nav>
       <div className="pt-5">
-        <Outlet context={{ server, role } satisfies ServerContext} />
+        {/* An error in one tab leaves the server's name and its other tabs standing. */}
+        <ErrorBoundary key={pathname}>
+          <Outlet context={{ server, role } satisfies ServerContext} />
+        </ErrorBoundary>
       </div>
       <ConnectDialog server={server} open={connecting} onOpenChange={setConnecting} />
       <DuplicateServer server={server} open={duplicating} onClose={() => setDuplicating(false)} />

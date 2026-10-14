@@ -15,30 +15,29 @@ test("an error on one page leaves the rest of the panel standing", async ({ page
   pageErrors.length = 0;
 });
 
-test("a part of the app that is gone reloads the page once, and never leaves it empty", async ({ page, as, pageErrors }) => {
+test("a part of the app that is gone reloads the page once, then says so, and never leaves it empty", async ({ page, as, pageErrors }) => {
   await as("owner");
   await page.goto("/o/friends/s/survival");
   await expect(page.getByRole("link", { name: "Terminal" })).toBeVisible();
   // As in a tab left open while the panel was updated: the file it asks for
-  // is not there.
-  let asked = 0;
-  await page.route("**/assets/Terminal-*.js", (route) =>
-    asked++ === 0 ? route.fulfill({ status: 404, headers: { "Cache-Control": "no-store" }, body: "not found" }) : route.continue(),
-  );
+  // is not there. In a real update the reload finds the new file under a new
+  // name; here it stays gone, which is the case that could go round for ever.
+  await page.route("**/assets/Terminal-*.js", (route) => route.fulfill({ status: 404, headers: { "Cache-Control": "no-store" }, body: "not found" }));
   let loads = 0;
   page.on("load", () => loads++);
   await page.getByRole("link", { name: "Terminal" }).click();
   await expect.poll(() => loads).toBe(1);
   await expect(page).toHaveURL(/\/terminal$/);
-  // Whatever the reload found, the server's page is there around it. (In
-  // Chromium the file is asked for again and the terminal opens. WebKit
-  // answers the second request from memory, which a real update, where the
-  // file has a new name, does not run into; it then says to reload by hand.)
-  await expect(page.getByRole("link", { name: "Terminal" })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("This page needs reloading");
+  // The server's name and its other tabs are still there around it.
   await expect(page.getByRole("heading", { name: "Survival" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Console" })).toBeVisible();
   // And it does not go round again.
   await page.waitForTimeout(1500);
   expect(loads).toBe(1);
+  // Another tab of the same server works.
+  await page.getByRole("main").getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "needs reloading" })).toHaveCount(0);
   pageErrors.length = 0;
 });
 
