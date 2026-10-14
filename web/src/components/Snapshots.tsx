@@ -11,7 +11,7 @@ import type { Selection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectionBar } from "./ui";
 
-const triggerLabel = (s: Snapshot) => {
+export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
   if (s.trigger === "pre-restore") return "Before a restore";
   if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
@@ -67,10 +67,12 @@ interface RowsProps {
   onRestore?: (snapshot: Snapshot) => void;
   /** Lets admins tick rows, to act on several at once. Shared by every list on a page. */
   selection?: Selection;
+  /** Put before each row, for a list that mixes servers: which one it is of. */
+  lead?: (snapshot: Snapshot) => ReactNode;
 }
 
 /** A list of snapshots, newest first, as rows of one bordered box. */
-export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, selection }: RowsProps) {
+export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, selection, lead }: RowsProps) {
   const [deleting, setDeleting] = useState<Snapshot | null>(null);
   const [creating, setCreating] = useState<Snapshot | null>(null);
   const [looking, setLooking] = useState<Snapshot | null>(null);
@@ -89,6 +91,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, select
                 className="-mr-1"
               />
             )}
+            {lead?.(s)}
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-medium" title={new Date(s.time).toLocaleString()}>
                 {/* The way into what the snapshot holds. */}
