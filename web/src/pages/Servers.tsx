@@ -2,13 +2,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Camera, Copy, Play, Plus, RotateCw, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { scheduleOf } from "../components/BackupSchedule";
+import { BackupMark, scheduleOf } from "../components/BackupSchedule";
 import { Picture } from "../components/Picture";
 import { ServerActions } from "../components/ServerActions";
 import { useOrg } from "../components/Shell";
 import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, SelectionBar, StatusDot, Loading, Toggle } from "../components/ui";
 import { api, ApiError, atLeast, serverIcon, serverPath, type Server } from "../lib/api";
-import { ago, describeSoftware, displayName } from "../lib/format";
+import { describeSoftware, displayName } from "../lib/format";
 import { keys, useBackupPolicy, useMeta, useServers } from "../lib/queries";
 import { newFrom } from "../lib/origin";
 import { useSelection } from "../lib/selection";
@@ -33,18 +33,6 @@ const phaseWords: Record<string, string> = {
   Stopped: "Offline",
   Error: "Error",
 };
-
-const overdueAfter = 36 * 60 * 60 * 1000;
-
-/** Says so when a server's backups need looking at: the last one failed, or the daily one has not happened. */
-function BackupMark({ server, scheduled }: { server: Server; scheduled: boolean }) {
-  const backups = server.status.snapshots;
-  if (backups?.error) return <span className="text-danger"> · backup failed</span>;
-  if (!scheduled) return null;
-  const last = backups?.lastRun ?? server.createdAt;
-  if (Date.now() - new Date(last).getTime() < overdueAfter) return null;
-  return <span className="text-warn"> · {backups?.lastRun ? `last backup ${ago(backups.lastRun)}` : "never backed up"}</span>;
-}
 
 const columns = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_72px_minmax(0,1.3fr)_112px] items-center gap-4 px-4";
 
