@@ -285,6 +285,14 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return snapshotError(err)
 	}
+	// Under its own name it is that server brought back, and its history
+	// goes on. Under another, it is a new server, which cannot take a name
+	// that the snapshots of another are under.
+	if snap.Server != name {
+		if err := s.nameIsFree(ctx, a, name); err != nil {
+			return err
+		}
+	}
 	if contentGiven(&requested) {
 		return errContentGiven
 	}
@@ -393,10 +401,9 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 		return err
 	}
 	// Said before the snapshot, which is the slow part and would be for
-	// nothing. They are checked again when the server is made.
-	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &avsysv1.MinecraftServer{}); err == nil {
-		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
-	} else if !apierrors.IsNotFound(err) {
+	// nothing. They are checked again when the server is made. A copy is
+	// never the server that a name's snapshots are of.
+	if err := s.nameIsFree(ctx, a, name); err != nil {
 		return err
 	}
 	if contentGiven(&requested) {

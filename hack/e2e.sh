@@ -385,6 +385,7 @@ expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['sna
 FINAL=$(call "$API/orgs/$ORG/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'final'][0]") || fail "there is no final snapshot of the deleted server"
 
 step "a deleted server comes back"
+expect "a new server cannot take the name its snapshots are under" "$(call -d '{"name":"probe","spec":{"eula":true,"loader":"paper","version":"1.21.4"}}' "$API/orgs/$ORG/servers" | field "d['code']")" name_has_history
 back=$(call -d "{\"name\":\"probe\",\"fromSnapshot\":\"$FINAL\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"$HOST\"}}}" "$API/orgs/$ORG/servers?wait=true")
 case "$back" in *'"spec"'*) ;; *) fail "the deleted server was not brought back: $back" ;; esac
 expect "under its own name, left stopped as asked" "$(echo "$back" | field "(d['name'], d['spec']['state'], d['spec']['expose']['hostname'])")" "('probe', 'Stopped', '$HOST')"
