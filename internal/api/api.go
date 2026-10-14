@@ -339,6 +339,8 @@ func (s *Server) Handler() http.Handler {
 
 	api("GET /catalog/minecraft/versions", s.authed(s.minecraftVersions))
 	api("GET /catalog/modrinth/search", s.authed(s.modrinthSearch))
+	api("GET /catalog/modrinth/categories", s.authed(s.modrinthCategories))
+	api("GET /catalog/modrinth/projects", s.authed(s.modrinthProjects))
 	api("GET /catalog/modrinth/projects/{id}/versions", s.authed(s.modrinthVersions))
 	api("POST /catalog/sha1", s.authed(s.hashURL))
 

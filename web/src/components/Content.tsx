@@ -1,6 +1,7 @@
 import { ExternalLink, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import type { ContentKind, ContentRef, ServerSpec } from "../lib/api";
+import type { ContentKind, ContentRef, Loader, ServerSpec } from "../lib/api";
+import { loaderNames } from "../lib/format";
 import { useGameVersions } from "../lib/software";
 import { ModrinthSearch, ProjectIcon } from "./ModrinthSearch";
 import { Button, Chip, cx, Field, Input, Modal, Spinner } from "./ui";
@@ -40,6 +41,12 @@ export function filtersFor(software: Software, kind: ContentKind, latestRelease?
     loader: kind === "datapack" ? "datapack" : software.loader,
     gameVersion: software.version === "LATEST" ? latestRelease : software.version,
   };
+}
+
+/** What a search is narrowed to, in words: "Paper 1.21.4", or just the game version for a datapack. */
+function fitsOf(filters: { loader?: string; gameVersion?: string }) {
+  const loader = filters.loader && filters.loader !== "datapack" ? (loaderNames[filters.loader as Loader] ?? filters.loader) : filters.gameVersion ? "Minecraft" : "";
+  return [loader, filters.gameVersion].filter(Boolean).join(" ") || undefined;
 }
 
 /** "mods or datapacks", for sentences about what a server accepts. */
@@ -86,6 +93,8 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
   // "Latest" is what the server's own software will get, which can be behind the newest there is.
   const latest = useGameVersions(software.modpack ? null : software.loader).data?.latest;
 
+  const filters = filtersFor(software, kind, latest);
+
   const tabClass = (active: boolean) => cx("h-7 rounded-sm px-2.5 text-xs font-medium", active ? "bg-hover text-fg" : "text-muted hover:text-fg");
   return (
     <Modal open onOpenChange={onClose} size="lg" title="Add content" description={description}>
@@ -113,11 +122,12 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
           </div>
         </div>
         {tab === "modrinth" ? (
-          <div className="h-[min(55vh,460px)]">
+          <div className="h-[min(60vh,560px)]">
             <ModrinthSearch
               key={kind}
               type={kind}
-              {...filtersFor(software, kind, latest)}
+              {...filters}
+              fits={fitsOf(filters)}
               picked={picked}
               busy={busy}
               placeholder={`Search ${kindNames[kind].toLowerCase()} on Modrinth`}

@@ -62,7 +62,9 @@ func (v modrinthVersion) file() string {
 // modrinthVersionList returns a project's versions, newest first, optionally
 // narrowed to loaders and a game version.
 func (s *Server) modrinthVersionList(ctx context.Context, project string, loaders []string, gameVersion string) ([]modrinthVersion, error) {
-	params := url.Values{}
+	// The changelogs are not used, and on a project with years of versions
+	// they are most of the answer.
+	params := url.Values{"include_changelog": {"false"}}
 	if len(loaders) > 0 {
 		encoded, _ := json.Marshal(loaders)
 		params.Set("loaders", string(encoded))

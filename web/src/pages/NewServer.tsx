@@ -194,7 +194,7 @@ export function NewServer() {
             <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Choose a different modpack" onClick={() => setModpack(null)} />
           </div>
         ) : (
-          <div className="h-96 overflow-hidden rounded-md border border-line bg-surface p-3">
+          <div className="h-[30rem] overflow-hidden rounded-md border border-line bg-surface p-3">
             <ModrinthSearch
               type="modpack"
               placeholder="Search modpacks on Modrinth"
