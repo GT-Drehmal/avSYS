@@ -3,6 +3,7 @@ import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import "./app.css";
+import { ErrorBoundary, reloadOnce } from "./components/ErrorBoundary";
 import { Shell } from "./components/Shell";
 import { Loading, Spinner, Toaster } from "./components/ui";
 import { queryClient, useMe } from "./lib/queries";
@@ -25,6 +26,13 @@ import { Snapshots } from "./pages/server/Snapshots";
 const Files = lazy(() => import("./pages/server/Files"));
 const Terminal = lazy(() => import("./pages/server/Terminal"));
 
+// A part of the app that could not be fetched belongs to a version that is
+// no longer served: the panel was updated under this tab. Loading the page
+// again gets the current one.
+window.addEventListener("vite:preloadError", (event) => {
+  if (reloadOnce()) event.preventDefault();
+});
+
 function RequireAuth() {
   const me = useMe();
   const location = useLocation();
@@ -35,6 +43,7 @@ function RequireAuth() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
+    <ErrorBoundary full>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
@@ -66,5 +75,6 @@ createRoot(document.getElementById("root")!).render(
       </BrowserRouter>
       <Toaster />
     </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

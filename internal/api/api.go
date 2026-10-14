@@ -359,6 +359,13 @@ func (s *Server) staticHandler() http.Handler {
 			path = "index.html"
 		}
 		if _, err := fs.Stat(s.Static, path); err != nil {
+			// A script or stylesheet that is not there belongs to another
+			// build. The page is no answer to that: a browser asking for a
+			// script would be handed HTML and told all was well.
+			if strings.HasPrefix(path, "assets/") {
+				http.NotFound(w, r)
+				return
+			}
 			path = "index.html"
 		}
 		if strings.HasPrefix(path, "assets/") {

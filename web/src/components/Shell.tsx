@@ -1,9 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, ChevronsUpDown, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useMatch, useNavigate } from "react-router";
+import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Org } from "../lib/api";
 import { keys, useAction, useLiveServers, useMe, useMeta } from "../lib/queries";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { Picture } from "./Picture";
 import { Button, cx, Field, Input, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
 
@@ -139,6 +140,7 @@ function NavItem({ to, end, icon, children }: { to: string; end?: boolean; icon:
 }
 
 export function Shell() {
+  const { pathname } = useLocation();
   const me = useMe().data!;
   const meta = useMeta().data;
   const org = useOrg();
@@ -215,7 +217,10 @@ export function Shell() {
       </aside>
       <main className="min-w-0 flex-1">
         <div className="mx-auto max-w-5xl px-5 py-8 md:px-10">
-          <Outlet />
+          {/* An error in a page leaves the navigation standing, and going elsewhere clears it. */}
+          <ErrorBoundary key={pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </main>
     </div>
