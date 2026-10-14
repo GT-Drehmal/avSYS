@@ -269,7 +269,8 @@ fi
 step "a new server from a snapshot"
 COPY=$API/orgs/$ORG/servers/copy
 expect "a snapshot says what its server was" "$(call "$API/orgs/$ORG/snapshots/$LAST" | field "(d['server'], d['spec']['version'], d['spec']['loader'])")" "('probe', '1.21.4', 'paper')"
-expect "its software is not chosen again" "$(call -o /dev/null -w '%{http_code}' -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"version\":\"1.20.1\"}}" "$API/orgs/$ORG/servers")" 400
+expect "its mods are not chosen again" "$(call -o /dev/null -w '%{http_code}' -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"mods\":[{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"luckperms\"}]}}" "$API/orgs/$ORG/servers")" 400
+expect "nor is it put on a version its software has no build for" "$(call -o /dev/null -w '%{http_code}' -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"version\":\"1.2.3\"}}" "$API/orgs/$ORG/servers")" 400
 # Answers once the files are in. It is then started, being asked for nothing else.
 copied=$(call -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"expose\":{\"hostname\":\"copy.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
 case "$copied" in *'"spec"'*) ;; *) fail "no server was made from the snapshot: $copied" ;; esac
@@ -296,8 +297,11 @@ expect "a copy has the original's software" "$(echo "$twin" | field "(d['spec'][
 expect "and its files as they were a moment ago" "$(call "$TWIN/files/content?path=/twin.txt")" "only in the original"
 copies="len([s for s in d['snapshots'] if s['trigger'] == 'copy'])"
 expect "it was made from a snapshot taken for it" "$(call "$SRV/snapshots" | field "$copies")" 1
-call -d '{"name":"twin-2","fromServer":"probe","spec":{"state":"Stopped"}}' "$API/orgs/$ORG/servers?wait=true" >/dev/null
-expect "a second copy with nothing changed needs no new one" "$(call "$SRV/snapshots" | field "$copies")" 1
+# A copy that differs from its original in what the request names, and in nothing else.
+second=$(call -d '{"name":"twin-2","fromServer":"probe","spec":{"state":"Stopped","properties":{"difficulty":"peaceful","motd":null},"autoWhitelist":"admin"}}' "$API/orgs/$ORG/servers?wait=true")
+expect "a second copy with nothing changed in the original needs no new one" "$(call "$SRV/snapshots" | field "$copies")" 1
+expect "a copy takes the settings it is asked to have" "$(echo "$second" | field "(d['spec']['properties'].get('difficulty'), 'motd' in d['spec']['properties'], d['spec']['autoWhitelist'])")" "('peaceful', False, 'admin')"
+expect "and the rest from its original" "$(echo "$second" | field "(d['spec']['version'], sorted(m['project'] for m in d['spec']['mods']))")" "('1.21.4', ['luckperms', 'worldedit'])"
 expect "the original is as it was" "$(call "$SRV" | field "(d['status']['phase'], d['spec']['expose']['hostname'])")" "('Stopped', '$HOST')"
 for name in twin twin-2; do
   call -o /dev/null -X DELETE "$API/orgs/$ORG/servers/$name?snapshot=false"
