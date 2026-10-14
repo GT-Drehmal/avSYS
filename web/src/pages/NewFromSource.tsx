@@ -44,7 +44,18 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
     </Link>
   );
   if (servers.isPending || (origin.kind === "snapshot" && snapshot.isPending)) return <Loading />;
-  const taken = new Set(servers.data?.map((s) => s.name));
+  // Without the list of servers it cannot be said which names are taken, or
+  // whether the original still exists: nothing is guessed from its absence.
+  if (!servers.data) {
+    return (
+      <>
+        {back}
+        <PageHeader title="New server" />
+        <Notice tone="danger">{servers.error instanceof ApiError ? servers.error.message : "The organization's servers could not be loaded."}</Notice>
+      </>
+    );
+  }
+  const taken = new Set(servers.data.map((s) => s.name));
   const live = origin.kind === "server" ? servers.data?.find((s) => s.name === origin.name) : undefined;
   const source: Source | null =
     origin.kind === "server"
@@ -222,7 +233,8 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
 
       <Section title="Starting point" description="Everything below starts as the original has it.">
         <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-          <Picture name={spec.displayName || source.name} url={source.live ? serverIcon(source.live) : undefined} size={36} />
+          {/* A copy of the server as it is now has its picture as it is now. One made from a snapshot has whatever picture the snapshot holds, which is not shown here as the server's present one. */}
+          <Picture name={spec.displayName || source.name} url={duplicating && source.live ? serverIcon(source.live) : undefined} size={36} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-medium">
               {duplicating ? `${source.name} as it is now` : `${source.name} as it was ${ago(source.taken)}`}

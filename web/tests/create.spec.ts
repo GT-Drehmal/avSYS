@@ -148,3 +148,12 @@ test("a server that is not there cannot be copied", async ({ page, as }) => {
   await page.goto("/o/friends/new?from=server:nobody");
   await expect(page.getByText("There is no server named nobody to copy.")).toBeVisible();
 });
+
+test("with the list of servers unavailable, nothing is guessed about the original", async ({ page, as }) => {
+  await as("owner");
+  await page.route("**/api/v1/orgs/friends/servers", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "unavailable", message: "The cluster did not answer." }) }));
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByText("The cluster did not answer.")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/There is no server named/)).toHaveCount(0);
+  await expect(page.getByLabel("Short name")).toHaveCount(0);
+});
