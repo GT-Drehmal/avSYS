@@ -8,6 +8,10 @@
 # The token must belong to an instance admin (it creates an organization).
 # Optional: AVSYS_SSH_PORT (2222), AVSYS_ROUTER_HOST (127.0.0.1), AVSYS_ROUTER_PORT (25565).
 # AVSYS_E2E_KEEP_ON_FAILURE=1 leaves the organization and server in place when a check fails.
+# AVSYS_E2E_EXITED_LOG is a command that prints the log of a server's game as
+# it last exited, given the organization and the server as $1 and $2. The
+# panel's console shows the game that is running, which after an exit is the
+# next one; why the last one stopped is only in its own log.
 set -eu
 
 : "${AVSYS_URL:?set AVSYS_URL to the panel address}"
@@ -88,6 +92,15 @@ FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload'
 # How many times that happened in this run, said at the end so that it shows.
 REFETCHED=0
 
+# exited_log SERVER_URL: the log of the game that last exited there, if this
+# run was told how to get at it, and nothing if not.
+exited_log() {
+  [ -n "${AVSYS_E2E_EXITED_LOG:-}" ] || return 0
+  org=$(printf '%s' "$1" | sed -E 's|.*/orgs/([^/]+)/servers/.*|\1|')
+  server=$(printf '%s' "$1" | sed -E 's|.*/servers/([^/]+).*|\1|')
+  sh -c "$AVSYS_E2E_EXITED_LOG" exited-log "$org" "$server" 2>/dev/null | sed 's/^/  | /' || true
+}
+
 wait_phase() {
   target=${2:-$SRV}
   excused=0
@@ -100,13 +113,16 @@ wait_phase() {
     [ "$phase" = "$1" ] && return 0
     if [ "$phase" = Error ]; then
       message=$(call "$target" | field "d['status'].get('message')")
-      log=$(game_log "$target")
+      # Why it stopped is in the log of the game that exited. The console
+      # may by now be showing the one started after it.
+      log=$(exited_log "$target")
+      [ -n "$log" ] || log=$(game_log "$target")
       # A failed fetch is waited out, twice at most. Anything else that
       # stops the game fails the run at once.
       if [ "$excused" -lt 2 ] && printf '%s' "$log" | grep -Eq "$FETCH_FAILED"; then
         excused=$((excused + 1))
         REFETCHED=$((REFETCHED + 1))
-        printf 'note: the game could not fetch what it runs, and is being started again:\n%s\n' "$(printf '%s' "$log" | grep -E "$FETCH_FAILED" | tail -2)"
+        printf 'note: the game could not fetch what it runs, and is being started again:\n%s\n' "$(printf '%s' "$log" | grep -E "$FETCH_FAILED|Caused by" | tail -3)"
         # Until the game has been started again, so that the same exit is not counted twice.
         while [ "$looks" -gt 0 ] && [ "$(call "$target" | field "d['status'].get('phase')")" = Error ]; do
           looks=$((looks - 1))
