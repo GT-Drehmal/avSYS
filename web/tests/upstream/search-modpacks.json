@@ -1,0 +1,73 @@
+{
+ "hits": [
+  {
+   "project_id": "P0000200",
+   "slug": "adventure-pack",
+   "title": "Adventure Pack",
+   "description": "Adventure Pack, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": -25000000,
+   "follows": -80000,
+   "author": "someone",
+   "project_type": "modpack",
+   "categories": [
+    "fabric",
+    "adventure"
+   ],
+   "display_categories": [
+    "adventure"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000201",
+   "slug": "tech-pack",
+   "title": "Tech Pack",
+   "description": "Tech Pack, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": -25150000,
+   "follows": -80500,
+   "author": "someone",
+   "project_type": "modpack",
+   "categories": [
+    "fabric",
+    "adventure"
+   ],
+   "display_categories": [
+    "adventure"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000202",
+   "slug": "cozy-pack",
+   "title": "Cozy Pack",
+   "description": "Cozy Pack, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": -25300000,
+   "follows": -81000,
+   "author": "someone",
+   "project_type": "modpack",
+   "categories": [
+    "fabric",
+    "adventure"
+   ],
+   "display_categories": [
+    "adventure"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  }
+ ],
+ "offset": 0,
+ "limit": 24,
+ "total_hits": 3
+}

@@ -1,0 +1,139 @@
+{
+ "hits": [
+  {
+   "project_id": "P0000024",
+   "slug": "starlight",
+   "title": "Starlight",
+   "description": "Starlight, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 1400000,
+   "follows": 8000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000025",
+   "slug": "c2me",
+   "title": "C2ME",
+   "description": "C2ME, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 1250000,
+   "follows": 7500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000026",
+   "slug": "let-me-despawn",
+   "title": "Let Me Despawn",
+   "description": "Let Me Despawn, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 1100000,
+   "follows": 7000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000027",
+   "slug": "almanac",
+   "title": "Almanac",
+   "description": "Almanac, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 950000,
+   "follows": 6500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000028",
+   "slug": "lootr",
+   "title": "Lootr",
+   "description": "Lootr, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 800000,
+   "follows": 6000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000029",
+   "slug": "supplementaries",
+   "title": "Supplementaries",
+   "description": "Supplementaries, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 650000,
+   "follows": 5500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "utility"
+   ],
+   "display_categories": [
+    "utility"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  }
+ ],
+ "offset": 24,
+ "limit": 24,
+ "total_hits": 30
+}

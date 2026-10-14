@@ -267,12 +267,15 @@ Needs Go, [Bun](https://bun.sh), Docker, [restic](https://restic.net) and a clus
 make dev        # builds everything and runs the panel on http://localhost:8080
 make test       # unit tests and type checks
 make test-snapshots  # the snapshot engine against a real workspace container
+make test-browser    # the web UI in Chromium and WebKit, against a panel with nothing behind it
 make e2e        # creates a real server through a running panel and checks it end to end
 make e2e-cluster  # the same from nothing: an empty k3s in Docker, installed from deploy/install.yaml
 make generate   # after changing api/
 ```
 
 `make e2e` needs `AVSYS_URL` and `AVSYS_TOKEN` (an instance admin's API token). It makes a throwaway organization and a Paper server with plugins, checks the console, files, snapshots and restore, SSH and the router against it, and deletes both. Unit tests cover the logic that needs no cluster; this covers what only a running server can show.
+
+`make test-browser` needs neither a cluster nor the internet. It starts `cmd/avsys-uitest`, which is the real API and web UI with stand-ins for everything they reach out to: servers are remembered but never run, and what the panel looks up at Modrinth, Mojang and the build sites is answered from `web/tests/upstream`. The tests in `web/tests` open every page, use the dialogs and forms, and check what each role is shown, in both engines, and fail on any error thrown in the page. Fetch the browsers once with `cd web && bunx playwright install`. A change to the web UI should come with a test here.
 
 `make e2e-cluster` needs only Docker. It starts an empty single-node k3s in a container, builds both images, applies `deploy/install.yaml`, creates the first account and then runs the same check. CI runs it on every push, and images are published only if it passes.
 

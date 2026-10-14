@@ -1,0 +1,67 @@
+[
+ {
+  "id": "v0000002",
+  "project_id": "P0000000",
+  "name": "2.0.0",
+  "version_number": "2.0.0",
+  "version_type": "release",
+  "game_versions": [
+   "1.21.4"
+  ],
+  "loaders": [
+   "fabric",
+   "paper"
+  ],
+  "date_published": "2026-09-20T10:00:00Z",
+  "dependencies": [
+   {
+    "project_id": "P0000006",
+    "version_id": null,
+    "dependency_type": "required"
+   },
+   {
+    "project_id": null,
+    "version_id": "vX",
+    "dependency_type": "required"
+   }
+  ],
+  "files": [
+   {
+    "url": "https://files.invalid/v0000002.jar",
+    "filename": "v0000002.jar",
+    "primary": true,
+    "hashes": {
+     "sha1": "0000000000000000000000000000000000000000"
+    },
+    "size": 1000
+   }
+  ]
+ },
+ {
+  "id": "v0000001",
+  "project_id": "P0000000",
+  "name": "1.9.0",
+  "version_number": "1.9.0",
+  "version_type": "release",
+  "game_versions": [
+   "1.21.4"
+  ],
+  "loaders": [
+   "fabric",
+   "paper"
+  ],
+  "date_published": "2026-09-20T10:00:00Z",
+  "dependencies": [],
+  "files": [
+   {
+    "url": "https://files.invalid/v0000001.jar",
+    "filename": "v0000001.jar",
+    "primary": true,
+    "hashes": {
+     "sha1": "0000000000000000000000000000000000000000"
+    },
+    "size": 1000
+   }
+  ]
+ }
+]

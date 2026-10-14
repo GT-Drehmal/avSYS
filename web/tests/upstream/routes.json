@@ -1,0 +1,97 @@
+[
+ {
+  "url": "https://api.modrinth.com/v2/search",
+  "has": "project_type:modpack",
+  "file": "search-modpacks.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/search",
+  "has": "categories:adventure",
+  "file": "search-adventure.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/search",
+  "has": "offset=24",
+  "file": "search-more.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/search",
+  "has": "",
+  "file": "search.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/tag/category",
+  "has": "",
+  "file": "categories.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/projects?",
+  "has": "",
+  "file": "projects.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/project/",
+  "has": "/version",
+  "file": "versions.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/project/",
+  "has": "",
+  "file": "project.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/version/",
+  "has": "",
+  "file": "version.json"
+ },
+ {
+  "url": "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
+  "has": "",
+  "file": "mojang.json"
+ },
+ {
+  "url": "https://fill.papermc.io/v3/projects/paper",
+  "has": "",
+  "file": "paper.json"
+ },
+ {
+  "url": "https://fill.papermc.io/v3/projects/folia",
+  "has": "",
+  "file": "folia.json"
+ },
+ {
+  "url": "https://api.purpurmc.org/v2/purpur",
+  "has": "",
+  "file": "purpur.json"
+ },
+ {
+  "url": "https://meta.fabricmc.net/v2/versions/game",
+  "has": "",
+  "file": "fabric.json"
+ },
+ {
+  "url": "https://meta.quiltmc.org/v3/versions/game",
+  "has": "",
+  "file": "fabric.json"
+ },
+ {
+  "url": "https://files.minecraftforge.net/",
+  "has": "",
+  "file": "forge.json"
+ },
+ {
+  "url": "https://maven.neoforged.net/",
+  "has": "",
+  "file": "neoforge.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/",
+  "has": "",
+  "file": "profile.json"
+ },
+ {
+  "url": "https://sessionserver.mojang.com/session/minecraft/profile/",
+  "has": "",
+  "file": "profile.json"
+ }
+]

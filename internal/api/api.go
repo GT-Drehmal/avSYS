@@ -59,6 +59,11 @@ type Server struct {
 	Log     *slog.Logger
 	// Static is the built web UI. Nil serves the API only.
 	Static fs.FS
+	// Upstream is how the panel reaches the services it looks things up in:
+	// Modrinth, Mojang, and the sites that list each kind of server's builds.
+	// Nil is the internet. The browser tests answer from files instead, so
+	// that they neither depend on those services nor load them.
+	Upstream http.RoundTripper
 
 	catalog    *catalog
 	workspaces *workspacePool
@@ -250,6 +255,9 @@ func (s *Server) audit(ctx context.Context, u *store.User, org *store.Org, actio
 // Handler builds the HTTP handler for the whole panel.
 func (s *Server) Handler() http.Handler {
 	s.catalog = newCatalog(s.Config.Version)
+	if s.Upstream != nil {
+		s.catalog.http.Transport = s.Upstream
+	}
 	s.offsite.since()
 	s.workspaces = newWorkspacePool(s.Gateway)
 
@@ -366,6 +374,9 @@ func (s *Server) staticHandler() http.Handler {
 			// build. The page is no answer to that: a browser asking for a
 			// script would be handed HTML and told all was well.
 			if strings.HasPrefix(path, "assets/") {
+				// Not to be kept either: WebKit holds on to a 404 for a
+				// script and answers the next request for it from memory.
+				w.Header().Set("Cache-Control", "no-store")
 				http.NotFound(w, r)
 				return
 			}

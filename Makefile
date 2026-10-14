@@ -2,7 +2,7 @@ VERSION ?= dev
 IMAGE ?= ghcr.io/gt-drehmal/avsys
 WORKSPACE_IMAGE ?= ghcr.io/gt-drehmal/avsys-workspace
 
-.PHONY: dev web generate test test-snapshots e2e e2e-cluster images
+.PHONY: dev web generate test test-snapshots test-browser e2e e2e-cluster images
 
 # Run the panel on this machine against the current kubectl context.
 dev: web
@@ -28,6 +28,12 @@ test:
 test-snapshots:
 	docker build -q -t avsys-workspace:dev -f images/workspace/Dockerfile .
 	AVSYS_TEST_WORKSPACE_IMAGE=avsys-workspace:dev go test -count=1 ./internal/backup/
+
+# The web UI in a browser, in Chromium and WebKit, against a panel with
+# nothing behind it (cmd/avsys-uitest). Needs neither a cluster nor the
+# internet. The first time, fetch the browsers: cd web && bunx playwright install
+test-browser: web
+	cd web && bunx playwright test
 
 # Exercise a running panel and cluster end to end. Needs AVSYS_URL and
 # AVSYS_TOKEN (an instance admin's API token).

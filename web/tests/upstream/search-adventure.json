@@ -1,0 +1,73 @@
+{
+ "hits": [
+  {
+   "project_id": "P0000100",
+   "slug": "waystones",
+   "title": "Waystones",
+   "description": "Waystones, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": -10000000,
+   "follows": -30000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "adventure"
+   ],
+   "display_categories": [
+    "adventure"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000101",
+   "slug": "yungs-better-dungeons",
+   "title": "YUNG's Better Dungeons",
+   "description": "YUNG's Better Dungeons, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": -10150000,
+   "follows": -30500,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "adventure"
+   ],
+   "display_categories": [
+    "adventure"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  },
+  {
+   "project_id": "P0000102",
+   "slug": "dungeons-and-taverns",
+   "title": "Dungeons and Taverns",
+   "description": "Dungeons and Taverns, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": -10300000,
+   "follows": -31000,
+   "author": "someone",
+   "project_type": "mod",
+   "categories": [
+    "fabric",
+    "adventure"
+   ],
+   "display_categories": [
+    "adventure"
+   ],
+   "date_modified": "2026-10-01T12:00:00Z",
+   "license": "MIT",
+   "client_side": "optional",
+   "server_side": "required"
+  }
+ ],
+ "offset": 0,
+ "limit": 24,
+ "total_hits": 3
+}
