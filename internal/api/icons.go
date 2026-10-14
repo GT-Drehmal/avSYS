@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -551,6 +552,75 @@ func (s *Server) ServerIcon(ctx context.Context, namespace, name string) []byte 
 		return s.readServerIcon(ctx, namespace, name)
 	})
 	return data
+}
+
+// snapshotIcons remembers the icons read out of snapshots. A snapshot never
+// changes, so what was read of one is good for as long as it is kept; a
+// page that offers several snapshots asks for each.
+type snapshotIcons struct {
+	mu    sync.Mutex
+	icons map[string][]byte
+}
+
+// snapshotIconsKept bounds how many are remembered. They are 64 pixel PNGs.
+const snapshotIconsKept = 512
+
+func (c *snapshotIcons) get(key string) ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	data, ok := c.icons[key]
+	return data, ok
+}
+
+func (c *snapshotIcons) set(key string, data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.icons == nil || len(c.icons) >= snapshotIconsKept {
+		c.icons = map[string][]byte{}
+	}
+	c.icons[key] = data
+}
+
+// snapshotIconLimit is the most read of a server-icon.png in a snapshot. The
+// game's own is a few kilobytes; the file is the server's, and could be
+// anything.
+const snapshotIconLimit = 1 << 20
+
+// getSnapshotIcon serves the icon a snapshot holds: the picture a server
+// made from it will have.
+func (s *Server) getSnapshotIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	a, err := s.org(r, u, store.RoleViewer)
+	if err != nil {
+		return err
+	}
+	if !s.Backups.Available() {
+		return errNoBackups
+	}
+	snap, err := s.Backups.Get(r.Context(), a.Org.Slug, r.PathValue("id"))
+	if err != nil {
+		return snapshotError(err)
+	}
+	key := a.Org.Slug + "/" + snap.ID
+	data, ok := s.snapshotIcons.get(key)
+	if !ok {
+		raw, err := s.Backups.File(r.Context(), a.Org.Slug, snap.ID, serverIconPath, snapshotIconLimit)
+		switch {
+		case errors.Is(err, backup.ErrTooLarge):
+			// Not a picture the game would show: the same as none.
+		case err != nil:
+			return err
+		case raw != nil:
+			// Redrawn like any upload before it is served. Not a picture is
+			// the same as none.
+			data, _ = squarePNG(bytes.NewReader(raw), serverIconSide)
+		}
+		s.snapshotIcons.set(key, data)
+	}
+	if data == nil {
+		return errNotFound
+	}
+	servePicture(w, r, data)
+	return nil
 }
 
 // getServerIcon serves the icon the game shows for a server in its
