@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
+import type { ReactNode } from "react";
 import { difficulties, gameModes } from "../lib/properties";
 import { Field, Input, Select } from "./ui";
 
@@ -32,10 +33,10 @@ export const triState = (
  * is being made of one. Each left on its default leaves server.properties
  * as it is. Meant for a two-column grid.
  */
-export function GameplayFields({ value, onChange }: { value: Gameplay; onChange: (key: keyof Gameplay, value: string) => void }) {
-  return (
-    <>
-      <Field label="Difficulty">
+export function GameplayFields({ value, onChange, only }: { value: Gameplay; onChange: (key: keyof Gameplay, value: string) => void; only?: (keyof Gameplay)[] }) {
+  const fields: Record<keyof Gameplay, ReactNode> = {
+    difficulty: (
+      <Field key="difficulty" label="Difficulty">
         {(id) => (
           <Select id={id} value={value.difficulty} onChange={(e) => onChange("difficulty", e.target.value)}>
             <option value="">Server default</option>
@@ -47,7 +48,9 @@ export function GameplayFields({ value, onChange }: { value: Gameplay; onChange:
           </Select>
         )}
       </Field>
-      <Field label="Game mode">
+    ),
+    gamemode: (
+      <Field key="gamemode" label="Game mode">
         {(id) => (
           <Select id={id} value={value.gamemode} onChange={(e) => onChange("gamemode", e.target.value)}>
             <option value="">Server default</option>
@@ -59,16 +62,24 @@ export function GameplayFields({ value, onChange }: { value: Gameplay; onChange:
           </Select>
         )}
       </Field>
-      <Field label="Player limit">{(id) => <Input id={id} type="number" min={1} value={value.maxPlayers} onChange={(e) => onChange("maxPlayers", e.target.value)} placeholder="20" />}</Field>
-      <Field label="PvP">
+    ),
+    maxPlayers: (
+      <Field key="maxPlayers" label="Player limit">
+        {(id) => <Input id={id} type="number" min={1} value={value.maxPlayers} onChange={(e) => onChange("maxPlayers", e.target.value)} placeholder="20" />}
+      </Field>
+    ),
+    pvp: (
+      <Field key="pvp" label="PvP">
         {(id) => (
           <Select id={id} value={value.pvp} onChange={(e) => onChange("pvp", e.target.value)}>
             {triState}
           </Select>
         )}
       </Field>
-    </>
-  );
+    ),
+  };
+  // All four, or the ones asked for in the order asked.
+  return <>{(only ?? (["difficulty", "gamemode", "maxPlayers", "pvp"] as const)).map((key) => fields[key])}</>;
 }
 
 /** From which role members are operators in game. */

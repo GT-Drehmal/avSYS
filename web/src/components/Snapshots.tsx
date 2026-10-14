@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CopyPlus, History, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { useNavigate } from "react-router";
+import { newFrom } from "../lib/origin";
 import { api, ApiError, type Operation, type Snapshot, type SnapshotDetail } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { keys, useAction, useOffsite } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
 import { ContentList } from "./Content";
-import { NewFromSnapshot } from "./NewFromSnapshot";
 import type { Selection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectionBar } from "./ui";
@@ -72,7 +73,9 @@ interface RowsProps {
 /** A list of snapshots, newest first, as rows of one bordered box. */
 export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, selection }: RowsProps) {
   const [deleting, setDeleting] = useState<Snapshot | null>(null);
-  const [creating, setCreating] = useState<Snapshot | null>(null);
+  const navigate = useNavigate();
+  // Making a server out of a snapshot is a page of its own, the same one a new server is made on.
+  const setCreating = (s: Snapshot) => navigate(newFrom(org, { kind: "snapshot", id: s.id }));
   const [looking, setLooking] = useState<Snapshot | null>(null);
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
   return (
@@ -125,7 +128,6 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, select
           </li>
         ))}
       </ul>
-      <NewFromSnapshot org={org} snapshot={creating} onClose={() => setCreating(null)} />
       <SnapshotDetails
         org={org}
         snapshot={looking}
