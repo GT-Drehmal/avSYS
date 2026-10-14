@@ -150,11 +150,12 @@ jobs:
       # are there. An older commit arriving late then leaves :edge on the
       # newer one, or moves it there; one whose newer neighbour is not
       # published yet leaves it alone, and the neighbour moves it when it
-      # arrives. Asked twice, because main can move while this runs.
+      # arrives. Asked again after each move, until main has stayed where
+      # it was for the length of one: it can move while this runs.
       - name: Move edge
         if: github.ref_type != 'tag'
         run: |
-          for attempt in 1 2; do
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
             tip=$(git ls-remote origin refs/heads/main | cut -f1)
             tag=sha-$(echo "$tip" | cut -c1-7)
             if ! docker buildx imagetools inspect "$PANEL:$tag" >/dev/null 2>&1 ||
@@ -168,3 +169,4 @@ jobs:
             echo "edge is $tag"
             [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$tip" ] && exit 0
           done
+          echo "main kept moving; edge is left to the runs that follow"
