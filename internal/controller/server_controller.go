@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -306,7 +307,7 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 			if cs.RestartCount != 1 {
 				restarts = fmt.Sprintf("%d restarts", cs.RestartCount)
 			}
-			if phase, message, ok := startFailure(cs.LastTerminationState.Terminated, cs.RestartCount); ok {
+			if phase, message, ok := startFailure(pod, cs.LastTerminationState.Terminated, cs.RestartCount); ok {
 				return phase, message
 			}
 			return avsysv1.PhaseError, fmt.Sprintf("The server keeps crashing (%s). Check the console for the cause.", restarts)
@@ -314,7 +315,7 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 			return avsysv1.PhaseError, fmt.Sprintf("%s: %s", w.Reason, w.Message)
 		}
 	case cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0:
-		if phase, message, ok := startFailure(cs.State.Terminated, cs.RestartCount); ok {
+		if phase, message, ok := startFailure(pod, cs.State.Terminated, cs.RestartCount); ok {
 			return phase, message
 		}
 		return avsysv1.PhaseError, fmt.Sprintf("The server exited with code %d.", cs.State.Terminated.ExitCode)
@@ -322,10 +323,16 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 	return avsysv1.PhaseStarting, ""
 }
 
-// lookupRetries is how many times a game that could not look up a name is
-// started again before that is called an error. The cluster waits longer
-// between each, so five is about five minutes.
-const lookupRetries = 5
+// A game that could not look up a name is reported as starting again until
+// it has been restarted lookupRetries times and its game has not been ready
+// for lookupGrace. Both, because the restart count is the pod's whole life,
+// and a game can be not ready for long while it installs a large modpack.
+// The cluster waits longer between each restart, so five is about five
+// minutes.
+const (
+	lookupRetries = 5
+	lookupGrace   = 5 * time.Minute
+)
 
 // Lines in a game's log that say a name could not be looked up, with the name.
 // The Java ones are the game's own downloads and the image's helper; the
@@ -337,29 +344,72 @@ var lookupFailed = []*regexp.Regexp{
 	regexp.MustCompile(`dial tcp: lookup ([A-Za-z0-9.-]+?)\.? on `),
 }
 
+var ansiColor = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
 // startFailure says whether a game stopped because a name it downloads from
 // could not be looked up, from the end of its log that the cluster kept. That
 // is nearly always the network or the cluster's DNS for a moment, and the
 // game is started again by itself, so it is reported as starting, with why,
 // rather than as a crash. If it goes on, it becomes an error.
-func startFailure(t *corev1.ContainerStateTerminated, restarts int32) (avsysv1.Phase, string, bool) {
+func startFailure(pod *corev1.Pod, t *corev1.ContainerStateTerminated, restarts int32) (avsysv1.Phase, string, bool) {
 	if t == nil || t.ExitCode == 0 {
 		return "", "", false
 	}
-	host := ""
-	for _, re := range lookupFailed {
-		if m := re.FindAllStringSubmatch(t.Message, -1); m != nil {
-			host = m[len(m)-1][1]
-			break
-		}
-	}
+	host := lookupAtEnd(ansiColor.ReplaceAllString(t.Message, ""))
 	if host == "" {
 		return "", "", false
 	}
-	if restarts > lookupRetries {
-		return avsysv1.PhaseError, fmt.Sprintf("The game could not look up %s to download what it runs, and has been started again %d times without that working. Check that the cluster can reach the internet and resolve names.", host, restarts), true
+	if waited := notReadyFor(pod); restarts >= lookupRetries && waited >= lookupGrace {
+		return avsysv1.PhaseError, fmt.Sprintf("The game could not look up %s to download what it runs, and has kept failing for %d minutes. Check that the cluster can reach the internet and resolve names.", host, int(waited.Minutes())), true
 	}
 	return avsysv1.PhaseStarting, fmt.Sprintf("The game could not look up %s to download what it runs, and is being started again.", host), true
+}
+
+// lookupAtEnd is the name in the last failed lookup in a log, if that is how
+// the log ends: nothing after it but the rest of its stack trace and the
+// image saying the game stopped. A lookup a plugin logged earlier, before
+// some other failure, is not why the game stopped.
+func lookupAtEnd(log string) string {
+patterns:
+	for _, re := range lookupFailed {
+		m := re.FindAllStringSubmatchIndex(log, -1)
+		if m == nil {
+			continue
+		}
+		last := m[len(m)-1]
+		rest := log[last[1]:]
+		if i := strings.IndexByte(rest, '\n'); i >= 0 {
+			rest = rest[i+1:]
+		} else {
+			rest = ""
+		}
+		for _, line := range strings.Split(rest, "\n") {
+			line = strings.TrimSpace(line)
+			switch {
+			case line == "",
+				strings.HasPrefix(line, "at "),
+				strings.HasPrefix(line, "..."),
+				strings.HasPrefix(line, "Caused by: "),
+				strings.HasPrefix(line, "[init] "),
+				strings.Contains(line, "mc-server-runner"):
+			default:
+				continue patterns
+			}
+		}
+		return log[last[2]:last[3]]
+	}
+	return ""
+}
+
+// notReadyFor is how long the pod's containers have not been ready: since the
+// pod was made, or since the game last stopped being ready.
+func notReadyFor(pod *corev1.Pod) time.Duration {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.ContainersReady && c.Status != corev1.ConditionTrue && !c.LastTransitionTime.IsZero() {
+			return time.Since(c.LastTransitionTime.Time)
+		}
+	}
+	return 0
 }
 
 func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServer, pod *corev1.Pod, svc *corev1.Service, pending bool) error {

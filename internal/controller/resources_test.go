@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -291,6 +292,21 @@ func TestPhaseOfLookupFailure(t *testing.T) {
 		}}
 		return pod
 	}
+	// notReady is how long ago the pod's containers stopped being ready.
+	notReady := func(pod *corev1.Pod, ago time.Duration) *corev1.Pod {
+		pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{
+			Type: corev1.ContainersReady, Status: corev1.ConditionFalse,
+			LastTransitionTime: metav1.NewTime(time.Now().Add(-ago)),
+		})
+		return pod
+	}
+	fabric := read("fabric-unknown-host.log")
+	// A plugin could not look something up while the game ran, and later
+	// the game crashed for another reason.
+	pluginThenCrash := "[12:00:01] [Server thread/WARN]: [Updater] java.net.UnknownHostException: api.example.org\n" +
+		"[12:30:00] [Server thread/ERROR]: Encountered an unexpected exception\n" +
+		"java.lang.IllegalStateException: broken chunk\n\tat net.minecraft.server.Main.main(Main.java:1)\n" +
+		"2026-10-14T06:00:55.213Z\tWARN\tmc-server-runner\tMinecraft server failed.\n"
 	justExited := func(log string) *corev1.Pod {
 		pod := buildPod(server(nil), Config{})
 		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
@@ -311,7 +327,12 @@ func TestPhaseOfLookupFailure(t *testing.T) {
 		{"paper", backingOff(read("paper-dns-timeout.log"), 2), avsysv1.PhaseStarting, "could not look up fill.papermc.io "},
 		{"curl", backingOff("curl: (6) Could not resolve host: cdn.modrinth.com\n", 0), avsysv1.PhaseStarting, "cdn.modrinth.com"},
 		{"go", backingOff(`Get "https://meta.fabricmc.net/v2": dial tcp: lookup meta.fabricmc.net. on 10.43.0.10:53: no such host`, 0), avsysv1.PhaseStarting, "meta.fabricmc.net "},
-		{"going on", backingOff(read("fabric-unknown-host.log"), lookupRetries+1), avsysv1.PhaseError, "Check that the cluster can reach the internet"},
+		{"going on", notReady(backingOff(fabric, lookupRetries), lookupGrace+time.Minute), avsysv1.PhaseError, "kept failing for 6 minutes. Check that the cluster can reach the internet"},
+		{"not yet as many restarts", notReady(backingOff(fabric, lookupRetries-1), time.Hour), avsysv1.PhaseStarting, "being started again"},
+		// Restarts from earlier in the pod's life are not counted against it.
+		{"after earlier restarts", notReady(backingOff(fabric, 40), time.Minute), avsysv1.PhaseStarting, "being started again"},
+		{"a lookup before another crash", backingOff(pluginThenCrash, 1), avsysv1.PhaseError, "keeps crashing"},
+		{"in colour", backingOff("\x1b[0;39mCaused by: java.net.UnknownHostException: piston-meta.mojang.com\x1b[0m\n\tat x.y(Z.java:1)\n", 0), avsysv1.PhaseStarting, "piston-meta.mojang.com "},
 		{"a crash", backingOff("Exception in thread \"main\" java.lang.NoClassDefFoundError: foo\n", 1), avsysv1.PhaseError, "keeps crashing"},
 		{"a pod from before the log was kept", backingOff("", 1), avsysv1.PhaseError, "keeps crashing"},
 	}
