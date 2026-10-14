@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
@@ -10,6 +11,9 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -471,5 +475,79 @@ func TestServerIconsAnswerWhatTheyHaveWhileReadingAgain(t *testing.T) {
 	}
 	if icon, _ := c.get("ns/world"); string(icon.data) != "new" || icon.failed {
 		t.Errorf("a failed read replaced what was known: %+v", icon)
+	}
+}
+
+// A snapshot's picture is the server-icon.png among its files, redrawn as any
+// picture the panel serves. One with none, or with a file there that is not
+// a picture, has none.
+func TestSnapshotIcon(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	p := newPanel(t)
+	dir := p.withOffsite("restic")
+	repo, key := filepath.Join(dir, "alpha"), filepath.Join(dir, "alpha.key")
+	restic := func(stdin []byte, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("restic", append([]string{"--repo", repo, "--password-file", key, "-q"}, args...)...)
+		cmd.Stdin = bytes.NewReader(stdin)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("restic %v: %v: %s", args, err, out)
+		}
+		return string(out)
+	}
+	if err := os.WriteFile(key, []byte("local\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restic(nil, "init")
+	ids := func() map[string]bool {
+		var list []struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(restic(nil, "snapshots", "--json")), &list); err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for _, s := range list {
+			seen[s.ID[:8]] = true
+		}
+		return seen
+	}
+	take := func(name string, data []byte) string {
+		before := ids()
+		restic(data, "backup", "--stdin", "--stdin-filename", strings.TrimPrefix(name, "/"), "--host", "world", "--tag", "avsys", "--tag", "trigger=manual")
+		for id := range ids() {
+			if !before[id] {
+				return id
+			}
+		}
+		t.Fatal("no snapshot was taken")
+		return ""
+	}
+	pictured := take(serverIconPath, asPNG(t, picture(128, 128)))
+	none := take("/data/level.dat", []byte("a world"))
+	notAPicture := take(serverIconPath, []byte("not a picture"))
+
+	got := p.send("viewer", "GET", "/orgs/alpha/snapshots/"+pictured+"/icon", nil)
+	if got.Code != http.StatusOK || got.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("a snapshot with a picture: %d %s", got.Code, got.Body)
+	}
+	if img, err := png.Decode(got.Body); err != nil || img.Bounds().Dx() != serverIconSide {
+		t.Errorf("not the panel's own %d pixel PNG: %v", serverIconSide, err)
+	}
+	for name, id := range map[string]string{"no picture": none, "not a picture": notAPicture, "no such snapshot": "deadbeef"} {
+		if got := p.send("viewer", "GET", "/orgs/alpha/snapshots/"+id+"/icon", nil); got.Code != http.StatusNotFound {
+			t.Errorf("%s: %d", name, got.Code)
+		}
+	}
+	// A snapshot never changes, so what was read of it is kept.
+	snap, err := p.srv.Backups.Get(context.Background(), "alpha", pictured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.srv.snapshotIcons.get("alpha/" + snap.ID); !ok {
+		t.Error("what was read of the snapshot was not kept")
 	}
 }

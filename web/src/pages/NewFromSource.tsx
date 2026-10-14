@@ -175,6 +175,9 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
   // Whole gigabytes that hold the snapshot's files with some room to spare.
   const leastStorage = Math.max(1, Math.ceil((source.size * 1.2) / GiB));
   const custom = !!spec.image || (spec.env?.length ?? 0) > 0;
+  // The picture the new server will have: the original's as it is now for a
+  // copy of it as it is now, or the one a snapshot holds.
+  const picture = origin.kind === "snapshot" ? `/api/v1/orgs/${org}/snapshots/${origin.id}/icon` : source.live ? serverIcon(source.live) : undefined;
   const original = optionsOf(spec);
   const [options, setOptions] = useState(original);
   const option = <K extends keyof Options>(key: K, value: Options[K]) => setOptions((o) => ({ ...o, [key]: value }));
@@ -239,8 +242,7 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
 
       <Section title="Starting point" description="Everything below starts as the original has it.">
         <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-          {/* A copy of the server as it is now has its picture as it is now. One made from a snapshot has whatever picture the snapshot holds, which is not shown here as the server's present one. */}
-          <Picture name={spec.displayName || source.name} url={duplicating && source.live ? serverIcon(source.live) : undefined} size={36} />
+          <Picture name={spec.displayName || source.name} url={picture} size={36} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-medium">
               {duplicating ? `${source.name} as it is now` : `${source.name} as it was ${ago(source.taken)}`}
@@ -271,7 +273,10 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
       </Section>
 
       <Section title="Name and picture" description="How it appears in the panel and in a player's server list.">
-        <p className="text-xs leading-relaxed text-muted">Its picture comes with its files. It can be changed in the new server's settings.</p>
+        <div className="flex items-center gap-3">
+          <Picture name={displayName || source.name} url={picture} size={56} />
+          <p className="text-xs leading-relaxed text-muted">Its picture comes with its files. It can be changed in the new server's settings.</p>
+        </div>
         <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
         <Field label="Short name" hint="It cannot be changed later.">
           {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}

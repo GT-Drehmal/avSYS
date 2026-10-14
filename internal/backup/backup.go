@@ -421,6 +421,46 @@ func (m *Manager) Record(ctx context.Context, org, id string) ([]byte, error) {
 	return m.restic(ctx, org, "dump", "--no-lock", snap.ID, RecordPath)
 }
 
+// ErrTooLarge is returned for a file in a snapshot larger than was asked for.
+var ErrTooLarge = errors.New("the file is larger than allowed")
+
+// File returns one file out of a snapshot, if it is no larger than limit.
+// It is nil, with no error, when the snapshot does not have that file. The
+// files are the server's own, and anything at all can be in them: what is
+// read is bounded, and is for the caller to check.
+func (m *Manager) File(ctx context.Context, org, id, path string, limit int64) ([]byte, error) {
+	snap, err := m.Get(ctx, org, id)
+	if err != nil {
+		return nil, err
+	}
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	cmd := exec.CommandContext(ctx, m.Restic, "--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache", "dump", "--no-lock", snap.ID, path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(out, limit+1))
+	if err == nil && int64(len(data)) > limit {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, ErrTooLarge
+	}
+	if waitErr := cmd.Wait(); waitErr != nil {
+		if strings.Contains(stderr.String(), "not found") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("restic dump: %w: %s", waitErr, lastLine(stderr.String()))
+	}
+	return data, err
+}
+
 // Delete removes one snapshot and the data only it referred to.
 func (m *Manager) Delete(ctx context.Context, org, id string) error {
 	return m.DeleteMany(ctx, org, []string{id})
