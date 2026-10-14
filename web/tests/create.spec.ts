@@ -26,6 +26,8 @@ test("a new server is made from the form", async ({ page, as, org, api }) => {
   expect(spec.properties).not.toHaveProperty("motd");
   expect(spec).not.toHaveProperty("backups");
   expect(spec.sleep.enabled ?? false).toBe(false);
+  // With no picture to wait for, it starts at once.
+  expect(spec.state).toBe("Running");
 });
 
 test("everything a server can be given later can be given when it is made", async ({ page, as, org, api }) => {
@@ -43,12 +45,14 @@ test("everything a server can be given later can be given when it is made", asyn
   await page.getByLabel("Scheduled snapshots").selectOption("off");
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
 
-  // A picture, which goes to the server once it exists. Nothing runs behind
-  // this panel, so where it would go is answered for it.
+  // A picture, which goes to the server once it exists and before its game
+  // first starts: the server is made stopped, and the panel starts it when
+  // the picture is in place. Nothing runs behind this panel, so that part is
+  // answered for it, and the server stays as it was made.
   await page.getByLabel("Picture for Lobby").setInputFiles({ name: "icon.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64") });
   await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
   let pictured = "";
-  await page.route(`**/api/v1/orgs/${slug}/servers/lobby/icon?wait=true`, async (route) => {
+  await page.route(`**/api/v1/orgs/${slug}/servers/lobby/icon?wait=true&start=true`, async (route) => {
     // What was sent is not looked into: WebKit does not show a test the body of a file.
     pictured = `${route.request().method()} ${route.request().headers()["content-type"] ?? ""}`;
     await route.fulfill({ status: 204 });
@@ -60,7 +64,7 @@ test("everything a server can be given later can be given when it is made", asyn
   expect(pictured).toBe("PUT image/png");
 
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/lobby`);
-  expect(spec).toMatchObject({ loader: "vanilla", autoWhitelist: "admin", autoOp: "owner", sleep: { enabled: true, idleMinutes: 5 }, backups: { enabled: false } });
+  expect(spec).toMatchObject({ loader: "vanilla", state: "Stopped", autoWhitelist: "admin", autoOp: "owner", sleep: { enabled: true, idleMinutes: 5 }, backups: { enabled: false } });
   expect(spec.properties).toMatchObject({ motd: "Come on in", "white-list": "true" });
 });
 

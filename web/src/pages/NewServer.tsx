@@ -128,21 +128,27 @@ export function NewServer() {
       ...(autoOp !== "operator" ? { autoOp: autoOp as ServerSpec["autoOp"] } : {}),
       ...(sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(idleMinutes) || 15 } } : {}),
       ...(schedule === "off" ? { backups: { enabled: false } } : {}),
+      // The game looks for its picture when it starts, so a server given one
+      // is made stopped and started by the panel once the picture is there.
+      ...(picture ? { state: "Stopped" as const } : {}),
       ...(kind === "modpack" ? { modpack } : { loader: loader ?? undefined, version }),
     };
     try {
       const server = await api.post<Server>(`/orgs/${org}/servers`, { name, spec });
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
       // Its picture goes onto its volume, which is not there yet. The panel
-      // waits for it; this page does not, and says how it went.
+      // waits for that, puts the picture in place and then starts the
+      // server, whether or not this page is still open. The page moves on
+      // and says how it went.
       if (picture) {
         api
-          .putRaw(`${serverPath(org, server.name)}/icon?wait=true`, picture)
+          .putRaw(`${serverPath(org, server.name)}/icon?wait=true&start=true`, picture)
           .then(() => {
             qc.setQueryData(["picture-version"], Date.now());
             toast.info(`${displayName || server.name} has its picture`);
           })
-          .catch((err) => toast.error(err instanceof ApiError ? `The picture was not set: ${err.message}` : "The picture was not set. Set it in the server's settings."));
+          .catch((err) => toast.error(err instanceof ApiError ? `The picture was not set: ${err.message}` : "The picture was not set. Set it in the server's settings."))
+          .finally(() => qc.invalidateQueries({ queryKey: keys.servers(org) }));
       }
       navigate(`/o/${org}/s/${server.name}`);
     } catch (err) {
