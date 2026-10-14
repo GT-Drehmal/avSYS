@@ -23,7 +23,10 @@ export function reloadOnce() {
     if (Date.now() - last < 30_000) return false;
     sessionStorage.setItem(reloadedAt, String(Date.now()));
   } catch {
-    // No session storage: reload anyway, once per page being as good as it gets.
+    // With nowhere to note that it was tried, it could not be known the
+    // second time round that it had been, and the page would reload for
+    // ever. The message with its Reload button is shown instead.
+    return false;
   }
   window.location.reload();
   return true;
@@ -39,11 +42,13 @@ interface Props {
  * Stands between an error in one part of the page and the rest of it. With
  * no boundary React takes everything down and leaves an empty window.
  */
-export class ErrorBoundary extends Component<Props, { error: unknown }> {
-  state: { error: unknown } = { error: null };
+export class ErrorBoundary extends Component<Props, { failed: boolean; error: unknown }> {
+  // Whether something was thrown is kept apart from what was: anything can
+  // be thrown, null included.
+  state: { failed: boolean; error: unknown } = { failed: false, error: null };
 
   static getDerivedStateFromError(error: unknown) {
-    return { error };
+    return { failed: true, error };
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
@@ -52,8 +57,8 @@ export class ErrorBoundary extends Component<Props, { error: unknown }> {
   }
 
   render() {
-    const { error } = this.state;
-    if (!error) return this.props.children;
+    const { failed, error } = this.state;
+    if (!failed) return this.props.children;
     const stale = isLoadFailure(error);
     return (
       <div role="alert" className={this.props.full ? "flex min-h-dvh items-center justify-center p-6" : "py-10"}>
@@ -69,7 +74,7 @@ export class ErrorBoundary extends Component<Props, { error: unknown }> {
             <Button variant="primary" onClick={() => window.location.reload()}>
               Reload
             </Button>
-            {!stale && <Button onClick={() => this.setState({ error: null })}>Try again</Button>}
+            {!stale && <Button onClick={() => this.setState({ failed: false, error: null })}>Try again</Button>}
           </div>
         </div>
       </div>
