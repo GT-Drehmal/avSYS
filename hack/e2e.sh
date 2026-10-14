@@ -52,6 +52,7 @@ cleanup() {
   call -X DELETE "$API/orgs/$ORG?snapshots=delete" >/dev/null 2>&1 || true
   [ -n "${KEY_ID:-}" ] && call -X DELETE "$API/me/ssh-keys/$KEY_ID" >/dev/null 2>&1 || true
   rm -rf "$WORK"
+  [ "${REFETCHED:-0}" -gt 0 ] && echo "note: $REFETCHED time(s) the game could not fetch what it runs and was started again"
   [ $status -eq 0 ] && echo "PASS" || echo "FAILED (exit $status)"
 }
 trap cleanup EXIT
@@ -77,15 +78,38 @@ print("\n".join("  | " + line for line in lines[-40:]))' || true
 }
 
 # wait_phase PHASE [SERVER]: the probe unless another server is named.
+# What the game image prints when it could not fetch what it runs: the jar's
+# own site did not answer, or its name did not resolve. That is somebody
+# else's service or the network between, not what is being tested here, and
+# the cluster starts the game again by itself.
+FETCH_FAILED='Failed to download|DnsNameResolverTimeoutException|UnknownHostException|Temporary failure in name resolution|Connection reset|Connection timed out|Read timed out|HTTP status code 5[0-9][0-9]'
+# How many times that happened in this run, said at the end so that it shows.
+REFETCHED=0
+
 wait_phase() {
   target=${2:-$SRV}
+  excused=0
   for _ in $(seq 1 120); do
     phase=$(call "$target" | field "d['status'].get('phase')")
     [ "$phase" = "$1" ] && return 0
     if [ "$phase" = Error ]; then
       message=$(call "$target" | field "d['status'].get('message')")
+      log=$(game_log "$target")
+      # A failed fetch is waited out, twice at most, within the same time
+      # limit. Anything else that stops the game fails the run at once.
+      if [ "$excused" -lt 2 ] && printf '%s' "$log" | grep -Eq "$FETCH_FAILED"; then
+        excused=$((excused + 1))
+        REFETCHED=$((REFETCHED + 1))
+        printf 'note: the game could not fetch what it runs, and is being started again:\n%s\n' "$(printf '%s' "$log" | grep -E "$FETCH_FAILED" | tail -2)"
+        # Until the game has been started again, so that the same exit is not counted twice.
+        for _ in $(seq 1 40); do
+          [ "$(call "$target" | field "d['status'].get('phase')")" != Error ] && break
+          sleep 3
+        done
+        continue
+      fi
       printf 'server went to Error: %s\nThe end of its log:\n' "$message" >&2
-      game_log "$target" >&2
+      printf '%s\n' "$log" >&2
       fail "server went to Error: $message"
     fi
     sleep 3
