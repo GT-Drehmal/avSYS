@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -159,25 +160,43 @@ func TestFromSnapshotTakesWhatIsAsked(t *testing.T) {
 	}
 }
 
-func TestContentGiven(t *testing.T) {
-	for name, spec := range map[string]avsysv1.MinecraftServerSpec{
-		"version":    {Version: "1.21.4", Loader: avsysv1.LoaderFabric},
-		"properties": {Properties: map[string]string{"motd": "x"}},
-		"players":    {Ops: []string{"Steve"}, Whitelist: []string{"Steve"}},
-		"pack":       {ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip"}},
-		"resources":  {DisplayName: "x", EULA: true, Image: "y", Resources: avsysv1.ResourcesSpec{Memory: resource.MustParse("2Gi")}},
+// A copy can be given other mods, plugins and datapacks than its original,
+// but not another modpack, nor a file that was never uploaded to it.
+func TestCheckCopiedContent(t *testing.T) {
+	recorded := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{
+		{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindMod, Project: "lithium", Version: "abc"},
+		{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "ours.jar"},
+	}}
+	mods := func(body string) map[string]json.RawMessage {
+		return map[string]json.RawMessage{"mods": json.RawMessage(body)}
+	}
+	for name, c := range map[string]struct {
+		spec  avsysv1.MinecraftServerSpec
+		given map[string]json.RawMessage
+		ok    bool
+	}{
+		"nothing about content": {avsysv1.MinecraftServerSpec{Properties: map[string]string{"motd": "x"}}, nil, true},
+		"one taken away":        {avsysv1.MinecraftServerSpec{Mods: recorded.Mods[1:]}, mods("[]"), true},
+		"all taken away":        {avsysv1.MinecraftServerSpec{}, mods("[]"), true},
+		"one added": {avsysv1.MinecraftServerSpec{Mods: append(slices.Clone(recorded.Mods), avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Project: "carpet"})},
+			mods("[]"), true},
+		"another modpack":  {avsysv1.MinecraftServerSpec{Modpack: &avsysv1.ModpackSpec{Project: "x"}}, nil, false},
+		"a file not there": {avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{{Source: avsysv1.SourceUpload, Project: "theirs.jar"}}}, mods("[]"), false},
 	} {
-		if contentGiven(&spec) {
-			t.Errorf("a request that sets the %s was refused", name)
+		if err := checkCopiedContent(&c.spec, recorded, c.given); (err == nil) != c.ok {
+			t.Errorf("%s: got %v, want allowed %v", name, err, c.ok)
 		}
 	}
-	for name, spec := range map[string]avsysv1.MinecraftServerSpec{
-		"modpack": {Modpack: &avsysv1.ModpackSpec{Project: "x"}},
-		"mods":    {Mods: []avsysv1.ContentRef{{Project: "x"}}},
-	} {
-		if !contentGiven(&spec) {
-			t.Errorf("a request that sets the %s was let through", name)
-		}
+
+	// What is not mentioned stays as the original has it; what is, replaces it.
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil); len(got.Mods) != 2 {
+		t.Errorf("mods not mentioned: %v", got.Mods)
+	}
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{Mods: recorded.Mods[:1]}, recorded, mods("[]")); len(got.Mods) != 1 || got.Mods[0].Project != "lithium" {
+		t.Errorf("mods given: %v", got.Mods)
+	}
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, mods("[]")); len(got.Mods) != 0 {
+		t.Errorf("all taken away: %v", got.Mods)
 	}
 }
 
@@ -471,7 +490,8 @@ func TestCreateFromServerRequests(t *testing.T) {
 	}{
 		"a server that is not there":    {`{"name":"copy","fromServer":"nobody"}`, 404, "not_found"},
 		"a name that is taken":          {`{"name":"world","fromServer":"world"}`, 409, "conflict"},
-		"mods named again":              {`{"name":"copy","fromServer":"world","spec":{"mods":[{"source":"modrinth","project":"lithium"}]}}`, 400, "invalid"},
+		"another modpack":               {`{"name":"copy","fromServer":"world","spec":{"modpack":{"source":"modrinth","project":"fabulously-optimized"}}}`, 400, "invalid"},
+		"a file not uploaded to it":     {`{"name":"copy","fromServer":"world","spec":{"mods":[{"source":"upload","kind":"mod","project":"theirs.jar"}]}}`, 400, "invalid"},
 		"a setting that is not one":     {`{"name":"copy","fromServer":"world","spec":{"autoWhitelist":"everyone"}}`, 400, "invalid"},
 		"a game setting on two lines":   {`{"name":"copy","fromServer":"world","spec":{"properties":{"motd":"a\nb"}}}`, 400, "invalid"},
 		"a state that is not one":       {`{"name":"copy","fromServer":"world","spec":{"state":"Bogus"}}`, 400, "invalid"},

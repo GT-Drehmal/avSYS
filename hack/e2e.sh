@@ -306,16 +306,18 @@ fi
 step "a new server from a snapshot"
 COPY=$API/orgs/$ORG/servers/copy
 expect "a snapshot says what its server was" "$(call "$API/orgs/$ORG/snapshots/$LAST" | field "(d['server'], d['spec']['version'], d['spec']['loader'])")" "('probe', '1.21.4', 'paper')"
-expect "its mods are not chosen again" "$(call -o /dev/null -w '%{http_code}' -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"mods\":[{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"luckperms\"}]}}" "$API/orgs/$ORG/servers")" 400
+expect "its modpack is not chosen again" "$(call -o /dev/null -w '%{http_code}' -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"modpack\":{\"source\":\"modrinth\",\"project\":\"fabulously-optimized\"}}}" "$API/orgs/$ORG/servers")" 400
 expect "nor is it put on a version its software has no build for" "$(call -o /dev/null -w '%{http_code}' -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"version\":\"1.2.3\"}}" "$API/orgs/$ORG/servers")" 400
-# Answers once the files are in. It is then started, being asked for nothing else.
-copied=$(call -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"expose\":{\"hostname\":\"copy.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
+# Answers once the files are in. It is then started, being asked for nothing
+# else, and given one of the original's two plugins.
+copied=$(call -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"expose\":{\"hostname\":\"copy.$ORG.test\"},\"mods\":[{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"luckperms\"}]}}" "$API/orgs/$ORG/servers?wait=true")
 case "$copied" in *'"spec"'*) ;; *) fail "no server was made from the snapshot: $copied" ;; esac
-expect "it has the snapshot's software and settings" "$(echo "$copied" | field "(d['spec']['version'], d['spec']['loader'], sorted(m['project'] for m in d['spec']['mods']), d['spec']['properties']['motd'], d['spec']['resources']['memory'])")" "('1.21.4', 'paper', ['luckperms', 'worldedit'], 'e2e probe', '2Gi')"
+expect "it has the snapshot's software and settings, and the plugins it was given" "$(echo "$copied" | field "(d['spec']['version'], d['spec']['loader'], [(m['project'], bool(m.get('version'))) for m in d['spec']['mods']], d['spec']['properties']['motd'], d['spec']['resources']['memory'])")" "('1.21.4', 'paper', [('luckperms', True)], 'e2e probe', '2Gi')"
 expect "and an address of its own" "$(echo "$copied" | field "(d['spec']['expose']['hostname'], d['spec']['state'])")" "('copy.$ORG.test', 'Running')"
 expect "it has the snapshot's files" "$(call "$COPY/files/content?path=/e2e.txt")" "written by e2e"
 wait_phase Running "$COPY"
-expect "and runs on them" "$(call -d '{"command":"plugins"}' "$COPY/console" | field "d['output']")" WorldEdit
+# WorldEdit came with the files, and is taken away because the copy was not given it.
+expect "and runs on them, with only the plugins it was given" "$(call -d '{"command":"plugins"}' "$COPY/console" | field "('LuckPerms' in d['output'], 'WorldEdit' in d['output'])")" "(True, False)"
 expect "players reach it by its own name" "$(python3 "$HERE/mcping.py" "copy.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "the server it was copied from is as it was" "$(call "$SRV" | field "(d['status']['phase'], d['spec']['expose']['hostname'])")" "('Stopped', '$HOST')"
 expect "it has no history of its own yet" "$(call "$COPY/snapshots" | field "len(d['snapshots'])")" 0

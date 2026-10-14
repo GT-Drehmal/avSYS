@@ -1,13 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Plus } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { ContentList } from "../components/Content";
+import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { Picture } from "../components/Picture";
 import { autoOpOptions, exposeOptions, GameplayFields, gameplayKeys, gameplayOf, joinHint, joinOptions, More, type Gameplay, type Join } from "../components/ServerFields";
 import { Button, Field, Input, Loading, Notice, PageHeader, Section, Select, Toggle } from "../components/ui";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ExposeType, type Server, type ServerSpec, type SnapshotDetail } from "../lib/api";
+import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Server, type ServerSpec, type SnapshotDetail } from "../lib/api";
 import { ago, loaderNames } from "../lib/format";
 import { keys, useServers } from "../lib/queries";
 import { type Origin } from "../lib/origin";
@@ -192,6 +192,11 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
   const [hostname, setHostname] = useState("");
   const [start, setStart] = useState(true);
   const [keepCustom, setKeepCustom] = useState(custom);
+  const [mods, setMods] = useState<ContentRef[]>(spec.mods ?? []);
+  const [addingMods, setAddingMods] = useState(false);
+  // Only sent when changed: what is left out is taken as the original has it.
+  const modsChanged = JSON.stringify(mods) !== JSON.stringify(spec.mods ?? []);
+  const fits: Software = { loader: spec.loader, version: options.version, modpack: spec.modpack };
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -210,6 +215,7 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
       // taken along.
       expose: options.expose === "None" ? { type: "None" } : { type: options.expose, hostname: hostname.trim() },
       ...(keepCustom ? { image: spec.image, env: spec.env } : {}),
+      ...(modsChanged ? { mods } : {}),
       ...changes,
     };
     try {
@@ -275,8 +281,34 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
         </Field>
       </Section>
 
-      <Section title="Content" description="Comes with it. Add or remove in the new server once it exists.">
-        {(spec.mods?.length ?? 0) > 0 ? <ContentList mods={spec.mods!} /> : <p className="text-[13px] text-muted">{spec.modpack ? "What its modpack brings." : "No mods, plugins or datapacks."}</p>}
+      <Section
+        title="Content"
+        description={spec.modpack ? "Its modpack comes with it. Anything added on top of it can be changed here." : "Comes with it. What is taken away here is removed before it first starts."}
+      >
+        {mods.length > 0 ? (
+          <ContentList mods={mods} onRemove={(i) => setMods(mods.filter((_, j) => j !== i))} />
+        ) : (
+          <p className="text-[13px] text-muted">{spec.modpack ? "Nothing on top of its modpack." : `No ${kindsPhrase(fits)}.`}</p>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button icon={<Plus className="size-4" />} onClick={() => setAddingMods(true)}>
+            Add {kindsPhrase(fits)}
+          </Button>
+          {modsChanged && (
+            <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setMods(spec.mods ?? [])}>
+              Put back as {source.name} has it
+            </button>
+          )}
+        </div>
+        {addingMods && (
+          <AddContentDialog
+            software={fits}
+            mods={mods}
+            description="Downloaded when the server first starts. Files can be uploaded once it exists."
+            onAdd={(ref) => setMods((current) => [...current, ref])}
+            onClose={() => setAddingMods(false)}
+          />
+        )}
       </Section>
 
       <Section title="World" description="Its world comes with it. Settings left on Server default stay as its server.properties has them.">

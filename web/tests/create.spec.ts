@@ -137,6 +137,37 @@ test("duplicating a server is the same page, filled in from the original, and se
   await expect(page.getByText("Not sent by the test.")).toBeVisible();
 });
 
+test("a copy can be given other content before it is made", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByRole("heading", { name: "Duplicate survival" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Remove LuckPerms" }).click();
+  await expect(page.getByText("No plugins or datapacks.")).toBeVisible();
+  // Put back as it was, and so not sent.
+  await page.getByRole("button", { name: "Put back as survival has it" }).click();
+  await expect(page.getByText("LuckPerms", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Remove LuckPerms" }).click();
+  await page.getByRole("button", { name: "Add plugins or datapacks" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "From URL" }).click();
+  // Files are uploaded once the server exists: there is nowhere to put one yet.
+  await expect(dialog.getByRole("button", { name: "Upload" })).toHaveCount(0);
+  await dialog.getByLabel("Download URL").fill("https://example.org/chunky-1.4.jar");
+  await dialog.getByRole("button", { name: "Add", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("chunky-1.4.jar", { exact: true })).toBeVisible();
+
+  const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.route("**/api/v1/orgs/friends/servers", (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
+  );
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  const body = (await sent).postDataJSON();
+  expect(body.spec.mods).toEqual([{ source: "url", kind: "plugin", project: "https://example.org/chunky-1.4.jar", title: "chunky-1.4.jar" }]);
+});
+
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new");
