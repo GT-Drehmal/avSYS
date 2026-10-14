@@ -27,8 +27,9 @@ interface PictureProps {
   onFound?: (found: boolean) => void;
   /**
    * Something that changes when a picture that was not there may have come
-   * to be: a server's icon cannot be read while it restarts, and is asked
-   * for again once this changes.
+   * to be: a server's icon cannot be read while it restarts, or before the
+   * files of one made from a snapshot are in, and is asked for again once
+   * this changes.
    */
   retryKey?: string;
 }

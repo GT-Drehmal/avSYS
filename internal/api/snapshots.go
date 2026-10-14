@@ -872,6 +872,9 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 		last = time.Now()
 		s.setOperation(mc.Namespace, op, "Restoring files", p.Percent)
 	})
+	// The picture may have come with the files, or gone with them. What was
+	// read before, perhaps from an empty volume, is not kept.
+	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
 	if err != nil {
 		// The server is left stopped: its files are in an unknown state and
 		// starting the game on them could make it worse.

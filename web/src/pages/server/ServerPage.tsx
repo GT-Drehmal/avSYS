@@ -129,7 +129,7 @@ export function ServerPage() {
       </Link>
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 items-center gap-4">
-          <Picture name={displayName(server)} url={serverIcon(server)} size={36} retryKey={status.phase} />
+          <Picture name={displayName(server)} url={serverIcon(server)} size={36} retryKey={`${status.phase}|${status.message ?? ""}`} />
           <h1 className="truncate text-xl font-semibold tracking-tight">{displayName(server)}</h1>
           <Status phase={status.phase} />
         </div>

@@ -307,10 +307,26 @@ expect "deleting it calls the copy off" "$(call -o /dev/null -w '%{http_code}' -
 step "duplicating a server"
 TWIN=$API/orgs/$ORG/servers/twin
 echo "only in the original" | call -X PUT --data-binary @- "$SRV/files/content?path=/twin.txt" >/dev/null
-twin=$(call -d '{"name":"twin","fromServer":"probe","spec":{"state":"Stopped"}}' "$API/orgs/$ORG/servers?wait=true")
+call -d '{"name":"twin","fromServer":"probe","spec":{"state":"Stopped"}}' "$API/orgs/$ORG/servers?wait=true" > "$WORK/twin.json" &
+duplicating=$!
+# Its picture is asked for while its files are on their way, as a list of
+# servers does: it has none yet, and that is not to be remembered.
+asked=""
+for _ in $(seq 1 600); do
+  if [ "$(call -o /dev/null -w '%{http_code}' "$TWIN")" = 200 ]; then
+    asked=$(call -o /dev/null -w '%{http_code}' "$TWIN/icon")
+    break
+  fi
+  kill -0 "$duplicating" 2>/dev/null || break
+  sleep 0.2
+done
+wait "$duplicating" || true
+twin=$(cat "$WORK/twin.json")
 case "$twin" in *'"spec"'*) ;; *) fail "the server was not duplicated: $twin" ;; esac
 expect "a copy has the original's software" "$(echo "$twin" | field "(d['spec']['version'], d['spec']['loader'], sorted(m['project'] for m in d['spec']['mods']))")" "('1.21.4', 'paper', ['luckperms', 'worldedit'])"
 expect "and its files as they were a moment ago" "$(call "$TWIN/files/content?path=/twin.txt")" "only in the original"
+[ "$asked" = 404 ] || echo "note: the copy's picture was not asked for before its files were in (got '$asked')"
+expect "and the picture that came with them, though it was asked for before" "$(call "$TWIN/icon" | python3 -c 'import hashlib, sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$shown"
 copies="len([s for s in d['snapshots'] if s['trigger'] == 'copy'])"
 expect "it was made from a snapshot taken for it" "$(call "$SRV/snapshots" | field "$copies")" 1
 # A copy that differs from its original in what the request names, and in nothing else.

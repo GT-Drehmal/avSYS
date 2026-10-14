@@ -489,6 +489,9 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 		last = time.Now()
 		s.setOperation(key.Namespace, op, "Copying files", p.Percent)
 	})
+	// The picture may have come with the files, or gone with them. What was
+	// read before, perhaps from an empty volume, is not kept.
+	s.serverIcons.forget(key.Namespace + "/" + key.Name)
 	if err != nil {
 		return err
 	}
