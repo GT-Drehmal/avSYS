@@ -115,4 +115,9 @@ TOKEN=$(curl -fsS -b "$JAR" -H 'X-Avsys: 1' -d '{"name":"e2e"}' "$URL/api/v1/me/
 rm -f "$JAR"
 echo "ok: first account is the administrator, and signups then close"
 
-AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 ./hack/e2e.sh
+# Why a game stopped is in the log of the container that exited, which only
+# the cluster can show: the panel's console is of the one running now.
+# Until the game has been started again, the one that exited is still the
+# current one.
+EXITED_LOG="docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft --previous --tail=80 2>/dev/null || docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft --tail=80"
+AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG ./hack/e2e.sh
