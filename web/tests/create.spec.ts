@@ -201,6 +201,32 @@ test("a server made from a snapshot shows the picture the snapshot holds", async
   expect(asked.length).toBeGreaterThan(0);
 });
 
+test("a name that snapshots of a deleted server are under is not suggested, and says why", async ({ page, as }) => {
+  await as("owner");
+  // A survival-copy was deleted, with a last snapshot of it.
+  await page.route("**/api/v1/orgs/friends/snapshots", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        snapshots: [{ id: "f1a2b3c4d5e6", time: new Date().toISOString(), server: "survival-copy", trigger: "final", size: 1024, added: 1024, files: 3 }],
+        usage: { bytes: 1024, snapshots: 1 },
+      }),
+    }),
+  );
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByLabel("Short name")).toHaveValue("survival-copy-2");
+  await expect(page.getByText("It cannot be changed later.")).toBeVisible();
+  await page.getByLabel("Short name").fill("survival-copy");
+  await expect(page.getByText("Snapshots of an earlier server named survival-copy go with the name. Choose another.")).toBeVisible();
+  await page.getByLabel("Short name").fill("survival");
+  await expect(page.getByText("There is already a server named survival.")).toBeVisible();
+
+  await page.goto("/o/friends/new");
+  await page.getByLabel("Display name").fill("Survival copy");
+  await expect(page.getByLabel("Short name")).toHaveValue("survival-copy");
+  await expect(page.getByText(/Snapshots of an earlier server named survival-copy go with the name/)).toBeVisible();
+});
+
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new");
