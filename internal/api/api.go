@@ -45,8 +45,10 @@ type Config struct {
 
 type Server struct {
 	Config Config
-	Store  *store.Store
-	Client client.Client
+	// contentLocks holds a lock per server, by namespace/name: see lockContent.
+	contentLocks sync.Map
+	Store        *store.Store
+	Client       client.Client
 	// Reader reads the cluster as it is now, where Client may lag a change
 	// by a moment. It is optional: Client is used where there is none.
 	Reader  client.Reader

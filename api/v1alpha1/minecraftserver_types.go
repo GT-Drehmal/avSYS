@@ -44,6 +44,10 @@ const (
 	// AnnotationAutoWhitelist is the same for the players the panel has put
 	// on a server's whitelist for being members of its organization.
 	AnnotationAutoWhitelist = "avsys.dev/auto-whitelist"
+	// AnnotationContentLeft lists files of content taken off a server that
+	// the panel could not delete then, one path per line, for it to delete
+	// when it next can.
+	AnnotationContentLeft = "avsys.dev/content-left"
 	// AnnotationRestart is copied to the pod template; changing it rolls the pod.
 	AnnotationRestart = "avsys.dev/restarted-at"
 )
@@ -106,6 +110,10 @@ type ContentRef struct {
 	// Java is the Java release the pinned file was compiled for, as read from
 	// it by the panel. The server runs on at least this.
 	Java int32 `json:"java,omitempty"`
+	// File is the name a datapack from a URL is saved under, as its download
+	// gave it, recorded by the panel when the entry was added. It is what
+	// the panel deletes when the entry is taken off.
+	File string `json:"file,omitempty"`
 	// Title and VersionName are display metadata recorded when the entry was added.
 	Title       string `json:"title,omitempty"`
 	VersionName string `json:"versionName,omitempty"`

@@ -391,7 +391,8 @@ func (s *Server) syncOpsOf(u *store.User) {
 }
 
 // RunOps looks once a minute for servers whose operators are out of step
-// with their organization's roles, until ctx ends. Changes made in the panel
+// with their organization's roles, and for content left to remove, until
+// ctx ends. Changes made in the panel
 // are acted on at once; this is what catches a server that has just
 // started, and anything that failed the first time.
 func (s *Server) RunOps(ctx context.Context) {
@@ -409,6 +410,12 @@ func (s *Server) opsTick(ctx context.Context) {
 	var all avsysv1.MinecraftServerList
 	if err := s.Client.List(ctx, &all); err != nil {
 		return
+	}
+	// Content taken off a server that could not be deleted then.
+	for i := range all.Items {
+		if all.Items[i].Annotations[avsysv1.AnnotationContentLeft] != "" {
+			s.finishContentLeft(ctx, &all.Items[i])
+		}
 	}
 	running := map[string]bool{}
 	for i := range all.Items {
