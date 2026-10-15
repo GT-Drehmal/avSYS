@@ -74,7 +74,7 @@ func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request, u *store.Us
 // could make a server out of it.
 func recordFor(role store.Role, spec avsysv1.MinecraftServerSpec) avsysv1.MinecraftServerSpec {
 	if !role.AtLeast(store.RoleAdmin) {
-		spec.Image, spec.Env = "", nil
+		spec.Image, spec.Env, spec.JVM.ExtraFlags = "", nil, ""
 	}
 	return spec
 }

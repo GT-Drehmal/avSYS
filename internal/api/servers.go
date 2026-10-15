@@ -97,7 +97,10 @@ func (s *Server) applyDefaults(org, name string, spec *avsysv1.MinecraftServerSp
 }
 
 // collectors picks a garbage collector, which Aikar's flags pick already.
-var collectors = regexp.MustCompile(`^-XX:\+Use(ZGC|ShenandoahGC|ParallelGC|SerialGC|EpsilonGC|ConcMarkSweepGC)$`)
+var collectors = regexp.MustCompile(`^-XX:\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)$`)
+
+// heapFlags set the heap, by any of the names HotSpot takes for it.
+var heapFlags = regexp.MustCompile(`^(-Xm[xs]|-XX:(Max|Initial|Min)HeapSize=|-XX:(Max|Initial|Min)RAMPercentage=|-XX:MaxRAM=)`)
 
 // checkJVM checks extra JVM flags, and tidies them to one per line. They are
 // options for Java and nothing else: no heap size, which is the server's
@@ -112,7 +115,7 @@ func checkJVM(jvm *avsysv1.JVMSpec) error {
 		switch {
 		case !strings.HasPrefix(f, "-"):
 			return errBadRequest("%q is not a JVM option: each starts with a dash, as -XX:+AlwaysPreTouch.", f)
-		case strings.HasPrefix(f, "-Xmx"), strings.HasPrefix(f, "-Xms"), strings.HasPrefix(f, "-XX:MaxRAMPercentage"), strings.HasPrefix(f, "-XX:InitialRAMPercentage"):
+		case heapFlags.MatchString(f):
 			return errBadRequest("%s sets the heap, which is the server's memory. Change Memory instead.", f)
 		case aikar && collectors.MatchString(f):
 			return errBadRequest("%s picks a garbage collector, and Aikar's flags pick G1. Switch Aikar's flags off to use another.", f)

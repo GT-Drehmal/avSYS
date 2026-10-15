@@ -575,18 +575,19 @@ func TestRecordFor(t *testing.T) {
 	spec := avsysv1.MinecraftServerSpec{
 		Version: "1.21.4", Image: "example.org/custom", Properties: map[string]string{"motd": "hello"},
 		Env: []corev1.EnvVar{{Name: "SECRET_TOKEN", Value: "do-not-show"}},
+		JVM: avsysv1.JVMSpec{ExtraFlags: "-Dpassword=do-not-show"},
 	}
 	for _, role := range []store.Role{store.RoleViewer, store.RoleOperator} {
 		got := recordFor(role, spec)
-		if got.Image != "" || got.Env != nil {
-			t.Errorf("a %s was shown the image or environment: %q %v", role, got.Image, got.Env)
+		if got.Image != "" || got.Env != nil || got.JVM.ExtraFlags != "" {
+			t.Errorf("a %s was shown the image, environment or extra JVM flags: %q %v %q", role, got.Image, got.Env, got.JVM.ExtraFlags)
 		}
 		if got.Version != "1.21.4" || got.Properties["motd"] != "hello" {
 			t.Errorf("a %s was not shown the rest: %+v", role, got)
 		}
 	}
 	for _, role := range []store.Role{store.RoleAdmin, store.RoleOwner} {
-		if got := recordFor(role, spec); got.Image != "example.org/custom" || len(got.Env) != 1 {
+		if got := recordFor(role, spec); got.Image != "example.org/custom" || len(got.Env) != 1 || got.JVM.ExtraFlags == "" {
 			t.Errorf("an %s was not shown the image and environment: %+v", role, got)
 		}
 	}

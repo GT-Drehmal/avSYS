@@ -337,7 +337,17 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		out = append(out, corev1.EnvVar{Name: k, Value: env[k]})
 	}
 	out = append(out, rconPasswordEnv(mc))
-	return append(out, mc.Spec.Env...)
+	// A server's own environment comes last and wins, except over launch
+	// flags set in their own fields: an older entry for those would
+	// otherwise override what its settings now say.
+	launch := mc.Spec.JVM.AikarFlags != nil || mc.Spec.JVM.ExtraFlags != ""
+	for _, e := range mc.Spec.Env {
+		if launch && (e.Name == "USE_AIKAR_FLAGS" || e.Name == "JVM_OPTS") {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func rconPasswordEnv(mc *avsysv1.MinecraftServer) corev1.EnvVar {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button, Confirm, Field, Input, Notice, Section, Select, Textarea, Toggle } from "../../components/ui";
 import { api, serverPath, type ExposeType, type Loader, type ServerSpec, type SpecPatch } from "../../lib/api";
+import { launchOf } from "../../lib/launch";
 import { parseProperties, worldKeys } from "../../lib/properties";
 import { useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
@@ -52,6 +53,7 @@ const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boo
 
 function toDraft(spec: ServerSpec): Draft {
   const p = spec.properties ?? {};
+  const launch = launchOf(spec);
   const typed = new Set<string>(typedProperties);
   return {
     displayName: spec.displayName ?? "",
@@ -85,10 +87,10 @@ function toDraft(spec: ServerSpec): Draft {
     packSHA1: spec.resourcePack?.sha1 ?? "",
     packEnforce: !!spec.resourcePack?.enforce,
     packPrompt: spec.resourcePack?.prompt ?? "",
-    env: (spec.env ?? []).map((e) => `${e.name}=${e.value ?? ""}`).join("\n"),
+    env: (launch.env ?? []).map((e) => `${e.name}=${e.value ?? ""}`).join("\n"),
     image: spec.image ?? "",
-    aikar: !!spec.jvm?.aikarFlags,
-    extraFlags: spec.jvm?.extraFlags ?? "",
+    aikar: launch.aikar,
+    extraFlags: launch.extraFlags,
   };
 }
 
@@ -362,7 +364,7 @@ export function Settings() {
 
       <Section title="Advanced" description="Options of the itzg/minecraft-server image.">
         <Field label="Environment" hint="One NAME=value per line.">
-          {(id) => <Textarea id={id} rows={3} {...text("env")} placeholder="USE_AIKAR_FLAGS=true" className="font-mono" spellCheck={false} />}
+          {(id) => <Textarea id={id} rows={3} {...text("env")} placeholder="ENABLE_ROLLING_LOGS=true" className="font-mono" spellCheck={false} />}
         </Field>
         <Field label="Image" hint="Leave empty for the default.">
           {(id) => <Input id={id} {...text("image")} placeholder="itzg/minecraft-server:java21" className="font-mono" spellCheck={false} />}

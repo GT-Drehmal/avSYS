@@ -21,6 +21,9 @@ func TestCheckJVM(t *testing.T) {
 		"another collector on top":   {avsysv1.JVMSpec{AikarFlags: &on, ExtraFlags: "-XX:+UseZGC"}, false},
 		"the heap":                   {avsysv1.JVMSpec{ExtraFlags: "-Xmx8G"}, false},
 		"the heap as a share":        {avsysv1.JVMSpec{ExtraFlags: "-XX:MaxRAMPercentage=80"}, false},
+		"the heap by its long name":  {avsysv1.JVMSpec{ExtraFlags: "-XX:MaxHeapSize=16G"}, false},
+		"the least heap":             {avsysv1.JVMSpec{ExtraFlags: "-XX:MinHeapSize=1G"}, false},
+		"Java 8's other collector":   {avsysv1.JVMSpec{AikarFlags: &on, ExtraFlags: "-XX:+UseParNewGC"}, false},
 		"not an option":              {avsysv1.JVMSpec{ExtraFlags: "rm -rf /"}, false},
 	} {
 		jvm := c.jvm

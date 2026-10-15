@@ -495,6 +495,32 @@ func TestLaunchFlags(t *testing.T) {
 			t.Errorf("%s: USE_AIKAR_FLAGS=%q JVM_OPTS=%q, want %q and %q", name, env["USE_AIKAR_FLAGS"], env["JVM_OPTS"], c.aikar, c.extra)
 		}
 	}
+	// Set in its own fields, a launch flag is not overridden by an older
+	// entry in the server's own environment; one with neither keeps it.
+	legacy := []corev1.EnvVar{{Name: "USE_AIKAR_FLAGS", Value: "true"}, {Name: "JVM_OPTS", Value: "-XX:+UseZGC"}, {Name: "TZ", Value: "UTC"}}
+	count := func(mc *avsysv1.MinecraftServer, name string) (n int, last string) {
+		for _, e := range minecraftEnv(mc, Config{}) {
+			if e.Name == name {
+				n, last = n+1, e.Value
+			}
+		}
+		return
+	}
+	withFields := server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.JVM = avsysv1.JVMSpec{AikarFlags: &off}
+		mc.Spec.Env = legacy
+	})
+	if n, _ := count(withFields, "USE_AIKAR_FLAGS"); n != 0 {
+		t.Error("an old USE_AIKAR_FLAGS overrode Aikar's flags switched off")
+	}
+	if n, _ := count(withFields, "TZ"); n != 1 {
+		t.Error("the rest of the server's own environment was dropped")
+	}
+	without := server(func(mc *avsysv1.MinecraftServer) { mc.Spec.Env = legacy })
+	if n, v := count(without, "USE_AIKAR_FLAGS"); n != 1 || v != "true" {
+		t.Error("a server not using the fields lost its own USE_AIKAR_FLAGS")
+	}
+
 	// Adding the setting asks nothing of a server that does not use it.
 	before := buildPod(server(nil), Config{}).Annotations[annotationSpecHash]
 	if after := buildPod(server(func(mc *avsysv1.MinecraftServer) { mc.Spec.JVM = avsysv1.JVMSpec{AikarFlags: &off} }), Config{}).Annotations[annotationSpecHash]; after != before {

@@ -485,3 +485,31 @@ test("a copy starts with the original's launch flags, sends only what changed, a
   await expect(page.getByLabel("Extra JVM flags")).toHaveValue("");
   await expect(page.getByText(/Not taken from a snapshot/)).toBeVisible();
 });
+
+test("a server with Aikar's flags in its environment shows them as its launch flags, and saving moves them there", async ({ page, as }) => {
+  await as("owner");
+  const sent: { spec: { jvm?: unknown; env?: unknown } }[] = [];
+  const env = [
+    { name: "USE_AIKAR_FLAGS", value: "true" },
+    { name: "JVM_OPTS", value: "-XX:+AlwaysPreTouch -Dfoo=bar" },
+    { name: "TZ", value: "UTC" },
+  ];
+  const older = (s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, env, jvm: undefined } } : s);
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => route.fulfill({ json: (await (await route.fetch()).json()).map(older) }));
+  await page.route("**/api/v1/orgs/friends/servers/survival", async (route) => {
+    if (route.request().method() === "PATCH") {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+    }
+    return route.fulfill({ json: older(await (await route.fetch()).json()) });
+  });
+  await page.goto("/o/friends/s/survival/settings");
+  await expect(page.getByRole("switch", { name: /Aikar's flags/ })).toBeChecked();
+  await expect(page.getByLabel("Extra JVM flags")).toHaveValue("-XX:+AlwaysPreTouch\n-Dfoo=bar");
+  await expect(page.getByLabel("Environment")).toHaveValue("TZ=UTC");
+  await page.getByLabel("Extra JVM flags").fill("-XX:+AlwaysPreTouch");
+  await page.getByRole("button", { name: /^Save/ }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].spec.jvm).toEqual({ aikarFlags: true, extraFlags: "-XX:+AlwaysPreTouch" });
+  expect(sent[0].spec.env).toEqual([{ name: "TZ", value: "UTC" }]);
+});

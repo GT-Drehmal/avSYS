@@ -10,6 +10,7 @@ import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Te
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { ago, loaderNames } from "../lib/format";
+import { launchOf } from "../lib/launch";
 import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
 import { keys, useMe } from "../lib/queries";
@@ -154,10 +155,10 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     autoOp: spec.autoOp || "operator",
     memory: toGigabytes(spec.resources.memory) || "4",
     storage: String(Math.max(Number(toGigabytes(spec.storage.size)) || 10, leastStorage)),
-    aikar: !!spec.jvm?.aikarFlags,
+    aikar: launchOf(spec).aikar,
     // Not taken from a snapshot, which the server could have written: they
     // run code. A copy of a server that is there takes its own.
-    extraFlags: source.origin.kind === "server" ? (spec.jvm?.extraFlags ?? "") : "",
+    extraFlags: source.origin.kind === "server" ? launchOf(spec).extraFlags : "",
     // A server's address is its own, and not taken along.
     hostname: "",
     exposeType: spec.expose?.type ?? "Router",
