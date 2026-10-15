@@ -92,6 +92,9 @@ export function useLiveServers() {
       // What was running may have finished unheard. It is forgotten, and
       // the next word of it, which comes every few seconds, notes it again.
       qc.removeQueries({ queryKey: ["running"] });
+      // Lists kept from a page left earlier are not asked for again until
+      // it is opened; what they say is running may have finished too.
+      qc.setQueriesData<SnapshotList>({ queryKey: ["snapshots"] }, (list) => list && { ...list, operations: [] });
       qc.invalidateQueries({ queryKey: ["servers"] });
       qc.invalidateQueries({ queryKey: ["snapshots"] });
       qc.invalidateQueries({ queryKey: ["offsite"] });

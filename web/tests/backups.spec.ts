@@ -270,3 +270,22 @@ test("by server, a list of servers that could not be loaded is said, not taken f
   await expect(page.getByText(/The list of servers could not be loaded/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: /^Snapshot .* now$/ })).toHaveCount(0);
 });
+
+test("a snapshot shown as running on a tab left earlier is let go of when the stream reconnects", async ({ page }) => {
+  const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Copying files", percent: 40, startedAt: new Date().toISOString() };
+  let running = true;
+  await page.route("**/api/v1/orgs/friends/servers/survival/snapshots", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...list, operations: running ? [op] : [] } });
+  });
+  // Each time the stream is opened it ends at once, and is opened again.
+  await page.route("**/api/v1/events", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: waiting\ndata: null\n\n" }));
+  await page.goto("/o/friends/s/survival/backups");
+  const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
+  await expect(snapshot).toBeDisabled();
+  // It finished while nothing was said of it, and the Console tab does not ask.
+  running = false;
+  await page.getByRole("link", { name: "Console" }).click();
+  await expect(snapshot).toBeEnabled({ timeout: 15_000 });
+});
