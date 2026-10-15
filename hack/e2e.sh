@@ -310,11 +310,19 @@ expect "its modpack is not chosen again" "$(call -o /dev/null -w '%{http_code}' 
 expect "nor is it put on a version its software has no build for" "$(call -o /dev/null -w '%{http_code}' -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"version\":\"1.2.3\"}}" "$API/orgs/$ORG/servers")" 400
 # Answers once the files are in. It is then started, being asked for nothing
 # else, and given one of the original's two plugins.
-copied=$(call -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"spec\":{\"expose\":{\"hostname\":\"copy.$ORG.test\"},\"mods\":[{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"luckperms\"}]}}" "$API/orgs/$ORG/servers?wait=true")
+# And a picture of its own, in place of the one its files bring.
+own=$(python3 -c '
+import base64, struct, zlib
+w = h = 64
+rows = b"".join(b"\x00" + bytes((200, 60, 60)) * w for _ in range(h))
+chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+print(base64.b64encode(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")).decode())')
+copied=$(call -d "{\"name\":\"copy\",\"fromSnapshot\":\"$LAST\",\"picture\":\"$own\",\"spec\":{\"expose\":{\"hostname\":\"copy.$ORG.test\"},\"mods\":[{\"source\":\"modrinth\",\"kind\":\"plugin\",\"project\":\"luckperms\"}]}}" "$API/orgs/$ORG/servers?wait=true")
 case "$copied" in *'"spec"'*) ;; *) fail "no server was made from the snapshot: $copied" ;; esac
 expect "it has the snapshot's software and settings, and the plugins it was given" "$(echo "$copied" | field "(d['spec']['version'], d['spec']['loader'], [(m['project'], bool(m.get('version'))) for m in d['spec']['mods']], d['spec']['properties']['motd'], d['spec']['resources']['memory'])")" "('1.21.4', 'paper', [('luckperms', True)], 'e2e probe', '2Gi')"
 expect "and an address of its own" "$(echo "$copied" | field "(d['spec']['expose']['hostname'], d['spec']['state'])")" "('copy.$ORG.test', 'Running')"
 expect "it has the snapshot's files" "$(call "$COPY/files/content?path=/e2e.txt")" "written by e2e"
+expect "but the picture it was given, not the one they brought" "$(call "$COPY/icon" | python3 -c 'import hashlib, sys; d = sys.stdin.buffer.read(); print(len(d) > 0 and hashlib.sha1(d).hexdigest() != sys.argv[1])' "$shown")" True
 wait_phase Running "$COPY"
 # WorldEdit came with the files, and is taken away because the copy was not given it.
 expect "and runs on them, with only the plugins it was given" "$(call -d '{"command":"plugins"}' "$COPY/console" | field "('LuckPerms' in d['output'], 'WorldEdit' in d['output'])")" "(True, False)"
@@ -353,9 +361,10 @@ expect "and the picture that came with them, though it was asked for before" "$(
 copies="len([s for s in d['snapshots'] if s['trigger'] == 'copy'])"
 expect "it was made from a snapshot taken for it" "$(call "$SRV/snapshots" | field "$copies")" 1
 # A copy that differs from its original in what the request names, and in nothing else.
-second=$(call -d '{"name":"twin-2","fromServer":"probe","spec":{"state":"Stopped","properties":{"difficulty":"peaceful","motd":null},"autoWhitelist":"admin"}}' "$API/orgs/$ORG/servers?wait=true")
+second=$(call -d '{"name":"twin-2","fromServer":"probe","picture":null,"spec":{"state":"Stopped","properties":{"difficulty":"peaceful","motd":null},"autoWhitelist":"admin"}}' "$API/orgs/$ORG/servers?wait=true")
 expect "a second copy with nothing changed in the original needs no new one" "$(call "$SRV/snapshots" | field "$copies")" 1
 expect "a copy takes the settings it is asked to have" "$(echo "$second" | field "(d['spec']['properties'].get('difficulty'), 'motd' in d['spec']['properties'], d['spec']['autoWhitelist'])")" "('peaceful', False, 'admin')"
+expect "and no picture, when asked for none" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/twin-2/icon")" 404
 expect "and the rest from its original" "$(echo "$second" | field "(d['spec']['version'], sorted(m['project'] for m in d['spec']['mods']))")" "('1.21.4', ['luckperms', 'worldedit'])"
 expect "the original is as it was" "$(call "$SRV" | field "(d['status']['phase'], d['spec']['expose']['hostname'])")" "('Stopped', '$HOST')"
 for name in twin twin-2; do

@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"image"
@@ -554,5 +555,39 @@ func TestSnapshotIcon(t *testing.T) {
 	}
 	if _, ok := p.srv.snapshotIcons.get("beta/" + pictured); !ok {
 		t.Error("another organization's was dropped too")
+	}
+}
+
+// A copy's picture is left out to keep the one its files bring, null for
+// none, or base64 for its own, which is checked before anything is copied.
+func TestPictureOf(t *testing.T) {
+	if got, err := pictureOf(nil); err != nil || got.data != nil || got.remove {
+		t.Errorf("left out: %+v %v", got, err)
+	}
+	if got, err := pictureOf(json.RawMessage(`null`)); err != nil || !got.remove {
+		t.Errorf("null: %+v %v", got, err)
+	}
+	encoded, _ := json.Marshal(base64.StdEncoding.EncodeToString(asPNG(t, picture(300, 200))))
+	got, err := pictureOf(encoded)
+	if err != nil || got.remove {
+		t.Fatalf("a picture: %+v %v", got, err)
+	}
+	if img, err := png.Decode(bytes.NewReader(got.data)); err != nil || img.Bounds().Dx() != serverIconSide || img.Bounds().Dy() != serverIconSide {
+		t.Errorf("not redrawn to %d pixels: %v", serverIconSide, err)
+	}
+	for name, raw := range map[string]string{
+		"not base64":    `"not base64!"`,
+		"not a picture": `"` + base64.StdEncoding.EncodeToString([]byte("hello")) + `"`,
+		"not a string":  `{"data":"x"}`,
+	} {
+		if _, err := pictureOf(json.RawMessage(raw)); err == nil {
+			t.Errorf("%s was taken", name)
+		}
+	}
+
+	// A server made from nothing is given its picture once it exists.
+	p := newPanel(t)
+	if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"pictured","picture":null,"spec":{"eula":true,"version":"1.21.4"}}`); got != 400 {
+		t.Errorf("a picture with a new server: %d %s, want 400", got, code)
 	}
 }

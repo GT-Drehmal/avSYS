@@ -259,6 +259,53 @@ test("a copy opens where any new server does, with how its copying goes on every
   await expect(progress).toHaveCount(1);
 });
 
+test("a copy keeps the picture its files bring, or is given its own, or none", async ({ page, as }) => {
+  await as("owner");
+  const sent: { picture?: string | null }[] = [];
+  await page.route("**/api/v1/orgs/friends/servers", (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+  });
+  await page.goto("/o/friends/new?from=server:survival");
+  const duplicate = page.getByRole("button", { name: "Duplicate", exact: true });
+
+  // Left alone, nothing is said of it: it keeps the one its files bring.
+  await duplicate.click();
+  await expect(page.getByText("Not sent by the test.")).toBeVisible();
+  expect(sent.at(-1)).not.toHaveProperty("picture");
+
+  // A large one of its own is made small enough to send.
+  const big = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 2000;
+    canvas.height = 1000;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#c33";
+      ctx.fillRect(0, 0, 2000, 1000);
+    }
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  await page.getByLabel("Picture for survival copy").setInputFiles({ name: "big.png", mimeType: "image/png", buffer: Buffer.from(big, "base64") });
+  await expect(page.getByText("Put in place before it first starts.")).toBeVisible();
+  await duplicate.click();
+  await expect.poll(() => sent.length).toBe(2);
+  const own = sent[1].picture;
+  expect(typeof own).toBe("string");
+  const png = Buffer.from(own as string, "base64");
+  expect(png.subarray(1, 4).toString()).toBe("PNG");
+  // 256 pixels on its longer side.
+  expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([256, 128]);
+
+  // Taken away, it is asked to have none.
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(page.getByText("It will have none.")).toBeVisible();
+  await duplicate.click();
+  await expect.poll(() => sent.length).toBe(3);
+  expect(sent[2].picture).toBeNull();
+});
+
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new");
