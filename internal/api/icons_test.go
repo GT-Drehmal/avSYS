@@ -415,3 +415,61 @@ func TestServerIconsLoad(t *testing.T) {
 	}
 	t.Error("the read nobody waited for was not remembered")
 }
+
+// One remembered past its time is answered at once and read again behind
+// the answer; a failure to read it again keeps what was known.
+func TestServerIconsAnswerWhatTheyHaveWhileReadingAgain(t *testing.T) {
+	ctx := t.Context()
+	var c serverIcons
+	if data, _ := c.load(ctx, "ns/world", func(context.Context) ([]byte, error) { return []byte("old"), nil }); string(data) != "old" {
+		t.Fatalf("first read: %q", data)
+	}
+	// Older than it is fresh for.
+	c.mu.Lock()
+	c.icons["ns/world"] = serverIcon{data: []byte("old"), at: time.Now().Add(-2 * serverIconFor)}
+	c.mu.Unlock()
+
+	release := make(chan struct{})
+	started := time.Now()
+	data, ok := c.load(ctx, "ns/world", func(context.Context) ([]byte, error) {
+		<-release
+		return []byte("new"), nil
+	})
+	if !ok || string(data) != "old" || time.Since(started) > 100*time.Millisecond {
+		t.Fatalf("not answered at once with what it had: %q %v after %s", data, ok, time.Since(started))
+	}
+	close(release)
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		if icon, fresh := c.get("ns/world"); fresh && string(icon.data) == "new" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("not read again behind the answer")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Past its time again, and its workspace cannot be reached: what was
+	// known stays, rather than becoming no picture.
+	c.mu.Lock()
+	c.icons["ns/world"] = serverIcon{data: []byte("new"), at: time.Now().Add(-2 * serverIconFor)}
+	c.mu.Unlock()
+	if data, ok := c.load(ctx, "ns/world", func(context.Context) ([]byte, error) { return nil, errors.New("unreachable") }); !ok || string(data) != "new" {
+		t.Fatalf("answered %q %v", data, ok)
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		c.mu.Lock()
+		_, reading := c.reading["ns/world"]
+		c.mu.Unlock()
+		if !reading {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the read did not finish")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if icon, _ := c.get("ns/world"); string(icon.data) != "new" || icon.failed {
+		t.Errorf("a failed read replaced what was known: %+v", icon)
+	}
+}

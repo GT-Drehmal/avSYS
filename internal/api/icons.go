@@ -209,7 +209,9 @@ func servePicture(w http.ResponseWriter, r *http.Request, data []byte) {
 	sum := sha1.Sum(data)
 	tag := `"` + hex.EncodeToString(sum[:8]) + `"`
 	w.Header().Set("ETag", tag)
-	w.Header().Set("Cache-Control", "private, no-cache")
+	// Kept by the browser for half a minute, then checked again against the
+	// tag. One changed here is asked for under a new address straight away.
+	w.Header().Set("Cache-Control", "private, max-age=30")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Header.Get("If-None-Match") == tag {
 		w.WriteHeader(http.StatusNotModified)
@@ -401,6 +403,10 @@ func (c *serverIcons) forget(key string) {
 // remembered. However many ask at once, one read is made; the rest wait for
 // it, or stop waiting when their own ctx ends. ok is false when it could
 // not be read.
+//
+// One remembered for longer than it is fresh for is still answered at once,
+// and read again behind the answer: a page of servers shows their pictures
+// without waiting on their workspaces, and is at most one read behind.
 func (c *serverIcons) load(ctx context.Context, key string, read func(context.Context) ([]byte, error)) (data []byte, ok bool) {
 	for {
 		c.mu.Lock()
@@ -409,6 +415,7 @@ func (c *serverIcons) load(ctx context.Context, key string, read func(context.Co
 			c.mu.Unlock()
 			return icon.data, !icon.failed
 		}
+		stale, known := c.icons[key]
 		wait, busy := c.reading[key]
 		if !busy {
 			wait = make(chan struct{})
@@ -425,15 +432,24 @@ func (c *serverIcons) load(ctx context.Context, key string, read func(context.Co
 				c.mu.Lock()
 				defer c.mu.Unlock()
 				// Not kept if the icon was set or removed meanwhile: this
-				// is what was there before.
+				// is what was there before. A failed read does not replace
+				// one that was read before: that one is still the best known.
 				if c.changes[key] == seen {
-					c.icons[key] = serverIcon{data: data, at: time.Now(), failed: err != nil}
+					if err == nil || !known || stale.failed {
+						c.icons[key] = serverIcon{data: data, at: time.Now(), failed: err != nil}
+					} else {
+						c.icons[key] = serverIcon{data: stale.data, at: time.Now()}
+					}
 				}
 				delete(c.reading, key)
 				close(wait)
 			}()
 		} else {
 			c.mu.Unlock()
+		}
+		// What was read before is the answer while it is read again.
+		if known && !stale.failed {
+			return stale.data, true
 		}
 		select {
 		case <-wait:
@@ -448,6 +464,27 @@ func (c *serverIcons) load(ctx context.Context, key string, read func(context.Co
 		case <-ctx.Done():
 			return nil, false
 		}
+	}
+}
+
+// warm reads the icons of servers that are not remembered yet, a few at a
+// time, so that a page that lists them finds them ready when it asks.
+func (s *Server) warmIcons(namespace string, names []string) {
+	slots := make(chan struct{}, 4)
+	for _, name := range names {
+		s.serverIcons.mu.Lock()
+		_, known := s.serverIcons.icons[namespace+"/"+name]
+		s.serverIcons.mu.Unlock()
+		if known {
+			continue
+		}
+		slots <- struct{}{}
+		go func() {
+			defer func() { <-slots }()
+			ctx, cancel := context.WithTimeout(context.Background(), serverIconRead)
+			defer cancel()
+			s.ServerIcon(ctx, namespace, name)
+		}()
 	}
 }
 

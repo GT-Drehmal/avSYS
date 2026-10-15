@@ -33,6 +33,13 @@ interface PictureProps {
   retryKey?: string;
 }
 
+/**
+ * Which addresses turned out to have a picture, and which to have none, for
+ * as long as the page is open: going back to a page shows them as they are
+ * at once, rather than as the initials they stand in for first.
+ */
+const seen = new Map<string, boolean>();
+
 /** The picture of a server, an organization or a person, or a tile with its initial. */
 export function Picture({ name, url, size = 24, shape = "square", onFound, retryKey = "" }: PictureProps) {
   const version = usePictureVersion();
@@ -44,13 +51,22 @@ export function Picture({ name, url, size = 24, shape = "square", onFound, retry
   // A failure only counts for as long as nothing has changed since.
   const attempt = `${src}|${retryKey}`;
   const radius = shape === "round" ? "rounded-full" : size > 32 ? "rounded-lg" : "rounded-md";
-  const shown = !!src && loaded === src;
+  const known = src ? seen.get(src) : undefined;
+  const gone = failed === attempt;
+  // One seen before is shown at once; the browser has it.
+  const shown = !!src && !gone && (loaded === src || known === true);
+  // The letter is for none, not for one still on its way: until it is known
+  // which, the tile is left plain, so that a picture does not replace a letter.
+  const letter = !src || gone || (known === false && loaded !== src);
   return (
     <span className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
-      {/* The letter stands in until the picture has arrived, and for good if there is none. */}
       {!shown && (
-        <span aria-hidden className={cx("flex size-full items-center justify-center bg-accent-wash font-mono font-medium text-accent uppercase", radius)} style={{ fontSize: size * 0.42 }}>
-          {name.slice(0, 1)}
+        <span
+          aria-hidden
+          className={cx("flex size-full items-center justify-center font-mono font-medium uppercase", letter ? "bg-accent-wash text-accent" : "bg-raised", radius)}
+          style={{ fontSize: size * 0.42 }}
+        >
+          {letter && name.slice(0, 1)}
         </span>
       )}
       {src && failed !== attempt && (
@@ -61,13 +77,15 @@ export function Picture({ name, url, size = 24, shape = "square", onFound, retry
           alt=""
           width={size}
           height={size}
-          className={cx("size-full bg-raised object-cover", radius, !shown && "absolute inset-0 opacity-0")}
+          className={cx("size-full bg-raised object-cover transition-opacity duration-150", radius, !shown && "absolute inset-0 opacity-0")}
           style={{ imageRendering: size <= 64 && shape === "square" ? "pixelated" : undefined }}
           onLoad={() => {
+            seen.set(src, true);
             setLoaded(src);
             onFound?.(true);
           }}
           onError={() => {
+            seen.set(src, false);
             setFailed(attempt);
             onFound?.(false);
           }}
