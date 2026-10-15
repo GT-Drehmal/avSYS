@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -45,7 +46,41 @@ func zipOf(t *testing.T, names ...string) (*os.File, int64) {
 	return f, info.Size()
 }
 
+// zipWith writes a zip of these files and contents to a temporary file.
+func zipWith(t *testing.T, files map[string]string) (*os.File, int64) {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "pack-*.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	z := zip.NewWriter(f)
+	for name, body := range files {
+		w, err := z.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.WriteString(w, body)
+	}
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := f.Stat()
+	return f, info.Size()
+}
+
 func TestCheckPack(t *testing.T) {
+	// Its metadata has to be something the game can read.
+	for what, files := range map[string]map[string]string{
+		"a folder of that name": {"pack.mcmeta/": "", "assets/x.json": "{}"},
+		"not JSON":              {"pack.mcmeta": "not json"},
+		"no pack in it":         {"pack.mcmeta": `{"other":1}`},
+	} {
+		f, size := zipWith(t, files)
+		if err := checkPack(f, size); err == nil || !strings.Contains(err.Error(), "not a pack's metadata") {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
 	ok, size := zipOf(t, "pack.mcmeta", "assets/minecraft/lang/en_us.json")
 	if err := checkPack(ok, size); err != nil {
 		t.Errorf("a pack with pack.mcmeta at its top: %v", err)
@@ -134,5 +169,43 @@ func TestKeepUploadedPack(t *testing.T) {
 	spec.ResourcePack.SHA1 = strings.Repeat("cd", 20)
 	if err := keepUploadedPack(spec, uploaded()); err == nil {
 		t.Error("an uploaded pack's hash changed by hand was taken")
+	}
+}
+
+func TestPackFits(t *testing.T) {
+	spec := &avsysv1.MinecraftServerSpec{Version: "1.21.4", ResourcePack: &avsysv1.ResourcePackSpec{Uploaded: &avsysv1.UploadedPack{Size: 200 << 20}}}
+	if err := packFits(spec); err != nil {
+		t.Errorf("200 MB on 1.21.4: %v", err)
+	}
+	spec.Version = "1.17.1"
+	if err := packFits(spec); err == nil || !strings.Contains(err.Error(), "over 100 MB") {
+		t.Errorf("200 MB on 1.17.1: %v", err)
+	}
+}
+
+// The packs the panel keeps that no server has are removed, once they are
+// old enough not to be an upload whose server has not been told yet.
+func TestPrunePacks(t *testing.T) {
+	p := newPanel(t)
+	dir := p.srv.Config.PackDir
+	used, unused, fresh := strings.Repeat("aa", 20), strings.Repeat("bb", 20), strings.Repeat("cc", 20)
+	old := time.Now().Add(-time.Hour)
+	for _, name := range []string{used + ".zip", unused + ".zip", fresh + ".zip", "upload-123", "notes.txt"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("x"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if name != fresh+".zip" {
+			os.Chtimes(path, old, old)
+		}
+	}
+	server := avsysv1.MinecraftServer{}
+	server.Spec.ResourcePack = &avsysv1.ResourcePackSpec{SHA1: used, Uploaded: &avsysv1.UploadedPack{Size: 1}}
+	p.srv.prunePacks([]avsysv1.MinecraftServer{server})
+	for name, want := range map[string]bool{used + ".zip": true, unused + ".zip": false, fresh + ".zip": true, "upload-123": false, "notes.txt": true} {
+		_, err := os.Stat(filepath.Join(dir, name))
+		if (err == nil) != want {
+			t.Errorf("%s kept %v, want %v", name, err == nil, want)
+		}
 	}
 }

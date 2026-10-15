@@ -51,6 +51,9 @@ type Config struct {
 
 type Server struct {
 	Config Config
+	// packsPruned is when the packs the panel keeps were last cleared of
+	// those no server has; see prunePacks. Only opsTick reads and sets it.
+	packsPruned time.Time
 	// contentLocks holds a lock per server, by namespace/name: see lockContent.
 	contentLocks sync.Map
 	// hostnames holds the panel to one change at a time of who may have

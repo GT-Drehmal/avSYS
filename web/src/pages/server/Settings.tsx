@@ -331,7 +331,12 @@ export function Settings() {
       </Section>
 
       <Section title="Resource pack" description="Offered to players as they join. Upload one for the panel to serve, or give the address of one hosted elsewhere, which players must be able to reach.">
-        <PackUpload server={server} />
+        <PackUpload
+          server={server}
+          // A page with unsaved changes keeps them, and takes the pack as it
+          // is now, so that saving them does not put back the one before.
+          onChanged={(next) => setDraft((d) => ({ ...d, packURL: next.spec.resourcePack?.url ?? "", packSHA1: next.spec.resourcePack?.sha1 ?? "", packEnforce: !!next.spec.resourcePack?.enforce, packPrompt: next.spec.resourcePack?.prompt ?? "" }))}
+        />
         {!server.spec.resourcePack?.uploaded && (
           <>
             <Field label="Or its URL">{(id) => <Input id={id} type="url" {...text("packURL")} placeholder="https://example.com/pack.zip" className="font-mono" />}</Field>

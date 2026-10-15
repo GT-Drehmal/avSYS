@@ -423,6 +423,11 @@ func (s *Server) opsTick(ctx context.Context) {
 	if err := s.Client.List(ctx, &all); err != nil {
 		return
 	}
+	// Packs the panel keeps that no server has any more, once an hour.
+	if time.Since(s.packsPruned) > time.Hour {
+		s.packsPruned = time.Now()
+		s.prunePacks(all.Items)
+	}
 	// Content taken off a server that could not be deleted then.
 	for i := range all.Items {
 		if all.Items[i].Annotations[avsysv1.AnnotationContentLeft] != "" {

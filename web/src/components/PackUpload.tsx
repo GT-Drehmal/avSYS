@@ -12,13 +12,16 @@ import { Button } from "./ui";
  * files and serves it to players: what it is, and replacing or removing it.
  * With none, a way to upload one.
  */
-export function PackUpload({ server }: { server: Server }) {
+export function PackUpload({ server, onChanged }: { server: Server; onChanged?: (next: Server) => void }) {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const path = `${serverPath(server.org, server.name)}/resource-pack`;
   const uploaded = server.spec.resourcePack?.uploaded;
   // The answer is the server as it is now, which every page showing it takes.
-  const done = (next: Server) => applyServer(qc, next);
+  const done = (next: Server) => {
+    applyServer(qc, next);
+    onChanged?.(next);
+  };
   const upload = useAction((file: File) => api.putRaw<Server>(`${path}?name=${encodeURIComponent(file.name)}`, file));
   const remove = useAction(() => api.del<Server>(path));
 

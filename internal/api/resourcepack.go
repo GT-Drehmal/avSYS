@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -63,8 +64,8 @@ func checkPack(f *os.File, size int64) error {
 	var nested string
 	for _, e := range z.File {
 		name := strings.TrimPrefix(e.Name, "./")
-		if name == "pack.mcmeta" {
-			return nil
+		if strings.TrimSuffix(name, "/") == "pack.mcmeta" {
+			return checkMeta(e)
 		}
 		if i := strings.Index(name, "/"); i > 0 {
 			folders[name[:i]] = true
@@ -77,6 +78,40 @@ func checkPack(f *os.File, size int64) error {
 		return errBadRequest("The pack is in a folder, %s, inside the zip. Zip what is inside that folder instead, so that pack.mcmeta is at the top.", nested)
 	}
 	return errBadRequest("There is no pack.mcmeta at the top of that zip, so it is not a resource pack.")
+}
+
+// packFits says whether a server's uploaded pack is one the game of its
+// version takes, as after the version is changed.
+func packFits(spec *avsysv1.MinecraftServerSpec) error {
+	if rp := spec.ResourcePack; rp != nil && rp.Uploaded != nil && rp.Uploaded.Size > packLimit(spec.Version) {
+		return errBadRequest("Its resource pack is over %d MB, the most the game takes for %s. Upload a smaller one, or remove it first.", packLimit(spec.Version)>>20, spec.Version)
+	}
+	return nil
+}
+
+// checkMeta says whether pack.mcmeta is what the game reads it as: a file of
+// JSON with a pack in it.
+func checkMeta(e *zip.File) error {
+	bad := errBadRequest("pack.mcmeta in that zip is not a pack's metadata: the game could not read it.")
+	if e.FileInfo().IsDir() {
+		return bad
+	}
+	f, err := e.Open()
+	if err != nil {
+		return bad
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 1<<20))
+	if err != nil {
+		return bad
+	}
+	var meta struct {
+		Pack json.RawMessage `json:"pack"`
+	}
+	if json.Unmarshal(data, &meta) != nil || len(meta.Pack) == 0 {
+		return bad
+	}
+	return nil
 }
 
 // packURL is where the panel serves a pack of this SHA-1.
@@ -101,6 +136,8 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 		return err
 	}
 	defer release()
+	// One change to its files at a time: content, and its pack.
+	defer s.lockContent(client.ObjectKeyFromObject(mc))()
 	if s.Config.PackDir == "" {
 		return &Error{Status: http.StatusServiceUnavailable, Code: "packs_unavailable", Message: "This panel has nowhere to keep resource packs."}
 	}
@@ -153,8 +190,8 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	if name == "." || name == "/" {
 		name = ""
 	}
-	now := &avsysv1.MinecraftServer{}
-	if err := s.Client.Get(r.Context(), client.ObjectKeyFromObject(mc), now); err != nil {
+	now, err := s.live(r.Context(), mc)
+	if err != nil {
 		return err
 	}
 	orig := now.DeepCopy()
@@ -167,6 +204,7 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 		return err
 	}
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, sha)
+	go s.prunePacksNow(context.WithoutCancel(r.Context()))
 	writeJSON(w, http.StatusOK, s.view(now))
 	return nil
 }
@@ -182,6 +220,11 @@ func (s *Server) deleteResourcePack(w http.ResponseWriter, r *http.Request, u *s
 		return err
 	}
 	defer release()
+	defer s.lockContent(client.ObjectKeyFromObject(mc))()
+	// As it is now: an upload a moment ago may not be in the cache yet.
+	if mc, err = s.live(r.Context(), mc); err != nil {
+		return err
+	}
 	if mc.Spec.ResourcePack != nil && mc.Spec.ResourcePack.Uploaded != nil {
 		sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
 		if err != nil {
@@ -191,16 +234,14 @@ func (s *Server) deleteResourcePack(w http.ResponseWriter, r *http.Request, u *s
 			return fileError(err)
 		}
 	}
-	now := &avsysv1.MinecraftServer{}
-	if err := s.Client.Get(r.Context(), client.ObjectKeyFromObject(mc), now); err != nil {
-		return err
-	}
+	now := mc.DeepCopy()
 	orig := now.DeepCopy()
 	now.Spec.ResourcePack = nil
 	if err := s.Client.Patch(r.Context(), now, client.MergeFrom(orig)); err != nil {
 		return err
 	}
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, "removed")
+	go s.prunePacksNow(context.WithoutCancel(r.Context()))
 	writeJSON(w, http.StatusOK, s.view(now))
 	return nil
 }
@@ -209,7 +250,7 @@ func writePack(sc *sftp.Client, src io.Reader) error {
 	if err := sc.MkdirAll(path.Dir(packPath)); err != nil {
 		return fileError(err)
 	}
-	tmp := packPath + ".avsys-upload"
+	tmp := fmt.Sprintf("%s.avsys-upload-%d", packPath, time.Now().UnixNano())
 	f, err := sc.Create(tmp)
 	if err != nil {
 		return fileError(err)
@@ -226,6 +267,51 @@ func writePack(sc *sftp.Client, src io.Reader) error {
 		return fileError(err)
 	}
 	return nil
+}
+
+// packGrace is how long a pack the panel keeps is left alone however it
+// looks: one just uploaded is kept before the server's settings say so.
+const packGrace = 10 * time.Minute
+
+// prunePacks deletes the packs the panel keeps that none of these servers
+// has. One brought back on a server later, from a snapshot, is read out of
+// its files again when it is first asked for.
+func (s *Server) prunePacks(servers []avsysv1.MinecraftServer) {
+	if s.Config.PackDir == "" {
+		return
+	}
+	used := map[string]bool{}
+	for i := range servers {
+		if rp := servers[i].Spec.ResourcePack; rp != nil && rp.Uploaded != nil {
+			used[rp.SHA1] = true
+		}
+	}
+	entries, err := os.ReadDir(s.Config.PackDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		m := packName.FindStringSubmatch(e.Name())
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) < packGrace {
+			continue
+		}
+		// Kept, or what an upload or fetch left behind when it failed.
+		if (m != nil && used[m[1]]) || (m == nil && !strings.HasPrefix(e.Name(), "upload-") && !strings.HasPrefix(e.Name(), "fetch-")) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.Config.PackDir, e.Name())); err == nil {
+			s.Log.Info("removed a resource pack no server has", "file", e.Name())
+		}
+	}
+}
+
+// prunePacksNow is prunePacks over every server, for after a pack changed.
+func (s *Server) prunePacksNow(ctx context.Context) {
+	var all avsysv1.MinecraftServerList
+	if err := s.nodeReader().List(ctx, &all); err == nil {
+		s.prunePacks(all.Items)
+	}
 }
 
 func (s *Server) cachedPack(sha string) string {

@@ -186,6 +186,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if err := checkJVM(&spec.JVM); err != nil {
 		return err
 	}
+	if err := packFits(spec); err != nil {
+		return err
+	}
 	spec.Expose.Hostname = router.NormalizeHostname(strings.TrimSpace(spec.Expose.Hostname))
 	if host := spec.Expose.Hostname; host != "" {
 		if !hostnamePattern.MatchString(host) {
@@ -351,6 +354,11 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if !serverNamePattern.MatchString(in.Name) {
 		return errBadRequest("Server names are up to 40 characters: lowercase letters, digits and dashes, starting with a letter.")
 	}
+	// An uploaded pack is the server's own, and comes by uploading it or with
+	// the files of the one it is copied from, which a request leaves to them.
+	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
+		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made, or takes the one of the server it is copied from.")
+	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
 	}
@@ -370,10 +378,6 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given its picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once it is made.")
-	}
-	// An uploaded pack is the server's own, and comes by uploading it.
-	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
-		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made.")
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// A new server has Aikar's flags unless asked not to. Only here: one
