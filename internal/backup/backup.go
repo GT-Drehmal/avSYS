@@ -429,13 +429,15 @@ var ErrTooLarge = errors.New("the file is larger than allowed")
 // files are the server's own, and anything at all can be in them: what is
 // read is bounded, and is for the caller to check.
 func (m *Manager) File(ctx context.Context, org, id, path string, limit int64) ([]byte, error) {
-	snap, err := m.Get(ctx, org, id)
-	if err != nil {
-		return nil, err
-	}
+	// Held from finding the snapshot to reading out of it, so that it cannot
+	// be deleted in between.
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	snap, err := m.get(ctx, org, id)
+	if err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(ctx, m.Restic, "--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache", "dump", "--no-lock", snap.ID, path)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
