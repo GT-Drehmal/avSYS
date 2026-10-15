@@ -222,9 +222,10 @@ func servePicture(w http.ResponseWriter, r *http.Request, data []byte) {
 	sum := sha1.Sum(data)
 	tag := `"` + hex.EncodeToString(sum[:8]) + `"`
 	w.Header().Set("ETag", tag)
-	// Kept by the browser for half a minute, then checked again against the
-	// tag. One changed here is asked for under a new address straight away.
-	w.Header().Set("Cache-Control", "private, max-age=30")
+	// Checked against the tag every time: these answer only to who may see
+	// them, and a browser kept for half a minute would show one to whoever
+	// signs in next. The check is cheap, the panel keeping them in memory.
+	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Header.Get("If-None-Match") == tag {
 		w.WriteHeader(http.StatusNotModified)
@@ -360,6 +361,9 @@ type serverIcon struct {
 	at   time.Time
 	// failed marks one that could not be read, which is asked again sooner.
 	failed bool
+	// retrySoon marks one that is still answered from before because reading
+	// it again failed: it too is asked again sooner.
+	retrySoon bool
 }
 
 const (
@@ -380,7 +384,7 @@ func (c *serverIcons) init() {
 func (c *serverIcons) fresh(key string) (serverIcon, bool) {
 	icon, ok := c.icons[key]
 	keep := serverIconFor
-	if icon.failed {
+	if icon.failed || icon.retrySoon {
 		keep = serverIconRetry
 	}
 	return icon, ok && time.Since(icon.at) < keep
@@ -451,7 +455,7 @@ func (c *serverIcons) load(ctx context.Context, key string, read func(context.Co
 					if err == nil || !known || stale.failed {
 						c.icons[key] = serverIcon{data: data, at: time.Now(), failed: err != nil}
 					} else {
-						c.icons[key] = serverIcon{data: stale.data, at: time.Now()}
+						c.icons[key] = serverIcon{data: stale.data, at: time.Now(), retrySoon: true}
 					}
 				}
 				delete(c.reading, key)
@@ -485,8 +489,12 @@ func (c *serverIcons) load(ctx context.Context, key string, read func(context.Co
 func (s *Server) warmIcons(namespace string, names []string) {
 	slots := make(chan struct{}, 4)
 	for _, name := range names {
+		key := namespace + "/" + name
 		s.serverIcons.mu.Lock()
-		_, known := s.serverIcons.icons[namespace+"/"+name]
+		_, known := s.serverIcons.icons[key]
+		// What has happened to it so far. A server deleted, and so
+		// forgotten, while this waits for its turn is not read back in.
+		seen := s.serverIcons.changes[key]
 		s.serverIcons.mu.Unlock()
 		if known {
 			continue
@@ -494,6 +502,12 @@ func (s *Server) warmIcons(namespace string, names []string) {
 		slots <- struct{}{}
 		go func() {
 			defer func() { <-slots }()
+			s.serverIcons.mu.Lock()
+			changed := s.serverIcons.changes[key] != seen
+			s.serverIcons.mu.Unlock()
+			if changed {
+				return
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), serverIconRead)
 			defer cancel()
 			s.ServerIcon(ctx, namespace, name)

@@ -118,7 +118,7 @@ export function Backups() {
   return (
     <>
       {header}
-      <div className={`flex flex-col gap-6 ${selection.count > 0 ? "pb-16" : ""}`}>
+      <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
           <p className="text-[13px] text-muted">
             {snapshots.length === 0

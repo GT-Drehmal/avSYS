@@ -207,7 +207,8 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	if spec.Resources.Memory.IsZero() {
 		spec.Resources.Memory = recorded.Resources.Memory
 	}
-	if spec.Resources.CPU == nil {
+	// A CPU limit given as null is none, and not the original's.
+	if spec.Resources.CPU == nil && !namedIn(given["resources"], "cpu") {
 		spec.Resources.CPU = recorded.Resources.CPU
 	}
 	if spec.Storage.Size.IsZero() {
@@ -223,6 +224,16 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 		spec.Sleep = recorded.Sleep
 	}
 	return spec
+}
+
+// namedIn reports whether a JSON object names a key at all, null included.
+func namedIn(object json.RawMessage, key string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(object, &fields) != nil {
+		return false
+	}
+	_, ok := fields[key]
+	return ok
 }
 
 // mergeProperties lays the game settings a request names over the recorded

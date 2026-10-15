@@ -3,6 +3,8 @@ import * as Dropdown from "@radix-ui/react-dropdown-menu";
 import { Check, Copy, LoaderCircle, X } from "lucide-react";
 import {
   useId,
+  useLayoutEffect,
+  useRef,
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -434,22 +436,38 @@ export function RowCheckbox({ checked, partial, onChange, label, quiet, classNam
  * can be done to them.
  */
 export function SelectionBar({ count, noun, onClear, children }: { count: number; noun: string; onClear: () => void; children: ReactNode }) {
+  // The bar is fixed to the bottom of the window and wraps to as many rows
+  // as its buttons need. As much room as it takes is left where it is
+  // placed, after the page's content, so that it never covers the end of it.
+  const bar = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = bar.current;
+    if (!el) return;
+    setHeight(el.offsetHeight);
+    const watch = new ResizeObserver(() => setHeight(el.offsetHeight));
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [count]);
   if (count === 0) return null;
   return (
-    <div role="region" aria-label="Selection" data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3 md:px-10">
-        <p className="flex items-center gap-3 text-[13px]">
-          <span className="font-medium" aria-live="polite">
-            {count} {noun}
-            {count === 1 ? "" : "s"} selected
-          </span>
-          <button type="button" onClick={onClear} className="text-muted hover:text-fg">
-            Clear
-          </button>
-        </p>
-        <div className="flex flex-wrap gap-2">{children}</div>
+    <>
+      <div aria-hidden style={{ height }} />
+      <div ref={bar} role="region" aria-label="Selection" data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3 md:px-10">
+          <p className="flex items-center gap-3 text-[13px]">
+            <span className="font-medium" aria-live="polite">
+              {count} {noun}
+              {count === 1 ? "" : "s"} selected
+            </span>
+            <button type="button" onClick={onClear} className="text-muted hover:text-fg">
+              Clear
+            </button>
+          </p>
+          <div className="flex flex-wrap gap-2">{children}</div>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
