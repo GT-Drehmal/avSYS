@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -498,6 +500,30 @@ func TestCreateFromServerRequests(t *testing.T) {
 	}
 }
 
+// A copy of a server takes when it is snapshotted and the nodes it is kept
+// to from the server itself, unless the request says otherwise.
+func TestFromLive(t *testing.T) {
+	live := &avsysv1.MinecraftServerSpec{
+		Backups:      &avsysv1.BackupSpec{Enabled: new(false)},
+		NodeSelector: map[string]string{"kubernetes.io/hostname": "pi"},
+	}
+	requested := &avsysv1.MinecraftServerSpec{}
+	fromLive(requested, nil, live)
+	if requested.Backups == nil || requested.NodeSelector["kubernetes.io/hostname"] != "pi" {
+		t.Errorf("not taken from the server: %+v %v", requested.Backups, requested.NodeSelector)
+	}
+	requested.NodeSelector["kubernetes.io/hostname"] = "changed"
+	if live.NodeSelector["kubernetes.io/hostname"] != "pi" {
+		t.Error("the copy's nodes are the original's own map")
+	}
+
+	asked := &avsysv1.MinecraftServerSpec{NodeSelector: map[string]string{"kubernetes.io/hostname": "big"}}
+	fromLive(asked, map[string]json.RawMessage{"nodeSelector": nil, "backups": nil}, live)
+	if asked.Backups != nil || asked.NodeSelector["kubernetes.io/hostname"] != "big" {
+		t.Errorf("the request did not win: %+v %v", asked.Backups, asked.NodeSelector)
+	}
+}
+
 // A server made from a snapshot is put on the kind of storage the original
 // was on unless the request names one: where a cluster has no default kind,
 // a volume asked for without one is never provided.
@@ -543,5 +569,143 @@ func TestRecordFor(t *testing.T) {
 	}
 	if spec.Image == "" || len(spec.Env) != 1 {
 		t.Error("showing the record to a viewer changed it")
+	}
+}
+
+// notCopied names every setting a server made from another does not take
+// from it, and why. Everything else is taken, which TestEverySettingIsDecided
+// holds every setting to: one added later has to be put on one side or the
+// other.
+var notCopied = map[string]string{
+	"State": "the request says whether the new server starts",
+	// For the reason given at restoreSoftware: these decide what code runs,
+	// and are read out of a repository the server itself could add to.
+	"Image": "only when the request sends it back",
+	"Env":   "only when the request sends it back",
+	// A server's address is its own.
+	"Expose.Hostname":           "an address is the original's own",
+	"Expose.LoadBalancerIP":     "an address is the original's own",
+	"Expose.NodePort":           "an address is the original's own",
+	"Expose.ServiceAnnotations": "they often claim an address, as the others do",
+	"Expose.Type":               "the request says how the new server is reached",
+	// Not taken from a snapshot's record: createFromServer takes these from
+	// the server itself when the request does not say.
+	"Backups":      "when it is snapshotted is not recorded",
+	"NodeSelector": "a record, which the server could have written, does not say where a server runs",
+}
+
+// TestEverySettingIsDecided fills in every setting of a server, makes a new
+// one from it with nothing asked, and checks each setting was taken, or is
+// one notCopied names.
+func TestEverySettingIsDecided(t *testing.T) {
+	recorded := &avsysv1.MinecraftServerSpec{}
+	fill(reflect.ValueOf(recorded).Elem())
+	spec := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil)
+
+	seen := map[string]bool{}
+	var walk func(path string, was, got reflect.Value)
+	walk = func(path string, was, got reflect.Value) {
+		for i := range was.NumField() {
+			f := was.Type().Field(i)
+			name := strings.TrimPrefix(path+"."+f.Name, ".")
+			seen[name] = true
+			// The groups of settings are looked into, setting by setting.
+			if f.Type.Kind() == reflect.Struct && f.Type != reflect.TypeFor[resource.Quantity]() {
+				walk(name, was.Field(i), got.Field(i))
+				continue
+			}
+			same := reflect.DeepEqual(was.Field(i).Interface(), got.Field(i).Interface())
+			if _, mine := notCopied[name]; mine && same {
+				t.Errorf("%s is said not to be copied, but was", name)
+			}
+			if _, mine := notCopied[name]; !mine && !same {
+				t.Errorf("%s was not copied: it is %v and the copy has %v. Copy it, or say in notCopied why not", name, was.Field(i).Interface(), got.Field(i).Interface())
+			}
+		}
+	}
+	walk("", reflect.ValueOf(recorded).Elem(), reflect.ValueOf(&spec).Elem())
+	for name := range notCopied {
+		if !seen[name] {
+			t.Errorf("notCopied names %s, which is not a setting", name)
+		}
+	}
+}
+
+// fill gives every field it can reach a value that is not its zero.
+func fill(v reflect.Value) {
+	if v.Type() == reflect.TypeFor[resource.Quantity]() {
+		v.Set(reflect.ValueOf(resource.MustParse("3Gi")))
+		return
+	}
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString("x" + v.Type().Name())
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		v.SetInt(7)
+	case reflect.Pointer:
+		v.Set(reflect.New(v.Type().Elem()))
+		fill(v.Elem())
+	case reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		fill(v.Index(0))
+	case reflect.Map:
+		v.Set(reflect.MakeMap(v.Type()))
+		key, value := reflect.New(v.Type().Key()).Elem(), reflect.New(v.Type().Elem()).Elem()
+		fill(key)
+		fill(value)
+		v.SetMapIndex(key, value)
+	case reflect.Struct:
+		for i := range v.NumField() {
+			if v.Type().Field(i).IsExported() {
+				fill(v.Field(i))
+			}
+		}
+	}
+}
+
+// notRestored names every setting a restore leaves as it is now, and why.
+// Everything else goes back to what the snapshot recorded.
+var notRestored = map[string]string{
+	"DisplayName":   "a restore puts back files, not what the server is called",
+	"State":         "whether it runs is settled by the restore itself",
+	"EULA":          "accepted for the server, not for its files",
+	"Resources":     "what it is given to run on stays as it is now",
+	"Storage":       "what it is given to run on stays as it is now",
+	"Expose":        "its address stays as it is now",
+	"Sleep":         "what it is given to run on stays as it is now",
+	"Backups":       "when it is snapshotted is not recorded",
+	"AutoOp":        "who is an operator by role is decided now, not by the files",
+	"AutoWhitelist": "who can join by role is decided now, not by the files",
+	// For the reason given at restoreSoftware.
+	"Image":        "not taken from a record the server could have written",
+	"Env":          "not taken from a record the server could have written",
+	"NodeSelector": "not taken from a record the server could have written",
+}
+
+// TestEverySettingIsDecidedForARestore is TestEverySettingIsDecided for
+// putting a server back to one of its own snapshots.
+func TestEverySettingIsDecidedForARestore(t *testing.T) {
+	recorded := &avsysv1.MinecraftServerSpec{}
+	fill(reflect.ValueOf(recorded).Elem())
+	now := &avsysv1.MinecraftServerSpec{}
+	restoreSoftware(now, recorded)
+	was, got := reflect.ValueOf(recorded).Elem(), reflect.ValueOf(now).Elem()
+	left := maps.Clone(notRestored)
+	for i := range was.NumField() {
+		name := was.Type().Field(i).Name
+		same := reflect.DeepEqual(was.Field(i).Interface(), got.Field(i).Interface())
+		_, kept := notRestored[name]
+		if kept && same {
+			t.Errorf("%s is said to stay as it is, but was restored", name)
+		}
+		if !kept && !same {
+			t.Errorf("%s was not restored. Restore it in restoreSoftware, or say in notRestored why not", name)
+		}
+		delete(left, name)
+	}
+	for name := range left {
+		t.Errorf("notRestored names %s, which is not a setting", name)
 	}
 }

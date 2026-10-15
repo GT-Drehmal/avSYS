@@ -192,7 +192,7 @@ export function Servers() {
                 >
                   <span className="flex min-w-0 items-center gap-3">
                     <StatusDot phase={s.status.phase} />
-                    <Picture name={displayName(s)} url={serverIcon(s)} size={32} retryKey={s.status.phase} />
+                    <Picture name={displayName(s)} url={serverIcon(s)} size={32} retryKey={`${s.status.phase}|${s.status.message ?? ""}`} />
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{displayName(s)}</span>
                       <span className="block truncate text-xs text-muted">
