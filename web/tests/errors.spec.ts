@@ -6,10 +6,10 @@ test("an error on one page leaves the rest of the panel standing", async ({ page
   await page.route("**/api/v1/orgs/friends/servers", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ name: "broken", org: "friends" }]) }));
   await page.goto("/o/friends");
   await expect(page.getByRole("alert")).toContainText("Something went wrong on this page");
-  await expect(page.getByRole("link", { name: "Backups" })).toBeVisible();
-  // Going somewhere else clears it.
-  await page.getByRole("link", { name: "Backups" }).click();
-  await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Members" })).toBeVisible();
+  // Going somewhere else, which does not read the broken list, clears it.
+  await page.getByRole("link", { name: "Members" }).click();
+  await expect(page.getByRole("heading", { name: "Members" })).toBeVisible();
   await expect(page.getByRole("alert").filter({ hasText: "Something went wrong" })).toHaveCount(0);
   // The error was caught and shown, which is what was being tested.
   pageErrors.length = 0;

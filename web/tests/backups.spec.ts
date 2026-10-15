@@ -47,6 +47,30 @@ test("a server is opened to see its snapshots, and one of them to see what it ho
   await expect(dialog).toContainText("Until it is deleted by hand.");
 });
 
+test("by server, each server that exists is snapshotted from its row, one with none yet too", async ({ page }) => {
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/*/snapshots", (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    asked.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 202, json: { kind: "snapshot", org: "friends", server: "survival", stage: "Starting", percent: 0, startedAt: new Date().toISOString() } });
+  });
+  // A server with no snapshot yet has a row of its own, to take its first.
+  const lobby = page.getByRole("listitem").filter({ hasText: "Lobby" });
+  await expect(lobby).toContainText("No snapshots yet");
+  await expect(lobby.getByRole("button", { expanded: false })).toHaveCount(0);
+  await lobby.getByRole("button", { name: "Snapshot lobby now" }).click();
+  await expect.poll(() => asked).toEqual(["/api/v1/orgs/friends/servers/lobby/snapshots"]);
+
+  // Pressing it does not open or close the row.
+  const survival = page.getByRole("listitem").filter({ hasText: "Survival" });
+  await survival.getByRole("button", { name: "Snapshot survival now" }).click();
+  await expect.poll(() => asked.length).toBe(2);
+  await expect(survival.getByRole("button", { expanded: false })).toBeVisible();
+
+  // A deleted server has nothing to snapshot.
+  await expect(page.getByRole("listitem").filter({ hasText: "oldworld" }).getByRole("button", { name: /^Snapshot / })).toHaveCount(0);
+});
+
 test("by time: everything in order, each with its server, and narrowed by server or reason", async ({ page }) => {
   await page.getByRole("button", { name: "By time" }).click();
   const snapshots = page.getByRole("button", { name: /^About the snapshot of / });
@@ -108,6 +132,7 @@ test("a viewer sees the snapshots and is offered nothing to do to them", async (
   await expect(page.getByLabel(/^Select the snapshot of /)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^New server from the snapshot/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Delete the snapshot/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Snapshot .* now$/ })).toHaveCount(0);
 });
 
 test("a server's picture is its own while it exists, and its newest snapshot's once it is gone", async ({ page }) => {
@@ -178,4 +203,89 @@ test("a server's own Backups tab restores with the same question", async ({ page
   await dialog.getByRole("button", { name: "Restore", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(asked).toMatch(/\/servers\/survival\/snapshots\/[0-9a-f]+\/restore$/);
+});
+
+test("a server is snapshotted from its header on any tab, and its Backups tab has no second button", async ({ page, as }) => {
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/snapshots", (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    asked.push(route.request().url());
+    return route.fulfill({ status: 202, json: { kind: "snapshot", org: "friends", server: "survival", stage: "Starting", percent: 0, startedAt: new Date().toISOString() } });
+  });
+  await page.goto("/o/friends/s/survival");
+  await page.getByRole("button", { name: "Snapshot", exact: true }).click();
+  await expect(page.getByText("Taking a snapshot of survival")).toBeVisible();
+  expect(asked).toHaveLength(1);
+
+  await page.goto("/o/friends/s/survival/backups");
+  await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toHaveCount(1);
+
+  await as("viewer");
+  await page.goto("/o/friends/s/survival");
+  await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toHaveCount(0);
+});
+
+test("the header's Snapshot waits while one is being taken, as the event stream says, on any tab", async ({ page }) => {
+  const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Copying files", percent: 40, startedAt: new Date().toISOString() };
+  let running = false;
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+      body: running ? `event: operation.progress\ndata: ${JSON.stringify(op)}\n\n` : "event: waiting\ndata: null\n\n",
+    }),
+  );
+  await page.goto("/o/friends/s/survival");
+  const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
+  await expect(snapshot).toBeEnabled();
+  // The stream is opened again, now saying a snapshot of it is under way,
+  // and that an old snapshot was deleted meanwhile, which is not its end.
+  running = true;
+  await expect(snapshot).toBeDisabled({ timeout: 15_000 });
+});
+
+test("a snapshot deleted while one is being taken does not end it; its own end does", async ({ page }) => {
+  const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Copying files", percent: 40, startedAt: new Date().toISOString() };
+  const deleted = { kind: "delete", org: "friends", server: "survival" };
+  const done = { kind: "snapshot", org: "friends", server: "survival" };
+  let body = `event: operation.progress\ndata: ${JSON.stringify(op)}\n\nevent: operation.done\ndata: ${JSON.stringify(deleted)}\n\n`;
+  await page.route("**/api/v1/events", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body }));
+  await page.goto("/o/friends/s/survival");
+  const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
+  await expect(snapshot).toBeDisabled();
+  body = `event: operation.done\ndata: ${JSON.stringify(done)}\n\n`;
+  await expect(snapshot).toBeEnabled({ timeout: 15_000 });
+});
+
+test("a server's header fits a phone, its buttons wrapping", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto("/o/friends/s/survival");
+  await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("by server, a list of servers that could not be loaded is said, not taken for none", async ({ page }) => {
+  await page.route("**/api/v1/orgs/friends/servers", (route) => route.fulfill({ status: 500, json: { code: "test", message: "Not today." } }));
+  await page.reload();
+  await expect(page.getByText(/The list of servers could not be loaded/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /^Snapshot .* now$/ })).toHaveCount(0);
+});
+
+test("a snapshot shown as running on a tab left earlier is let go of when the stream reconnects", async ({ page }) => {
+  const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Copying files", percent: 40, startedAt: new Date().toISOString() };
+  let running = true;
+  await page.route("**/api/v1/orgs/friends/servers/survival/snapshots", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...list, operations: running ? [op] : [] } });
+  });
+  // Each time the stream is opened it ends at once, and is opened again.
+  await page.route("**/api/v1/events", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: waiting\ndata: null\n\n" }));
+  await page.goto("/o/friends/s/survival/backups");
+  const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
+  await expect(snapshot).toBeDisabled();
+  // It finished while nothing was said of it, and the Console tab does not ask.
+  running = false;
+  await page.getByRole("link", { name: "Console" }).click();
+  await expect(snapshot).toBeEnabled({ timeout: 15_000 });
 });
