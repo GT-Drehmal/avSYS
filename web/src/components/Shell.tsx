@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, ChevronsUpDown, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
+import { Archive, Check, ChevronsUpDown, Cpu, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
@@ -236,6 +236,11 @@ export function Shell() {
               <MenuItem icon={<UserRound />} onSelect={() => navigate("/account")}>
                 Account
               </MenuItem>
+              {me.user.isAdmin && (
+                <MenuItem icon={<Cpu />} onSelect={() => navigate("/nodes")}>
+                  Nodes
+                </MenuItem>
+              )}
               <MenuSeparator />
               <MenuItem icon={<LogOut />} onSelect={signOut}>
                 Sign out

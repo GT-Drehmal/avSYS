@@ -278,6 +278,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// FromServer makes the server a copy of another in the organization,
 		// as that one is now.
 		FromServer string `json:"fromServer"`
+		// Node is the node to put it on, rather than the one the panel would
+		// choose. Its world lives on that node's disk.
+		Node string `json:"node"`
 		// Picture is, for one made from a snapshot or another server, a
 		// picture of its own in place of the one its files bring: base64,
 		// or null for none.
@@ -311,9 +314,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 		if raw.FromServer != "" {
-			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture)
+			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture, raw.Node)
 		}
-		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture)
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture, raw.Node)
 	}
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given its picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once it is made.")
@@ -354,7 +357,12 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: in.Name},
 		Spec:       in.Spec,
 	}
-	if err := s.Client.Create(r.Context(), mc); err != nil {
+	if raw.Node != "" {
+		// Placed where asked, which the controller then keeps to.
+		mc.Annotations = map[string]string{avsysv1.AnnotationNode: raw.Node}
+		mc.Spec.NodeSelector = nil
+	}
+	if err := s.createPlaced(r.Context(), mc, raw.Node); err != nil {
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "server.create", in.Name, "")
