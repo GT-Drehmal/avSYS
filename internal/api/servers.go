@@ -421,12 +421,15 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	mc.Spec = spec
 	// Update carries the resource version read above, so a concurrent edit
 	// is rejected instead of silently overwritten.
+	// The server's content is held still from here until what was taken
+	// off it is removed.
+	defer s.lockContent(client.ObjectKeyFromObject(mc))()
 	if err := s.Client.Update(r.Context(), mc); apierrors.IsConflict(err) {
 		return &Error{Status: http.StatusConflict, Code: "stale", Message: "This server was changed by someone else just now. Try again."}
 	} else if err != nil {
 		return err
 	}
-	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, previous.Mods, mc.Spec.Mods)
+	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
 	// From which role members are operators in game, acted on now and not
 	// with the next look.
