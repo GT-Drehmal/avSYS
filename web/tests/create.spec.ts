@@ -306,6 +306,34 @@ test("a copy keeps the picture its files bring, or is given its own, or none", a
   expect(sent[2].picture).toBeNull();
 });
 
+test("a copy is the same form: its world's making shown as it was, and its other properties there to change", async ({ page, as }) => {
+  await as("owner");
+  const properties = { difficulty: "hard", "level-type": "flat", "view-distance": "12", "spawn-protection": "0" };
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+    }
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, properties } } : s)) });
+  });
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByLabel("Difficulty")).toHaveValue("hard");
+  await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
+  // Made already, so shown as it was made and not to be changed.
+  await expect(page.getByLabel("World type")).toHaveValue("flat");
+  await expect(page.getByLabel("World type")).toBeDisabled();
+  await expect(page.getByLabel("Seed")).toBeDisabled();
+  const other = page.getByLabel("Other properties");
+  await expect(other).toHaveValue("view-distance=12\nspawn-protection=0");
+
+  await other.fill("view-distance=6\nmax-tick-time=-1");
+  const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  const body = (await sent).postDataJSON();
+  // Changed, added, and taken away; what was left alone is not named.
+  expect(body.spec.properties).toEqual({ "view-distance": "6", "max-tick-time": "-1", "spawn-protection": null });
+});
+
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new");

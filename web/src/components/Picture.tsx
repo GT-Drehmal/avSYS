@@ -164,53 +164,6 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint }: P
   );
 }
 
-/**
- * A picture chosen for something that does not exist yet, such as a server
- * being made: it is held here and shown, and put in place by whoever makes
- * the thing.
- */
-export function PictureChoice({ name, shape, file, onChange, hint }: Pick<PictureProps, "name" | "shape"> & { file: File | null; onChange: (file: File | null) => void; hint?: string }) {
-  const input = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState<string>();
-  // An address for the file that lasts as long as it is the one chosen.
-  useEffect(() => {
-    if (!file) return setPreview(undefined);
-    const url = URL.createObjectURL(file);
-    setPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
-  return (
-    <div className="flex items-center gap-4">
-      <Picture name={name || "?"} url={preview} size={56} shape={shape} />
-      <div className="flex flex-col gap-1.5">
-        <div className="flex gap-2">
-          <Button size="sm" onClick={() => input.current?.click()}>
-            {file ? "Replace" : "Choose a picture"}
-          </Button>
-          {file && (
-            <Button size="sm" variant="ghost" onClick={() => onChange(null)}>
-              Remove
-            </Button>
-          )}
-        </div>
-        {hint && <p className="text-xs leading-relaxed text-muted">{hint}</p>}
-      </div>
-      <input
-        ref={input}
-        type="file"
-        accept="image/png,image/jpeg,image/gif"
-        className="hidden"
-        aria-label={`Picture for ${name || "the new server"}`}
-        onChange={(e) => {
-          const chosen = e.target.files?.[0];
-          e.target.value = "";
-          if (chosen) onChange(chosen);
-        }}
-      />
-    </div>
-  );
-}
-
 /** What a server made from another is to have for a picture: the one its files bring, one of its own, or none. */
 export type PictureChange = { kind: "keep" } | { kind: "file"; file: File } | { kind: "none" };
 
@@ -235,7 +188,9 @@ export function PictureChange({ name, current, value, onChange }: { name: string
     value.kind === "file"
       ? "Put in place before it first starts."
       : value.kind === "none"
-        ? "It will have none."
+        ? current
+          ? "It will have none."
+          : "Optional. Shown to players in their server list."
         : brought === false
           ? "None could be shown for it."
           : "The one its files bring.";
