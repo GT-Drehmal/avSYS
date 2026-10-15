@@ -15,12 +15,14 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
@@ -422,8 +424,8 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 	for i := range spec.Mods {
 		m := &spec.Mods[i]
 		if m.Source == avsysv1.SourceURL && m.Kind == avsysv1.KindDatapack {
-			file, ok := saved[m.Project]
-			if m.File = file; ok {
+			// One added before the name was recorded has it looked up now.
+			if m.File = saved[m.Project]; m.File != "" {
 				continue
 			}
 		} else {
@@ -628,43 +630,176 @@ func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Cli
 	}
 	sc, err := through, error(nil)
 	if sc == nil {
-		if sc, err = s.workspaces.get(ctx, namespace, server); err != nil {
-			s.Log.Warn("could not reach a server's files to remove content taken off it", "server", server, "error", err)
-			return
+		sc, err = s.workspaces.get(ctx, namespace, server)
+	}
+	var left []string
+	if err != nil {
+		s.Log.Warn("could not reach a server's files to remove content taken off it; trying again later", "server", server, "error", err)
+		left = gone
+	} else {
+		left = removeFiles(s, sc, server, gone)
+	}
+	if len(left) > 0 {
+		// Kept on the server, for the look once a minute to finish: nothing
+		// else would remember what is to go.
+		if err := s.setContentLeft(ctx, client.ObjectKey{Namespace: namespace, Name: server}, func(was []string) []string { return union(was, left) }); err != nil {
+			s.Log.Warn("could not note content left to remove", "server", server, "error", err)
 		}
 	}
-	for _, file := range gone {
+}
+
+// removeFiles deletes files of a server's, and returns those it could not.
+func removeFiles(s *Server, sc *sftp.Client, server string, files []string) []string {
+	var left []string
+	for _, file := range files {
 		if err := sc.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			s.Log.Warn("could not delete content taken off a server", "server", server, "file", file, "error", err)
+			left = append(left, file)
 		}
 	}
+	return left
+}
+
+func union(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range append(append([]string{}, a...), b...) {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// setContentLeft changes a server's note of content left to remove.
+func (s *Server) setContentLeft(ctx context.Context, key client.ObjectKey, change func([]string) []string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		mc := &avsysv1.MinecraftServer{}
+		if err := s.Client.Get(ctx, key, mc); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		was := contentLeftOf(mc)
+		now := change(was)
+		if slices.Equal(was, now) {
+			return nil
+		}
+		if mc.Annotations == nil {
+			mc.Annotations = map[string]string{}
+		}
+		if len(now) == 0 {
+			delete(mc.Annotations, avsysv1.AnnotationContentLeft)
+		} else {
+			mc.Annotations[avsysv1.AnnotationContentLeft] = strings.Join(now, "\n")
+		}
+		return s.Client.Update(ctx, mc)
+	})
+}
+
+// contentLeftOf reads a server's note of content left to remove. Only paths
+// the panel would itself have put there are taken: a stored upload, or a
+// file in a world's datapacks folder.
+func contentLeftOf(mc *avsysv1.MinecraftServer) []string {
+	var out []string
+	for _, file := range strings.Split(mc.Annotations[avsysv1.AnnotationContentLeft], "\n") {
+		dir, name := path.Split(file)
+		if file != path.Clean(file) || !plainName(name) {
+			continue
+		}
+		dir = strings.TrimSuffix(dir, "/")
+		if dir == controller.ContentDir {
+			out = append(out, file)
+			continue
+		}
+		if world, ok := strings.CutSuffix(dir, "/datapacks"); ok && path.Dir(world) == dataRoot && plainName(path.Base(world)) {
+			out = append(out, file)
+		}
+	}
+	return out
+}
+
+// finishContentLeft deletes what a server's note says is left to remove,
+// except what its content as it is now has put there again.
+func (s *Server) finishContentLeft(ctx context.Context, mc *avsysv1.MinecraftServer) {
+	left := contentLeftOf(mc)
+	if len(left) == 0 {
+		if mc.Annotations[avsysv1.AnnotationContentLeft] != "" {
+			_ = s.setContentLeft(ctx, client.ObjectKeyFromObject(mc), func([]string) []string { return nil })
+		}
+		return
+	}
+	inUse := installedFiles(&mc.Spec)
+	var gone []string
+	for _, file := range left {
+		if !inUse[file] {
+			gone = append(gone, file)
+		}
+	}
+	sc, err := s.workspaces.get(ctx, mc.Namespace, mc.Name)
+	if err != nil {
+		return
+	}
+	still := removeFiles(s, sc, mc.Name, gone)
+	if err := s.setContentLeft(ctx, client.ObjectKeyFromObject(mc), func(was []string) []string {
+		// Only what was looked at here is settled; anything noted since stays.
+		done := map[string]bool{}
+		for _, f := range left {
+			done[f] = !slices.Contains(still, f)
+		}
+		var out []string
+		for _, f := range was {
+			if !done[f] {
+				out = append(out, f)
+			}
+		}
+		return out
+	}); err != nil {
+		s.Log.Warn("could not clear the note of content left to remove", "server", mc.Name, "error", err)
+	}
+}
+
+// installedFiles are the files a server's content as it is puts on it that
+// the panel would remove: stored uploads and installed datapacks.
+func installedFiles(spec *avsysv1.MinecraftServerSpec) map[string]bool {
+	out := map[string]bool{}
+	level := levelOf(spec)
+	for _, m := range spec.Mods {
+		if m.Source == avsysv1.SourceUpload {
+			out[path.Join(controller.ContentDir, path.Base(m.Project))] = true
+		}
+		if name := installedDatapack(m); name != "" && level != "" {
+			out[path.Join(dataRoot, level, "datapacks", name)] = true
+		}
+	}
+	return out
 }
 
 // leftBehind lists the files to delete for content that was in before and is
 // not in spec's list.
 func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
-	kept := map[string]bool{}
+	// An upload's stored file stays while the same upload is listed, as any
+	// kind; a datapack's installed file only while it is still a datapack.
+	listed, asDatapack := map[string]bool{}, map[string]bool{}
 	for _, m := range spec.Mods {
-		kept[string(m.Source)+":"+m.Project] = true
+		listed[string(m.Source)+":"+m.Project] = true
+		if m.Kind == avsysv1.KindDatapack {
+			asDatapack[string(m.Source)+":"+m.Project] = true
+		}
 	}
 	// A datapack is in the world's folder, which LEVEL can move. Where it was
 	// put is where the world was then; and a datapack still listed may be
 	// in the same file, which then stays. If either folder is not known,
 	// as when LEVEL is read from elsewhere, no datapack is deleted.
 	was, now := levelOf(before), levelOf(spec)
-	inUse := map[string]bool{}
-	for _, m := range spec.Mods {
-		if name := installedDatapack(m); name != "" && now != "" {
-			inUse[path.Join(dataRoot, now, "datapacks", name)] = true
-		}
-	}
+	inUse := installedFiles(spec)
 	var gone []string
 	for _, m := range before.Mods {
-		if kept[string(m.Source)+":"+m.Project] {
-			continue
-		}
-		if m.Source == avsysv1.SourceUpload {
+		key := string(m.Source) + ":" + m.Project
+		if m.Source == avsysv1.SourceUpload && !listed[key] {
 			gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
+		}
+		if asDatapack[key] {
+			continue
 		}
 		if name := installedDatapack(m); name != "" && was != "" && now != "" {
 			if file := path.Join(dataRoot, was, "datapacks", name); !inUse[file] {
@@ -708,9 +843,15 @@ func plainName(name string) bool {
 
 // levelOf is the world's folder, where the image puts datapacks: what LEVEL
 // says in a server's own environment, or "world". It is "" when that cannot
-// be told: LEVEL read from a secret or the like, or naming a folder that is
-// not one in /data.
+// be told: LEVEL read from a secret or the like, naming a folder that is not
+// one in /data, or left for the image to work out from a modpack.
 func levelOf(spec *avsysv1.MinecraftServerSpec) string {
+	for _, e := range spec.Env {
+		// The image works the world's folder out from a modpack's own.
+		if e.Name == "CF_SET_LEVEL_FROM" && (e.Value != "" || e.ValueFrom != nil) {
+			return ""
+		}
+	}
 	for _, e := range spec.Env {
 		if e.Name != "LEVEL" {
 			continue

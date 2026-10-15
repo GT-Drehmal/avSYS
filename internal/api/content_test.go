@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -172,6 +174,70 @@ func TestLeftBehind(t *testing.T) {
 	}
 }
 
+// Content that stops being a datapack has its installed datapack deleted;
+// an upload's stored file stays while the upload is listed as anything.
+func TestLeftBehindKindChange(t *testing.T) {
+	url := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: "https://example.org/thing.zip"}
+	upload := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "ours.zip"}
+	before := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{url, upload}}
+	url.Kind, upload.Kind = avsysv1.KindMod, avsysv1.KindPlugin
+	got := leftBehind(&avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{url, upload}}, before)
+	if want := "/data/world/datapacks/thing.zip /data/world/datapacks/ours.zip"; strings.Join(got, " ") != want {
+		t.Errorf("got %v, want %s", got, want)
+	}
+	// A world the image works out from a modpack is not guessed at.
+	cf := []corev1.EnvVar{{Name: "CF_SET_LEVEL_FROM", Value: "WORLD_FROM_SAVES"}}
+	if got := leftBehind(&avsysv1.MinecraftServerSpec{Env: cf}, &avsysv1.MinecraftServerSpec{Env: cf, Mods: before.Mods}); strings.Join(got, " ") != "/data/.avsys/content/ours.zip" {
+		t.Errorf("with the level from a modpack: %v", got)
+	}
+}
+
+// What a note of content left to remove may name: only files the panel puts
+// there itself.
+func TestContentLeftOf(t *testing.T) {
+	note := strings.Join([]string{
+		"/data/.avsys/content/ours.zip",
+		"/data/world/datapacks/Veinminer-1.2.4.zip",
+		"/data/drehmal/datapacks/pack.zip",
+		"/data/server.properties",
+		"/data/world/../server.properties",
+		"/data/world/datapacks/../../server.properties",
+		"/etc/passwd",
+		"/data/a/b/datapacks/x.zip",
+		"",
+	}, "\n")
+	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{avsysv1.AnnotationContentLeft: note}}}
+	want := "/data/.avsys/content/ours.zip /data/world/datapacks/Veinminer-1.2.4.zip /data/drehmal/datapacks/pack.zip"
+	if got := strings.Join(contentLeftOf(mc), " "); got != want {
+		t.Errorf("got %s\nwant %s", got, want)
+	}
+}
+
+// Content taken off while the server's files cannot be reached is noted on
+// the server, to be removed when they can.
+func TestContentLeftIsNoted(t *testing.T) {
+	p := newPanel(t)
+	p.addServer("alpha", "packs", "")
+	ns := p.srv.Namespace("alpha")
+	before := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "ours.zip"}}}
+	p.srv.removeDroppedUploads(context.Background(), ns, "packs", &avsysv1.MinecraftServerSpec{}, before)
+	var mc avsysv1.MinecraftServer
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "packs"}, &mc); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(contentLeftOf(&mc), " "); got != "/data/.avsys/content/ours.zip /data/world/datapacks/ours.zip" {
+		t.Errorf("noted: %q", got)
+	}
+	// Noted again, nothing twice.
+	p.srv.removeDroppedUploads(context.Background(), ns, "packs", &avsysv1.MinecraftServerSpec{}, before)
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "packs"}, &mc); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(contentLeftOf(&mc)); got != 2 {
+		t.Errorf("noted twice: %d entries", got)
+	}
+}
+
 // A datapack from a URL is recorded under the name its download saves it as.
 func TestSavedName(t *testing.T) {
 	mux := http.NewServeMux()
@@ -216,16 +282,19 @@ func TestDatapackFileIsRecordedByThePanel(t *testing.T) {
 	defer func() { publicHTTP = public }()
 
 	kept := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: srv.URL + "/old.zip", File: "old-1.0.zip"}
-	previous := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{kept}}
+	// Added before the name was recorded.
+	older := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: srv.URL + "/older.zip"}
+	previous := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{kept, older}}
 	spec := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{
 		{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: kept.Project, File: "server.properties"},
+		{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: older.Project},
 		{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: srv.URL + "/download.zip", File: "server.properties"},
 		{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "ours.zip", File: "server.properties"},
 	}}
 	if err := (&Server{}).resolveContent(context.Background(), spec, previous); err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range []string{"old-1.0.zip", "pack-v2.zip", ""} {
+	for i, want := range []string{"old-1.0.zip", "pack-v2.zip", "pack-v2.zip", ""} {
 		if got := spec.Mods[i].File; got != want {
 			t.Errorf("entry %d: file %q, want %q", i, got, want)
 		}

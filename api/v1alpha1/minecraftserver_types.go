@@ -44,6 +44,10 @@ const (
 	// AnnotationAutoWhitelist is the same for the players the panel has put
 	// on a server's whitelist for being members of its organization.
 	AnnotationAutoWhitelist = "avsys.dev/auto-whitelist"
+	// AnnotationContentLeft lists files of content taken off a server that
+	// the panel could not delete then, one path per line, for it to delete
+	// when it next can.
+	AnnotationContentLeft = "avsys.dev/content-left"
 	// AnnotationRestart is copied to the pod template; changing it rolls the pod.
 	AnnotationRestart = "avsys.dev/restarted-at"
 )
