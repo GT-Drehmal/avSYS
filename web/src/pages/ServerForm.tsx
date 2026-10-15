@@ -6,7 +6,7 @@ import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../co
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, More, type Join } from "../components/ServerFields";
-import { Button, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
+import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { ago, loaderNames } from "../lib/format";
@@ -408,13 +408,14 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
             <Picture name={spec?.displayName || source.name} url={brought} size={36} />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-medium">
-                {duplicating ? `${source.name} as it is now` : `${source.name} as it was ${ago(source.taken)}`}
-                {source.taken && <span className="ml-2 font-normal text-muted">{new Date(source.taken).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</span>}
+              <p className="flex items-center gap-2 truncate text-[13px] font-medium">
+                {spec?.displayName || source.name}
+                {!source.live && <Chip>deleted</Chip>}
               </p>
               <p className="truncate text-xs text-muted">
-                {softwareName}
-                {copying ? `. ${source.name} itself is not touched.` : ". It no longer exists; this brings it back."}
+                {[source.taken && `Snapshot from ${ago(source.taken)} · ${new Date(source.taken).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`, softwareName]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             </div>
           </div>
