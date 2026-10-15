@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/sftp"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -554,6 +555,12 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 // removeDroppedUploads deletes the stored files of uploads that are no longer
 // listed. The game's copy is removed by the server image on the next start.
 func (s *Server) removeDroppedUploads(ctx context.Context, namespace, server string, before, after []avsysv1.ContentRef) {
+	s.removeDroppedUploadsWith(ctx, nil, namespace, server, before, after)
+}
+
+// removeDroppedUploadsWith is removeDroppedUploads through a connection to the
+// server's files that the caller has made sure of, or the shared one if nil.
+func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Client, namespace, server string, before, after []avsysv1.ContentRef) {
 	kept := map[string]bool{}
 	for _, m := range after {
 		if m.Source == avsysv1.SourceUpload {
@@ -564,7 +571,10 @@ func (s *Server) removeDroppedUploads(ctx context.Context, namespace, server str
 		if m.Source != avsysv1.SourceUpload || kept[m.Project] {
 			continue
 		}
-		sc, err := s.workspaces.get(ctx, namespace, server)
+		sc, err := through, error(nil)
+		if sc == nil {
+			sc, err = s.workspaces.get(ctx, namespace, server)
+		}
 		if err == nil {
 			err = sc.Remove(path.Join(controller.ContentDir, path.Base(m.Project)))
 		}

@@ -237,7 +237,7 @@ export function PictureChange({ name, current, value, onChange }: { name: string
       : value.kind === "none"
         ? "It will have none."
         : brought === false
-          ? "Its files bring none."
+          ? "None could be shown for it."
           : "The one its files bring.";
   return (
     <div className="flex items-center gap-4">
@@ -247,12 +247,13 @@ export function PictureChange({ name, current, value, onChange }: { name: string
           <Button size="sm" onClick={() => input.current?.click()}>
             {value.kind === "file" ? "Replace" : "Choose a picture"}
           </Button>
-          {(value.kind === "file" || (value.kind === "keep" && brought)) && (
+          {/* Asking for none is safe whatever the files bring; that one could not be shown is not proof that there is none. */}
+          {(value.kind === "file" || (value.kind === "keep" && current)) && (
             <Button size="sm" variant="ghost" onClick={() => onChange({ kind: "none" })}>
               Remove
             </Button>
           )}
-          {value.kind !== "keep" && brought !== false && current && (
+          {value.kind !== "keep" && current && (
             <Button size="sm" variant="ghost" onClick={() => onChange({ kind: "keep" })}>
               Keep the one it has
             </Button>
