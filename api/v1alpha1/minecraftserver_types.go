@@ -219,6 +219,19 @@ type ResourcesSpec struct {
 	CPU *resource.Quantity `json:"cpu,omitempty"`
 }
 
+// JVMSpec is how the game's Java is started, beyond its memory.
+type JVMSpec struct {
+	// AikarFlags turns on Aikar's flags: G1 garbage collection tuned for the
+	// game's many short-lived objects. New servers have them; one made before
+	// they were offered, or with them switched off, has not.
+	AikarFlags *bool `json:"aikarFlags,omitempty"`
+	// ExtraFlags are more options for the JVM. They come after the heap and
+	// Aikar's flags, so one given here wins. Its memory is Resources.Memory,
+	// and is not set here.
+	// +kubebuilder:validation:MaxLength=2048
+	ExtraFlags string `json:"extraFlags,omitempty"`
+}
+
 type MinecraftServerSpec struct {
 	DisplayName string `json:"displayName,omitempty"`
 
@@ -256,6 +269,8 @@ type MinecraftServerSpec struct {
 	Whitelist  []string          `json:"whitelist,omitempty"`
 
 	Resources ResourcesSpec `json:"resources,omitempty"`
+	// JVM is how its Java is started.
+	JVM JVMSpec `json:"jvm,omitzero"`
 	Storage   StorageSpec   `json:"storage,omitempty"`
 	Expose    ExposeSpec    `json:"expose,omitempty"`
 	Sleep     SleepSpec     `json:"sleep,omitempty"`

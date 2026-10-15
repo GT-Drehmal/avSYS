@@ -8,7 +8,7 @@ import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
-import { autoOpOptions, exposeOptions, GameplayFields, memberRoleOptions, triState } from "../../components/ServerFields";
+import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, memberRoleOptions, triState } from "../../components/ServerFields";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -44,6 +44,8 @@ interface Draft {
   packPrompt: string;
   env: string;
   image: string;
+  aikar: boolean;
+  extraFlags: string;
 }
 
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -85,6 +87,8 @@ function toDraft(spec: ServerSpec): Draft {
     packPrompt: spec.resourcePack?.prompt ?? "",
     env: (spec.env ?? []).map((e) => `${e.name}=${e.value ?? ""}`).join("\n"),
     image: spec.image ?? "",
+    aikar: !!spec.jvm?.aikarFlags,
+    extraFlags: spec.jvm?.extraFlags ?? "",
   };
 }
 
@@ -122,6 +126,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
       return i > 0 ? [{ name: line.slice(0, i).trim(), value: line.slice(i + 1) }] : [];
     }),
     image: d.image.trim(),
+    jvm: { aikarFlags: d.aikar, extraFlags: d.extraFlags },
   };
 }
 
@@ -321,6 +326,7 @@ export function Settings() {
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} {...text("memory")} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={toGigabytes(server.spec.storage.size) || 1} step={1} {...text("storage")} />}</Field>
         </div>
+        <LaunchFlags aikar={draft.aikar} extra={draft.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} />
       </Section>
 
       <Section title="Network">

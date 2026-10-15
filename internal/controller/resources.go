@@ -211,6 +211,16 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		"CREATE_CONSOLE_IN_PIPE":         "true",
 		"CONSOLE_IN_NAMED_PIPE":          ConsolePipe,
 	}
+	// Set only when asked for, so that a server made before these were
+	// offered keeps the environment, and the pod, it has.
+	if on := mc.Spec.JVM.AikarFlags; on != nil && *on {
+		env["USE_AIKAR_FLAGS"] = "true"
+	}
+	// After the heap and Aikar's on the command line, so that one given here
+	// wins over theirs: the image puts JVM_OPTS last.
+	if extra := strings.Join(strings.Fields(mc.Spec.JVM.ExtraFlags), " "); extra != "" {
+		env["JVM_OPTS"] = extra
+	}
 
 	switch {
 	case mc.Spec.Modpack != nil && mc.Spec.Modpack.Source == avsysv1.SourceModrinth:

@@ -420,3 +420,68 @@ test("a copy's picture can be taken away even when it could not be shown", async
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].picture).toBeNull();
 });
+
+test("launch flags: Aikar's on for a new server, as the original has them for a copy, and saved from settings", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Display name").fill("Flags");
+  await page.getByRole("button", { name: /^Launch flags/ }).click();
+  await expect(page.getByRole("switch", { name: /Aikar's flags/ })).toBeChecked();
+  await page.getByLabel("Extra JVM flags").fill("-XX:+AlwaysPreTouch");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/flags$`));
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/flags`);
+  expect(spec.jvm).toEqual({ aikarFlags: true, extraFlags: "-XX:+AlwaysPreTouch" });
+
+  // Its settings: off, with flags of its own.
+  await page.goto(`/o/${slug}/s/flags/settings`);
+  await page.getByRole("switch", { name: /Aikar's flags/ }).click();
+  await page.getByLabel("Extra JVM flags").fill("-XX:+UseZGC");
+  await page.getByRole("button", { name: /^Save/ }).click();
+  await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/flags`)).spec.jvm).toEqual({ aikarFlags: false, extraFlags: "-XX:+UseZGC" });
+});
+
+test("a copy starts with the original's launch flags, sends only what changed, and takes no extra ones from a snapshot", async ({ page, as }) => {
+  await as("owner");
+  const sent: { spec: { jvm?: unknown } }[] = [];
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() === "POST") {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+    }
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, jvm: { extraFlags: "-XX:+AlwaysPreTouch" } } } : s)) });
+  });
+  await page.goto("/o/friends/new?from=server:survival");
+  await page.getByRole("button", { name: /^Launch flags/ }).click();
+  // Made before they were offered: off, and its own extra flags.
+  await expect(page.getByRole("switch", { name: /Aikar's flags/ })).not.toBeChecked();
+  await expect(page.getByLabel("Extra JVM flags")).toHaveValue("-XX:+AlwaysPreTouch");
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].spec).not.toHaveProperty("jvm");
+  await page.getByRole("switch", { name: /Aikar's flags/ }).click();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(sent[1].spec.jvm).toEqual({ aikarFlags: true });
+
+  // From a snapshot, whose record the server could have written: none of its extra flags.
+  const id = "abcd1234";
+  await page.route(`**/api/v1/orgs/friends/snapshots/${id}`, (route) =>
+    route.fulfill({
+      json: {
+        id, time: new Date(Date.now() - 3600_000).toISOString(), server: "survival", trigger: "manual", size: 1 << 20, added: 1024, files: 10,
+        spec: { displayName: "Survival", version: "1.21.4", loader: "paper", eula: true, resources: { memory: "4Gi" }, storage: { size: "10Gi" }, mods: [], jvm: { aikarFlags: true, extraFlags: "-javaagent:/data/agent.jar" } },
+        retention: { scheduled: true },
+      },
+    }),
+  );
+  await page.goto(`/o/friends/new?from=snapshot:${id}`);
+  await page.getByRole("button", { name: /^Launch flags/ }).click();
+  await expect(page.getByRole("switch", { name: /Aikar's flags/ })).toBeChecked();
+  await expect(page.getByLabel("Extra JVM flags")).toHaveValue("");
+  await expect(page.getByText(/Not taken from a snapshot/)).toBeVisible();
+});

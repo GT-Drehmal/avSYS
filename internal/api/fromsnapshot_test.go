@@ -613,8 +613,9 @@ var notCopied = map[string]string{
 	"Expose.Type":               "the request says how the new server is reached",
 	// Not taken from a snapshot's record: createFromServer takes these from
 	// the server itself when the request does not say.
-	"Backups":      "when it is snapshotted is not recorded",
-	"NodeSelector": "a record, which the server could have written, does not say where a server runs",
+	"Backups":        "when it is snapshotted is not recorded",
+	"NodeSelector":   "a record, which the server could have written, does not say where a server runs",
+	"JVM.ExtraFlags": "they run code; a record, which the server could have written, does not say what",
 }
 
 // TestEverySettingIsDecided fills in every setting of a server, makes a new
@@ -705,6 +706,7 @@ var notRestored = map[string]string{
 	"Image":        "not taken from a record the server could have written",
 	"Env":          "not taken from a record the server could have written",
 	"NodeSelector": "not taken from a record the server could have written",
+	"JVM":          "how Java is started is not what the files depend on",
 }
 
 // TestEverySettingIsDecidedForARestore is TestEverySettingIsDecided for

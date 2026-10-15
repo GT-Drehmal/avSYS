@@ -170,8 +170,10 @@ created=$(call -d "{\"name\":\"probe\",\"spec\":{\"eula\":true,\"loader\":\"pape
 case "$created" in *'"spec"'*) ;; *) fail "the server was not created: $created" ;; esac
 expect "content is pinned when added" "$(echo "$created" | field "all(m.get('version') for m in d['spec']['mods'])")" True
 expect "content fits the game's Java" "$(echo "$created" | field "d['java']['effective'] == d['java']['game'] == 21")" True
+expect "a new server has Aikar's flags" "$(echo "$created" | field "d['spec']['jvm']")" "{'aikarFlags': True}"
 wait_phase Running
 echo "ok: server reached Running"
+expect "and the game was started with them" "$(game_log)" "Using Aikar's flags"
 
 step "console"
 plugins=$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")

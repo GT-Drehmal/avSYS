@@ -96,6 +96,32 @@ func (s *Server) applyDefaults(org, name string, spec *avsysv1.MinecraftServerSp
 	}
 }
 
+// collectors picks a garbage collector, which Aikar's flags pick already.
+var collectors = regexp.MustCompile(`^-XX:\+Use(ZGC|ShenandoahGC|ParallelGC|SerialGC|EpsilonGC|ConcMarkSweepGC)$`)
+
+// checkJVM checks extra JVM flags, and tidies them to one per line. They are
+// options for Java and nothing else: no heap size, which is the server's
+// memory, and no second collector on top of Aikar's.
+func checkJVM(jvm *avsysv1.JVMSpec) error {
+	flags := strings.Fields(jvm.ExtraFlags)
+	if len(jvm.ExtraFlags) > 2048 {
+		return errBadRequest("Extra JVM flags are up to 2048 characters.")
+	}
+	aikar := jvm.AikarFlags != nil && *jvm.AikarFlags
+	for _, f := range flags {
+		switch {
+		case !strings.HasPrefix(f, "-"):
+			return errBadRequest("%q is not a JVM option: each starts with a dash, as -XX:+AlwaysPreTouch.", f)
+		case strings.HasPrefix(f, "-Xmx"), strings.HasPrefix(f, "-Xms"), strings.HasPrefix(f, "-XX:MaxRAMPercentage"), strings.HasPrefix(f, "-XX:InitialRAMPercentage"):
+			return errBadRequest("%s sets the heap, which is the server's memory. Change Memory instead.", f)
+		case aikar && collectors.MatchString(f):
+			return errBadRequest("%s picks a garbage collector, and Aikar's flags pick G1. Switch Aikar's flags off to use another.", f)
+		}
+	}
+	jvm.ExtraFlags = strings.Join(flags, "\n")
+	return nil
+}
+
 func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec *avsysv1.MinecraftServerSpec) error {
 	if !spec.EULA {
 		return errBadRequest("Accept the Minecraft EULA to run a server.")
@@ -105,6 +131,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	}
 	if spec.Storage.Size.Cmp(minStorage) < 0 {
 		return errBadRequest("A server needs at least 1Gi of storage.")
+	}
+	if err := checkJVM(&spec.JVM); err != nil {
+		return err
 	}
 	spec.Expose.Hostname = router.NormalizeHostname(strings.TrimSpace(spec.Expose.Hostname))
 	if host := spec.Expose.Hostname; host != "" {
@@ -286,6 +315,12 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return errBadRequest("A new server is given its picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once it is made.")
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
+	// A new server has Aikar's flags unless asked not to. Only here: one
+	// made before they were offered keeps starting as it always has.
+	if in.Spec.JVM.AikarFlags == nil {
+		on := true
+		in.Spec.JVM.AikarFlags = &on
+	}
 	// "Latest" is settled once, here. A server that kept following it would
 	// upgrade its world, and outgrow its mods, on some later restart.
 	// It is the newest the chosen software has a build for, which can be

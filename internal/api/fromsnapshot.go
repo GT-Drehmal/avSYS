@@ -210,6 +210,13 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	if spec.Resources.CPU == nil {
 		spec.Resources.CPU = recorded.Resources.CPU
 	}
+	// Aikar's flags, on or off, as the original has them unless the request
+	// says. Its extra flags run code, like an image, so they are not taken
+	// from a record the server could have written: fromLive takes them from
+	// a server that is there.
+	if !namedInJVM(given, "aikarFlags") {
+		spec.JVM.AikarFlags = recorded.JVM.AikarFlags
+	}
 	if spec.Storage.Size.IsZero() {
 		spec.Storage.Size = recorded.Storage.Size
 	}
@@ -489,6 +496,20 @@ func fromLive(requested *avsysv1.MinecraftServerSpec, given map[string]json.RawM
 	if _, said := given["nodeSelector"]; !said {
 		requested.NodeSelector = maps.Clone(live.NodeSelector)
 	}
+	if !namedInJVM(given, "extraFlags") {
+		requested.JVM.ExtraFlags = live.JVM.ExtraFlags
+	}
+}
+
+// namedInJVM reports whether a request's jvm names a key at all, null
+// included.
+func namedInJVM(given map[string]json.RawMessage, key string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(given["jvm"], &fields) != nil {
+		return false
+	}
+	_, ok := fields[key]
+	return ok
 }
 
 // newestOf returns a server's newest snapshot.

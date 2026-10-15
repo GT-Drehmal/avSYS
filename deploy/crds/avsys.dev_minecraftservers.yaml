@@ -338,6 +338,23 @@ spec:
                   Image overrides the server image. By default a tag of itzg/minecraft-server
                   with the right Java for the game version is chosen.
                 type: string
+              jvm:
+                description: JVM is how its Java is started.
+                properties:
+                  aikarFlags:
+                    description: |-
+                      AikarFlags turns on Aikar's flags: G1 garbage collection tuned for the
+                      game's many short-lived objects. New servers have them; one made before
+                      they were offered, or with them switched off, has not.
+                    type: boolean
+                  extraFlags:
+                    description: |-
+                      ExtraFlags are more options for the JVM. They come after the heap and
+                      Aikar's flags, so one given here wins. Its memory is Resources.Memory,
+                      and is not set here.
+                    maxLength: 2048
+                    type: string
+                type: object
               loader:
                 default: vanilla
                 enum:

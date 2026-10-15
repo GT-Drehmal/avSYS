@@ -468,3 +468,36 @@ func TestGameJavaOf(t *testing.T) {
 		t.Errorf("a weekly snapshot noted as 17: game %d, runs on %d", game, runs)
 	}
 }
+
+// Aikar's flags and extra ones reach the image as it reads them, and a server
+// that has neither starts as it always has.
+func TestLaunchFlags(t *testing.T) {
+	envOf := func(jvm avsysv1.JVMSpec) map[string]string {
+		mc := server(func(mc *avsysv1.MinecraftServer) { mc.Spec.JVM = jvm })
+		env := map[string]string{}
+		for _, e := range minecraftEnv(mc, Config{}) {
+			env[e.Name] = e.Value
+		}
+		return env
+	}
+	on, off := true, false
+	for name, c := range map[string]struct {
+		jvm          avsysv1.JVMSpec
+		aikar, extra string
+	}{
+		"neither, as before they were offered": {avsysv1.JVMSpec{}, "", ""},
+		"Aikar's":                              {avsysv1.JVMSpec{AikarFlags: &on}, "true", ""},
+		"Aikar's and more":                     {avsysv1.JVMSpec{AikarFlags: &on, ExtraFlags: "-XX:+AlwaysPreTouch\n-Dfoo=bar"}, "true", "-XX:+AlwaysPreTouch -Dfoo=bar"},
+		"only one's own":                       {avsysv1.JVMSpec{AikarFlags: &off, ExtraFlags: "-XX:+UseZGC"}, "", "-XX:+UseZGC"},
+	} {
+		env := envOf(c.jvm)
+		if env["USE_AIKAR_FLAGS"] != c.aikar || env["JVM_OPTS"] != c.extra {
+			t.Errorf("%s: USE_AIKAR_FLAGS=%q JVM_OPTS=%q, want %q and %q", name, env["USE_AIKAR_FLAGS"], env["JVM_OPTS"], c.aikar, c.extra)
+		}
+	}
+	// Adding the setting asks nothing of a server that does not use it.
+	before := buildPod(server(nil), Config{}).Annotations[annotationSpecHash]
+	if after := buildPod(server(func(mc *avsysv1.MinecraftServer) { mc.Spec.JVM = avsysv1.JVMSpec{AikarFlags: &off} }), Config{}).Annotations[annotationSpecHash]; after != before {
+		t.Error("switching off flags that were never on changed the pod")
+	}
+}

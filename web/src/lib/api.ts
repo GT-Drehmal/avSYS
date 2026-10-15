@@ -157,6 +157,8 @@ export interface ServerSpec {
   ops?: string[];
   whitelist?: string[];
   resources: { memory: string; cpu?: string | null };
+  /** How its Java is started. A server made before these were offered has neither. */
+  jvm?: { aikarFlags?: boolean | null; extraFlags?: string };
   storage: { size: string; storageClassName?: string };
   expose: { type: ExposeType; hostname?: string; loadBalancerIP?: string; nodePort?: number };
   sleep: { enabled?: boolean; idleMinutes: number };
