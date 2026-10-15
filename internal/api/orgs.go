@@ -119,6 +119,9 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 	if err := s.Backups.Destroy(a.Org.Slug); err != nil {
 		return fmt.Errorf("removing the organization's snapshots: %w", err)
 	}
+	// What was read out of them goes too: a later organization of the same
+	// name starts a repository of its own.
+	s.snapshotIcons.forgetOrg(a.Org.Slug)
 	// Only remove a namespace avSYS created for this organization.
 	ns := &corev1.Namespace{}
 	err = s.Client.Get(r.Context(), client.ObjectKey{Name: a.Namespace}, ns)

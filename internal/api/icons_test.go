@@ -546,4 +546,13 @@ func TestSnapshotIcon(t *testing.T) {
 	if _, ok := p.srv.snapshotIcons.get("alpha/" + pictured); !ok {
 		t.Error("what was read of the snapshot was not kept")
 	}
+	// Until the organization's repository is gone with it.
+	p.srv.snapshotIcons.set("beta/"+pictured, []byte("another's"))
+	p.srv.snapshotIcons.forgetOrg("alpha")
+	if _, ok := p.srv.snapshotIcons.get("alpha/" + pictured); ok {
+		t.Error("what was read of a removed repository was kept")
+	}
+	if _, ok := p.srv.snapshotIcons.get("beta/" + pictured); !ok {
+		t.Error("another organization's was dropped too")
+	}
 }
