@@ -395,3 +395,59 @@ func TestMovingHoldsMemory(t *testing.T) {
 		t.Error("a server being moved holds no memory")
 	}
 }
+
+func TestNodeMatches(t *testing.T) {
+	n := node("east-1", "16Gi", "")
+	n.Labels["topology.kubernetes.io/zone"] = "east"
+	req := func(key string, op corev1.NodeSelectorOperator, values ...string) *corev1.NodeSelector {
+		return &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: key, Operator: op, Values: values}}}}}
+	}
+	for what, c := range map[string]struct {
+		sel  *corev1.NodeSelector
+		want bool
+	}{
+		"in its zone":      {req("topology.kubernetes.io/zone", corev1.NodeSelectorOpIn, "east"), true},
+		"in another zone":  {req("topology.kubernetes.io/zone", corev1.NodeSelectorOpIn, "west"), false},
+		"not in another":   {req("topology.kubernetes.io/zone", corev1.NodeSelectorOpNotIn, "west"), true},
+		"a label it has":   {req("topology.kubernetes.io/zone", corev1.NodeSelectorOpExists), true},
+		"a label it lacks": {req("disk", corev1.NodeSelectorOpExists), false},
+		"by its name":      {&corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"east-1"}}}}}}, true},
+		"any of two terms": {&corev1.NodeSelector{NodeSelectorTerms: append(req("disk", corev1.NodeSelectorOpExists).NodeSelectorTerms, req("topology.kubernetes.io/zone", corev1.NodeSelectorOpIn, "east").NodeSelectorTerms...)}, true},
+	} {
+		if got := nodeMatches(&n, c.sel); got != c.want {
+			t.Errorf("%s: %v, want %v", what, got, c.want)
+		}
+	}
+}
+
+// A server being moved holds its memory on the node it goes to even while
+// its pod is still bound to the one it leaves.
+func TestMovingReservesTargetWhileLeaving(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	a, b := node("a", "16Gi", ""), node("b", "16Gi", "")
+	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "leaving", UID: "u", Annotations: map[string]string{avsysv1.AnnotationNode: "b", avsysv1.AnnotationMoving: "b"}}}
+	mc.Spec.State = avsysv1.StateStopped
+	mc.Spec.Resources.Memory = resource.MustParse("4Gi")
+	yes := true
+	old := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "leaving", OwnerReferences: []metav1.OwnerReference{{APIVersion: "avsys.dev/v1alpha1", Kind: "MinecraftServer", Name: "leaving", UID: "u", Controller: &yes}}},
+		Spec:       corev1.PodSpec{NodeName: "a", Containers: []corev1.Container{{Name: "w", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Mi")}}}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&a, &b, mc, old).Build()
+	_, reserved, err := NodeUsage(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reserved["b"] != 4*gi+32<<20 {
+		t.Errorf("reserved on b = %d, want its game and workspace", reserved["b"])
+	}
+	if reserved["a"] != 32<<20 {
+		t.Errorf("reserved on a = %d, want only the pod still there", reserved["a"])
+	}
+}

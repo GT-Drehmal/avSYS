@@ -143,6 +143,22 @@ func (o *operations) change(namespace, server string, blockedBy ...string) (rele
 
 // remove admits the deletion of a snapshot, unless a restore is using it.
 // Until release is called no restore to that snapshot can start.
+// heldIn names a server whose files are to be put back from this snapshot,
+// as one whose restore or move was cut short says on itself, or "". Such a
+// snapshot is all there may be of them.
+func (s *Server) heldIn(ctx context.Context, namespace, snapshot string) string {
+	var list avsysv1.MinecraftServerList
+	if err := s.Client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+		return ""
+	}
+	for _, mc := range list.Items {
+		if mc.Annotations[avsysv1.AnnotationRestoring] == snapshot {
+			return mc.Name
+		}
+	}
+	return ""
+}
+
 // carry records the snapshot an operation is carrying a server's files in,
 // which may not be deleted until it is over. ok is false if it is being
 // deleted already.
@@ -888,7 +904,13 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	}
 	s.setOperation(mc.Namespace, op, "Restoring files", 0)
 	last := time.Time{}
-	err = s.Backups.Restore(ctx, org, ws, snap.ID, func(p backup.Progress) {
+	// A move's snapshot has the workspace home too, which a move left half
+	// done needs back.
+	put := s.Backups.Restore
+	if snap.Trigger == backup.TriggerMove {
+		put = s.Backups.RestoreWhole
+	}
+	err = put(ctx, org, ws, snap.ID, func(p backup.Progress) {
 		if time.Since(last) < 500*time.Millisecond {
 			return
 		}
@@ -1056,6 +1078,9 @@ func (s *Server) deleteSnapshots(w http.ResponseWriter, r *http.Request, u *stor
 			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("A server is being restored to the snapshot of %s from %s. Nothing was deleted; wait for that to finish.", snap.Server, snap.Time.Format("2 Jan 15:04"))}
 		}
 		defer release()
+		if held := s.heldIn(r.Context(), a.Namespace, snap.ID); held != "" {
+			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s is waiting for its files to be put back from the snapshot of %s from %s. Nothing was deleted; restore it first.", held, snap.Server, snap.Time.Format("2 Jan 15:04"))}
+		}
 		ids[i] = snap.ID
 	}
 	if err := s.Backups.DeleteMany(context.WithoutCancel(r.Context()), a.Org.Slug, ids); err != nil {
@@ -1092,6 +1117,9 @@ func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store
 		return &Error{Status: http.StatusConflict, Code: "in_use", Message: "A server is being restored to this snapshot. Wait for that to finish."}
 	}
 	defer release()
+	if held := s.heldIn(r.Context(), a.Namespace, snap.ID); held != "" {
+		return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s is waiting for its files to be put back from this snapshot. Restore it first.", held)}
+	}
 	if err := s.Backups.Delete(context.WithoutCancel(r.Context()), a.Org.Slug, snap.ID); err != nil {
 		return snapshotError(err)
 	}

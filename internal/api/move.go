@@ -88,6 +88,17 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 	if err != nil {
 		return err
 	}
+	// Files not on the node's own disk stay where they are, and the new node
+	// has to be one their volume can be used on.
+	if from == "" {
+		fits, err := controller.VolumeFits(r.Context(), s.nodeReader(), mc, in.Node)
+		if err != nil {
+			return err
+		}
+		if !fits {
+			return errBadRequest("Its files are on storage that %s cannot use, as storage limited to a zone is. Choose a node where it can be used.", in.Node)
+		}
+	}
 	if from != "" && !s.Backups.Available() {
 		return &Error{Status: http.StatusServiceUnavailable, Code: "backups_unavailable", Message: "Its files are on its node's own disk, and are carried over in a snapshot, which needs restic where the panel runs."}
 	}

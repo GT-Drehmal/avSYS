@@ -98,6 +98,9 @@ export function useLiveServers() {
       qc.invalidateQueries({ queryKey: ["servers"] });
       qc.invalidateQueries({ queryKey: ["snapshots"] });
       qc.invalidateQueries({ queryKey: ["offsite"] });
+      // A move may have finished unheard.
+      qc.invalidateQueries({ queryKey: ["placement"] });
+      qc.invalidateQueries({ queryKey: ["nodes"] });
     };
     const source = new EventSource("/api/v1/events");
     let opened = false;

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -35,5 +36,21 @@ func TestMoveHoldsTheServer(t *testing.T) {
 	defer release()
 	if s.ops.carry("mc-x", op, "ffff0000") {
 		t.Error("a snapshot being deleted was taken up")
+	}
+}
+
+// A snapshot that a server's interrupted restore or move is to be put back
+// from is named as held, whatever this panel remembers.
+func TestHeldIn(t *testing.T) {
+	p := newPanel(t)
+	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-alpha", Name: "halfway", Annotations: map[string]string{avsysv1.AnnotationRestoring: "abcd1234", avsysv1.AnnotationMoving: "b"}}}
+	if err := p.srv.Client.Create(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.srv.heldIn(context.Background(), "mc-alpha", "abcd1234"); got != "halfway" {
+		t.Errorf("held by %q, want halfway", got)
+	}
+	if got := p.srv.heldIn(context.Background(), "mc-alpha", "ffff0000"); got != "" {
+		t.Errorf("another snapshot held by %q", got)
 	}
 }
