@@ -116,14 +116,31 @@ func errNoRecord(err error) error {
 	return &Error{Status: http.StatusUnprocessableEntity, Code: "no_record", Message: fmt.Sprintf("This snapshot does not say what server it is of, so none can be made from it: %v", err)}
 }
 
-// contentGiven reports whether a request names the mods or the modpack of a
-// server made from a snapshot. Those stay as the snapshot has them: its files
-// include what they installed, and the uploaded ones exist nowhere else.
-func contentGiven(spec *avsysv1.MinecraftServerSpec) bool {
-	return spec.Modpack != nil || len(spec.Mods) > 0
+// checkCopiedContent says whether what a request asks a server made from
+// another to have can be given to it. Its modpack stays as the original has
+// it: the files were made by that pack. Its mods, plugins and datapacks can
+// be chosen again, but a file uploaded to the original exists only among its
+// files, and one not uploaded there has to wait until the server exists.
+func checkCopiedContent(requested, recorded *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage) error {
+	if requested.Modpack != nil {
+		return errBadRequest("A server made from another keeps its modpack. Change the modpack's version once the server exists.")
+	}
+	if _, said := given["mods"]; !said {
+		return nil
+	}
+	uploaded := map[string]bool{}
+	for _, m := range recorded.Mods {
+		if m.Source == avsysv1.SourceUpload {
+			uploaded[m.Project] = true
+		}
+	}
+	for _, m := range requested.Mods {
+		if m.Source == avsysv1.SourceUpload && !uploaded[m.Project] {
+			return errBadRequest("%s was not uploaded to the original. Upload it once the server exists.", m.Project)
+		}
+	}
+	return nil
 }
-
-var errContentGiven = errBadRequest("A server made from a snapshot takes its mods and modpack from it. Leave those out, and change them once the server exists.")
 
 // fromSnapshot builds the spec of a server made from a snapshot. What the
 // request names is used, and everything it leaves out is as the snapshot
@@ -133,7 +150,7 @@ var errContentGiven = errBadRequest("A server made from a snapshot takes its mod
 // Game settings are merged one by one: the request's over the snapshot's.
 // One it gives as null is no longer set by the panel, which leaves that
 // line of the copied server.properties as the snapshot has it. The modpack
-// and mods are always the snapshot's.
+// is always the snapshot's; its mods are unless the request names them.
 //
 // Three things are the request's alone. Its address is its own. The image
 // and extra environment are never taken from the snapshot, for the reason
@@ -161,7 +178,10 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	if spec.Version == recorded.Version {
 		spec.GameJava = recorded.GameJava
 	}
-	spec.Modpack, spec.Mods = recorded.Modpack, recorded.Mods
+	spec.Modpack = recorded.Modpack
+	if !said("mods") {
+		spec.Mods = recorded.Mods
+	}
 	if !said("resourcePack") {
 		spec.ResourcePack = recorded.ResourcePack
 	}
@@ -293,20 +313,21 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 			return err
 		}
 	}
-	if contentGiven(&requested) {
-		return errContentGiven
-	}
 	record, err := s.recordOf(ctx, a.Org.Slug, snap.ID)
 	if err != nil {
 		return errNoRecord(err)
+	}
+	if err := checkCopiedContent(&requested, &record.Spec, given); err != nil {
+		return err
 	}
 	spec, err := s.specFromSnapshot(ctx, a, name, &requested, &record.Spec, given)
 	if err != nil {
 		return err
 	}
 	// Mods were picked to fit one game version and loader, and are picked
-	// again for another, as when a server's own version is changed.
-	if targetOf(&spec) != targetOf(&record.Spec) {
+	// again for another, as when a server's own version is changed. Any the
+	// request added are pinned, as for any new server.
+	if _, said := given["mods"]; said || targetOf(&spec) != targetOf(&record.Spec) {
 		if err := s.resolveContent(ctx, &spec, &record.Spec); err != nil {
 			return err
 		}
@@ -362,7 +383,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		defer stop()
 		ctx, cancel := context.WithTimeout(working, operationTimeout)
 		defer cancel()
-		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final)
+		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, record.Spec.Mods)
 		if err != nil {
 			err = fmt.Errorf("making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again: %w", err)
 		}
@@ -406,8 +427,8 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	if err := s.nameIsFree(ctx, a, name); err != nil {
 		return err
 	}
-	if contentGiven(&requested) {
-		return errContentGiven
+	if err := checkCopiedContent(&requested, &mc.Spec, given); err != nil {
+		return err
 	}
 	if st := requested.State; st != "" && st != avsysv1.StateRunning && st != avsysv1.StateStopped {
 		return errBadRequest("%q is not a state. A server is Running or Stopped.", st)
@@ -420,7 +441,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	if err != nil {
 		return err
 	}
-	if targetOf(&wanted) != targetOf(&mc.Spec) {
+	if _, said := given["mods"]; said || targetOf(&wanted) != targetOf(&mc.Spec) {
 		if err := s.resolveContent(ctx, &wanted, &mc.Spec); err != nil {
 			return err
 		}
@@ -485,7 +506,10 @@ func (s *Server) newestOf(ctx context.Context, org, server string) (*backup.Snap
 
 // populate copies a snapshot's files into a server that has just been
 // created, and then lets it go.
-func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState) error {
+//
+// copied is the content the original had. A file uploaded to it that the new
+// server was not given is deleted once the files are in.
+func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, copied []avsysv1.ContentRef) error {
 	key := client.ObjectKeyFromObject(created)
 	// A new server's volume has to be provisioned and the workspace image may
 	// have to be pulled, which on a node that has never run one takes a while.
@@ -516,6 +540,8 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 	if err != nil {
 		return err
 	}
+
+	s.removeDroppedUploads(ctx, key.Namespace, key.Name, copied, created.Spec.Mods)
 
 	// The marks come off and the state goes on in one change: there is no
 	// moment at which the server is both released and not yet as asked for.
