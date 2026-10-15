@@ -339,6 +339,35 @@ test("a copy is the same form: its world's making shown as it was, and its other
   expect(body.spec.properties).toEqual({ "view-distance": "6", "max-tick-time": "-1", "spawn-protection": null });
 });
 
+test("picking the latest release for a copy already on it changes nothing", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/new?from=server:survival");
+  const latestOption = page.getByLabel("Game version").locator('option[value="LATEST"]');
+  await expect(latestOption).toHaveText(/\(.+\)/);
+  const latest = /\((.+)\)/.exec((await latestOption.textContent()) ?? "")?.[1] ?? "";
+  expect(latest).not.toBe("");
+  // Survival, as if it were on the latest release already.
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+    }
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, version: latest } } : s)) });
+  });
+  await page.reload();
+  await page.getByLabel("Game version").selectOption("LATEST");
+  // The starting point says what the original runs, not what was picked.
+  await expect(page.getByText(`Paper ${latest}`, { exact: true })).toBeVisible();
+  await expect(page.getByText("A world opened in a newer version does not open in an older one again.")).toHaveCount(0);
+  const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  expect((await sent).postDataJSON().spec).not.toHaveProperty("version");
+
+  // Another version is a change, and says what that means.
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await expect(page.getByText("A world opened in a newer version does not open in an older one again.")).toBeVisible();
+});
+
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new");

@@ -238,6 +238,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const software: Software | null =
     v.kind === "modpack" ? { loader: "vanilla", version: v.version, modpack: v.modpack ?? { source: "modrinth", project: "" } } : v.loader ? { loader: v.loader, version: v.version } : null;
   const modsChanged = JSON.stringify(v.mods) !== JSON.stringify(start.mods);
+  // "Latest release" is whichever version that is now: picked for a copy of
+  // a server already on it, nothing changes.
+  const effective = (version: string) => (version === "LATEST" ? (versions.data?.latest ?? version) : version);
+  const versionChanged = effective(v.version) !== effective(start.version);
   // The picture made from it will have: the original's as it is now for a
   // copy of it as it is now, or the one a snapshot holds.
   const brought = source ? (source.origin.kind === "snapshot" ? `/api/v1/orgs/${org}/snapshots/${source.origin.id}/icon` : source.live ? serverIcon(source.live) : undefined) : undefined;
@@ -284,7 +288,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
    */
   const copyRequest = (): Partial<ServerSpec> => {
     const changes: Partial<ServerSpec> = {};
-    if (v.version !== start.version) changes.version = v.version;
+    if (versionChanged) changes.version = v.version;
     // A setting put back on "Server default", or taken out of the other
     // properties, is sent as null: the panel stops setting it, and the copied
     // server.properties keeps what it has.
@@ -363,11 +367,12 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const tile = (active: boolean) =>
     cx("flex flex-col gap-0.5 rounded-md border px-3 py-2.5 text-left transition-colors", active ? "border-accent bg-accent-wash" : "border-line-strong bg-raised hover:bg-hover");
   const segment = (active: boolean) => cx("h-7 rounded-sm px-3 text-xs font-medium", active ? "bg-hover text-fg" : "text-muted hover:text-fg");
-  const softwareName = v.modpack ? `${v.modpack.title || v.modpack.project} modpack` : `${loaderNames[v.loader ?? "vanilla"] ?? v.loader} ${v.version}`;
+  // The starting point says what the original runs, whatever is picked below.
+  const softwareName = start.modpack ? `${start.modpack.title || start.modpack.project} modpack` : `${loaderNames[start.loader ?? "vanilla"] ?? start.loader} ${start.version}`;
   const versionField = (
     <Field
       label="Game version"
-      hint={onPreview(versions.data, v.version) ? previewWarning : source && v.version !== start.version ? "A world opened in a newer version does not open in an older one again." : undefined}
+      hint={onPreview(versions.data, v.version) ? previewWarning : source && versionChanged ? "A world opened in a newer version does not open in an older one again." : undefined}
     >
       {(id) => (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
