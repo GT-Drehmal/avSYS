@@ -110,8 +110,17 @@ func (s *Server) checkHostnameOwner(ctx context.Context, org *store.Org, host st
 	if host == "" {
 		return nil
 	}
-	if d := s.Config.RouterDomain; d != "" && strings.HasSuffix(host, "."+org.Slug+"."+d) {
-		return nil
+	// The names the panel gives by itself are under each organization's own
+	// name in the router's domain: those are its alone, whatever is claimed.
+	if d := s.Config.RouterDomain; d != "" && strings.HasSuffix(host, "."+d) {
+		labels := strings.Split(strings.TrimSuffix(host, "."+d), ".")
+		zone := labels[len(labels)-1]
+		if zone == org.Slug && len(labels) > 1 {
+			return nil
+		}
+		if other, err := s.Store.OrgBySlug(ctx, zone); err == nil && other.ID != org.ID {
+			return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: fmt.Sprintf("%s is under %s.%s, where the panel names %s's servers.", host, zone, d, other.Name)}
+		}
 	}
 	owner, err := s.Store.DomainOwner(ctx, host)
 	if err != nil || owner == "" || owner == org.ID {

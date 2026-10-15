@@ -58,3 +58,23 @@ func TestDomainsAreTheirOrganizations(t *testing.T) {
 		t.Errorf("a member reading: %d %v", code, got)
 	}
 }
+
+// The names the panel gives a server by itself, under its organization's own
+// name in the router's domain, are that organization's, whatever is claimed.
+func TestOwnZoneIsTheOrganizations(t *testing.T) {
+	p := newPanel(t)
+	p.srv.Config.RouterDomain = "mc.example.org"
+	// Even given a domain over it, beta takes no name in alpha's zone.
+	if code, msg := p.do("root", "PUT", "/orgs/beta/domains", `{"domains":["alpha.mc.example.org"]}`); code != 200 {
+		t.Fatalf("claiming: %d %s", code, msg)
+	}
+	if code, name := p.do("outsider", "POST", "/orgs/beta/servers", `{"name":"squat","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"lobby.alpha.mc.example.org"}}}`); code != 409 || name != "domain_claimed" {
+		t.Errorf("beta in alpha's zone: %d %s, want 409 domain_claimed", code, name)
+	}
+	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"lobby","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"lobby.alpha.mc.example.org"}}}`); code != 201 {
+		t.Errorf("alpha in its own zone: %d %s", code, msg)
+	}
+	if code, msg := p.do("outsider", "POST", "/orgs/beta/servers", `{"name":"own","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"own.beta.mc.example.org"}}}`); code != 201 {
+		t.Errorf("beta in its own zone: %d %s", code, msg)
+	}
+}
