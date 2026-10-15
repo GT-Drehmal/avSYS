@@ -87,3 +87,28 @@ test("what each role may do to the list", async ({ page, as }) => {
   await expect(bar.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "New server" })).toBeVisible();
 });
+
+test("a snapshot of several servers is asked for at once, and one that could not says why", async ({ page, as, org }) => {
+  const slug = await org(["alpha", "bravo"]);
+  await as("owner");
+  // Nothing runs behind this panel to take them: alpha is taken, and bravo
+  // is busy with something else.
+  const asked: string[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers/*/snapshots`, (route) => {
+    const server = new URL(route.request().url()).pathname.split("/")[6];
+    asked.push(`${route.request().method()} ${server}`);
+    return server === "bravo"
+      ? route.fulfill({ status: 409, json: { code: "busy", message: "Something else is being done to this server. Try again when it has finished." } })
+      : route.fulfill({ status: 202, json: { kind: "snapshot", org: slug, server, stage: "Starting", percent: 0 } });
+  });
+  await page.goto(`/o/${slug}`);
+  await page.getByLabel("Select every server").click();
+  const bar = page.getByRole("region", { name: "Selection" });
+  await bar.getByRole("button", { name: "Snapshot", exact: true }).click();
+  await expect(page.getByText("Taking a snapshot of 1 server")).toBeVisible();
+  await expect(page.getByText(/1 of 2 failed\. bravo: Something else is being done/)).toBeVisible();
+  expect(asked.sort()).toEqual(["POST alpha", "POST bravo"]);
+  // What failed stays selected.
+  await expect(bar).toContainText("1 server selected");
+  await expect(page.getByLabel("Select bravo")).toBeChecked();
+});

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Play, Plus, RotateCw, Square, Trash2 } from "lucide-react";
+import { Camera, Play, Plus, RotateCw, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { scheduleOf } from "../components/BackupSchedule";
@@ -47,15 +47,17 @@ function BackupMark({ server, scheduled }: { server: Server; scheduled: boolean 
 
 const columns = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_72px_minmax(0,1.3fr)_112px] items-center gap-4 px-4";
 
-type Act = "start" | "stop" | "restart" | "delete";
+type Act = "start" | "stop" | "restart" | "snapshot" | "delete";
 
-const done: Record<Act, string> = { start: "Started", stop: "Stopped", restart: "Restarted", delete: "Deleted" };
+const done: Record<Act, string> = { start: "Started", stop: "Stopped", restart: "Restarted", snapshot: "Taking a snapshot of", delete: "Deleted" };
 
 /** Which of the selected servers an action makes sense for: one that is stopped is not stopped again. */
 const fits: Record<Act, (s: Server) => boolean> = {
   start: (s) => s.spec.state === "Stopped" || s.status.phase === "Sleeping",
   stop: (s) => s.spec.state !== "Stopped",
   restart: (s) => s.spec.state !== "Stopped" && s.status.phase !== "Sleeping",
+  // Running or not: a snapshot of a stopped server is of its files as they are.
+  snapshot: () => true,
   delete: () => true,
 };
 
@@ -78,9 +80,14 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
     const targets = chosen.filter(fits[act]);
     setRunning(act);
     const results = await Promise.allSettled(
-      targets.map((s) => (act === "delete" ? api.del(serverPath(org, s.name) + (keeps ? "" : "?snapshot=false")) : api.post(`${serverPath(org, s.name)}/${act}`))),
+      targets.map((s) =>
+        act === "delete"
+          ? api.del(serverPath(org, s.name) + (keeps ? "" : "?snapshot=false"))
+          : // Each is started here and goes on in the panel, which says when it is taken.
+            api.post(`${serverPath(org, s.name)}/${act === "snapshot" ? "snapshots" : act}`),
+      ),
     );
-    await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), act === "delete" ? qc.invalidateQueries({ queryKey: keys.snapshots(org) }) : null]);
+    await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), act === "delete" || act === "snapshot" ? qc.invalidateQueries({ queryKey: ["snapshots", org] }) : null]);
     setRunning(null);
     setDeleting(false);
     const failed = targets.filter((_, i) => results[i].status === "rejected");
@@ -106,6 +113,7 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
       {button("start", "Start", <Play className="size-3.5" />)}
       {button("restart", "Restart", <RotateCw className="size-3.5" />)}
       {button("stop", "Stop", <Square className="size-3" />)}
+      {meta.data?.snapshots && button("snapshot", "Snapshot", <Camera className="size-3.5" />)}
       {canAdmin && (
         <Button size="sm" variant="danger" icon={<Trash2 className="size-3.5" />} disabled={running !== null} onClick={() => setDeleting(true)}>
           Delete
