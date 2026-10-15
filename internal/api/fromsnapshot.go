@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/sftp"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -543,10 +544,18 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 		return err
 	}
 
-	s.removeDroppedUploads(ctx, key.Namespace, key.Name, copied, created.Spec.Mods)
-	// As with a new server's picture, the server is never held back over it.
-	if err := s.placePicture(ctx, key.Namespace, key.Name, picture); err != nil {
-		s.Log.Warn("a new server's own picture was not put in place", "server", key.String(), "error", err)
+	// Through the connection made above, to this server's own volume: a pod
+	// of a server of the same name that was deleted may still be going away,
+	// and a connection kept from it would reach its volume instead.
+	if files, err := sftp.NewClient(ws); err != nil {
+		s.Log.Warn("could not reach a new server's files to tidy them", "server", key.String(), "error", err)
+	} else {
+		s.removeDroppedUploadsWith(ctx, files, key.Namespace, key.Name, copied, created.Spec.Mods)
+		// As with a new server's picture, the server is never held back over it.
+		if err := s.placePicture(files, key.Namespace, key.Name, picture); err != nil {
+			s.Log.Warn("a new server's own picture was not put in place", "server", key.String(), "error", err)
+		}
+		files.Close()
 	}
 
 	// The marks come off and the state goes on in one change: there is no

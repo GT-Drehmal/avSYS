@@ -340,3 +340,21 @@ test("a restore's progress shows before the server is held, once, and on every t
   await expect(page).toHaveURL(/\/s\/creative\/files$/);
   await expect(progress).toBeVisible();
 });
+
+test("a copy's picture can be taken away even when it could not be shown", async ({ page, as }) => {
+  await as("owner");
+  const sent: { picture?: string | null }[] = [];
+  // Survival's picture cannot be read just now.
+  await page.route("**/api/v1/orgs/friends/servers/survival/icon*", (route) => route.fulfill({ status: 503, json: { code: "unavailable", message: "Not now." } }));
+  await page.route("**/api/v1/orgs/friends/servers", (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+  });
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByText("None could be shown for it.")).toBeVisible();
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].picture).toBeNull();
+});
