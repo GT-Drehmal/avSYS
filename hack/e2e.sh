@@ -8,6 +8,9 @@
 # The token must belong to an instance admin (it creates an organization).
 # Optional: AVSYS_SSH_PORT (2222), AVSYS_ROUTER_HOST (127.0.0.1), AVSYS_ROUTER_PORT (25565).
 # AVSYS_E2E_KEEP_ON_FAILURE=1 leaves the organization and server in place when a check fails.
+# AVSYS_E2E_CONTAINER_LOG is a command that prints the whole log of a server's
+# running game container, given the organization and the server as $1 and
+# $2: what the image prints before the game starts is only there.
 # AVSYS_E2E_EXITED_LOG is a command that prints the log of a server's game as
 # it last exited, given the organization and the server as $1 and $2. The
 # panel's console shows the game that is running, which after an exit is the
@@ -170,8 +173,14 @@ created=$(call -d "{\"name\":\"probe\",\"spec\":{\"eula\":true,\"loader\":\"pape
 case "$created" in *'"spec"'*) ;; *) fail "the server was not created: $created" ;; esac
 expect "content is pinned when added" "$(echo "$created" | field "all(m.get('version') for m in d['spec']['mods'])")" True
 expect "content fits the game's Java" "$(echo "$created" | field "d['java']['effective'] == d['java']['game'] == 21")" True
+expect "a new server has Aikar's flags" "$(echo "$created" | field "d['spec']['jvm']")" "{'aikarFlags': True}"
 wait_phase Running
 echo "ok: server reached Running"
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  expect "and the game was started with them" "$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" probe 2>/dev/null)" "Using Aikar's flags"
+else
+  echo "skipped: the game's own container log is not available to this run"
+fi
 
 step "console"
 plugins=$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")
@@ -190,6 +199,30 @@ echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e
 expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "managed server.properties" "$(call "$SRV/files/content?path=/server.properties")" "motd=e2e probe"
 
+step "datapacks"
+# restarted asks for a restart and waits it out: down first, then up.
+restarted() {
+  call -X POST "$SRV/restart" >/dev/null
+  for _ in $(seq 1 90); do
+    [ "$(call "$SRV" | field "d['status'].get('phase')")" != Running ] && break
+    sleep 1
+  done
+  wait_phase Running
+}
+# One from a URL, which the image only ever adds: taking it off has to take
+# its file away too, or the game goes on loading it.
+PACK=https://cdn.modrinth.com/data/OhduvhIc/versions/8cEJouzY/Veinminer-1.2.4.zip
+mods=$(call "$SRV" | field "__import__('json').dumps(d['spec']['mods'])")
+with=$(python3 -c 'import json, sys; m = json.loads(sys.argv[1]); m.append({"source": "url", "kind": "datapack", "project": sys.argv[2]}); print(json.dumps({"spec": {"mods": m}}))' "$mods" "$PACK")
+call -X PATCH -d "$with" "$SRV" >/dev/null
+restarted
+expect "a datapack from a URL is installed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/world/datapacks/Veinminer-1.2.4.zip")" 200
+expect "and enabled" "$(call -d '{"command":"datapack list enabled"}' "$SRV/console" | field "d['output']")" "Veinminer-1.2.4.zip"
+call -X PATCH -d "{\"spec\":{\"mods\":$mods}}" "$SRV" >/dev/null
+expect "taken off, its file is removed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/world/datapacks/Veinminer-1.2.4.zip")" 404
+restarted
+expect "and the game no longer has it" "$(call -d '{"command":"datapack list"}' "$SRV/console" | field "'Veinminer' not in d['output']")" True
+
 step "snapshots"
 snap=$(call -X POST "$SRV/snapshots?wait=true")
 SNAP=$(echo "$snap" | field "d['id']") || fail "no snapshot was taken: $snap"
@@ -205,6 +238,12 @@ wait_phase Running
 expect "a changed file is put back" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "a file added since is removed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/stray.txt")" 404
 expect "the settings come back with the files" "$(call "$SRV" | field "sorted(m['project'] for m in d['spec']['mods'])")" "['luckperms', 'worldedit']"
+# The game started again, and packed the log of its run before.
+earlier=$(call "$SRV/logs" | field "[l['name'] for l in d['logs'] if l['kind'] == 'log'][0]") || fail "no earlier run is listed"
+expect "the run before a restart is listed" "$(call "$SRV/logs" | field "(d['logs'][0]['name'], d['logs'][0]['kind'])")" "('logs/latest.log', 'current')"
+expect "and reads unpacked, to where it got going" "$(call "$SRV/logs/file?name=$earlier" | field "any('Done (' in l['text'] for l in d['lines'])")" True
+expect "and is searched where it is" "$(call "$SRV/logs/file?name=$earlier&q=Done%20(" | field "all('Done (' in l['text'] for l in d['lines'] if l.get('match')) and len(d['lines']) > 0")" True
+expect "nothing but the game's logs is read" "$(call -o /dev/null -w '%{http_code}' "$SRV/logs/file?name=logs/../server.properties")" 400
 expect "the plugin runs again" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit
 listed=$(call "$SRV/snapshots")
 expect "what was there before the restore is kept too" "$(echo "$listed" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'pre-restore']"

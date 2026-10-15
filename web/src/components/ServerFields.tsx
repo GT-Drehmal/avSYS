@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { api, type NodeInfo } from "../lib/api";
 import { difficulties, gameModes } from "../lib/properties";
 import { fromGigabytes } from "../lib/software";
-import { Field, Input, Select } from "./ui";
+import { Field, Input, Select, Textarea, Toggle } from "./ui";
 
 /** The server.properties entries that have a control of their own here. */
 export interface Gameplay {
@@ -139,6 +139,31 @@ export function More({ label, changed = 0, open, onToggle }: { label: string; ch
       {label}
       {changed > 0 && <span className="text-accent">· {changed} changed</span>}
     </button>
+  );
+}
+
+/**
+ * How the game's Java is started: Aikar's flags, which suit nearly every
+ * server, and any more of one's own. Off with nothing typed is the JVM's own
+ * defaults.
+ */
+export function LaunchFlags({ aikar, extra, onAikar, onExtra, fromSnapshot }: { aikar: boolean; extra: string; onAikar: (on: boolean) => void; onExtra: (text: string) => void; fromSnapshot?: boolean }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <Toggle checked={aikar} onChange={onAikar} label="Use Aikar's flags (recommended)" hint="Garbage collection tuned for the game, so that it pauses less. Suits nearly every server." />
+      <Field
+        label="Extra JVM flags"
+        hint={
+          fromSnapshot
+            ? "Not taken from a snapshot. One per line, as -XX:+AlwaysPreTouch."
+            : aikar
+              ? "Optional, added after Aikar's. One per line, as -XX:+AlwaysPreTouch. Memory is set above."
+              : "Optional. One per line. With Aikar's off and none here, Java starts with its own defaults."
+        }
+      >
+        {(id) => <Textarea id={id} rows={2} value={extra} onChange={(e) => onExtra(e.target.value)} placeholder="-XX:+AlwaysPreTouch" className="font-mono" spellCheck={false} />}
+      </Field>
+    </div>
   );
 }
 

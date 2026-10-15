@@ -5,11 +5,12 @@ import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, More, NodeChoice, type Join } from "../components/ServerFields";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, NodeChoice, type Join } from "../components/ServerFields";
 import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { ago, loaderNames } from "../lib/format";
+import { launchOf } from "../lib/launch";
 import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
 import { keys, useMe } from "../lib/queries";
@@ -77,6 +78,8 @@ interface Values {
   storage: string;
   /** The node to put it on; empty for the panel to choose. */
   node: string;
+  aikar: boolean;
+  extraFlags: string;
   hostname: string;
   exposeType: ExposeType;
   sleep: boolean;
@@ -113,6 +116,9 @@ const fresh: Values = {
   memory: "4",
   storage: "10",
   node: "",
+  // Recommended for every server, and on unless switched off.
+  aikar: true,
+  extraFlags: "",
   hostname: "",
   exposeType: "Router",
   sleep: false,
@@ -155,6 +161,10 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     // The panel chooses for a copy too, unless asked: the original's node
     // may have no room for both.
     node: "",
+    aikar: launchOf(spec).aikar,
+    // Not taken from a snapshot, which the server could have written: they
+    // run code. A copy of a server that is there takes its own.
+    extraFlags: source.origin.kind === "server" ? launchOf(spec).extraFlags : "",
     // A server's address is its own, and not taken along.
     hostname: "",
     exposeType: spec.expose?.type ?? "Router",
@@ -224,6 +234,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [addingMods, setAddingMods] = useState(false);
   const [moreWorld, setMoreWorld] = useState(false);
   const [moreNetwork, setMoreNetwork] = useState(false);
+  const [moreLaunch, setMoreLaunch] = useState(false);
   const [eula, setEula] = useState(false);
   const [startNow, setStartNow] = useState(true);
   const custom = !!spec?.image || (spec?.env?.length ?? 0) > 0;
@@ -280,6 +291,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ...(v.autoOp !== "operator" ? { autoOp: v.autoOp as ServerSpec["autoOp"] } : {}),
       ...(v.sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(v.idleMinutes) || 15 } } : {}),
       ...(v.schedule === "off" ? { backups: { enabled: false } } : {}),
+      jvm: { aikarFlags: v.aikar, extraFlags: v.extraFlags },
       // The game looks for its picture when it starts, so a server given one
       // is made stopped and started by the panel once the picture is there.
       ...(v.picture.kind === "file" ? { state: "Stopped" as const } : {}),
@@ -311,6 +323,13 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     if (sleeps !== start.sleep || (sleeps && v.idleMinutes !== start.idleMinutes)) changes.sleep = { enabled: sleeps, idleMinutes: Number(v.idleMinutes) || 15 };
     if (v.schedule !== start.schedule) changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : null;
     if (modsChanged) changes.mods = v.mods;
+    const jvm: NonNullable<ServerSpec["jvm"]> = {};
+    if (v.aikar !== start.aikar) jvm.aikarFlags = v.aikar;
+    if (v.extraFlags !== start.extraFlags) jvm.extraFlags = v.extraFlags;
+    // An original with them only in its environment has neither field: the
+    // one not changed is sent too, or it would be lost as the other is set.
+    const legacy = spec?.jvm?.aikarFlags == null && !spec?.jvm?.extraFlags;
+    if (Object.keys(jvm).length > 0) changes.jvm = legacy ? { aikarFlags: v.aikar, extraFlags: v.extraFlags } : jvm;
     return {
       displayName: v.displayName,
       state: startNow ? "Running" : "Stopped",
@@ -654,6 +673,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={v.storage} onChange={(e) => set("storage", e.target.value)} />}</Field>
         </div>
         <NodeChoice memory={v.memory} value={v.node} kept={source?.origin.kind === "server" ? source.live?.spec.nodeSelector : undefined} onChange={(node) => set("node", node)} />
+        <More label="Launch flags" changed={(v.aikar !== start.aikar ? 1 : 0) + (v.extraFlags !== start.extraFlags ? 1 : 0)} open={moreLaunch} onToggle={() => setMoreLaunch(!moreLaunch)} />
+        {moreLaunch && <LaunchFlags aikar={v.aikar} extra={v.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} fromSnapshot={source?.origin.kind === "snapshot"} />}
       </Section>
 
       <Section title="Network">
