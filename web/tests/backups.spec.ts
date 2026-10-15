@@ -135,3 +135,47 @@ test("a server's picture is its own while it exists, and its newest snapshot's o
   const dialog = page.getByRole("dialog");
   await expect(dialog.locator('img[src*="/snapshots/"]')).toBeVisible();
 });
+
+test("a snapshot of a server that exists can be restored from here, and one of a deleted server cannot", async ({ page }) => {
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/*/snapshots/*/restore", (route) => {
+    asked.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 202, json: { kind: "restore", org: "friends", server: "survival", stage: "Stopping the server", percent: 0 } });
+  });
+  await page.getByRole("button", { expanded: false }).filter({ hasText: "oldworld" }).click();
+  await expect(page.getByRole("button", { name: /^Restore oldworld/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^New server from the snapshot of oldworld/ })).toBeVisible();
+
+  await page.getByRole("button", { expanded: false }).filter({ hasText: "Survival" }).click();
+  const restore = page.getByRole("button", { name: /^Restore survival to the snapshot from/ });
+  await expect(restore).toHaveCount(4);
+  await restore.first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Restore survival?" })).toBeVisible();
+  await expect(dialog).toContainText("saved as a snapshot first");
+  await dialog.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(asked).toHaveLength(1);
+  expect(asked[0]).toMatch(/^\/api\/v1\/orgs\/friends\/servers\/survival\/snapshots\/[0-9a-f]+\/restore$/);
+
+  // By time too, and from a snapshot's details.
+  await page.getByRole("button", { name: "By time" }).click();
+  await expect(page.getByRole("button", { name: /^Restore oldworld/ })).toHaveCount(0);
+  await page.getByRole("button", { name: /^About the snapshot of survival/ }).first().click();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Restore", exact: true })).toBeVisible();
+});
+
+test("a server's own Backups tab restores with the same question", async ({ page }) => {
+  let asked = "";
+  await page.route("**/api/v1/orgs/friends/servers/survival/snapshots/*/restore", (route) => {
+    asked = new URL(route.request().url()).pathname;
+    return route.fulfill({ status: 202, json: { kind: "restore", org: "friends", server: "survival", stage: "Stopping the server", percent: 0 } });
+  });
+  await page.goto("/o/friends/s/survival/backups");
+  await page.getByRole("button", { name: /^Restore survival to the snapshot from/ }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Restore survival?" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(asked).toMatch(/\/servers\/survival\/snapshots\/[0-9a-f]+\/restore$/);
+});

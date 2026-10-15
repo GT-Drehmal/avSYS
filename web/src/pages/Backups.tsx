@@ -5,7 +5,7 @@ import { backupConcern, BackupSchedule, scheduleOf } from "../components/BackupS
 import { OffsiteCopy } from "../components/OffsiteCopy";
 import { Picture } from "../components/Picture";
 import { useOrg } from "../components/Shell";
-import { OperationRow, SnapshotRows, SnapshotSelectionBar } from "../components/Snapshots";
+import { OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, type RowsProps } from "../components/Snapshots";
 import { Chip, cx, Empty, Loading, Notice, PageHeader, Select } from "../components/ui";
 import { atLeast, serverIcon, snapshotIcon, type Server, type Snapshot } from "../lib/api";
 import { ago, bytes, displayName } from "../lib/format";
@@ -58,6 +58,15 @@ export function Backups() {
 
   const snapshots = list.data?.snapshots ?? [];
   const byName = new Map(servers.data?.map((s) => [s.name, s]));
+  // A snapshot of a server that still exists can put it back. One that is
+  // gone is brought back as a new server instead.
+  const [restoring, setRestoring] = useState<Snapshot | null>(null);
+  const running = new Set(list.data?.operations.map((op) => op.server));
+  const restoreProps = {
+    onRestore: setRestoring,
+    restorable: (s: Snapshot) => byName.has(s.server),
+    busy: (s: Snapshot) => running.has(s.server),
+  };
   // Newest first within a server, as the list comes.
   const groups = new Map<string, Snapshot[]>();
   for (const s of snapshots) groups.set(s.server, [...(groups.get(s.server) ?? []), s]);
@@ -166,6 +175,7 @@ export function Backups() {
                   snapshots={filtered}
                   canAdmin={canAdmin}
                   selection={selection}
+                  {...restoreProps}
                   lead={(s) => (
                     <span className="flex w-36 shrink-0 items-center gap-2 max-sm:w-24">
                       <ServerPicture org={org} name={s.server} server={byName.get(s.server)} known={!!servers.data} newest={groups.get(s.server)?.[0]?.id} size={24} />
@@ -191,6 +201,7 @@ export function Backups() {
                     onShowAll={() => setAll(toggle(all, name))}
                     canAdmin={canAdmin}
                     selection={selection}
+                    restore={restoreProps}
                   />
                 ))}
               </ul>
@@ -199,6 +210,7 @@ export function Backups() {
         )}
       </div>
       {canAdmin && <SnapshotSelectionBar org={org} snapshots={snapshots} selection={selection} />}
+      {restoring && byName.get(restoring.server) && <RestoreDialog server={byName.get(restoring.server) as Server} snapshot={restoring} onClose={() => setRestoring(null)} />}
     </>
   );
 }
@@ -229,10 +241,12 @@ interface GroupProps {
   onShowAll: () => void;
   canAdmin: boolean;
   selection: Selection;
+  /** Restoring a snapshot of the server, where it still exists. */
+  restore: Pick<RowsProps, "onRestore" | "restorable" | "busy">;
 }
 
 /** One server's snapshots: a line that says how they stand, opened to see them. */
-function ServerGroup({ org, name, server, known, items, concern, open, onToggle, showAll, onShowAll, canAdmin, selection }: GroupProps) {
+function ServerGroup({ org, name, server, known, items, concern, open, onToggle, showAll, onShowAll, canAdmin, selection, restore }: GroupProps) {
   const newest = items[0];
   const shown = showAll ? items : items.slice(0, firstFew);
   return (
@@ -259,7 +273,7 @@ function ServerGroup({ org, name, server, known, items, concern, open, onToggle,
       </button>
       {open && (
         <div className="flex flex-col gap-2 border-t border-line bg-bg p-3">
-          <SnapshotRows org={org} snapshots={shown} canAdmin={canAdmin} selection={selection} />
+          <SnapshotRows org={org} snapshots={shown} canAdmin={canAdmin} selection={selection} {...restore} />
           <div className="flex items-center gap-4 px-1 text-xs">
             {items.length > firstFew && (
               <button type="button" onClick={onShowAll} className="text-accent hover:underline">

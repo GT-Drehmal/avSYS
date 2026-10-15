@@ -2,8 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Camera } from "lucide-react";
 import { useState } from "react";
 import { ServerSchedule } from "../../components/BackupSchedule";
-import { holdsTheServer, OperationRow, SnapshotRows, SnapshotSelectionBar } from "../../components/Snapshots";
-import { Button, Empty, Loading, Modal, Notice } from "../../components/ui";
+import { holdsTheServer, OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar } from "../../components/Snapshots";
+import { Button, Empty, Loading, Notice } from "../../components/ui";
 import { api, atLeast, serverPath, type Operation, type Snapshot } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { keys, useAction, useServerSnapshots } from "../../lib/queries";
@@ -24,7 +24,6 @@ export function Snapshots() {
   // reported as over, and would then be shown as running for ever.
   const started = () => qc.invalidateQueries({ queryKey: keys.serverSnapshots(server.org, server.name) });
   const snapshot = useAction(() => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots`));
-  const restore = useAction((id: string) => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots/${id}/restore`));
 
   const selection = useSelection(list.data?.snapshots.map((s) => s.id) ?? [], `${server.org}/${server.name}`);
 
@@ -64,38 +63,7 @@ export function Snapshots() {
       )}
       {canAdmin && <SnapshotSelectionBar org={server.org} snapshots={snapshots} selection={selection} />}
 
-      <Modal
-        open={!!restoring}
-        onOpenChange={(open) => !open && setRestoring(null)}
-        title={`Restore ${server.name}?`}
-        description={restoring ? `To how it was ${ago(restoring.time)}, on ${new Date(restoring.time).toLocaleString()}.` : ""}
-      >
-        <div className="flex flex-col gap-4">
-          <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-relaxed text-muted">
-            <li>The server is stopped while its files are put back{server.spec.state === "Stopped" ? "" : ", then started again"}.</li>
-            <li>Its world, files, game version and mods return to how they were. Anything added since is removed.</li>
-            <li>What is there now is saved as a snapshot first, so a restore can be undone.</li>
-          </ul>
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => setRestoring(null)}>Cancel</Button>
-            <Button
-              variant="danger"
-              loading={restore.isPending}
-              onClick={() =>
-                restoring &&
-                restore.mutate(restoring.id, {
-                  onSuccess: () => {
-                    started();
-                    setRestoring(null);
-                  },
-                })
-              }
-            >
-              Restore
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      <RestoreDialog server={server} snapshot={restoring} onClose={() => setRestoring(null)} />
     </div>
   );
 }
