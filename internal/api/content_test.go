@@ -192,6 +192,41 @@ func TestLeftBehindKindChange(t *testing.T) {
 	}
 }
 
+// The world's folder, from LEVEL or the server's level-name, and not when
+// the two say different things.
+func TestLevelOf(t *testing.T) {
+	env := func(v string) []corev1.EnvVar { return []corev1.EnvVar{{Name: "LEVEL", Value: v}} }
+	for _, c := range []struct {
+		spec avsysv1.MinecraftServerSpec
+		want string
+	}{
+		{avsysv1.MinecraftServerSpec{}, "world"},
+		{avsysv1.MinecraftServerSpec{Env: env("drehmal")}, "drehmal"},
+		{avsysv1.MinecraftServerSpec{Properties: map[string]string{"level-name": "world"}}, "world"},
+		{avsysv1.MinecraftServerSpec{Properties: map[string]string{"level-name": "drehmal"}}, ""},
+		{avsysv1.MinecraftServerSpec{Env: env("drehmal"), Properties: map[string]string{"level-name": "drehmal"}}, "drehmal"},
+		{avsysv1.MinecraftServerSpec{Env: env("drehmal"), Properties: map[string]string{"level-name": "other"}}, ""},
+	} {
+		if got := levelOf(&c.spec); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.spec, got, c.want)
+		}
+	}
+}
+
+// A file a Modrinth datapack still listed was saved as stays, though a URL
+// entry for the same file is taken off.
+func TestLeftBehindSharedWithModrinth(t *testing.T) {
+	modrinth := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindDatapack, Project: "veinminer", Version: "abc", File: "Veinminer-1.2.4.zip"}
+	url := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: "https://cdn.modrinth.com/data/x/versions/y/Veinminer-1.2.4.zip"}
+	if got := leftBehind(&avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{modrinth}}, &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{modrinth, url}}); len(got) != 0 {
+		t.Errorf("deleted a file still used: %v", got)
+	}
+	// A Modrinth datapack taken off is the image's to remove.
+	if got := leftBehind(&avsysv1.MinecraftServerSpec{}, &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{modrinth}}); len(got) != 0 {
+		t.Errorf("deleted what the image removes: %v", got)
+	}
+}
+
 // What a note of content left to remove may name: only files the panel puts
 // there itself.
 func TestContentLeftOf(t *testing.T) {
@@ -282,19 +317,21 @@ func TestDatapackFileIsRecordedByThePanel(t *testing.T) {
 	defer func() { publicHTTP = public }()
 
 	kept := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: srv.URL + "/old.zip", File: "old-1.0.zip"}
+	pinned := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindDatapack, Project: "veinminer", Version: "abc", Title: "Veinminer", IconURL: "x", File: "Veinminer-1.2.4.zip"}
 	// Added before the name was recorded.
 	older := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: srv.URL + "/older.zip"}
-	previous := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{kept, older}}
+	previous := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{kept, older, pinned}}
 	spec := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{
 		{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: kept.Project, File: "server.properties"},
 		{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: older.Project},
 		{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: srv.URL + "/download.zip", File: "server.properties"},
 		{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "ours.zip", File: "server.properties"},
+		{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindDatapack, Project: "veinminer", Version: "abc", Title: "Veinminer", IconURL: "x", File: "server.properties"},
 	}}
 	if err := (&Server{}).resolveContent(context.Background(), spec, previous); err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range []string{"old-1.0.zip", "pack-v2.zip", "pack-v2.zip", ""} {
+	for i, want := range []string{"old-1.0.zip", "pack-v2.zip", "pack-v2.zip", "", "Veinminer-1.2.4.zip"} {
 		if got := spec.Mods[i].File; got != want {
 			t.Errorf("entry %d: file %q, want %q", i, got, want)
 		}

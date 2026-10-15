@@ -52,6 +52,19 @@ type modrinthVersion struct {
 	Files         []modrinthFile `json:"files"`
 }
 
+// fileName is the name the primary file is saved under.
+func (v modrinthVersion) fileName() string {
+	for _, f := range v.Files {
+		if f.Primary {
+			return f.Filename
+		}
+	}
+	if len(v.Files) > 0 {
+		return v.Files[0].Filename
+	}
+	return ""
+}
+
 func (v modrinthVersion) file() string {
 	for _, f := range v.Files {
 		if f.Primary {
@@ -309,6 +322,9 @@ func (s *Server) pin(ctx context.Context, m *avsysv1.ContentRef, t target) error
 			return err
 		}
 		m.VersionName, m.Java = v.VersionNumber, int32(inspect(v))
+		if m.Kind == avsysv1.KindDatapack {
+			m.File = v.fileName()
+		}
 		return nil
 	}
 
@@ -338,6 +354,9 @@ func (s *Server) pin(ctx context.Context, m *avsysv1.ContentRef, t target) error
 		}
 	}
 	m.Version, m.VersionName, m.Java = chosen.ID, chosen.VersionNumber, int32(java)
+	if m.Kind == avsysv1.KindDatapack {
+		m.File = chosen.fileName()
+	}
 	return nil
 }
 
@@ -411,32 +430,45 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		mu    sync.Mutex
 		first error
 	)
-	// Where a datapack from a URL was saved is known from when it was added.
-	// What a request says of it is not taken: the panel deletes that file.
+	// Where a datapack from a URL or Modrinth was saved is known from when it
+	// was added or pinned. What a request says of it is not taken: the panel
+	// deletes that file, or keeps another for it.
+	savedKey := func(m *avsysv1.ContentRef) string {
+		if m.Kind != avsysv1.KindDatapack {
+			return ""
+		}
+		switch m.Source {
+		case avsysv1.SourceURL:
+			return "url:" + m.Project
+		case avsysv1.SourceModrinth:
+			return "modrinth:" + m.Project + "@" + m.Version
+		}
+		return ""
+	}
 	saved := map[string]string{}
 	if previous != nil {
-		for _, m := range previous.Mods {
-			if m.Source == avsysv1.SourceURL && m.Kind == avsysv1.KindDatapack {
-				saved[m.Project] = m.File
+		for i := range previous.Mods {
+			if key := savedKey(&previous.Mods[i]); key != "" {
+				saved[key] = previous.Mods[i].File
 			}
 		}
 	}
 	for i := range spec.Mods {
 		m := &spec.Mods[i]
-		if m.Source == avsysv1.SourceURL && m.Kind == avsysv1.KindDatapack {
-			// One added before the name was recorded has it looked up now.
-			if m.File = saved[m.Project]; m.File != "" {
-				continue
-			}
-		} else {
-			m.File = ""
+		m.File = ""
+		if key := savedKey(m); key != "" {
+			m.File = saved[key]
+		}
+		// One added before the name was recorded has it looked up now.
+		if m.Source == avsysv1.SourceURL && m.Kind == avsysv1.KindDatapack && m.File != "" {
+			continue
 		}
 		switch m.Source {
 		case avsysv1.SourceModrinth:
 			if retarget {
-				m.Version, m.VersionName, m.Java = "", "", 0
+				m.Version, m.VersionName, m.Java, m.File = "", "", 0, ""
 			}
-			if m.Version != "" && (m.Java != 0 || m.Kind == avsysv1.KindDatapack) && m.Title != "" && m.IconURL != "" {
+			if m.Version != "" && (m.Java != 0 || (m.Kind == avsysv1.KindDatapack && m.File != "")) && m.Title != "" && m.IconURL != "" {
 				continue
 			}
 		case avsysv1.SourceURL:
@@ -536,6 +568,7 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 		return err
 	}
 	defer release()
+	defer s.lockContent(client.ObjectKeyFromObject(mc))()
 	kind := avsysv1.ContentKind(r.URL.Query().Get("kind"))
 	switch kind {
 	case avsysv1.KindMod, avsysv1.KindPlugin, avsysv1.KindDatapack:
@@ -624,6 +657,11 @@ func (s *Server) removeDroppedUploads(ctx context.Context, namespace, server str
 // removeDroppedUploadsWith is removeDroppedUploads through a connection to the
 // server's files that the caller has made sure of, or the shared one if nil.
 func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Client, namespace, server string, spec, before *avsysv1.MinecraftServerSpec) {
+	// What was changed is saved already: this is seen through even if
+	// whoever asked for it has gone.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	before = withSavedNames(ctx, spec, before)
 	gone := leftBehind(spec, before)
 	if len(gone) == 0 {
 		return
@@ -646,6 +684,23 @@ func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Cli
 			s.Log.Warn("could not note content left to remove", "server", server, "error", err)
 		}
 	}
+}
+
+// withSavedNames is before, with the saved name looked up of each URL
+// datapack taken off that was added before names were recorded.
+func withSavedNames(ctx context.Context, spec, before *avsysv1.MinecraftServerSpec) *avsysv1.MinecraftServerSpec {
+	listed := map[string]bool{}
+	for _, m := range spec.Mods {
+		listed[m.Project] = true
+	}
+	out := before.DeepCopy()
+	for i := range out.Mods {
+		m := &out.Mods[i]
+		if m.Source == avsysv1.SourceURL && m.Kind == avsysv1.KindDatapack && m.File == "" && !listed[m.Project] {
+			m.File = savedName(ctx, m.Project)
+		}
+	}
+	return out
 }
 
 // removeFiles deletes files of a server's, and returns those it could not.
@@ -720,30 +775,48 @@ func contentLeftOf(mc *avsysv1.MinecraftServer) []string {
 
 // finishContentLeft deletes what a server's note says is left to remove,
 // except what its content as it is now has put there again.
-func (s *Server) finishContentLeft(ctx context.Context, mc *avsysv1.MinecraftServer) {
+func (s *Server) finishContentLeft(ctx context.Context, listed *avsysv1.MinecraftServer) {
+	key := client.ObjectKeyFromObject(listed)
+	// Not while the server's content is being changed, and as it is now.
+	unlock := s.lockContent(key)
+	defer unlock()
+	mc := &avsysv1.MinecraftServer{}
+	var reader client.Reader = s.Client
+	if s.Reader != nil {
+		reader = s.Reader
+	}
+	if err := reader.Get(ctx, key, mc); err != nil {
+		return
+	}
 	left := contentLeftOf(mc)
 	if len(left) == 0 {
 		if mc.Annotations[avsysv1.AnnotationContentLeft] != "" {
-			_ = s.setContentLeft(ctx, client.ObjectKeyFromObject(mc), func([]string) []string { return nil })
+			_ = s.setContentLeft(ctx, key, func([]string) []string { return nil })
 		}
 		return
 	}
+	// A datapack noted is kept while where the world is now cannot be told:
+	// it may be the one put back.
+	known := levelOf(&mc.Spec) != ""
 	inUse := installedFiles(&mc.Spec)
 	var gone []string
 	for _, file := range left {
-		if !inUse[file] {
+		if !inUse[file] && (known || !strings.HasSuffix(path.Dir(file), "/datapacks")) {
 			gone = append(gone, file)
 		}
+	}
+	if len(gone) == 0 {
+		return
 	}
 	sc, err := s.workspaces.get(ctx, mc.Namespace, mc.Name)
 	if err != nil {
 		return
 	}
 	still := removeFiles(s, sc, mc.Name, gone)
-	if err := s.setContentLeft(ctx, client.ObjectKeyFromObject(mc), func(was []string) []string {
-		// Only what was looked at here is settled; anything noted since stays.
+	if err := s.setContentLeft(ctx, key, func(was []string) []string {
+		// Only what was deleted here is settled; anything else stays.
 		done := map[string]bool{}
-		for _, f := range left {
+		for _, f := range gone {
 			done[f] = !slices.Contains(still, f)
 		}
 		var out []string
@@ -756,6 +829,14 @@ func (s *Server) finishContentLeft(ctx context.Context, mc *avsysv1.MinecraftSer
 	}); err != nil {
 		s.Log.Warn("could not clear the note of content left to remove", "server", mc.Name, "error", err)
 	}
+}
+
+// lockContent holds one server's content still: a change to what it lists
+// and the removal of what was taken off it are one at a time.
+func (s *Server) lockContent(key client.ObjectKey) (unlock func()) {
+	lock, _ := s.contentLocks.LoadOrStore(key.String(), &sync.Mutex{})
+	lock.(*sync.Mutex).Lock()
+	return lock.(*sync.Mutex).Unlock
 }
 
 // installedFiles are the files a server's content as it is puts on it that
@@ -801,6 +882,10 @@ func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 		if asDatapack[key] {
 			continue
 		}
+		// The image removes what it installed from Modrinth itself.
+		if m.Source != avsysv1.SourceURL && m.Source != avsysv1.SourceUpload {
+			continue
+		}
 		if name := installedDatapack(m); name != "" && was != "" && now != "" {
 			if file := path.Join(dataRoot, was, "datapacks", name); !inUse[file] {
 				gone = append(gone, file)
@@ -821,6 +906,10 @@ func installedDatapack(m avsysv1.ContentRef) string {
 	switch m.Source {
 	case avsysv1.SourceUpload:
 		return path.Base(m.Project)
+	case avsysv1.SourceModrinth:
+		if plainName(m.File) {
+			return m.File
+		}
 	case avsysv1.SourceURL:
 		if plainName(m.File) {
 			return m.File
@@ -844,22 +933,28 @@ func plainName(name string) bool {
 // levelOf is the world's folder, where the image puts datapacks: what LEVEL
 // says in a server's own environment, or "world". It is "" when that cannot
 // be told: LEVEL read from a secret or the like, naming a folder that is not
-// one in /data, or left for the image to work out from a modpack.
+// one in /data, left for the image to work out from a modpack, or a
+// level-name in its properties that says otherwise.
 func levelOf(spec *avsysv1.MinecraftServerSpec) string {
+	level := "world"
 	for _, e := range spec.Env {
-		// The image works the world's folder out from a modpack's own.
-		if e.Name == "CF_SET_LEVEL_FROM" && (e.Value != "" || e.ValueFrom != nil) {
-			return ""
+		switch e.Name {
+		case "CF_SET_LEVEL_FROM":
+			// The image works the world's folder out from a modpack's own.
+			if e.Value != "" || e.ValueFrom != nil {
+				return ""
+			}
+		case "LEVEL":
+			if e.ValueFrom != nil || !plainName(e.Value) {
+				return ""
+			}
+			level = e.Value
 		}
 	}
-	for _, e := range spec.Env {
-		if e.Name != "LEVEL" {
-			continue
-		}
-		if e.ValueFrom != nil || !plainName(e.Value) {
-			return ""
-		}
-		return e.Value
+	// The server's own properties can name it too; which would win is not
+	// for the panel to guess when they differ.
+	if named, ok := spec.Properties["level-name"]; ok && named != level {
+		return ""
 	}
-	return "world"
+	return level
 }
