@@ -227,6 +227,25 @@ type ResourcesSpec struct {
 	CPU *resource.Quantity `json:"cpu,omitempty"`
 }
 
+// JVMSpec is how the game's Java is started, beyond its memory. The panel
+// checks the same when a server is changed through it; these hold for a
+// server applied directly, with kubectl or GitOps, as well.
+// +kubebuilder:validation:XValidation:rule="!has(self.extraFlags) || self.extraFlags.matches('^(\\\\s*-\\\\S+)*\\\\s*$')",message="extraFlags are JVM options, each starting with a dash"
+// +kubebuilder:validation:XValidation:rule="!has(self.extraFlags) || !self.extraFlags.matches('(^|\\\\s)(-Xm[xs]|-XX:(Max|Initial|Min)(HeapSize|RAMPercentage)=|-XX:MaxRAM=)')",message="extraFlags cannot set the heap: that is resources.memory"
+// +kubebuilder:validation:XValidation:rule="!(has(self.aikarFlags) && self.aikarFlags && has(self.extraFlags) && self.extraFlags.matches('(^|\\\\s)-XX:(\\\\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)|-UseG1GC)(\\\\s|$)'))",message="Aikar's flags pick the G1 garbage collector; switch them off to use another"
+type JVMSpec struct {
+	// AikarFlags turns on Aikar's flags: G1 garbage collection tuned for the
+	// game's many short-lived objects. The panel switches them on for the
+	// servers it makes; left out, as for a server made before they were
+	// offered or applied directly, they are off.
+	AikarFlags *bool `json:"aikarFlags,omitempty"`
+	// ExtraFlags are more options for the JVM. They come after the heap and
+	// Aikar's flags, so one given here wins. Its memory is Resources.Memory,
+	// and is not set here.
+	// +kubebuilder:validation:MaxLength=2048
+	ExtraFlags string `json:"extraFlags,omitempty"`
+}
+
 type MinecraftServerSpec struct {
 	DisplayName string `json:"displayName,omitempty"`
 
@@ -264,9 +283,11 @@ type MinecraftServerSpec struct {
 	Whitelist  []string          `json:"whitelist,omitempty"`
 
 	Resources ResourcesSpec `json:"resources,omitempty"`
-	Storage   StorageSpec   `json:"storage,omitempty"`
-	Expose    ExposeSpec    `json:"expose,omitempty"`
-	Sleep     SleepSpec     `json:"sleep,omitempty"`
+	// JVM is how its Java is started.
+	JVM     JVMSpec     `json:"jvm,omitzero"`
+	Storage StorageSpec `json:"storage,omitempty"`
+	Expose  ExposeSpec  `json:"expose,omitempty"`
+	Sleep   SleepSpec   `json:"sleep,omitempty"`
 	// Backups is the server's own schedule for snapshots, where it has one.
 	Backups *BackupSpec `json:"backups,omitempty"`
 	// AutoOp says which members of the organization are operators in game

@@ -120,4 +120,7 @@ echo "ok: first account is the administrator, and signups then close"
 # Until the game has been started again, the one that exited is still the
 # current one.
 EXITED_LOG="docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft --previous --tail=80 2>/dev/null || docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft --tail=80"
-AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG ./hack/e2e.sh
+# What the image prints before the game's own log begins, such as which
+# launch flags it used, is only in the container's log too.
+GAME_LOG="docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft"
+AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG AVSYS_E2E_CONTAINER_LOG=$GAME_LOG ./hack/e2e.sh
