@@ -3,7 +3,7 @@ import { CopyPlus, History, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
-import { api, ApiError, snapshotIcon, type Operation, type Snapshot, type SnapshotDetail } from "../lib/api";
+import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, type Snapshot, type SnapshotDetail } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { keys, useAction, useOffsite } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
@@ -62,14 +62,16 @@ export function OperationRow({ op }: { op: Operation }) {
   );
 }
 
-interface RowsProps {
+export interface RowsProps {
   org: string;
   snapshots: Snapshot[];
   /** Admins can delete and make a new server; restore is offered where onRestore is given. */
   canAdmin: boolean;
-  /** True while something is running on the server, which rules out a restore. */
-  busy?: boolean;
+  /** True while something is running on its server, which rules out a restore. */
+  busy?: boolean | ((snapshot: Snapshot) => boolean);
+  /** Offers a restore, of the snapshots it is asked for; on a list that mixes servers, only those whose server still exists. */
   onRestore?: (snapshot: Snapshot) => void;
+  restorable?: (snapshot: Snapshot) => boolean;
   /** Lets admins tick rows, to act on several at once. Shared by every list on a page. */
   selection?: Selection;
   /** Put before each row, for a list that mixes servers: which one it is of. */
@@ -77,7 +79,9 @@ interface RowsProps {
 }
 
 /** A list of snapshots, newest first, as rows of one bordered box. */
-export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, selection, lead }: RowsProps) {
+export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restorable, selection, lead }: RowsProps) {
+  const isBusy = (s: Snapshot) => (typeof busy === "function" ? busy(s) : !!busy);
+  const canRestore = (s: Snapshot) => canAdmin && !!onRestore && (restorable?.(s) ?? true);
   const [deleting, setDeleting] = useState<Snapshot | null>(null);
   const navigate = useNavigate();
   // Making a server out of a snapshot is a page of its own, the same one a new server is made on.
@@ -121,9 +125,15 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, select
               </p>
             </div>
             {s.trigger === "pre-restore" && <Chip className="max-md:hidden">undo point</Chip>}
-            {canAdmin && onRestore && (
-              <Button size="sm" icon={<History className="size-3.5" />} disabled={busy} onClick={() => onRestore(s)}>
-                Restore
+            {canRestore(s) && (
+              <Button
+                size="sm"
+                icon={<History className="size-3.5" />}
+                disabled={isBusy(s)}
+                aria-label={`Restore ${s.server} to the snapshot from ${ago(s.time)}`}
+                onClick={() => onRestore?.(s)}
+              >
+                <span className="max-lg:hidden">Restore</span>
               </Button>
             )}
             {canAdmin && (
@@ -143,13 +153,13 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, select
           looking &&
           canAdmin && (
             <>
-              {onRestore && (
+              {canRestore(looking) && (
                 <Button
                   icon={<History className="size-3.5" />}
-                  disabled={busy}
+                  disabled={isBusy(looking)}
                   onClick={() => {
                     setLooking(null);
-                    onRestore(looking);
+                    onRestore?.(looking);
                   }}
                 >
                   Restore
@@ -376,5 +386,53 @@ export function SnapshotSelectionBar({ org, snapshots, selection }: { org: strin
         }
       />
     </>
+  );
+}
+
+/**
+ * Asks before a server is put back to one of its snapshots, and starts it.
+ * The same from the server's own Backups tab and the organization's.
+ */
+export function RestoreDialog({ server, snapshot, onClose }: { server: Server; snapshot: Snapshot | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const restore = useAction((id: string) => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots/${id}/restore`));
+  return (
+    <Modal
+      open={!!snapshot}
+      onOpenChange={(open) => !open && onClose()}
+      title={`Restore ${server.name}?`}
+      description={snapshot ? `To how it was ${ago(snapshot.time)}, on ${new Date(snapshot.time).toLocaleString()}.` : ""}
+    >
+      <div className="flex flex-col gap-4">
+        <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-relaxed text-muted">
+          <li>The server is stopped while its files are put back{server.spec.state === "Stopped" ? "" : ", then started again"}.</li>
+          <li>Its world, files, game version and mods return to how they were. Anything added since is removed.</li>
+          <li>What is there now is saved as a snapshot first, so a restore can be undone.</li>
+        </ul>
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger"
+            loading={restore.isPending}
+            onClick={() =>
+              snapshot &&
+              restore.mutate(snapshot.id, {
+                onSuccess: () => {
+                  // Once it has been started the lists are asked for again, and
+                  // show it as running. The answer is not put into them
+                  // directly: an operation that failed at once may already
+                  // have been reported as over, and would show as running for ever.
+                  qc.invalidateQueries({ queryKey: keys.serverSnapshots(server.org, server.name) });
+                  qc.invalidateQueries({ queryKey: keys.snapshots(server.org) });
+                  onClose();
+                },
+              })
+            }
+          >
+            Restore
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
