@@ -1,0 +1,262 @@
+package controller
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+)
+
+// PortRange is the public ports given out to the extra ports of servers that
+// share the router's address. Zero is none: the cluster then gives each a
+// node port.
+type PortRange struct{ First, Last int32 }
+
+// ParsePortRange reads "first-last", or "" for none.
+func ParsePortRange(s string) (PortRange, error) {
+	if s == "" {
+		return PortRange{}, nil
+	}
+	a, b, ok := strings.Cut(s, "-")
+	first, err1 := strconv.Atoi(strings.TrimSpace(a))
+	last, err2 := strconv.Atoi(strings.TrimSpace(b))
+	if !ok || err1 != nil || err2 != nil || first < 1 || last > 65535 || first > last {
+		return PortRange{}, fmt.Errorf("%q is not a range of ports, as 25600-25699", s)
+	}
+	return PortRange{int32(first), int32(last)}, nil
+}
+
+// PortsServiceName is the Service that opens the extra ports of a server
+// sharing the router's address.
+func PortsServiceName(server string) string { return server + "-ports" }
+
+// sharesAddress says whether a server is reached through the router, whose
+// one address its extra ports then need public ports of their own on.
+func sharesAddress(mc *avsysv1.MinecraftServer) bool {
+	return mc.Spec.Expose.Type == "" || mc.Spec.Expose.Type == avsysv1.ExposeRouter
+}
+
+// portServiceName is the name a port has in a Service.
+func portServiceName(p avsysv1.ExtraPort) string { return "x-" + p.Name }
+
+func protocolOf(p avsysv1.ExtraPort) corev1.Protocol {
+	if p.Protocol == "" {
+		return corev1.ProtocolTCP
+	}
+	return p.Protocol
+}
+
+// publicPorts reads the public ports given out to a server, by port name.
+func publicPorts(mc *avsysv1.MinecraftServer) map[string]int32 {
+	out := map[string]int32{}
+	for _, pair := range strings.Split(mc.Annotations[avsysv1.AnnotationPublicPorts], ",") {
+		name, port, ok := strings.Cut(pair, "=")
+		if n, err := strconv.Atoi(port); ok && err == nil {
+			out[name] = int32(n)
+		}
+	}
+	return out
+}
+
+func writePublicPorts(ports map[string]int32) string {
+	names := make([]string, 0, len(ports))
+	for name := range ports {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, len(names))
+	for i, name := range names {
+		parts[i] = fmt.Sprintf("%s=%d", name, ports[name])
+	}
+	return strings.Join(parts, ",")
+}
+
+// allocating holds giving out public ports to one server at a time.
+var allocating sync.Mutex
+
+// allocatePorts gives each extra port of a server sharing the router's
+// address a public port of its own from the range, one that no other server
+// has, and records them on the server. Ports it no longer has give theirs
+// back. Without a range nothing is given out.
+func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftServer) (map[string]int32, error) {
+	have := publicPorts(mc)
+	want := map[string]int32{}
+	if sharesAddress(mc) && r.Config.PortRange.First != 0 {
+		for _, p := range mc.Spec.Ports {
+			if n, ok := have[p.Name]; ok && n >= r.Config.PortRange.First && n <= r.Config.PortRange.Last {
+				want[p.Name] = n
+			}
+		}
+		if len(want) < len(mc.Spec.Ports) {
+			allocating.Lock()
+			defer allocating.Unlock()
+			var all avsysv1.MinecraftServerList
+			if err := r.Reader.List(ctx, &all); err != nil {
+				return nil, err
+			}
+			taken := map[int32]bool{}
+			for i := range all.Items {
+				other := &all.Items[i]
+				if other.Namespace == mc.Namespace && other.Name == mc.Name {
+					continue
+				}
+				for _, n := range publicPorts(other) {
+					taken[n] = true
+				}
+			}
+			for _, n := range want {
+				taken[n] = true
+			}
+			next := r.Config.PortRange.First
+			for _, p := range mc.Spec.Ports {
+				if _, ok := want[p.Name]; ok {
+					continue
+				}
+				for next <= r.Config.PortRange.Last && taken[next] {
+					next++
+				}
+				if next > r.Config.PortRange.Last {
+					return nil, fmt.Errorf("every public port from %d to %d is given out", r.Config.PortRange.First, r.Config.PortRange.Last)
+				}
+				want[p.Name], taken[next] = next, true
+			}
+		}
+	}
+	if written := writePublicPorts(want); written != mc.Annotations[avsysv1.AnnotationPublicPorts] {
+		orig := mc.DeepCopy()
+		if mc.Annotations == nil {
+			mc.Annotations = map[string]string{}
+		}
+		if written == "" {
+			delete(mc.Annotations, avsysv1.AnnotationPublicPorts)
+		} else {
+			mc.Annotations[avsysv1.AnnotationPublicPorts] = written
+		}
+		if err := r.Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
+			return nil, err
+		}
+	}
+	return want, nil
+}
+
+// ensurePorts opens a server's extra ports and says where they are reached.
+// One with an address of its own has them beside the game port on its
+// Service (see applyService), at their own numbers or node ports. One that
+// shares the router's address has a Service of their own, on the public
+// ports given out to it, or node ports. One that is not exposed has none.
+func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServer, svc *corev1.Service) ([]avsysv1.PortStatus, error) {
+	public, err := r.allocatePorts(ctx, mc)
+	if err != nil {
+		return nil, err
+	}
+	own := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: mc.Namespace, Name: PortsServiceName(mc.Name)}}
+	if !sharesAddress(mc) || len(mc.Spec.Ports) == 0 {
+		if err := r.Delete(ctx, own); client.IgnoreNotFound(err) != nil {
+			return nil, err
+		}
+		if len(mc.Spec.Ports) == 0 || mc.Spec.Expose.Type == avsysv1.ExposeNone {
+			return nil, nil
+		}
+		return portStatus(mc, svc, nil, r.Config), nil
+	}
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, own, func() error {
+		own.Labels = labelsFor(mc)
+		own.Spec.Selector = map[string]string{avsysv1.LabelServer: mc.Name}
+		own.Spec.Type = corev1.ServiceTypeNodePort
+		if r.Config.PortRange.First != 0 {
+			own.Spec.Type = corev1.ServiceTypeLoadBalancer
+		}
+		kept := map[string]int32{}
+		for _, p := range own.Spec.Ports {
+			kept[p.Name] = p.NodePort
+		}
+		ports := make([]corev1.ServicePort, 0, len(mc.Spec.Ports))
+		for _, p := range mc.Spec.Ports {
+			sp := corev1.ServicePort{Name: portServiceName(p), Port: p.Port, TargetPort: intstr.FromInt32(p.Port), Protocol: protocolOf(p), NodePort: kept[portServiceName(p)]}
+			if n := public[p.Name]; n != 0 {
+				sp.Port = n
+			}
+			ports = append(ports, sp)
+		}
+		own.Spec.Ports = ports
+		return controllerutil.SetControllerReference(mc, own, r.Scheme)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return portStatus(mc, own, public, r.Config), nil
+}
+
+// portStatus says where each extra port is reached, by the Service that
+// opens it.
+func portStatus(mc *avsysv1.MinecraftServer, svc *corev1.Service, public map[string]int32, cfg Config) []avsysv1.PortStatus {
+	byName := map[string]corev1.ServicePort{}
+	if svc != nil {
+		for _, sp := range svc.Spec.Ports {
+			byName[sp.Name] = sp
+		}
+	}
+	host := mc.Spec.Expose.Hostname
+	if host == "" && svc != nil {
+		for _, ing := range svc.Status.LoadBalancer.Ingress {
+			if host = ing.Hostname; host == "" {
+				host = ing.IP
+			}
+			if host != "" {
+				break
+			}
+		}
+	}
+	out := make([]avsysv1.PortStatus, 0, len(mc.Spec.Ports))
+	for _, p := range mc.Spec.Ports {
+		st := avsysv1.PortStatus{Name: p.Name, Port: p.Port, Protocol: protocolOf(p)}
+		sp, ok := byName[portServiceName(p)]
+		switch {
+		case !ok:
+		case svc.Spec.Type == corev1.ServiceTypeNodePort:
+			st.PublicPort = sp.NodePort
+		case public != nil:
+			st.PublicPort = public[p.Name]
+		default:
+			st.PublicPort = sp.Port
+		}
+		if st.PublicPort != 0 && host != "" {
+			st.Address = net.JoinHostPort(host, strconv.Itoa(int(st.PublicPort)))
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+// extraServicePorts are a server's extra ports on its own Service, when it
+// has an address of its own: at their own numbers, keeping node ports given
+// before.
+func extraServicePorts(mc *avsysv1.MinecraftServer, existing []corev1.ServicePort) []corev1.ServicePort {
+	if sharesAddress(mc) || mc.Spec.Expose.Type == avsysv1.ExposeNone {
+		return nil
+	}
+	kept := map[string]int32{}
+	for _, p := range existing {
+		kept[p.Name] = p.NodePort
+	}
+	out := make([]corev1.ServicePort, 0, len(mc.Spec.Ports))
+	for _, p := range mc.Spec.Ports {
+		sp := corev1.ServicePort{Name: portServiceName(p), Port: p.Port, TargetPort: intstr.FromInt32(p.Port), Protocol: protocolOf(p)}
+		if mc.Spec.Expose.Type == avsysv1.ExposeNodePort {
+			sp.NodePort = kept[sp.Name]
+		}
+		out = append(out, sp)
+	}
+	return out
+}

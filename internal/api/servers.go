@@ -12,6 +12,7 @@ import (
 	"time"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -184,6 +185,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		return errBadRequest("A server needs at least 1Gi of storage.")
 	}
 	if err := checkJVM(&spec.JVM); err != nil {
+		return err
+	}
+	if err := checkPorts(spec.Ports); err != nil {
 		return err
 	}
 	spec.Expose.Hostname = router.NormalizeHostname(strings.TrimSpace(spec.Expose.Hostname))
@@ -741,6 +745,44 @@ func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv
 	}
 	return now, nil
 }
+
+// checkPorts checks a server's extra ports beyond what the CRD says: each
+// name and each number and protocol once, and not the game's own.
+func checkPorts(ports []avsysv1.ExtraPort) error {
+	names, numbers := map[string]bool{}, map[string]bool{}
+	for i := range ports {
+		p := &ports[i]
+		if p.Protocol == "" {
+			p.Protocol = corev1.ProtocolTCP
+		}
+		if !portName.MatchString(p.Name) {
+			return errBadRequest("A port's name is up to 15 lowercase letters, digits and dashes, starting with a letter, as voice-chat.")
+		}
+		if p.Port < 1 || p.Port > 65535 {
+			return errBadRequest("%d is not a port.", p.Port)
+		}
+		if p.Port == 25565 {
+			return errBadRequest("25565 is the game's own port, not an extra one.")
+		}
+		if p.Port == 25575 {
+			return errBadRequest("25575 is the game's console, and is not opened.")
+		}
+		if p.Protocol != corev1.ProtocolTCP && p.Protocol != corev1.ProtocolUDP {
+			return errBadRequest("A port is TCP or UDP.")
+		}
+		key := fmt.Sprintf("%d/%s", p.Port, p.Protocol)
+		if names[p.Name] || numbers[key] {
+			return errBadRequest("Each port is there once: %s (%s) appears twice.", p.Name, key)
+		}
+		names[p.Name], numbers[key] = true, true
+	}
+	if len(ports) > 8 {
+		return errBadRequest("A server has up to 8 extra ports.")
+	}
+	return nil
+}
+
+var portName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,14}$`)
 
 // rcon runs a console command on a running server.
 func (s *Server) rcon(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error) {

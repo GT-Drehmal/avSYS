@@ -35,6 +35,9 @@ type Config struct {
 	// RouterPublicPort is the port players reach the router on, when not 25565.
 	RouterPublicPort int
 	CurseForgeAPIKey string
+	// PortRange is the public ports given out to the extra ports of
+	// servers that share the router's address.
+	PortRange PortRange
 }
 
 type Reconciler struct {
@@ -89,11 +92,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.ensurePlacement(ctx, mc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("placement: %w", err)
 	}
+	ports, err := r.ensurePorts(ctx, mc, svc)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ports: %w", err)
+	}
 	pod, pending, err := r.ensurePod(ctx, mc)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("pod: %w", err)
 	}
-	return ctrl.Result{}, r.updateStatus(ctx, mc, pod, svc, pending)
+	return ctrl.Result{}, r.updateStatus(ctx, mc, pod, svc, ports, pending)
 }
 
 // leftOf reports whether an object belongs to another server than this one,
@@ -412,7 +419,7 @@ func notReadyFor(pod *corev1.Pod) time.Duration {
 	return 0
 }
 
-func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServer, pod *corev1.Pod, svc *corev1.Service, pending bool) error {
+func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServer, pod *corev1.Pod, svc *corev1.Service, ports []avsysv1.PortStatus, pending bool) error {
 	orig := mc.DeepCopy()
 	st := &mc.Status
 
@@ -427,6 +434,7 @@ func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServ
 	}
 	st.Phase, st.Message = phase, message
 	st.Address = addressFor(mc, svc, r.Config)
+	st.Ports = ports
 	st.PendingRestart = pending
 	st.ObservedGeneration = mc.Generation
 	st.Restarts = 0

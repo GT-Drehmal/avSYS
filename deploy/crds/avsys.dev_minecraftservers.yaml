@@ -503,6 +503,45 @@ spec:
                 items:
                   type: string
                 type: array
+              ports:
+                description: |-
+                  Ports are what mods and plugins listen on beside the game: voice
+                  chat, Geyser, a web map. Each is opened to players next to the
+                  game's own.
+                items:
+                  description: ExtraPort is a port a mod or plugin listens on in the
+                    server.
+                  properties:
+                    name:
+                      description: Name says what it is for, as voice-chat.
+                      pattern: ^[a-z][a-z0-9-]{0,14}$
+                      type: string
+                    port:
+                      description: Port is the one it listens on in the server.
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                    protocol:
+                      default: TCP
+                      description: Protocol defines network protocols supported for
+                        things like container ports.
+                      enum:
+                      - TCP
+                      - UDP
+                      type: string
+                  required:
+                  - name
+                  - port
+                  type: object
+                  x-kubernetes-validations:
+                  - message: 25565 is the game's and 25575 its console's
+                    rule: self.port != 25565 && self.port != 25575
+                maxItems: 8
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               properties:
                 additionalProperties:
                   type: string
@@ -657,6 +696,36 @@ spec:
                 - max
                 - online
                 type: object
+              ports:
+                description: Ports are where the server's extra ports are reached.
+                items:
+                  description: PortStatus is where players reach an extra port.
+                  properties:
+                    address:
+                      description: Address is host:port to reach it at, when the host
+                        is known.
+                      type: string
+                    name:
+                      type: string
+                    port:
+                      format: int32
+                      type: integer
+                    protocol:
+                      description: Protocol defines network protocols supported for
+                        things like container ports.
+                      type: string
+                    publicPort:
+                      description: |-
+                        PublicPort is the port it is reached on from outside, 0 while there
+                        is none yet.
+                      format: int32
+                      type: integer
+                  required:
+                  - name
+                  - port
+                  - protocol
+                  type: object
+                type: array
               restarts:
                 format: int32
                 type: integer

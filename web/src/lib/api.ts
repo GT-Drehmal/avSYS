@@ -163,6 +163,8 @@ export interface ServerSpec {
   jvm?: { aikarFlags?: boolean | null; extraFlags?: string };
   storage: { size: string; storageClassName?: string };
   expose: { type: ExposeType; hostname?: string; loadBalancerIP?: string; nodePort?: number };
+  /** What mods and plugins listen on beside the game, opened to players. */
+  ports?: ExtraPort[] | null;
   sleep: { enabled?: boolean; idleMinutes: number };
   /** From which role members are operators in game: "" is operator, "off" is nobody. */
   autoOp?: "" | "operator" | "admin" | "owner" | "off";
@@ -179,10 +181,27 @@ export interface ServerSpec {
   env?: { name: string; value?: string }[];
 }
 
+/** A port a mod or plugin listens on in the server. */
+export interface ExtraPort {
+  name: string;
+  port: number;
+  protocol?: "TCP" | "UDP";
+}
+
+/** Where an extra port is reached from outside. */
+export interface PortStatus {
+  name: string;
+  port: number;
+  protocol: "TCP" | "UDP";
+  publicPort?: number;
+  address?: string;
+}
+
 export interface ServerStatus {
   phase?: Phase;
   message?: string;
   address?: string;
+  ports?: PortStatus[];
   version?: string;
   players?: { online: number; max: number; names?: string[] } | null;
   lastActive?: string;

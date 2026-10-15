@@ -62,6 +62,7 @@ type options struct {
 	httpAddr            string
 	sshAddr             string
 	routerAddr          string
+	extraPorts          string
 	publicURL           string
 	sshPublicHost       string
 	sshPublicPort       int
@@ -108,6 +109,7 @@ func parseFlags() options {
 	str(&o.sshPublicHost, "ssh-public-host", "", "hostname shown in SSH instructions (default: the host of public-url)")
 	flag.IntVar(&o.sshPublicPort, "ssh-public-port", envInt("ssh-public-port", 0), "port shown in SSH instructions (default: the port of ssh-addr)")
 	flag.IntVar(&o.routerPort, "router-public-port", envInt("router-public-port", 25565), "port players reach the router on")
+	str(&o.extraPorts, "extra-ports", "", "range of public ports, as 25600-25699, given out to the extra ports (voice chat, Geyser, maps) of servers that share the router's address, on a LoadBalancer Service each (empty: the cluster gives each a node port)")
 	str(&o.routerDomain, "router-domain", "", "domain with a wildcard DNS record pointing at the router; new servers default to <server>.<org>.<domain>")
 	str(&o.namespacePrefix, "namespace-prefix", "mc-", "prefix of the namespace created for each organization")
 	str(&o.workspaceImage, "workspace-image", "ghcr.io/gt-drehmal/avsys-workspace:"+version, "image for the SSH workspace next to each server")
@@ -227,6 +229,10 @@ func run(opts options, log *slog.Logger) error {
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &avsysv1.MinecraftServer{}, router.HostnameIndex, router.IndexHostname); err != nil {
 		return err
 	}
+	portRange, err := controller.ParsePortRange(opts.extraPorts)
+	if err != nil {
+		return fmt.Errorf("extra-ports: %w", err)
+	}
 	if err := (&controller.Reconciler{
 		Client: mgr.GetClient(),
 		Reader: mgr.GetAPIReader(),
@@ -237,6 +243,7 @@ func run(opts options, log *slog.Logger) error {
 			WorkspaceAuthorizedKeys:  string(ssh.MarshalAuthorizedKey(workspaceKey.PublicKey())),
 			RouterPublicPort:         opts.routerPort,
 			CurseForgeAPIKey:         os.Getenv("AVSYS_CURSEFORGE_API_KEY"),
+			PortRange:                portRange,
 		},
 	}).SetupWithManager(mgr); err != nil {
 		return err

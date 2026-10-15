@@ -699,6 +699,7 @@ var notRestored = map[string]string{
 	"Resources":        "what it is given to run on stays as it is now",
 	"Storage":          "what it is given to run on stays as it is now",
 	"Expose":           "its address stays as it is now",
+	"Ports":            "how it is reached stays as it is now, as its address does",
 	"Sleep":            "what it is given to run on stays as it is now",
 	"Backups":          "when it is snapshotted is not recorded",
 	"AutoOp":           "who is an operator by role is decided now, not by the files",
