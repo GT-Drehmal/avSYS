@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
@@ -553,6 +555,64 @@ func (s *Server) ServerIcon(ctx context.Context, namespace, name string) []byte 
 		return s.readServerIcon(ctx, namespace, name)
 	})
 	return data
+}
+
+// newPicture is what a request says of the picture of a server made from a
+// snapshot or another server, beyond the one its files bring: nothing, to
+// keep that one; remove, for none; or data, a picture of its own.
+type newPicture struct {
+	data   []byte
+	remove bool
+}
+
+// pictureOf reads a request's picture: left out, null, or base64. It is
+// redrawn here, so a request with one that is not a picture is refused
+// before anything is copied.
+func pictureOf(raw json.RawMessage) (newPicture, error) {
+	if len(raw) == 0 {
+		return newPicture{}, nil
+	}
+	if string(raw) == "null" {
+		return newPicture{remove: true}, nil
+	}
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return newPicture{}, errBadRequest("A picture is given as base64, or as null for none.")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return newPicture{}, errBadRequest("A picture is given as base64, or as null for none.")
+	}
+	data, err := squarePNG(bytes.NewReader(decoded), serverIconSide)
+	if err != nil {
+		return newPicture{}, err
+	}
+	return newPicture{data: data}, nil
+}
+
+// placePicture puts a server's own picture in place, or takes away the one it
+// has, as a request asked.
+func (s *Server) placePicture(ctx context.Context, namespace, name string, picture newPicture) error {
+	if picture.data == nil && !picture.remove {
+		return nil
+	}
+	key := namespace + "/" + name
+	sc, err := s.workspaces.get(ctx, namespace, name)
+	if err != nil {
+		return err
+	}
+	if picture.remove {
+		if err := sc.Remove(serverIconPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		s.serverIcons.forget(key)
+		return nil
+	}
+	if err := writeServerIcon(sc, picture.data); err != nil {
+		return err
+	}
+	s.serverIcons.set(key, picture.data)
+	return nil
 }
 
 // snapshotIcons remembers the icons read out of snapshots. A snapshot never

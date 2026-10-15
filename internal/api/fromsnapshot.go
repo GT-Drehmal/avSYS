@@ -284,7 +284,7 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 // was deleted, to bring it back, or of one that still exists, to copy it.
 // The server exists as soon as this answers, stopped and held, and its files
 // follow; with ?wait=true the answer waits for them.
-func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string) error {
+func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, picture newPicture) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -383,7 +383,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		defer stop()
 		ctx, cancel := context.WithTimeout(working, operationTimeout)
 		defer cancel()
-		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, record.Spec.Mods)
+		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, record.Spec.Mods, picture)
 		if err != nil {
 			err = fmt.Errorf("making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again: %w", err)
 		}
@@ -410,7 +410,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 //
 // The request waits for the snapshot. What follows is as for any server made
 // from a snapshot: it exists once this answers, and its files follow.
-func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string) error {
+func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string, picture newPicture) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -473,7 +473,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	// The snapshot was seen through although the caller may have hung up
 	// meanwhile, and so is making the server from it: otherwise a dropped
 	// connection would leave the snapshot and nothing to show for it.
-	return s.createFromSnapshot(w, r.WithContext(context.WithoutCancel(ctx)), u, a, name, requested, given, snap.ID)
+	return s.createFromSnapshot(w, r.WithContext(context.WithoutCancel(ctx)), u, a, name, requested, given, snap.ID, picture)
 }
 
 // fromLive fills in what a copy of a server takes from the server itself
@@ -508,8 +508,10 @@ func (s *Server) newestOf(ctx context.Context, org, server string) (*backup.Snap
 // created, and then lets it go.
 //
 // copied is the content the original had. A file uploaded to it that the new
-// server was not given is deleted once the files are in.
-func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, copied []avsysv1.ContentRef) error {
+// server was not given is deleted once the files are in. A picture of its
+// own goes in then too, over the one the files brought, before the game
+// first starts.
+func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, copied []avsysv1.ContentRef, picture newPicture) error {
 	key := client.ObjectKeyFromObject(created)
 	// A new server's volume has to be provisioned and the workspace image may
 	// have to be pulled, which on a node that has never run one takes a while.
@@ -542,6 +544,10 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 	}
 
 	s.removeDroppedUploads(ctx, key.Namespace, key.Name, copied, created.Spec.Mods)
+	// As with a new server's picture, the server is never held back over it.
+	if err := s.placePicture(ctx, key.Namespace, key.Name, picture); err != nil {
+		s.Log.Warn("a new server's own picture was not put in place", "server", key.String(), "error", err)
+	}
 
 	// The marks come off and the state goes on in one change: there is no
 	// moment at which the server is both released and not yet as asked for.

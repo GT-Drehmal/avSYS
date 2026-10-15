@@ -210,3 +210,89 @@ export function PictureChoice({ name, shape, file, onChange, hint }: Pick<Pictur
     </div>
   );
 }
+
+/** What a server made from another is to have for a picture: the one its files bring, one of its own, or none. */
+export type PictureChange = { kind: "keep" } | { kind: "file"; file: File } | { kind: "none" };
+
+/**
+ * The picture of a server made from another: the one its files bring unless
+ * another is chosen or it is taken away. current is where that one is.
+ */
+export function PictureChange({ name, current, value, onChange }: { name: string; current?: string; value: PictureChange; onChange: (change: PictureChange) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<string>();
+  // Whether the files bring one at all, which is only known once it is asked for.
+  const [brought, setBrought] = useState<boolean | null>(current ? null : false);
+  const file = value.kind === "file" ? value.file : null;
+  useEffect(() => {
+    if (!file) return setPreview(undefined);
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  const url = value.kind === "file" ? preview : value.kind === "keep" ? current : undefined;
+  const hint =
+    value.kind === "file"
+      ? "Put in place before it first starts."
+      : value.kind === "none"
+        ? "It will have none."
+        : brought === false
+          ? "Its files bring none."
+          : "The one its files bring.";
+  return (
+    <div className="flex items-center gap-4">
+      <Picture name={name || "?"} url={url} size={56} onFound={value.kind === "keep" ? setBrought : undefined} />
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => input.current?.click()}>
+            {value.kind === "file" ? "Replace" : "Choose a picture"}
+          </Button>
+          {(value.kind === "file" || (value.kind === "keep" && brought)) && (
+            <Button size="sm" variant="ghost" onClick={() => onChange({ kind: "none" })}>
+              Remove
+            </Button>
+          )}
+          {value.kind !== "keep" && brought !== false && current && (
+            <Button size="sm" variant="ghost" onClick={() => onChange({ kind: "keep" })}>
+              Keep the one it has
+            </Button>
+          )}
+        </div>
+        <p className="text-xs leading-relaxed text-muted">{hint}</p>
+      </div>
+      <input
+        ref={input}
+        type="file"
+        accept="image/png,image/jpeg,image/gif"
+        className="hidden"
+        aria-label={`Picture for ${name || "the new server"}`}
+        onChange={(e) => {
+          const chosen = e.target.files?.[0];
+          e.target.value = "";
+          if (chosen) onChange({ kind: "file", file: chosen });
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * A picture as base64, at most side pixels on its longer side. The panel
+ * redraws it at the size the game uses; this only keeps a large photo from
+ * making a request too large to send.
+ */
+export async function pictureForRequest(file: File, side = 256): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("The picture could not be read.");
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
