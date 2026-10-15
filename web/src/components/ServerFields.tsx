@@ -152,10 +152,11 @@ export function NodeChoice({ memory, value, kept, onChange }: { memory: string; 
   const wanted = fromGigabytes(memory);
   const nodes = useQuery({ queryKey: ["nodes", wanted], queryFn: () => api.get<{ nodes: NodeInfo[]; automatic?: string }>(`/nodes?memory=${encodeURIComponent(wanted)}`) });
   const list = nodes.data?.nodes ?? [];
-  // Only worth asking where there is more than one.
-  if (list.length < 2 && !value) return null;
   // A copy of a server kept to some nodes is kept to them too, unless asked.
   const keptTo = kept && Object.keys(kept).length > 0 ? Object.entries(kept).map(([k, v]) => `${k}=${v}`).join(", ") : "";
+  // Only worth asking where there is more than one, or the original's
+  // nodes could be let go of.
+  if (list.length < 2 && !value && !keptTo) return null;
   // What the server's pod asks for: its memory and a little for its workspace.
   const need = (Number(memory) || 0) * 1024 ** 3 + 32 * 1024 ** 2;
   const automatic = nodes.data?.automatic;

@@ -89,6 +89,7 @@ func TestPodMemory(t *testing.T) {
 		{"a bigger init container", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(5)}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 5},
 		{"a smaller init container", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(1)}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 2},
 		{"a sidecar", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(1), RestartPolicy: &always}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 3},
+		{"the pod as a whole", corev1.PodSpec{Containers: []corev1.Container{{Resources: gi(2)}}, Resources: &corev1.ResourceRequirements{Requests: gi(6).Requests}}, 6},
 		{"overhead", corev1.PodSpec{Containers: []corev1.Container{{Resources: gi(2)}}, Overhead: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(1<<30, resource.BinarySI)}}, 3},
 	} {
 		if got := podMemory(&corev1.Pod{Spec: c.pod}); got != c.want<<30 {

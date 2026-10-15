@@ -175,7 +175,7 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 // podMemory is the memory the scheduler holds on a node for a pod: its
 // containers and the init containers that keep running beside them, or, if
 // more, any one init container that runs before them with those started so
-// far; and the pod's overhead.
+// far; or what the pod as a whole asks for; and the pod's overhead.
 func podMemory(p *corev1.Pod) int64 {
 	var running, sidecars, most int64
 	for _, c := range p.Spec.Containers {
@@ -191,6 +191,13 @@ func podMemory(p *corev1.Pod) int64 {
 		most = max(most, sidecars+m)
 	}
 	total := max(running+sidecars, most)
+	// Asked for the pod as a whole, where the cluster allows that, it is
+	// what counts.
+	if p.Spec.Resources != nil {
+		if mem, ok := p.Spec.Resources.Requests[corev1.ResourceMemory]; ok {
+			total = mem.Value()
+		}
+	}
 	if mem, ok := p.Spec.Overhead[corev1.ResourceMemory]; ok {
 		total += mem.Value()
 	}

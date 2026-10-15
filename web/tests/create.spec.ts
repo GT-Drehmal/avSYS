@@ -479,6 +479,12 @@ test("a copy of a server kept to some nodes is kept to them, unless Automatic is
   await expect.poll(() => sent.length).toBe(2);
   expect(sent[1]).not.toHaveProperty("node");
   expect(sent[1].spec.nodeSelector).toEqual({});
+
+  // With one node, the original's nodes can still be let go of.
+  await page.unroute("**/api/v1/nodes?*");
+  await page.route("**/api/v1/nodes?*", (route) => route.fulfill({ json: { automatic: "fast", nodes: twoNodes.nodes.slice(0, 1) } }));
+  await page.reload();
+  await expect(page.getByLabel("Node", { exact: true }).locator("option")).toHaveText(["As the original: nodes with disk=ssd", "Automatic (now fast)", /^fast/]);
 });
 
 test("the panel's administrator sees the nodes and what runs on each; nobody else is offered them", async ({ page, as }) => {
