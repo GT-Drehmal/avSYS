@@ -30,9 +30,14 @@ import (
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
-// packPath is where an uploaded resource pack is kept in a server's files:
-// beside the game's own, so that snapshots and copies take it along.
-const packPath = dataRoot + "/.avsys/resource-pack.zip"
+// packDir is where an uploaded resource pack is kept in a server's files:
+// beside the game's own, so that snapshots and copies take it along. Each is
+// named by its hash, so that the file and the server's settings never
+// speak of different packs: a new one is written beside the old, and the
+// old is removed only once the settings say the new one.
+const packDir = dataRoot + "/.avsys"
+
+func packFile(sha string) string { return packDir + "/resource-pack-" + sha + ".zip" }
 
 // packLimit is the most the game takes of a server resource pack, by the
 // game version it runs: 250 MB from 1.18, 100 MB from 1.15, and 50 MB
@@ -197,7 +202,7 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	if err := writePack(sc, tmp); err != nil {
+	if err := writePack(sc, tmp, sha); err != nil {
 		return err
 	}
 	// And kept by the panel, under its hash, to serve.
@@ -217,10 +222,17 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	if old := now.Spec.ResourcePack; old != nil {
 		pack.Enforce, pack.Prompt = old.Enforce, old.Prompt
 	}
+	was := orig.Spec.ResourcePack
 	now.Spec.ResourcePack = pack
 	if err := s.Client.Patch(r.Context(), now, client.MergeFrom(orig)); err != nil {
+		// The settings still say the pack before: the new file goes.
+		if was == nil || was.SHA1 != sha {
+			_ = sc.Remove(packFile(sha))
+		}
 		return err
 	}
+	// The settings say the new pack: any other is gone from them.
+	removeOtherPacks(sc, sha)
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, sha)
 	go s.prunePacksNow(context.WithoutCancel(r.Context()))
 	writeJSON(w, http.StatusOK, s.view(now))
@@ -243,20 +255,19 @@ func (s *Server) deleteResourcePack(w http.ResponseWriter, r *http.Request, u *s
 	if mc, err = s.live(r.Context(), mc); err != nil {
 		return err
 	}
-	if mc.Spec.ResourcePack != nil && mc.Spec.ResourcePack.Uploaded != nil {
-		sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
-		if err != nil {
-			return err
-		}
-		if err := sc.Remove(packPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fileError(err)
-		}
-	}
+	uploaded := mc.Spec.ResourcePack != nil && mc.Spec.ResourcePack.Uploaded != nil
 	now := mc.DeepCopy()
 	orig := now.DeepCopy()
 	now.Spec.ResourcePack = nil
+	// The settings first: a file left over when they no longer say it is
+	// only a file, removed by the next upload if not now.
 	if err := s.Client.Patch(r.Context(), now, client.MergeFrom(orig)); err != nil {
 		return err
+	}
+	if uploaded {
+		if sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name); err == nil {
+			removeOtherPacks(sc, "")
+		}
 	}
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, "removed")
 	go s.prunePacksNow(context.WithoutCancel(r.Context()))
@@ -264,11 +275,11 @@ func (s *Server) deleteResourcePack(w http.ResponseWriter, r *http.Request, u *s
 	return nil
 }
 
-func writePack(sc *sftp.Client, src io.Reader) error {
-	if err := sc.MkdirAll(path.Dir(packPath)); err != nil {
+func writePack(sc *sftp.Client, src io.Reader, sha string) error {
+	if err := sc.MkdirAll(packDir); err != nil {
 		return fileError(err)
 	}
-	tmp := fmt.Sprintf("%s.avsys-upload-%d", packPath, time.Now().UnixNano())
+	tmp := fmt.Sprintf("%s.avsys-upload-%d", packFile(sha), time.Now().UnixNano())
 	f, err := sc.Create(tmp)
 	if err != nil {
 		return fileError(err)
@@ -278,7 +289,7 @@ func writePack(sc *sftp.Client, src io.Reader) error {
 		err = cerr
 	}
 	if err == nil {
-		err = sc.PosixRename(tmp, packPath)
+		err = sc.PosixRename(tmp, packFile(sha))
 	}
 	if err != nil {
 		_ = sc.Remove(tmp)
@@ -348,6 +359,33 @@ func (s *Server) prunePacksNow(ctx context.Context) {
 	}
 }
 
+// removeOtherPacks removes the uploaded packs in a server's files but the one
+// of this hash, as with "" all of them.
+func removeOtherPacks(sc *sftp.Client, keep string) {
+	entries, err := sc.ReadDir(packDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, "resource-pack-") && name != path.Base(packFile(keep)) {
+			_ = sc.Remove(packDir + "/" + name)
+		}
+	}
+}
+
+// removeDroppedPack removes the file of an uploaded pack a server's settings
+// no longer have, after they were changed to one hosted elsewhere.
+func (s *Server) removeDroppedPack(ctx context.Context, namespace, name string, spec, previous *avsysv1.MinecraftServerSpec) {
+	was, now := previous.ResourcePack, spec.ResourcePack
+	if was == nil || was.Uploaded == nil || (now != nil && now.Uploaded != nil && now.SHA1 == was.SHA1) {
+		return
+	}
+	if sc, err := s.workspaces.get(ctx, namespace, name); err == nil {
+		removeOtherPacks(sc, "")
+	}
+}
+
 func (s *Server) cachedPack(sha string) string {
 	return filepath.Join(s.Config.PackDir, sha+".zip")
 }
@@ -383,6 +421,8 @@ func (s *Server) PackHandler() http.Handler {
 				}
 			}
 			mu.(*sync.Mutex).Unlock()
+			// Not kept: any hash at all may be asked for here.
+			s.packFetches.Delete(sha)
 		}
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, errNoSuchPack) {
@@ -435,7 +475,7 @@ func (s *Server) copyPackFrom(ctx context.Context, mc *avsysv1.MinecraftServer, 
 	if err != nil {
 		return err
 	}
-	src, err := sc.Open(packPath)
+	src, err := sc.Open(packFile(sha))
 	if err != nil {
 		return err
 	}

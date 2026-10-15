@@ -179,6 +179,14 @@ func TestKeepUploadedPack(t *testing.T) {
 	if err := keepUploadedPack(spec, uploaded()); err != nil || spec.ResourcePack == nil || spec.ResourcePack.Uploaded == nil {
 		t.Errorf("none said: %v %+v", err, spec.ResourcePack)
 	}
+	// The same with the version lowered under it: refused, as the pack is
+	// too big for it.
+	spec = &avsysv1.MinecraftServerSpec{Version: "1.17.1"}
+	big := uploaded()
+	big.ResourcePack.Uploaded.Size = 200 << 20
+	if err := keepUploadedPack(spec, big); err == nil {
+		t.Error("a pack too big for the lowered version was kept")
+	}
 	// Made up, or its hash changed by hand: refused.
 	if err := keepUploadedPack(uploaded(), &avsysv1.MinecraftServerSpec{}); err == nil {
 		t.Error("an uploaded pack made up was taken")

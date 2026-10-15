@@ -551,6 +551,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
+	s.removeDroppedPack(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
 	// From which role members are operators in game, acted on now and not
 	// with the next look.
@@ -762,7 +763,8 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 	// file too: it is what settings from before it was uploaded say.
 	if (rp == nil || rp.URL == "") && was != nil && was.Uploaded != nil {
 		spec.ResourcePack = was.DeepCopy()
-		return nil
+		// Checked as the version it is kept with, which may be another.
+		return packFits(spec)
 	}
 	if rp == nil || rp.Uploaded == nil {
 		return nil
