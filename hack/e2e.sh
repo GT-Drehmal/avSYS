@@ -8,6 +8,9 @@
 # The token must belong to an instance admin (it creates an organization).
 # Optional: AVSYS_SSH_PORT (2222), AVSYS_ROUTER_HOST (127.0.0.1), AVSYS_ROUTER_PORT (25565).
 # AVSYS_E2E_KEEP_ON_FAILURE=1 leaves the organization and server in place when a check fails.
+# AVSYS_E2E_CONTAINER_LOG is a command that prints the whole log of a server's
+# running game container, given the organization and the server as $1 and
+# $2: what the image prints before the game starts is only there.
 # AVSYS_E2E_EXITED_LOG is a command that prints the log of a server's game as
 # it last exited, given the organization and the server as $1 and $2. The
 # panel's console shows the game that is running, which after an exit is the
@@ -173,7 +176,11 @@ expect "content fits the game's Java" "$(echo "$created" | field "d['java']['eff
 expect "a new server has Aikar's flags" "$(echo "$created" | field "d['spec']['jvm']")" "{'aikarFlags': True}"
 wait_phase Running
 echo "ok: server reached Running"
-expect "and the game was started with them" "$(game_log)" "Using Aikar's flags"
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  expect "and the game was started with them" "$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" probe 2>/dev/null)" "Using Aikar's flags"
+else
+  echo "skipped: the game's own container log is not available to this run"
+fi
 
 step "console"
 plugins=$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")
