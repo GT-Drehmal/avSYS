@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -707,5 +710,75 @@ func TestEverySettingIsDecidedForARestore(t *testing.T) {
 	}
 	for name := range left {
 		t.Errorf("notRestored names %s, which is not a setting", name)
+	}
+}
+
+// A name that a deleted server's snapshots are under is for bringing that
+// server back. A new server, or a copy of another, cannot take it: it would
+// have that history for its own.
+func TestANameGoesWithItsHistory(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	p := newPanel(t)
+	dir := p.withOffsite("restic")
+	repo, key := filepath.Join(dir, "alpha"), filepath.Join(dir, "alpha.key")
+	if err := os.WriteFile(key, []byte("local\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restic := func(stdin string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("restic", append([]string{"--repo", repo, "--password-file", key, "-q"}, args...)...)
+		cmd.Stdin = strings.NewReader(stdin)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("restic %v: %v: %s", args, err, out)
+		}
+		return string(out)
+	}
+	restic("", "init")
+	// The final snapshot of a server named gone, which was deleted, and one
+	// of world, which is still there.
+	for _, server := range []string{"gone", "world"} {
+		restic("a world", "backup", "--stdin", "--stdin-filename", "data/level.dat", "--host", server, "--tag", "avsys", "--tag", "trigger=final")
+	}
+	var list []struct {
+		ID       string `json:"id"`
+		Hostname string `json:"hostname"`
+	}
+	if err := json.Unmarshal([]byte(restic("", "snapshots", "--json")), &list); err != nil {
+		t.Fatal(err)
+	}
+	gone := ""
+	for _, s := range list {
+		if s.Hostname == "gone" {
+			gone = s.ID[:8]
+		}
+	}
+
+	post := func(body string) (int, string) { return p.do("owner", "POST", "/orgs/alpha/servers", body) }
+	for name, c := range map[string]struct {
+		body string
+		want int
+		code string
+	}{
+		"a new server under it":  {`{"name":"gone","spec":{"eula":true,"version":"1.21.4"}}`, 409, "name_has_history"},
+		"a copy under it":        {`{"name":"gone","fromServer":"world"}`, 409, "name_has_history"},
+		"a server that is there": {`{"name":"world","spec":{"eula":true,"version":"1.21.4"}}`, 409, "conflict"},
+		"a name with no history": {`{"name":"fresh","spec":{"eula":true,"version":"1.21.4"}}`, 201, ""},
+	} {
+		if got, code := post(c.body); got != c.want || code != c.code {
+			t.Errorf("%s: got %d %q, want %d %q", name, got, code, c.want, c.code)
+		}
+	}
+	// Brought back under its own name, it gets as far as reading what the
+	// snapshot recorded, which this one has none of.
+	if got, code := post(`{"name":"gone","fromSnapshot":"` + gone + `"}`); got != 422 || code != "no_record" {
+		t.Errorf("bringing it back: got %d %q, want 422 no_record", got, code)
+	}
+	// Made from its snapshot under another name, it is a new server, and the
+	// other name is free.
+	if got, code := post(`{"name":"elsewhere","fromSnapshot":"` + gone + `"}`); got != 422 || code != "no_record" {
+		t.Errorf("a new server from its snapshot: got %d %q, want 422 no_record", got, code)
 	}
 }

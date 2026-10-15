@@ -294,6 +294,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := s.resolveContent(r.Context(), &in.Spec, nil); err != nil {
 		return err
 	}
+	if err := s.nameIsFree(r.Context(), a, in.Name); err != nil {
+		return err
+	}
 	if err := s.ensureNamespace(r.Context(), a.Org.Slug); err != nil {
 		return err
 	}
@@ -307,6 +310,41 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.audit(r.Context(), u, a.Org, "server.create", in.Name, "")
 	writeJSON(w, http.StatusCreated, s.view(mc))
 	return nil
+}
+
+// nameIsFree says whether a new server, other than one brought back, may
+// take this name. One that a server has now is taken. So is one that a
+// deleted server's snapshots are under: snapshots are kept by server name,
+// and a new server of that name would have that history for its own,
+// restore it, and thin its scheduled snapshots by its own policy. That name
+// is for bringing that server back, until its snapshots are deleted.
+//
+// When the snapshots cannot be listed, the name is not refused for it: a
+// fault in backups does not stop servers being made.
+func (s *Server) nameIsFree(ctx context.Context, a *access, name string) error {
+	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &avsysv1.MinecraftServer{}); err == nil {
+		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if !s.Backups.Available() {
+		return nil
+	}
+	list, err := s.Backups.List(ctx, a.Org.Slug)
+	if err != nil {
+		s.Log.Warn("could not list snapshots to see whether a name has history", "org", a.Org.Slug, "name", name, "error", err)
+		return nil
+	}
+	for _, snap := range list {
+		if snap.Server == name {
+			return errNameHasHistory(name)
+		}
+	}
+	return nil
+}
+
+func errNameHasHistory(name string) error {
+	return &Error{Status: http.StatusConflict, Code: "name_has_history", Message: fmt.Sprintf("There are snapshots of an earlier server named %s, and the name goes with them. Bring that server back from one of them, or give this one another name. Deleting all of them frees the name.", name)}
 }
 
 // updateServer applies a JSON merge patch to the server's spec: fields left
