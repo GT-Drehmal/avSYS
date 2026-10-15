@@ -357,12 +357,14 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-validations:
+                - message: extraFlags are JVM options, each starting with a dash
+                  rule: '!has(self.extraFlags) || self.extraFlags.matches(''^(\\s*-\\S+)*\\s*$'')'
                 - message: 'extraFlags cannot set the heap: that is resources.memory'
                   rule: '!has(self.extraFlags) || !self.extraFlags.matches(''(^|\\s)(-Xm[xs]|-XX:(Max|Initial|Min)(HeapSize|RAMPercentage)=|-XX:MaxRAM=)'')'
                 - message: Aikar's flags pick the G1 garbage collector; switch them
                     off to use another
                   rule: '!(has(self.aikarFlags) && self.aikarFlags && has(self.extraFlags)
-                    && self.extraFlags.matches(''(^|\\s)-XX:\\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)(\\s|$)''))'
+                    && self.extraFlags.matches(''(^|\\s)-XX:(\\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)|-UseG1GC)(\\s|$)''))'
               loader:
                 default: vanilla
                 enum:

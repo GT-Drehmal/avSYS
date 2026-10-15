@@ -320,7 +320,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     const jvm: NonNullable<ServerSpec["jvm"]> = {};
     if (v.aikar !== start.aikar) jvm.aikarFlags = v.aikar;
     if (v.extraFlags !== start.extraFlags) jvm.extraFlags = v.extraFlags;
-    if (Object.keys(jvm).length > 0) changes.jvm = jvm;
+    // An original with them only in its environment has neither field: the
+    // one not changed is sent too, or it would be lost as the other is set.
+    const legacy = spec?.jvm?.aikarFlags == null && !spec?.jvm?.extraFlags;
+    if (Object.keys(jvm).length > 0) changes.jvm = legacy ? { aikarFlags: v.aikar, extraFlags: v.extraFlags } : jvm;
     return {
       displayName: v.displayName,
       state: startNow ? "Running" : "Stopped",

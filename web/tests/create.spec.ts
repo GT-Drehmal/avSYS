@@ -513,3 +513,28 @@ test("a server with Aikar's flags in its environment shows them as its launch fl
   expect(sent[0].spec.jvm).toEqual({ aikarFlags: true, extraFlags: "-XX:+AlwaysPreTouch" });
   expect(sent[0].spec.env).toEqual([{ name: "TZ", value: "UTC" }]);
 });
+
+test("a copy of a server with its launch flags only in its environment keeps both when one is changed", async ({ page, as }) => {
+  await as("owner");
+  const sent: { spec: { jvm?: unknown } }[] = [];
+  const env = [
+    { name: "USE_AIKAR_FLAGS", value: "true" },
+    { name: "JVM_OPTS", value: "-XX:+AlwaysPreTouch" },
+  ];
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() === "POST") {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+    }
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, env, jvm: undefined } } : s)) });
+  });
+  await page.goto("/o/friends/new?from=server:survival");
+  await page.getByRole("button", { name: /^Launch flags/ }).click();
+  await expect(page.getByRole("switch", { name: /Aikar's flags/ })).toBeChecked();
+  await expect(page.getByLabel("Extra JVM flags")).toHaveValue("-XX:+AlwaysPreTouch");
+  await page.getByLabel("Extra JVM flags").fill("-XX:+AlwaysPreTouch\n-Dfoo=bar");
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].spec.jvm).toEqual({ aikarFlags: true, extraFlags: "-XX:+AlwaysPreTouch\n-Dfoo=bar" });
+});

@@ -222,8 +222,9 @@ type ResourcesSpec struct {
 // JVMSpec is how the game's Java is started, beyond its memory. The panel
 // checks the same when a server is changed through it; these hold for a
 // server applied directly, with kubectl or GitOps, as well.
+// +kubebuilder:validation:XValidation:rule="!has(self.extraFlags) || self.extraFlags.matches('^(\\\\s*-\\\\S+)*\\\\s*$')",message="extraFlags are JVM options, each starting with a dash"
 // +kubebuilder:validation:XValidation:rule="!has(self.extraFlags) || !self.extraFlags.matches('(^|\\\\s)(-Xm[xs]|-XX:(Max|Initial|Min)(HeapSize|RAMPercentage)=|-XX:MaxRAM=)')",message="extraFlags cannot set the heap: that is resources.memory"
-// +kubebuilder:validation:XValidation:rule="!(has(self.aikarFlags) && self.aikarFlags && has(self.extraFlags) && self.extraFlags.matches('(^|\\\\s)-XX:\\\\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)(\\\\s|$)'))",message="Aikar's flags pick the G1 garbage collector; switch them off to use another"
+// +kubebuilder:validation:XValidation:rule="!(has(self.aikarFlags) && self.aikarFlags && has(self.extraFlags) && self.extraFlags.matches('(^|\\\\s)-XX:(\\\\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)|-UseG1GC)(\\\\s|$)'))",message="Aikar's flags pick the G1 garbage collector; switch them off to use another"
 type JVMSpec struct {
 	// AikarFlags turns on Aikar's flags: G1 garbage collection tuned for the
 	// game's many short-lived objects. The panel switches them on for the

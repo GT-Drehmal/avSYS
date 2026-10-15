@@ -97,7 +97,8 @@ func (s *Server) applyDefaults(org, name string, spec *avsysv1.MinecraftServerSp
 }
 
 // collectors picks a garbage collector, which Aikar's flags pick already.
-var collectors = regexp.MustCompile(`^-XX:\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)$`)
+// Switching G1 off is the same.
+var collectors = regexp.MustCompile(`^-XX:(\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)|-UseG1GC)$`)
 
 // heapFlags set the heap, by any of the names HotSpot takes for it.
 var heapFlags = regexp.MustCompile(`^(-Xm[xs]|-XX:(Max|Initial|Min)HeapSize=|-XX:(Max|Initial|Min)RAMPercentage=|-XX:MaxRAM=)`)

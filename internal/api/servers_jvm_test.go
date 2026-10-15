@@ -19,6 +19,8 @@ func TestCheckJVM(t *testing.T) {
 		"Aikar's and a harmless one": {avsysv1.JVMSpec{AikarFlags: &on, ExtraFlags: "-XX:+AlwaysPreTouch  -Dlog4j2.formatMsgNoLookups=true"}, true},
 		"another collector alone":    {avsysv1.JVMSpec{AikarFlags: &off, ExtraFlags: "-XX:+UseZGC -XX:+ZGenerational"}, true},
 		"another collector on top":   {avsysv1.JVMSpec{AikarFlags: &on, ExtraFlags: "-XX:+UseZGC"}, false},
+		"G1 switched off on top":     {avsysv1.JVMSpec{AikarFlags: &on, ExtraFlags: "-XX:-UseG1GC"}, false},
+		"G1 switched off alone":      {avsysv1.JVMSpec{AikarFlags: &off, ExtraFlags: "-XX:-UseG1GC"}, true},
 		"the heap":                   {avsysv1.JVMSpec{ExtraFlags: "-Xmx8G"}, false},
 		"the heap as a share":        {avsysv1.JVMSpec{ExtraFlags: "-XX:MaxRAMPercentage=80"}, false},
 		"the heap by its long name":  {avsysv1.JVMSpec{ExtraFlags: "-XX:MaxHeapSize=16G"}, false},
