@@ -1,8 +1,8 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, ChevronsUpDown, Cpu, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
-import { orgIcon, api, atLeast, type Org } from "../lib/api";
+import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
 import { keys, useAction, useLiveServers, useMe, useMeta } from "../lib/queries";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Picture } from "./Picture";
@@ -139,6 +139,36 @@ function NavItem({ to, end, icon, children }: { to: string; end?: boolean; icon:
   );
 }
 
+/**
+ * Says when the panel has been updated since this page was loaded: what is
+ * open is the version before, until it is reloaded.
+ */
+function UpdateNotice({ loaded }: { loaded?: string }) {
+  // The version this page came with, as first told.
+  const first = useRef(loaded);
+  if (!first.current && loaded) first.current = loaded;
+  const now = useQuery({
+    queryKey: ["meta", "now"],
+    queryFn: () => api.get<Meta>("/meta"),
+    enabled: !!first.current,
+    refetchInterval: 5 * 60_000,
+    refetchOnWindowFocus: "always",
+    retry: false,
+  });
+  const latest = now.data?.version;
+  if (!first.current || !latest || latest === first.current) return null;
+  return (
+    <div role="status" className="flex items-center justify-center gap-3 border-b border-line bg-accent-wash px-4 py-2 text-[13px]">
+      <span>
+        avSYS was updated to <span className="font-mono">{latest}</span>.
+      </span>
+      <button type="button" onClick={() => window.location.reload()} className="font-medium text-accent hover:underline">
+        Reload
+      </button>
+    </div>
+  );
+}
+
 export function Shell() {
   const { pathname } = useLocation();
   const me = useMe().data!;
@@ -221,6 +251,7 @@ export function Shell() {
         </div>
       </aside>
       <main className="min-w-0 flex-1">
+        <UpdateNotice loaded={meta?.version} />
         <div className="mx-auto max-w-5xl px-5 py-8 md:px-10">
           {/* An error in a page leaves the navigation standing, and going elsewhere clears it. */}
           <ErrorBoundary key={pathname}>
