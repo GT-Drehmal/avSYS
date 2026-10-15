@@ -3,13 +3,14 @@ import { CopyPlus, History, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
-import { api, ApiError, type Operation, type Snapshot, type SnapshotDetail } from "../lib/api";
+import { api, ApiError, snapshotIcon, type Operation, type Snapshot, type SnapshotDetail } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { keys, useAction, useOffsite } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
 import { ContentList } from "./Content";
 import type { Selection } from "../lib/selection";
 import { toast } from "../lib/toast";
+import { Picture } from "./Picture";
 import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectionBar } from "./ui";
 
 export const triggerLabel = (s: Snapshot) => {
@@ -270,7 +271,11 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
           </dl>
 
           <section className="flex flex-col gap-2">
-            <h3 className="text-[13px] font-semibold">{s.server} as it was</h3>
+            <h3 className="flex items-center gap-2 text-[13px] font-semibold">
+              {/* The picture among its files, which a server made from it has. */}
+              <Picture name={detail.data?.spec.displayName || s.server} url={snapshotIcon(org, s.id)} size={24} />
+              {s.server} as it was
+            </h3>
             {detail.isPending ? (
               <Loading />
             ) : !spec ? (

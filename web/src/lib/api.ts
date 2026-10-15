@@ -95,6 +95,8 @@ export interface Org {
 export const orgIcon = (o: Pick<Org, "slug" | "hasIcon">) => (o.hasIcon ? `/api/v1/orgs/${o.slug}/icon` : undefined);
 /** Where a server's icon is. Whether it has one is only known by asking. */
 export const serverIcon = (s: Pick<Server, "org" | "name">) => `/api/v1/orgs/${s.org}/servers/${s.name}/icon`;
+/** The picture among a snapshot's files: what a server made from it will have. */
+export const snapshotIcon = (org: string, id: string) => `/api/v1/orgs/${org}/snapshots/${id}/icon`;
 
 export interface Me {
   user: User;
