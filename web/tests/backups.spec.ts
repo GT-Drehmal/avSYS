@@ -238,7 +238,35 @@ test("the header's Snapshot waits while one is being taken, as the event stream 
   await page.goto("/o/friends/s/survival");
   const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
   await expect(snapshot).toBeEnabled();
-  // The stream is opened again, now saying a snapshot of it is under way.
+  // The stream is opened again, now saying a snapshot of it is under way,
+  // and that an old snapshot was deleted meanwhile, which is not its end.
   running = true;
   await expect(snapshot).toBeDisabled({ timeout: 15_000 });
+});
+
+test("a snapshot deleted while one is being taken does not end it; its own end does", async ({ page }) => {
+  const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Copying files", percent: 40, startedAt: new Date().toISOString() };
+  const deleted = { kind: "delete", org: "friends", server: "survival" };
+  const done = { kind: "snapshot", org: "friends", server: "survival" };
+  let body = `event: operation.progress\ndata: ${JSON.stringify(op)}\n\nevent: operation.done\ndata: ${JSON.stringify(deleted)}\n\n`;
+  await page.route("**/api/v1/events", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body }));
+  await page.goto("/o/friends/s/survival");
+  const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
+  await expect(snapshot).toBeDisabled();
+  body = `event: operation.done\ndata: ${JSON.stringify(done)}\n\n`;
+  await expect(snapshot).toBeEnabled({ timeout: 15_000 });
+});
+
+test("a server's header fits a phone, its buttons wrapping", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto("/o/friends/s/survival");
+  await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("by server, a list of servers that could not be loaded is said, not taken for none", async ({ page }) => {
+  await page.route("**/api/v1/orgs/friends/servers", (route) => route.fulfill({ status: 500, json: { code: "test", message: "Not today." } }));
+  await page.reload();
+  await expect(page.getByText(/The list of servers could not be loaded/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /^Snapshot .* now$/ })).toHaveCount(0);
 });

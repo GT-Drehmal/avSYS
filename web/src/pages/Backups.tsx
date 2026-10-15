@@ -88,7 +88,8 @@ export function Backups() {
   const listed = view === "time" ? filtered : ordered.flatMap(([name, items]) => (open.has(name) ? (all.has(name) ? items : items.slice(0, firstFew)) : []));
   const selection = useSelection(listed.map((s) => s.id), `${org}/${view}`);
 
-  if (list.isPending) return <Loading />;
+  // Which servers there are decides the rows and what can be done to them.
+  if (list.isPending || servers.isPending) return <Loading />;
   const header = <PageHeader title="Backups" description={membership?.name} />;
   if (!list.data) {
     return (
@@ -134,6 +135,7 @@ export function Backups() {
           </p>
           <OffsiteCopy org={org} canAdmin={canAdmin} empty={snapshots.length === 0 && operations.length === 0} />
         </div>
+        {servers.isError && <Notice tone="danger">The list of servers could not be loaded, so only servers with snapshots are shown, and nothing can be done to them here.</Notice>}
         <BackupSchedule org={org} canAdmin={canAdmin} />
         {operations.map((op) => (
           <OperationRow key={op.server} op={op} />

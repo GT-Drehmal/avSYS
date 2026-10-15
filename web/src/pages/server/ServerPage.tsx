@@ -152,7 +152,7 @@ export function ServerPage() {
           <Status phase={status.phase} />
         </div>
         {canOperate && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button icon={<Plug className="size-3.5" />} onClick={() => setConnecting(true)}>
               Connect
             </Button>
@@ -165,11 +165,13 @@ export function ServerPage() {
             {meta?.snapshots && (
               <Button
                 icon={<Camera className="size-3.5" />}
+                aria-label="Snapshot"
                 disabled={busy}
                 loading={snapshot.isPending}
                 onClick={() => snapshot.mutate(undefined, { onSuccess: () => toast.info(`Taking a snapshot of ${server.name}`) })}
               >
-                Snapshot
+                {/* Its picture alone on a phone, where the row is narrow. */}
+                <span className="max-sm:hidden">Snapshot</span>
               </Button>
             )}
             <ServerActions server={server} />
@@ -232,7 +234,7 @@ export function ServerPage() {
         )}
       </div>
 
-      <nav className="mt-6 flex gap-6 border-b border-line">
+      <nav className="mt-6 flex gap-6 border-b border-line max-sm:gap-4">
         <Tab to="." end>
           Console
         </Tab>
