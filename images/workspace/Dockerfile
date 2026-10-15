@@ -21,7 +21,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       openssh-server ca-certificates tini \
       bash-completion curl wget git rsync tar gzip unzip zip \
-      nano vim-tiny less htop jq procps tmux \
+      nano vim-tiny less htop jq procps tmux file tree \
+      python3 python3-venv \
  && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
  && curl -fsSL "https://github.com/itzg/rcon-cli/releases/download/${RCON_CLI_VERSION}/rcon-cli_${RCON_CLI_VERSION}_linux_${TARGETARCH}.tar.gz" \
       | tar -xz -C /usr/local/bin rcon-cli \
@@ -35,6 +36,9 @@ COPY images/workspace/profile.sh /etc/profile.d/avsys.sh
 COPY images/workspace/bashrc /etc/bash.bashrc
 COPY images/workspace/entrypoint.sh /usr/local/bin/avsys-workspace
 COPY images/workspace/mc /usr/local/bin/mc
+# Found before the real ones, to say why they will not do and what will.
+COPY images/workspace/no-root /usr/local/bin/sudo
+RUN for name in su doas apt apt-get; do ln -s sudo /usr/local/bin/$name; done
 COPY LICENSE /licenses/LICENSE
 
 USER 1000:1000

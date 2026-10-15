@@ -1,0 +1,55 @@
+#!/bin/sh
+# Stands where sudo and apt would be found first, and says what to do
+# instead: nothing in a server's workspace runs as root, so a package cannot
+# be installed into it, and one that could would be gone the next time the
+# server's pod was replaced.
+me=$(basename "$0")
+
+explain() {
+  cat >&2 <<'TEXT'
+There is no root in a server's workspace, so packages cannot be installed
+into it with apt. Everyone with a shell here shares one unprivileged user,
+the same one the game runs as.
+
+What does work, and stays with the server:
+
+  A program that is one file     put it in ~/.local/bin, which is on your PATH
+  Python packages                python3 -m venv ~/venv && ~/venv/bin/pip install <name>
+  Anything you can build         install it under ~ (for example with --prefix=$HOME/.local)
+
+Your home here is on the server's own storage, so these survive restarts.
+It is left out of snapshots, so a copy of the server starts without them.
+
+For a tool everyone should have, ask whoever runs this panel: the workspace
+image can be replaced with one that includes it.
+TEXT
+}
+
+case "$me" in
+  sudo|su|doas)
+    explain
+    exit 1
+    ;;
+  apt|apt-get)
+    # Looking is fine; only what would change the system is turned away.
+    # The command is the first word that is not an option, nor the value
+    # of one that takes a value.
+    skip=
+    for arg in "$@"; do
+      if [ -n "$skip" ]; then
+        skip=
+        continue
+      fi
+      case "$arg" in
+        -o|-c|-t|--option|--config-file|--target-release|--default-release) skip=1 ;;
+        -*) ;;
+        install|reinstall|remove|purge|autoremove|autopurge|update|upgrade|full-upgrade|dist-upgrade|dselect-upgrade|satisfy|build-dep|edit-sources|clean|autoclean|distclean|markauto|unmarkauto)
+          explain
+          exit 1
+          ;;
+        *) break ;;
+      esac
+    done
+    exec "/usr/bin/$me" "$@"
+    ;;
+esac

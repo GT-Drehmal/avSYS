@@ -208,6 +208,15 @@ expect "shell lands in the server directory" "$out" /data
 expect "shell sees the same files" "$out" "written by e2e"
 expect "mc helper reaches the game" "$out" "players online"
 expect "mc console types at the server console and shows the log" "$out" "[Server] hello from a shell"
+# What someone installs for themselves goes in their home, which is on the
+# server's storage, and is found; what would need root says what to do instead.
+own=$(ssh -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'mkdir -p ~/.local/bin && printf "#!/bin/sh\necho a tool of my own\n" > ~/.local/bin/mytool && chmod +x ~/.local/bin/mytool && bash -lc mytool; python3 -c "print(6 * 7)"; sudo true 2>&1 | head -1; apt-get -o APT::Color=0 install nothing 2>&1 | head -1; echo "restic is $(command -v restic)"' 2>&1) || true
+expect "a program put in ~/.local/bin is found by a login shell" "$own" "a tool of my own"
+# A plain command, which is how the panel runs restic here, does not look there.
+expect "the panel's own commands do not look in anyone's home" "$own" "restic is /usr/local/bin/restic"
+expect "python is there" "$own" "42"
+expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
 
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
