@@ -384,7 +384,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		defer stop()
 		ctx, cancel := context.WithTimeout(working, operationTimeout)
 		defer cancel()
-		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, record.Spec.Mods, picture)
+		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, &record.Spec, picture)
 		if err != nil {
 			err = fmt.Errorf("making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again: %w", err)
 		}
@@ -508,11 +508,12 @@ func (s *Server) newestOf(ctx context.Context, org, server string) (*backup.Snap
 // populate copies a snapshot's files into a server that has just been
 // created, and then lets it go.
 //
-// copied is the content the original had. A file uploaded to it that the new
-// server was not given is deleted once the files are in. A picture of its
+// original is the spec of the server the snapshot is of. Content it had that
+// the new server was not given, and that only the panel removes, is deleted
+// once the files are in. A picture of its
 // own goes in then too, over the one the files brought, before the game
 // first starts.
-func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, copied []avsysv1.ContentRef, picture newPicture) error {
+func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, original *avsysv1.MinecraftServerSpec, picture newPicture) error {
 	key := client.ObjectKeyFromObject(created)
 	// A new server's volume has to be provisioned and the workspace image may
 	// have to be pulled, which on a node that has never run one takes a while.
@@ -550,7 +551,7 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 	if files, err := sftp.NewClient(ws); err != nil {
 		s.Log.Warn("could not reach a new server's files to tidy them", "server", key.String(), "error", err)
 	} else {
-		s.removeDroppedUploadsWith(ctx, files, key.Namespace, key.Name, &created.Spec, copied)
+		s.removeDroppedUploadsWith(ctx, files, key.Namespace, key.Name, &created.Spec, original)
 		// As with a new server's picture, the server is never held back over it.
 		if err := s.placePicture(files, key.Namespace, key.Name, picture); err != nil {
 			s.Log.Warn("a new server's own picture was not put in place", "server", key.String(), "error", err)

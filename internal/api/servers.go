@@ -426,7 +426,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	} else if err != nil {
 		return err
 	}
-	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous.Mods)
+	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
 	// From which role members are operators in game, acted on now and not
 	// with the next look.

@@ -391,6 +391,12 @@ spec:
                 items:
                   description: ContentRef is one installed mod, plugin or datapack.
                   properties:
+                    file:
+                      description: |-
+                        File is the name a datapack from a URL is saved under, as its download
+                        gave it, recorded by the panel when the entry was added. It is what
+                        the panel deletes when the entry is taken off.
+                      type: string
                     iconUrl:
                       type: string
                     java:

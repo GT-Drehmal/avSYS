@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -408,8 +409,26 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		mu    sync.Mutex
 		first error
 	)
+	// Where a datapack from a URL was saved is known from when it was added.
+	// What a request says of it is not taken: the panel deletes that file.
+	saved := map[string]string{}
+	if previous != nil {
+		for _, m := range previous.Mods {
+			if m.Source == avsysv1.SourceURL && m.Kind == avsysv1.KindDatapack {
+				saved[m.Project] = m.File
+			}
+		}
+	}
 	for i := range spec.Mods {
 		m := &spec.Mods[i]
+		if m.Source == avsysv1.SourceURL && m.Kind == avsysv1.KindDatapack {
+			file, ok := saved[m.Project]
+			if m.File = file; ok {
+				continue
+			}
+		} else {
+			m.File = ""
+		}
 		switch m.Source {
 		case avsysv1.SourceModrinth:
 			if retarget {
@@ -419,7 +438,10 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 				continue
 			}
 		case avsysv1.SourceURL:
-			if m.Java != 0 || m.Kind == avsysv1.KindDatapack || !strings.HasSuffix(strings.ToLower(strings.SplitN(m.Project, "?", 2)[0]), ".jar") {
+			if m.Kind == avsysv1.KindDatapack {
+				break
+			}
+			if m.Java != 0 || !strings.HasSuffix(strings.ToLower(strings.SplitN(m.Project, "?", 2)[0]), ".jar") {
 				continue
 			}
 		default:
@@ -431,7 +453,10 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 			defer wg.Done()
 			defer func() { <-slots }()
 			var err error
-			if m.Source == avsysv1.SourceURL {
+			if m.Source == avsysv1.SourceURL && m.Kind == avsysv1.KindDatapack {
+				// Best effort, as below; without it, the URL's own name is used.
+				m.File = savedName(ctx, m.Project)
+			} else if m.Source == avsysv1.SourceURL {
 				// Best effort: a URL that cannot be read now may still work
 				// from inside the cluster.
 				if java, ierr := javaOfURL(ctx, m.Project); ierr == nil {
@@ -451,6 +476,34 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 	}
 	wg.Wait()
 	return first
+}
+
+// savedName is the name the image's downloader saves a file from fileURL
+// under: the one its response gives, or else the last part of the path it
+// was redirected to. "" if the URL cannot be read now.
+func savedName(ctx context.Context, fileURL string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := publicHTTP.Do(req)
+	if err != nil {
+		return ""
+	}
+	// Only the headers are wanted.
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	if _, params, err := mime.ParseMediaType(resp.Header.Get("Content-Disposition")); err == nil {
+		if name := path.Base(strings.ReplaceAll(params["filename"], "\\", "/")); plainName(name) {
+			return name
+		}
+	}
+	if name := path.Base(resp.Request.URL.Path); plainName(name) {
+		return name
+	}
+	return ""
 }
 
 var unsafeFilenameChars = regexp.MustCompile(`[^A-Za-z0-9._+()\[\] -]+`)
@@ -562,13 +615,13 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 // datapack from a URL or an upload it only ever adds: it can be told to clear
 // the whole datapacks folder, which would take Modrinth's and any put there
 // by hand with it. So the panel removes exactly the file it had put there.
-func (s *Server) removeDroppedUploads(ctx context.Context, namespace, server string, spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef) {
+func (s *Server) removeDroppedUploads(ctx context.Context, namespace, server string, spec, before *avsysv1.MinecraftServerSpec) {
 	s.removeDroppedUploadsWith(ctx, nil, namespace, server, spec, before)
 }
 
 // removeDroppedUploadsWith is removeDroppedUploads through a connection to the
 // server's files that the caller has made sure of, or the shared one if nil.
-func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Client, namespace, server string, spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef) {
+func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Client, namespace, server string, spec, before *avsysv1.MinecraftServerSpec) {
 	gone := leftBehind(spec, before)
 	if len(gone) == 0 {
 		return
@@ -589,22 +642,33 @@ func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Cli
 
 // leftBehind lists the files to delete for content that was in before and is
 // not in spec's list.
-func leftBehind(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef) []string {
+func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 	kept := map[string]bool{}
 	for _, m := range spec.Mods {
 		kept[string(m.Source)+":"+m.Project] = true
 	}
+	// A datapack is in the world's folder, which LEVEL can move. Where it was
+	// put is where the world was then; and a datapack still listed may be
+	// in the same file, which then stays. If either folder is not known,
+	// as when LEVEL is read from elsewhere, no datapack is deleted.
+	was, now := levelOf(before), levelOf(spec)
+	inUse := map[string]bool{}
+	for _, m := range spec.Mods {
+		if name := installedDatapack(m); name != "" && now != "" {
+			inUse[path.Join(dataRoot, now, "datapacks", name)] = true
+		}
+	}
 	var gone []string
-	for _, m := range before {
+	for _, m := range before.Mods {
 		if kept[string(m.Source)+":"+m.Project] {
 			continue
 		}
 		if m.Source == avsysv1.SourceUpload {
 			gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
 		}
-		if m.Kind == avsysv1.KindDatapack && (m.Source == avsysv1.SourceUpload || m.Source == avsysv1.SourceURL) {
-			if name := installedDatapack(m); name != "" {
-				gone = append(gone, path.Join(dataRoot, levelOf(spec), "datapacks", name))
+		if name := installedDatapack(m); name != "" && was != "" && now != "" {
+			if file := path.Join(dataRoot, was, "datapacks", name); !inUse[file] {
+				gone = append(gone, file)
 			}
 		}
 	}
@@ -612,30 +676,49 @@ func leftBehind(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef) 
 }
 
 // installedDatapack is the name the image gives a datapack from a URL or an
-// upload in the world's datapacks folder: the upload's own name, or the last
-// part of the URL's path.
+// upload in the world's datapacks folder: the upload's own name, or the name
+// its download gave it, recorded when it was added. Without that, as for one
+// added before the panel recorded it, the last part of the URL's path.
 func installedDatapack(m avsysv1.ContentRef) string {
-	if m.Source == avsysv1.SourceUpload {
+	if m.Kind != avsysv1.KindDatapack {
+		return ""
+	}
+	switch m.Source {
+	case avsysv1.SourceUpload:
 		return path.Base(m.Project)
+	case avsysv1.SourceURL:
+		if plainName(m.File) {
+			return m.File
+		}
+		u, err := url.Parse(m.Project)
+		if err != nil {
+			return ""
+		}
+		if name := path.Base(u.Path); plainName(name) && strings.HasSuffix(strings.ToLower(name), ".zip") {
+			return name
+		}
 	}
-	u, err := url.Parse(m.Project)
-	if err != nil {
-		return ""
-	}
-	name := path.Base(u.Path)
-	if name == "." || name == "/" || !strings.HasSuffix(strings.ToLower(name), ".zip") {
-		return ""
-	}
-	return name
+	return ""
+}
+
+// plainName is a file's name with no folder in it.
+func plainName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/\\\x00")
 }
 
 // levelOf is the world's folder, where the image puts datapacks: what LEVEL
-// says in a server's own environment, or "world".
+// says in a server's own environment, or "world". It is "" when that cannot
+// be told: LEVEL read from a secret or the like, or naming a folder that is
+// not one in /data.
 func levelOf(spec *avsysv1.MinecraftServerSpec) string {
 	for _, e := range spec.Env {
-		if e.Name == "LEVEL" && e.Value != "" && !strings.Contains(e.Value, "/") && e.Value != ".." {
-			return e.Value
+		if e.Name != "LEVEL" {
+			continue
 		}
+		if e.ValueFrom != nil || !plainName(e.Value) {
+			return ""
+		}
+		return e.Value
 	}
 	return "world"
 }
