@@ -245,6 +245,10 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// FromServer makes the server a copy of another in the organization,
 		// as that one is now.
 		FromServer string `json:"fromServer"`
+		// Picture is, for one made from a snapshot or another server, a
+		// picture of its own in place of the one its files bring: base64,
+		// or null for none.
+		Picture json.RawMessage `json:"picture"`
 	}
 	if err := decode(r, &raw); err != nil {
 		return err
@@ -269,10 +273,17 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// out: "sleep off" and no word about sleep decode to the same thing.
 		given := map[string]json.RawMessage{}
 		_ = json.Unmarshal(raw.Spec, &given)
-		if raw.FromServer != "" {
-			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer)
+		picture, err := pictureOf(raw.Picture)
+		if err != nil {
+			return err
 		}
-		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot)
+		if raw.FromServer != "" {
+			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture)
+		}
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture)
+	}
+	if len(raw.Picture) > 0 {
+		return errBadRequest("A new server is given its picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once it is made.")
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// "Latest" is settled once, here. A server that kept following it would

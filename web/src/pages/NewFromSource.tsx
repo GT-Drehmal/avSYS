@@ -3,7 +3,7 @@ import { ChevronLeft, Plus } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
-import { Picture } from "../components/Picture";
+import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, GameplayFields, gameplayKeys, gameplayOf, joinHint, joinOptions, More, type Gameplay, type Join } from "../components/ServerFields";
 import { Button, Field, Input, Loading, Notice, PageHeader, Section, Select, Toggle } from "../components/ui";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
@@ -207,6 +207,7 @@ function Form({ org, origin, source, taken, history }: { org: string; origin: Or
   const [hostname, setHostname] = useState("");
   const [start, setStart] = useState(true);
   const [keepCustom, setKeepCustom] = useState(custom);
+  const [pictureChange, setPictureChange] = useState<PictureChange>({ kind: "keep" });
   const [mods, setMods] = useState<ContentRef[]>(spec.mods ?? []);
   const [addingMods, setAddingMods] = useState(false);
   // Only sent when changed: what is left out is taken as the original has it.
@@ -235,7 +236,9 @@ function Form({ org, origin, source, taken, history }: { org: string; origin: Or
     };
     try {
       const from = origin.kind === "server" ? { fromServer: origin.name } : { fromSnapshot: origin.id };
-      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, spec: request });
+      // Left out, it keeps the one its files bring.
+      const pictured = pictureChange.kind === "file" ? { picture: await pictureForRequest(pictureChange.file) } : pictureChange.kind === "none" ? { picture: null } : {};
+      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, spec: request });
       await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
       // Where any new server opens. How the copying goes shows there, as on
       // every tab, until its files are in.
@@ -286,10 +289,7 @@ function Form({ org, origin, source, taken, history }: { org: string; origin: Or
       </Section>
 
       <Section title="Name and picture" description="How it appears in the panel and in a player's server list.">
-        <div className="flex items-center gap-3">
-          <Picture name={displayName || source.name} url={picture} size={56} />
-          <p className="text-xs leading-relaxed text-muted">Its picture comes with its files. It can be changed in the new server's settings.</p>
-        </div>
+        <PictureChange name={displayName || source.name} current={picture} value={pictureChange} onChange={setPictureChange} />
         <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
         <Field label="Short name" hint={nameHint}>
           {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
