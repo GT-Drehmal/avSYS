@@ -101,6 +101,16 @@ func TestPodMemory(t *testing.T) {
 			t.Errorf("%s: %d GiB, want %d", c.name, got>>30, c.want)
 		}
 	}
+	// Being made smaller in place: what it has now, until it is done.
+	resizing := &corev1.Pod{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "game", Resources: gi(2)}}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "game", AllocatedResources: gi(4).Requests, Resources: &corev1.ResourceRequirements{Requests: gi(4).Requests},
+		}}},
+	}
+	if got := podMemory(resizing); got != 4<<30 {
+		t.Errorf("resizing: %d GiB, want 4", got>>30)
+	}
 }
 
 // A server given a node counts there from then on, though its pod is not
@@ -132,7 +142,7 @@ func TestNodeUsageCountsPlacedServers(t *testing.T) {
 	creating.Annotations[avsysv1.AnnotationRestoring] = "abcd1234"
 	asleep := server("asleep", "Running", "a")
 	asleep.Annotations[avsysv1.AnnotationAsleep] = "true"
-	// Making it failed: it waits to be deleted, and holds nothing.
+	// Making it failed: it waits to be deleted, holding its workspace.
 	failed := server("failed", "Stopped", "a")
 	failed.Annotations[avsysv1.AnnotationCreating] = "abcd1234"
 	failed.Status.Snapshots = &avsysv1.SnapshotStatus{Error: "making this server from the snapshot did not finish"}
@@ -147,16 +157,18 @@ func TestNodeUsageCountsPlacedServers(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n, workspace,
 		server("new", "Running", "a"),      // placed, no pod yet: 4Gi + 32Mi
 		server("starting", "Running", "a"), // bound workspace of 32Mi: 4Gi more
-		server("stopped", "Stopped", "a"),  // nothing
+		server("stopped", "Stopped", "a"),  // its workspace: 32Mi
 		creating,                           // being made from a snapshot, held stopped: 4Gi + 32Mi
-		asleep,                             // gives its memory back: nothing
+		asleep,                             // gives the game's memory back: 32Mi
 		failed, again, leftover, &b,
 	).Build()
 	_, reserved, err := NodeUsage(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := 4*(4*gi) + 4*(32<<20)
+	// Four to run, and three that hold only their workspace: stopped,
+	// asleep, and the one whose making failed.
+	want := 4*(4*gi) + 4*(32<<20) + 3*(32<<20)
 	if reserved["a"] != want {
 		t.Errorf("reserved on a = %d, want %d", reserved["a"], want)
 	}
@@ -185,7 +197,8 @@ func TestNodeNamedByHostnameLabel(t *testing.T) {
 }
 
 // A server whose record holds its node's hostname label, as an older panel
-// wrote it, has it renamed to the node's name, which its pod is kept to.
+// wrote it, has it set to the name of the node its volume is on, which its
+// pod is kept to: also where that label is another node's name.
 func TestRecordedHostnameRenamed(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
@@ -194,13 +207,31 @@ func TestRecordedHostnameRenamed(t *testing.T) {
 	if err := avsysv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	n := node("node-1", "16Gi", "")
-	n.Labels[corev1.LabelHostname] = "host-1"
-	older := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "older", Annotations: map[string]string{avsysv1.AnnotationNode: "host-1"}}}
-	named := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "named", Annotations: map[string]string{avsysv1.AnnotationNode: "node-1"}}}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n, older, named).Build()
+	// Node one's hostname label is node two's name.
+	one, two := node("one", "16Gi", ""), node("two", "16Gi", "")
+	one.Labels[corev1.LabelHostname] = "two"
+	two.Labels[corev1.LabelHostname] = "host-of-two"
+	objects := []client.Object{&one, &two}
+	server := func(name, recorded, label string) *avsysv1.MinecraftServer {
+		mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: name, Annotations: map[string]string{avsysv1.AnnotationNode: recorded}}}
+		pv := &corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{Name: "pv-" + name},
+			Spec: corev1.PersistentVolumeSpec{NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{label}}},
+			}}}}},
+		}
+		pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: DataPVCName(name)}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: pv.Name}}
+		objects = append(objects, mc, pv, pvc)
+		return mc
+	}
+	cases := map[*avsysv1.MinecraftServer]string{
+		server("older", "two", "two"):                 "one", // its volume is on one
+		server("named", "two", "host-of-two"):         "two", // already right
+		server("plain", "host-of-two", "host-of-two"): "two",
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 	r := &Reconciler{Client: c, Reader: c}
-	for _, mc := range []*avsysv1.MinecraftServer{older, named} {
+	for mc, want := range cases {
 		if err := r.ensurePlacement(context.Background(), mc); err != nil {
 			t.Fatal(err)
 		}
@@ -208,8 +239,8 @@ func TestRecordedHostnameRenamed(t *testing.T) {
 		if err := c.Get(context.Background(), client.ObjectKeyFromObject(mc), got); err != nil {
 			t.Fatal(err)
 		}
-		if got.Annotations[avsysv1.AnnotationNode] != "node-1" {
-			t.Errorf("%s: recorded node %q, want node-1", mc.Name, got.Annotations[avsysv1.AnnotationNode])
+		if got.Annotations[avsysv1.AnnotationNode] != want {
+			t.Errorf("%s: recorded node %q, want %s", mc.Name, got.Annotations[avsysv1.AnnotationNode], want)
 		}
 	}
 }

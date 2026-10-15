@@ -117,21 +117,18 @@ func LockPlacement() (unlock func()) {
 	return placing.Unlock
 }
 
-// renameRecordedNode puts the name of a server's node in its record where an
-// older panel wrote that node's hostname label, read off its volume: the pod
-// is kept to the node by name, and no node may have that one.
+// renameRecordedNode puts in a server's record the node its volume is on,
+// where that is another: an older panel wrote the node's hostname label
+// there, read off the volume, and the pod is now kept to a node by name.
+// Node-local files decide where the server can run.
 func (r *Reconciler) renameRecordedNode(ctx context.Context, mc *avsysv1.MinecraftServer, recorded string) error {
-	err := r.Reader.Get(ctx, types.NamespacedName{Name: recorded}, &corev1.Node{})
-	if !apierrors.IsNotFound(err) {
-		return err
-	}
-	name, err := r.nodeNamed(ctx, recorded)
-	if err != nil || name == recorded {
+	node, err := r.nodeOfVolume(ctx, mc)
+	if err != nil || node == "" || node == recorded {
 		return err
 	}
 	orig := mc.DeepCopy()
-	mc.Annotations[avsysv1.AnnotationNode] = name
-	log.FromContext(ctx).Info("recorded node renamed from its hostname label", "label", recorded, "node", name)
+	mc.Annotations[avsysv1.AnnotationNode] = node
+	log.FromContext(ctx).Info("recorded node set to where its volume is", "recorded", recorded, "node", node)
 	return r.Patch(ctx, mc, client.MergeFrom(orig))
 }
 
@@ -227,13 +224,15 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 	}
 	for i := range servers.Items {
 		mc := &servers.Items[i]
-		if !holdsMemory(mc) {
-			continue
+		// Every server has a pod for its workspace, stopped or not; one
+		// that is to run has its game there too.
+		need := workspaceMemory.Value()
+		if holdsMemory(mc) {
+			need = ServerNeeds(mc.Spec.Resources.Memory)
 		}
 		// A server's pod has its name. Where it is bound already, only
 		// what it has yet to ask for there is added: a stopped server's
 		// workspace becoming the game.
-		need := ServerNeeds(mc.Spec.Resources.Memory)
 		// A pod of its name that another server owns is a deleted one's,
 		// on its way out, and not where this one runs.
 		if p := bound[client.ObjectKeyFromObject(mc)]; p != nil && !leftOf(p, mc) {
@@ -266,12 +265,25 @@ func holdsMemory(mc *avsysv1.MinecraftServer) bool {
 // more, any one init container that runs before them with those started so
 // far; or what the pod as a whole asks for; and the pod's overhead.
 func podMemory(p *corev1.Pod) int64 {
+	// While a container's memory is being changed in place, the scheduler
+	// holds the most of what is asked for and what it has now.
+	status := map[string]int64{}
+	for _, list := range [][]corev1.ContainerStatus{p.Status.ContainerStatuses, p.Status.InitContainerStatuses} {
+		for _, cs := range list {
+			m := cs.AllocatedResources.Memory().Value()
+			if cs.Resources != nil {
+				m = max(m, cs.Resources.Requests.Memory().Value())
+			}
+			status[cs.Name] = m
+		}
+	}
+	request := func(c corev1.Container) int64 { return max(c.Resources.Requests.Memory().Value(), status[c.Name]) }
 	var running, sidecars, most int64
 	for _, c := range p.Spec.Containers {
-		running += c.Resources.Requests.Memory().Value()
+		running += request(c)
 	}
 	for _, c := range p.Spec.InitContainers {
-		m := c.Resources.Requests.Memory().Value()
+		m := request(c)
 		if c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways {
 			sidecars += m
 			most = max(most, sidecars)
