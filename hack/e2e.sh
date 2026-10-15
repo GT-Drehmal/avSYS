@@ -312,11 +312,16 @@ if [ -n "$OTHER_NODE" ]; then
     echo "moved with it" | call -f -X PUT --data-binary @- "$PLACED/files/content?path=/moved.txt" >/dev/null 2>&1 && break
     sleep 2
   done
-  expect "its files are on its node's own disk" "$(call "$PLACED/placement" | field "(d['node'], d['local'])")" "('$NODE', True)"
+  # Its workspace home too, where people keep what they install, which an
+  # ordinary snapshot leaves out.
+  echo "home moved with it" | call -X PUT --data-binary @- "$PLACED/files/content?path=/.workspace/moved-home.txt" >/dev/null
+  placement=$(call "$PLACED/placement")
+  expect "its files are on its node's own disk" "$(echo "$placement" | field "(d.get('node'), d.get('local'))" 2>/dev/null) $placement" "('$NODE', True)"
   moved=$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move?wait=true")
   case "$moved" in *'"code"'*) fail "moving the server: $moved" ;; esac
   expect "a server is moved to another node" "$(call "$PLACED" | field "d['status'].get('node')")" "$OTHER_NODE"
   expect "with its files" "$(call "$PLACED/files/content?path=/moved.txt")" "moved with it"
+  expect "and its workspace home" "$(call "$PLACED/files/content?path=/.workspace/moved-home.txt")" "home moved with it"
   expect "and is as it was, stopped" "$(call "$PLACED" | field "(d['spec']['state'], d['status']['phase'])")" "('Stopped', 'Stopped')"
   expect "the snapshot that carried them is kept" "$(call "$PLACED/snapshots" | field "[s['trigger'] for s in d['snapshots']]")" "'move'"
   expect "and it cannot be moved to where it is" "$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move" | field "d['message']")" "on $OTHER_NODE already"

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -145,8 +144,11 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 
 	// Stopped first, so that the snapshot has everything and nothing is
 	// written after it.
+	// Its pod is made again, so that every session to its files ends: none
+	// can write after the snapshot, and new ones wait for the move.
 	s.setOperation(mc.Namespace, op, "Stopping the server", 0)
-	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateStopped }); err != nil {
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := s.stopAnew(ctx, key, stamp); err != nil {
 		return nil, err
 	}
 	// Whatever goes wrong before its volume is let go of, it is as it was.
@@ -155,16 +157,16 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 			_ = s.patchSpec(context.WithoutCancel(ctx), key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateRunning })
 		}
 	}
+	if err := s.waitRestarted(ctx, key, stamp, 5*time.Minute); err != nil {
+		restart()
+		return nil, fmt.Errorf("the server did not stop, so it was not moved: %w", err)
+	}
 	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
 		restart()
 		return nil, fmt.Errorf("the server did not stop, so it was not moved: %w", err)
 	}
 	s.setOperation(mc.Namespace, op, "Saving its files", 0)
 	snap, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerMove, by)
-	if errors.Is(err, backup.ErrUnchanged) {
-		// Its newest snapshot has everything already.
-		snap, err = s.newestOf(ctx, org, mc.Name)
-	}
 	if err != nil {
 		restart()
 		return nil, fmt.Errorf("its files could not be saved, so it was not moved: %w", err)
@@ -218,7 +220,7 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	defer ws.Close()
 	s.setOperation(mc.Namespace, op, "Putting its files back", 0)
 	last := time.Time{}
-	err = s.Backups.Restore(ctx, org, ws, snap.ID, func(p backup.Progress) {
+	err = s.Backups.RestoreWhole(ctx, org, ws, snap.ID, func(p backup.Progress) {
 		if time.Since(last) < 500*time.Millisecond {
 			return
 		}
@@ -303,6 +305,41 @@ func (s *Server) remark(ctx context.Context, key client.ObjectKey, node, snapsho
 	mc.Annotations[avsysv1.AnnotationMoving] = node
 	mc.Annotations[avsysv1.AnnotationRestoring] = snapshot
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// stopAnew stops a server and has its pod made again, stamped, whether or
+// not it was running.
+func (s *Server) stopAnew(ctx context.Context, key client.ObjectKey, stamp string) error {
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, mc); err != nil {
+		return err
+	}
+	orig := mc.DeepCopy()
+	mc.Spec.State = avsysv1.StateStopped
+	if mc.Annotations == nil {
+		mc.Annotations = map[string]string{}
+	}
+	mc.Annotations[avsysv1.AnnotationRestart] = stamp
+	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// waitRestarted waits for a server's pod made again with this stamp to have
+// its workspace up.
+func (s *Server) waitRestarted(ctx context.Context, key client.ObjectKey, stamp string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		pod := &corev1.Pod{}
+		err := s.nodeReader().Get(ctx, key, pod)
+		if err == nil && pod.Annotations[avsysv1.AnnotationRestart] == stamp && pod.DeletionTimestamp.IsZero() && containerIsReady(pod, controller.WorkspaceContainer) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("its pod was not made again after %s", timeout)
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // waitPodOn waits for a server's pod to be running on a node, with its

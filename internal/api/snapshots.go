@@ -551,7 +551,10 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 		// A scheduled snapshot of a server nothing has happened to is not
 		// taken, and neither is a final one or one to copy from: the last
 		// one is as good.
-		SkipUnchanged: trigger == backup.TriggerScheduled || trigger == backup.TriggerFinal || trigger == backup.TriggerCopy || trigger == backup.TriggerMove,
+		SkipUnchanged: trigger == backup.TriggerScheduled || trigger == backup.TriggerFinal || trigger == backup.TriggerCopy,
+		// One that carries a server to another node is all there will be of
+		// its files, its workspace home among them, and is always taken.
+		Whole: trigger == backup.TriggerMove,
 	}
 	s.setOperation(mc.Namespace, op, "Copying files", 0)
 	last := time.Time{}
@@ -614,6 +617,8 @@ func (s *Server) markRestoring(ctx context.Context, key client.ObjectKey, snapsh
 	orig := mc.DeepCopy()
 	if snapshot == "" {
 		delete(mc.Annotations, avsysv1.AnnotationRestoring)
+		// A move left to be finished by a restore is finished by it.
+		delete(mc.Annotations, avsysv1.AnnotationMoving)
 	} else {
 		if mc.Annotations == nil {
 			mc.Annotations = map[string]string{}
