@@ -105,7 +105,7 @@ test("a snapshot of several servers is asked for at once, and one that could not
   await page.getByLabel("Select every server").click();
   const bar = page.getByRole("region", { name: "Selection" });
   await bar.getByRole("button", { name: "Snapshot", exact: true }).click();
-  await expect(page.getByText("Taking a snapshot of 1 server")).toBeVisible();
+  await expect(page.getByText("Taking a snapshot of alpha")).toBeVisible();
   await expect(page.getByText(/1 of 2 failed\. bravo: Something else is being done/)).toBeVisible();
   expect(asked.sort()).toEqual(["POST alpha", "POST bravo"]);
   // What failed stays selected.

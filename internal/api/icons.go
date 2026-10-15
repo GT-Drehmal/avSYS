@@ -425,9 +425,22 @@ func (c *serverIcons) forget(key string) {
 // and read again behind the answer: a page of servers shows their pictures
 // without waiting on their workspaces, and is at most one read behind.
 func (c *serverIcons) load(ctx context.Context, key string, read func(context.Context) ([]byte, error)) (data []byte, ok bool) {
+	return c.loadAsOf(ctx, key, -1, read)
+}
+
+// loadAsOf is load for a caller that decided to read when the icon had been
+// set or removed asOf times: if that has changed since, as when the server
+// was deleted, nothing is read. The check is made under the same lock that
+// starts the read, so a change cannot come in between. asOf below zero asks
+// for no such check.
+func (c *serverIcons) loadAsOf(ctx context.Context, key string, asOf int, read func(context.Context) ([]byte, error)) (data []byte, ok bool) {
 	for {
 		c.mu.Lock()
 		c.init()
+		if asOf >= 0 && c.changes[key] != asOf {
+			c.mu.Unlock()
+			return nil, false
+		}
 		if icon, fresh := c.fresh(key); fresh {
 			c.mu.Unlock()
 			return icon.data, !icon.failed
@@ -502,15 +515,11 @@ func (s *Server) warmIcons(namespace string, names []string) {
 		slots <- struct{}{}
 		go func() {
 			defer func() { <-slots }()
-			s.serverIcons.mu.Lock()
-			changed := s.serverIcons.changes[key] != seen
-			s.serverIcons.mu.Unlock()
-			if changed {
-				return
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), serverIconRead)
 			defer cancel()
-			s.ServerIcon(ctx, namespace, name)
+			s.serverIcons.loadAsOf(ctx, key, seen, func(ctx context.Context) ([]byte, error) {
+				return s.readServerIcon(ctx, namespace, name)
+			})
 		}()
 	}
 }

@@ -618,3 +618,26 @@ func TestPictureOf(t *testing.T) {
 		t.Errorf("a picture with a new server: %d %s, want 400", got, code)
 	}
 }
+
+// A load decided on before the icon was forgotten reads nothing, however
+// late it starts.
+func TestServerIconsLoadAsOf(t *testing.T) {
+	ctx := t.Context()
+	var c serverIcons
+	c.init()
+	asOf := c.changes["ns/gone"]
+	c.forget("ns/gone")
+	if data, ok := c.loadAsOf(ctx, "ns/gone", asOf, func(context.Context) ([]byte, error) {
+		t.Error("read after it was forgotten")
+		return []byte("old"), nil
+	}); ok || data != nil {
+		t.Errorf("got %q %v", data, ok)
+	}
+	if _, known := c.get("ns/gone"); known {
+		t.Error("something was remembered for it")
+	}
+	// Unchanged, it reads as usual.
+	if data, ok := c.loadAsOf(ctx, "ns/kept", c.changes["ns/kept"], func(context.Context) ([]byte, error) { return []byte("icon"), nil }); !ok || string(data) != "icon" {
+		t.Errorf("unchanged: %q %v", data, ok)
+	}
+}

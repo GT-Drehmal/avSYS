@@ -73,16 +73,18 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
       targets.map((s) =>
         act === "delete"
           ? api.del(serverPath(org, s.name) + (keeps ? "" : "?snapshot=false"))
-          : // Each is started here and goes on in the panel, which says when it is taken.
-            api.post(`${serverPath(org, s.name)}/${act === "snapshot" ? "snapshots" : act}`),
+          : act === "snapshot"
+            ? // Each goes on in the panel once it is started, and is said to
+              // be under way the moment it is: a small one can be taken, and
+              // said to be, before the others have answered.
+              api.post(`${serverPath(org, s.name)}/snapshots`).then(() => toast.info(`Taking a snapshot of ${s.name}`))
+            : api.post(`${serverPath(org, s.name)}/${act}`),
       ),
     );
-    // Said before the lists are asked for again: a small snapshot can be
-    // taken, and said to be, while that is under way.
     const failed = targets.filter((_, i) => results[i].status === "rejected");
     const reasons = results.flatMap((r, i) => (r.status === "rejected" ? [`${targets[i].name}: ${r.reason instanceof ApiError ? r.reason.message : "it could not be reached"}`] : []));
     const succeeded = targets.length - failed.length;
-    if (succeeded > 0) toast.info(`${done[act]} ${plural(succeeded, "server")}`);
+    if (succeeded > 0 && act !== "snapshot") toast.info(`${done[act]} ${plural(succeeded, "server")}`);
     if (failed.length > 0) toast.error(`${failed.length} of ${targets.length} failed. ${reasons.join(" ")}`);
     await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), act === "delete" || act === "snapshot" ? qc.invalidateQueries({ queryKey: ["snapshots", org] }) : null]);
     setRunning(null);
