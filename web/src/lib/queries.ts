@@ -148,8 +148,8 @@ export const useBackupPolicy = (org: string) =>
 
 export const useOffsite = (org: string) => useQuery({ queryKey: keys.offsite(org), queryFn: () => api.get<Offsite>(`/orgs/${org}/offsite`) });
 
-export const useServerSnapshots = (org: string, server: string) =>
-  useQuery({ queryKey: keys.serverSnapshots(org, server), queryFn: () => api.get<SnapshotList>(`${serverPath(org, server)}/snapshots`) });
+export const useServerSnapshots = (org: string, server: string, enabled = true) =>
+  useQuery({ queryKey: keys.serverSnapshots(org, server), queryFn: () => api.get<SnapshotList>(`${serverPath(org, server)}/snapshots`), enabled });
 
 const onError = (err: unknown) => toast.error(err instanceof Error ? err.message : "Something went wrong.");
 

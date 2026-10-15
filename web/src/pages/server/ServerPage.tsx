@@ -4,11 +4,12 @@ import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useP
 import { newFrom } from "../../lib/origin";
 import { Picture } from "../../components/Picture";
 import { ServerActions } from "../../components/ServerActions";
+import { holdsTheServer, OperationRow } from "../../components/Snapshots";
 import { useOrg } from "../../components/Shell";
 import { Button, CopyText, cx, Empty, Modal, Notice, Status, Loading } from "../../components/ui";
 import { atLeast, serverIcon, type Meta, type Role, type Server } from "../../lib/api";
 import { describeSoftware, displayName, quantity } from "../../lib/format";
-import { useMe, useMeta, useServer, useServerAction } from "../../lib/queries";
+import { useMe, useMeta, useServer, useServerAction, useServerSnapshots } from "../../lib/queries";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 
 export interface ServerContext {
@@ -107,6 +108,10 @@ export function ServerPage() {
   const [connecting, setConnecting] = useState(false);
   const navigate = useNavigate();
   const meta = useMeta().data;
+  // A server being made from a snapshot, or restored, is held stopped until
+  // its files are in, and says so. How far along that is shows on every tab.
+  const held = server?.status.phase === "Stopped" && !!server.status.message;
+  const holding = useServerSnapshots(org, name, held).data?.operations.find(holdsTheServer);
 
   if (isPending) return <Loading />;
   if (!server || !membership) {
@@ -176,6 +181,7 @@ export function ServerPage() {
 
       <div className="mt-3 flex flex-col gap-2 empty:hidden">
         {status.message && <Notice tone={status.phase === "Error" ? "danger" : "info"}>{status.message}</Notice>}
+        {held && holding && <OperationRow op={holding} />}
         {status.snapshots?.error && (
           <Notice
             tone="danger"
