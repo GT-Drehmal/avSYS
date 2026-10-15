@@ -66,3 +66,29 @@ test("signing in with a password", async ({ page, password }) => {
   await expect(page).toHaveURL(/\/o\/friends$/);
   await expect(content(page).getByText("Survival").first()).toBeVisible();
 });
+
+test("a picture still on its way is not stood in for by a letter, and one seen before is there at once", async ({ page, as }) => {
+  await as("owner");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGM4oREFRAwQCgAl3gUpEzqvXwAAAABJRU5ErkJggg==", "base64");
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  // Survival has a picture, slow to come; creative has none.
+  await page.route("**/api/v1/orgs/friends/servers/survival/icon*", async (route) => {
+    await held;
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
+  await page.route("**/api/v1/orgs/friends/servers/creative/icon*", (route) => route.fulfill({ status: 404, json: { code: "not_found", message: "Not found." } }));
+  await page.goto("/o/friends");
+  const row = (name: string) => page.getByRole("link", { name: new RegExp(`^${name}`) }).first();
+  await expect(row("Creative")).toContainText("C");
+  // While survival's is on its way, no letter is shown for it.
+  await expect(row("Survival").locator("span[aria-hidden]").first()).toHaveText("");
+  release();
+  await expect(row("Survival").locator("img")).toHaveCSS("opacity", "1");
+
+  // Away and back: shown at once, with no plain tile first.
+  await page.getByRole("link", { name: "Members" }).click();
+  await page.getByRole("link", { name: "Servers" }).click();
+  await expect(row("Survival").locator("img")).toBeVisible();
+  await expect(row("Survival").locator("span[aria-hidden]")).toHaveCount(0);
+});

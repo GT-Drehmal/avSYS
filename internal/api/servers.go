@@ -195,9 +195,16 @@ func (s *Server) listServers(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
 	out := make([]serverView, len(list.Items))
+	names := make([]string, len(list.Items))
 	for i := range list.Items {
 		out[i] = s.view(&list.Items[i])
+		names[i] = list.Items[i].Name
 	}
+	// A list of servers is followed by their pictures: they are read now.
+	s.serverIcons.mu.Lock()
+	s.serverIcons.init()
+	s.serverIcons.mu.Unlock()
+	go s.warmIcons(a.Namespace, names)
 	writeJSON(w, http.StatusOK, out)
 	return nil
 }

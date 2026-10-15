@@ -186,6 +186,8 @@ func (c *pooledSFTP) close() {
 	c.ssh.Close()
 }
 
+var errNoWorkspaces = errors.New("this panel has no SSH gateway to reach server files through")
+
 func (p *workspacePool) get(ctx context.Context, namespace, server string) (*sftp.Client, error) {
 	key := namespace + "/" + server
 	p.mu.Lock()
@@ -201,6 +203,10 @@ func (p *workspacePool) get(ctx context.Context, namespace, server string) (*sft
 	}
 	p.mu.Unlock()
 
+	// A panel run without its SSH gateway, as in tests, reaches no workspace.
+	if p.gateway == nil {
+		return nil, errNoWorkspaces
+	}
 	conn, err := p.gateway.DialWorkspace(ctx, namespace, server)
 	if err != nil {
 		return nil, err
