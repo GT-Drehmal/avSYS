@@ -9,7 +9,7 @@ import { useOrg } from "../../components/Shell";
 import { Button, CopyText, cx, Empty, Modal, Notice, Status, Loading } from "../../components/ui";
 import { api, atLeast, serverIcon, serverPath, type Meta, type Operation, type Role, type Server } from "../../lib/api";
 import { describeSoftware, displayName, quantity } from "../../lib/format";
-import { keys, useAction, useMe, useMeta, useServer, useServerAction, useServerSnapshots } from "../../lib/queries";
+import { keys, useAction, useMe, useMeta, useRunning, useServer, useServerAction, useServerSnapshots } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 
@@ -116,9 +116,10 @@ export function ServerPage() {
   // restore was started from its Backups tab, is shown from the start.
   const snapshots = useServerSnapshots(org, name, held);
   const holding = snapshots.data?.operations.find(holdsTheServer);
-  // Whether something is being done to its snapshots, as far as is known
-  // here without asking: the list is not fetched for it.
-  const busy = (snapshots.data?.operations.length ?? 0) > 0;
+  // Whether something is being done to its snapshots: as the event stream
+  // has said, on any tab, or as its list says where that was loaded.
+  const running = useRunning(org, name);
+  const busy = !!running || (snapshots.data?.operations.length ?? 0) > 0;
   // Once started, the lists are asked for again and show it as running. The
   // answer is not put into them directly: an operation that failed at once
   // may already have been reported as over, and would be shown as running

@@ -23,6 +23,8 @@ export const keys = {
   invites: (org: string) => ["invites", org] as const,
   snapshots: (org: string) => ["snapshots", org] as const,
   serverSnapshots: (org: string, server: string) => ["snapshots", org, server] as const,
+  /** What is being done to a server's snapshots now, as the event stream says, or null. */
+  running: (org: string, server: string) => ["running", org, server] as const,
   backupPolicy: (org: string) => ["backup-policy", org] as const,
   offsite: (org: string) => ["offsite", org] as const,
 };
@@ -112,6 +114,7 @@ export function useLiveServers() {
       const without = (list: SnapshotList | undefined) => list && { ...list, operations: list.operations.filter((o) => o.server !== done.server) };
       qc.setQueryData<SnapshotList>(keys.snapshots(done.org), without);
       qc.setQueryData<SnapshotList>(keys.serverSnapshots(done.org, done.server), without);
+      qc.setQueryData<Operation | null>(keys.running(done.org, done.server), null);
       // Both lists are refetched: the snapshot is new to them, or gone.
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
       // And it is new to the offsite copy, or still to be removed there.
@@ -137,13 +140,24 @@ export function useLiveServers() {
   }, [qc]);
 }
 
-/** Puts a running operation's progress into every snapshot list that shows it. */
+/**
+ * Puts a running operation's progress into every snapshot list that shows it,
+ * and notes it for the server whether or not any list of it was loaded.
+ */
 function applyOperation(qc: QueryClient, op: Operation) {
+  qc.setQueryData<Operation | null>(keys.running(op.org, op.server), op);
   const merge = (list: SnapshotList | undefined) =>
     list && { ...list, operations: [...list.operations.filter((o) => o.server !== op.server), op] };
   qc.setQueryData<SnapshotList>(keys.snapshots(op.org), merge);
   qc.setQueryData<SnapshotList>(keys.serverSnapshots(op.org, op.server), merge);
 }
+
+/**
+ * What is being done to a server's snapshots now, as far as the event stream
+ * has said since the page was opened. Nothing is fetched for it.
+ */
+export const useRunning = (org: string, server: string) =>
+  useQuery({ queryKey: keys.running(org, server), queryFn: () => null as Operation | null, enabled: false }).data ?? null;
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });

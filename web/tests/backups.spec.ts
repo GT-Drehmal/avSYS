@@ -224,3 +224,21 @@ test("a server is snapshotted from its header on any tab, and its Backups tab ha
   await page.goto("/o/friends/s/survival");
   await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toHaveCount(0);
 });
+
+test("the header's Snapshot waits while one is being taken, as the event stream says, on any tab", async ({ page }) => {
+  const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Copying files", percent: 40, startedAt: new Date().toISOString() };
+  let running = false;
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+      body: running ? `event: operation.progress\ndata: ${JSON.stringify(op)}\n\n` : "event: waiting\ndata: null\n\n",
+    }),
+  );
+  await page.goto("/o/friends/s/survival");
+  const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
+  await expect(snapshot).toBeEnabled();
+  // The stream is opened again, now saying a snapshot of it is under way.
+  running = true;
+  await expect(snapshot).toBeDisabled({ timeout: 15_000 });
+});
