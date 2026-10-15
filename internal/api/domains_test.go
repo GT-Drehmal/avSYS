@@ -1,0 +1,60 @@
+package api
+
+import (
+	"testing"
+)
+
+// A domain the panel's administrator gives an organization is its alone: no
+// other claims one overlapping it, and no other's server takes a hostname
+// under it, though one that had it already keeps it.
+func TestDomainsAreTheirOrganizations(t *testing.T) {
+	p := newPanel(t)
+	// Beta's server had its address before alpha claimed the domain it is under.
+	p.addServer("beta", "early", "early.alpha.example.org")
+
+	code, got := p.get("root", "PUT", "/orgs/alpha/domains", `{"domains":["Alpha.Example.org.", "alpha.example.org"]}`)
+	if code != 200 || len(got["domains"].([]any)) != 1 || got["domains"].([]any)[0] != "alpha.example.org" {
+		t.Fatalf("claiming: %d %v", code, got)
+	}
+	inUse, _ := got["inUse"].([]any)
+	if len(inUse) != 1 || inUse[0].(map[string]any)["server"] != "early" || inUse[0].(map[string]any)["org"] != "beta" {
+		t.Errorf("servers already under it: %v", inUse)
+	}
+	if code, name := p.do("admin", "PUT", "/orgs/alpha/domains", `{"domains":["mine.example.org"]}`); code != 403 {
+		t.Errorf("an organization's own admin claiming: %d %s, want 403", code, name)
+	}
+	for _, d := range []string{"play.alpha.example.org", "example.org", "alpha.example.org"} {
+		if code, name := p.do("root", "PUT", "/orgs/beta/domains", `{"domains":["`+d+`"]}`); code != 409 || name != "domain_claimed" {
+			t.Errorf("beta claiming %s: %d %s, want 409 domain_claimed", d, code, name)
+		}
+	}
+	if code, _ := p.do("root", "PUT", "/orgs/beta/domains", `{"domains":["not a domain"]}`); code != 400 {
+		t.Errorf("a claim that is no domain: %d, want 400", code)
+	}
+
+	// Beta cannot make a server under alpha's domain; alpha can.
+	if code, name := p.do("outsider", "POST", "/orgs/beta/servers", `{"name":"squat","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"play.alpha.example.org"}}}`); code != 409 || name != "domain_claimed" {
+		t.Errorf("beta under alpha's domain: %d %s, want 409 domain_claimed", code, name)
+	}
+	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"lobby","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"play.alpha.example.org"}}}`); code != 201 {
+		t.Errorf("alpha under its own: %d %s", code, msg)
+	}
+	// Under no claimed domain, anyone may.
+	if code, msg := p.do("outsider", "POST", "/orgs/beta/servers", `{"name":"free","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"play.unclaimed.example.net"}}}`); code != 201 {
+		t.Errorf("beta under an unclaimed domain: %d %s", code, msg)
+	}
+
+	// The server that had it keeps it through other changes, but cannot
+	// move to another name under alpha's domain.
+	if code, msg := p.do("outsider", "PATCH", "/orgs/beta/servers/early", `{"spec":{"displayName":"Early"}}`); code != 200 {
+		t.Errorf("changing something else on a server that had it already: %d %s", code, msg)
+	}
+	if code, name := p.do("outsider", "PATCH", "/orgs/beta/servers/early", `{"spec":{"expose":{"type":"Router","hostname":"later.alpha.example.org"}}}`); code != 409 || name != "domain_claimed" {
+		t.Errorf("moving to another name under it: %d %s, want 409 domain_claimed", code, name)
+	}
+
+	// Members see their organization's domains, and that they cannot change them.
+	if code, got := p.get("viewer", "GET", "/orgs/alpha/domains", ""); code != 200 || got["editable"] != false || len(got["domains"].([]any)) != 1 {
+		t.Errorf("a member reading: %d %v", code, got)
+	}
+}

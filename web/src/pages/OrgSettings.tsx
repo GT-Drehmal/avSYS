@@ -1,9 +1,9 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { PicturePicker } from "../components/Picture";
 import { useOrg } from "../components/Shell";
-import { Button, Confirm, Field, Input, PageHeader, Section } from "../components/ui";
+import { Button, Confirm, Field, Input, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api } from "../lib/api";
 import { keys, useAction, useOrgSnapshots } from "../lib/queries";
 import { toast } from "../lib/toast";
@@ -48,6 +48,7 @@ export function OrgSettings() {
           </div>
         </form>
       </Section>
+      <Domains org={org} />
       <Section title="Delete organization" description="Its servers must be deleted first. Members keep their accounts. Its snapshots are deleted with it.">
         <div>
           <Button variant="danger" onClick={() => setDeleting(true)}>
@@ -68,5 +69,66 @@ export function OrgSettings() {
         onConfirm={() => remove.mutate(undefined, { onSuccess: () => navigate("/") })}
       />
     </>
+  );
+}
+
+interface DomainsAnswer {
+  domains: string[];
+  editable: boolean;
+  inUse?: { org: string; server: string; hostname: string }[];
+}
+
+/**
+ * The domains an organization has: a hostname under one of them is its own
+ * servers' alone. Given by whoever runs the panel, who points their DNS at it.
+ */
+function Domains({ org }: { org: string }) {
+  const qc = useQueryClient();
+  const key = ["domains", org];
+  const domains = useQuery({ queryKey: key, queryFn: () => api.get<DomainsAnswer>(`/orgs/${org}/domains`) });
+  const [text, setText] = useState<string | null>(null);
+  const [inUse, setInUse] = useState<DomainsAnswer["inUse"]>([]);
+  const save = useAction(() => api.put<DomainsAnswer>(`/orgs/${org}/domains`, { domains: (text ?? "").split(/[\s,]+/).filter(Boolean) }));
+  const d = domains.data;
+  if (!d) return null;
+  const shown = text ?? d.domains.join("\n");
+  return (
+    <Section title="Domains" description="A hostname under one of these can only be one of this organization's servers. Under no organization's domain, any may use it.">
+      {d.editable ? (
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            save.mutate(undefined, {
+              onSuccess: (answer) => {
+                qc.setQueryData(key, answer);
+                setText(null);
+                setInUse(answer.inUse ?? []);
+                toast.info("Domains saved");
+              },
+            });
+          }}
+        >
+          <Field label="Its domains" hint="One per line, as play.example.org. Only you, as the panel's administrator, can change them.">
+            {(id) => <Textarea id={id} rows={3} value={shown} onChange={(e) => setText(e.target.value)} placeholder="play.example.org" className="font-mono" spellCheck={false} />}
+          </Field>
+          {inUse && inUse.length > 0 && (
+            <Notice>
+              Servers of other organizations already use names under these, and keep them:{" "}
+              {inUse.map((u) => `${u.hostname} (${u.org}/${u.server})`).join(", ")}. They cannot be given another one there.
+            </Notice>
+          )}
+          <div>
+            <Button type="submit" variant="primary" disabled={text === null} loading={save.isPending}>
+              Save domains
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <p className="text-[13px] text-muted">
+          {d.domains.length > 0 ? <span className="font-mono text-fg">{d.domains.join(", ")}</span> : "None."} Given by the panel's administrator.
+        </p>
+      )}
+    </Section>
   );
 }

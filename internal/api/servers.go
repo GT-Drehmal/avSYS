@@ -308,6 +308,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := s.nameIsFree(r.Context(), a, in.Name); err != nil {
 		return err
 	}
+	if err := s.checkHostnameOwner(r.Context(), a.Org, in.Spec.Expose.Hostname); err != nil {
+		return err
+	}
 	if err := s.ensureNamespace(r.Context(), a.Org.Slug); err != nil {
 		return err
 	}
@@ -417,6 +420,13 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	previous := mc.Spec.DeepCopy()
 	if err := s.resolveContent(r.Context(), &spec, previous); err != nil {
 		return err
+	}
+	// A hostname it has already is left alone, even under a domain claimed
+	// by another since; only a new one is held to who claims what.
+	if spec.Expose.Hostname != previous.Expose.Hostname {
+		if err := s.checkHostnameOwner(r.Context(), a.Org, spec.Expose.Hostname); err != nil {
+			return err
+		}
 	}
 	mc.Spec = spec
 	// Update carries the resource version read above, so a concurrent edit

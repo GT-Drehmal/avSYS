@@ -324,6 +324,8 @@ func (s *Server) Handler() http.Handler {
 	api("DELETE /orgs/{org}/snapshots", s.authed(s.deleteSnapshots))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
 
+	api("GET /orgs/{org}/domains", s.authed(s.getDomains))
+	api("PUT /orgs/{org}/domains", s.authed(s.putDomains))
 	api("GET /orgs/{org}/servers", s.authed(s.listServers))
 	api("POST /orgs/{org}/servers", s.authed(s.createServer))
 	api("GET /orgs/{org}/servers/{server}", s.authed(s.getServer))

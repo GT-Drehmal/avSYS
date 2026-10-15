@@ -234,6 +234,16 @@ step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"
 
+step "domains"
+# The organization claims its domain; another cannot use a name under it.
+expect "an organization is given its domain" "$(call -X PUT -d "{\"domains\":[\"$ORG.test\"]}" "$API/orgs/$ORG/domains" | field "d['domains']")" "['$ORG.test']"
+OTHER=$ORG-other
+call -d "{\"name\":\"Other $ORG\",\"slug\":\"$OTHER\"}" "$API/orgs" >/dev/null
+expect "another organization's server cannot take a name under it" "$(call -d "{\"name\":\"squat\",\"spec\":{\"eula\":true,\"loader\":\"vanilla\",\"version\":\"1.21.4\",\"state\":\"Stopped\",\"expose\":{\"hostname\":\"squat.$ORG.test\"}}}" "$API/orgs/$OTHER/servers" | field "d['code']")" domain_claimed
+expect "nor claim one overlapping it" "$(call -X PUT -d "{\"domains\":[\"x.$ORG.test\"]}" "$API/orgs/$OTHER/domains" | field "d['code']")" domain_claimed
+expect "and its own server keeps its name" "$(call -X PATCH -d '{"spec":{"displayName":"Probe"}}' "$SRV" | field "d['spec']['expose']['hostname']")" "$HOST"
+call -X DELETE "$API/orgs/$OTHER" >/dev/null
+
 step "stop keeps the workspace"
 call -X POST "$SRV/stop" >/dev/null
 wait_phase Stopped
