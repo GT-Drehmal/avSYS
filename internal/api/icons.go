@@ -15,6 +15,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -579,6 +580,19 @@ func (c *snapshotIcons) set(key string, data []byte) {
 		c.icons = map[string][]byte{}
 	}
 	c.icons[key] = data
+}
+
+// forgetOrg drops what was read out of an organization's snapshots, once its
+// repository is gone. They are kept by the name a snapshot was asked for by,
+// which another repository could also have.
+func (c *snapshotIcons) forgetOrg(org string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key := range c.icons {
+		if strings.HasPrefix(key, org+"/") {
+			delete(c.icons, key)
+		}
+	}
 }
 
 // snapshotIconLimit is the most read of a server-icon.png in a snapshot. The
