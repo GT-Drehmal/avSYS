@@ -204,3 +204,23 @@ test("a server's own Backups tab restores with the same question", async ({ page
   await expect(dialog).toHaveCount(0);
   expect(asked).toMatch(/\/servers\/survival\/snapshots\/[0-9a-f]+\/restore$/);
 });
+
+test("a server is snapshotted from its header on any tab, and its Backups tab has no second button", async ({ page, as }) => {
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/snapshots", (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    asked.push(route.request().url());
+    return route.fulfill({ status: 202, json: { kind: "snapshot", org: "friends", server: "survival", stage: "Starting", percent: 0, startedAt: new Date().toISOString() } });
+  });
+  await page.goto("/o/friends/s/survival");
+  await page.getByRole("button", { name: "Snapshot", exact: true }).click();
+  await expect(page.getByText("Taking a snapshot of survival")).toBeVisible();
+  expect(asked).toHaveLength(1);
+
+  await page.goto("/o/friends/s/survival/backups");
+  await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toHaveCount(1);
+
+  await as("viewer");
+  await page.goto("/o/friends/s/survival");
+  await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toHaveCount(0);
+});

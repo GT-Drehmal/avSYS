@@ -1,4 +1,4 @@
-import { ChevronLeft, Code2, Copy, Plug } from "lucide-react";
+import { Camera, ChevronLeft, Code2, Copy, Plug } from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from "react-router";
 import { newFrom } from "../../lib/origin";
@@ -7,9 +7,10 @@ import { ServerActions } from "../../components/ServerActions";
 import { holdsTheServer, OperationRow } from "../../components/Snapshots";
 import { useOrg } from "../../components/Shell";
 import { Button, CopyText, cx, Empty, Modal, Notice, Status, Loading } from "../../components/ui";
-import { atLeast, serverIcon, type Meta, type Role, type Server } from "../../lib/api";
+import { api, atLeast, serverIcon, serverPath, type Meta, type Operation, type Role, type Server } from "../../lib/api";
 import { describeSoftware, displayName, quantity } from "../../lib/format";
-import { useMe, useMeta, useServer, useServerAction, useServerSnapshots } from "../../lib/queries";
+import { keys, useAction, useMe, useMeta, useServer, useServerAction, useServerSnapshots } from "../../lib/queries";
+import { toast } from "../../lib/toast";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 
 export interface ServerContext {
@@ -113,7 +114,16 @@ export function ServerPage() {
   const held = server?.status.phase === "Stopped" && !!server.status.message;
   // Asked for while it is held; what is already known of it, as after a
   // restore was started from its Backups tab, is shown from the start.
-  const holding = useServerSnapshots(org, name, held).data?.operations.find(holdsTheServer);
+  const snapshots = useServerSnapshots(org, name, held);
+  const holding = snapshots.data?.operations.find(holdsTheServer);
+  // Whether something is being done to its snapshots, as far as is known
+  // here without asking: the list is not fetched for it.
+  const busy = (snapshots.data?.operations.length ?? 0) > 0;
+  // Once started, the lists are asked for again and show it as running. The
+  // answer is not put into them directly: an operation that failed at once
+  // may already have been reported as over, and would be shown as running
+  // for ever.
+  const snapshot = useAction(() => api.post<Operation>(`${serverPath(org, name)}/snapshots`), [keys.serverSnapshots(org, name), keys.snapshots(org)]);
 
   if (isPending) return <Loading />;
   if (!server || !membership) {
@@ -149,6 +159,16 @@ export function ServerPage() {
             {atLeast(role, "admin") && meta?.snapshots && (
               <Button icon={<Copy className="size-3.5" />} onClick={() => navigate(newFrom(server.org, { kind: "server", name: server.name }))}>
                 Duplicate
+              </Button>
+            )}
+            {meta?.snapshots && (
+              <Button
+                icon={<Camera className="size-3.5" />}
+                disabled={busy}
+                loading={snapshot.isPending}
+                onClick={() => snapshot.mutate(undefined, { onSuccess: () => toast.info(`Taking a snapshot of ${server.name}`) })}
+              >
+                Snapshot
               </Button>
             )}
             <ServerActions server={server} />

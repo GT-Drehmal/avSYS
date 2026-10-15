@@ -1,29 +1,18 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { Camera } from "lucide-react";
 import { useState } from "react";
 import { ServerSchedule } from "../../components/BackupSchedule";
 import { holdsTheServer, OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar } from "../../components/Snapshots";
-import { Button, Empty, Loading, Notice } from "../../components/ui";
-import { api, atLeast, serverPath, type Operation, type Snapshot } from "../../lib/api";
+import { Empty, Loading, Notice } from "../../components/ui";
+import { atLeast, type Snapshot } from "../../lib/api";
 import { ago } from "../../lib/format";
-import { keys, useAction, useServerSnapshots } from "../../lib/queries";
+import { useServerSnapshots } from "../../lib/queries";
 import { useSelection } from "../../lib/selection";
 import { useServerContext } from "./ServerPage";
 
 export function Snapshots() {
   const { server, role } = useServerContext();
-  const qc = useQueryClient();
   const list = useServerSnapshots(server.org, server.name);
   const [restoring, setRestoring] = useState<Snapshot | null>(null);
-  const canOperate = atLeast(role, "operator");
   const canAdmin = atLeast(role, "admin");
-
-  // Once something has been started the list is asked for again, and shows
-  // it as running. The answer to the request is not put into the list
-  // directly: an operation that failed at once may already have been
-  // reported as over, and would then be shown as running for ever.
-  const started = () => qc.invalidateQueries({ queryKey: keys.serverSnapshots(server.org, server.name) });
-  const snapshot = useAction(() => api.post<Operation>(`${serverPath(server.org, server.name)}/snapshots`));
 
   const selection = useSelection(list.data?.snapshots.map((s) => s.id) ?? [], `${server.org}/${server.name}`);
 
@@ -38,16 +27,10 @@ export function Snapshots() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-[13px] text-muted">
-          {snapshots.length === 0 ? "No snapshots yet." : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"}, the newest from ${ago(snapshots[0].time)}.`}
-        </p>
-        {canOperate && (
-          <Button variant="primary" icon={<Camera className="size-4" />} disabled={!!op} loading={snapshot.isPending} onClick={() => snapshot.mutate(undefined, { onSuccess: started })}>
-            Snapshot now
-          </Button>
-        )}
-      </div>
+      {/* A snapshot is taken from the server's header, above every tab. */}
+      <p className="text-[13px] text-muted">
+        {snapshots.length === 0 ? "No snapshots yet." : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"}, the newest from ${ago(snapshots[0].time)}.`}
+      </p>
       <ServerSchedule server={server} canAdmin={canAdmin} />
       {failure && !op && <Notice tone="danger">The last snapshot or restore failed: {failure}</Notice>}
       {/* One that holds the server is shown above every tab. */}
