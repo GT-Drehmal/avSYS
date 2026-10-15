@@ -52,9 +52,10 @@ const (
 // files, so that nothing else may touch the server while it runs.
 //
 // A server on its way to being deleted counts: nothing is rewritten, but a
-// change made after its last snapshot would be lost with it.
+// change made after its last snapshot would be lost with it. So does one
+// being moved, whose files are put back on another node.
 func rewrites(kind string) bool {
-	return kind == kindRestore || kind == kindCreate || kind == kindDeleteServer
+	return kind == kindRestore || kind == kindCreate || kind == kindDeleteServer || kind == kindMove
 }
 
 // operations decides who may touch a server or a snapshot at a time. One
@@ -533,7 +534,7 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 		// A scheduled snapshot of a server nothing has happened to is not
 		// taken, and neither is a final one or one to copy from: the last
 		// one is as good.
-		SkipUnchanged: trigger == backup.TriggerScheduled || trigger == backup.TriggerFinal || trigger == backup.TriggerCopy,
+		SkipUnchanged: trigger == backup.TriggerScheduled || trigger == backup.TriggerFinal || trigger == backup.TriggerCopy || trigger == backup.TriggerMove,
 	}
 	s.setOperation(mc.Namespace, op, "Copying files", 0)
 	last := time.Time{}

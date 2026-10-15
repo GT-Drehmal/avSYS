@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -187,11 +188,10 @@ func TestNodeNamedByHostnameLabel(t *testing.T) {
 	n := node("node-1", "16Gi", "")
 	n.Labels[corev1.LabelHostname] = "host-1"
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n).Build()
-	r := &Reconciler{Client: c, Reader: c}
-	if got, err := r.nodeNamed(context.Background(), "host-1"); err != nil || got != "node-1" {
+	if got, err := nodeNamed(context.Background(), c, "host-1"); err != nil || got != "node-1" {
 		t.Errorf("nodeNamed(host-1) = %q, %v; want node-1", got, err)
 	}
-	if got, _ := r.nodeNamed(context.Background(), "unknown"); got != "unknown" {
+	if got, _ := nodeNamed(context.Background(), c, "unknown"); got != "unknown" {
 		t.Errorf("nodeNamed(unknown) = %q; want it as given", got)
 	}
 }
@@ -242,5 +242,112 @@ func TestRecordedHostnameRenamed(t *testing.T) {
 		if got.Annotations[avsysv1.AnnotationNode] != want {
 			t.Errorf("%s: recorded node %q, want %s", mc.Name, got.Annotations[avsysv1.AnnotationNode], want)
 		}
+	}
+}
+
+// A server being moved has its pod and its volume on the node it leaves
+// deleted, and nothing made in their place until the volume is gone; a
+// volume on the node it goes to, or not yet tied to one, is left alone.
+func TestMoveVolume(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	a, b := node("a", "16Gi", ""), node("b", "16Gi", "")
+	a.Labels[corev1.LabelHostname], b.Labels[corev1.LabelHostname] = "a", "b"
+	volumeOn := func(name, on string) (*corev1.PersistentVolume, *corev1.PersistentVolumeClaim) {
+		pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: DataPVCName(name)}}
+		if on == "" {
+			return nil, pvc
+		}
+		pv := &corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{Name: "pv-" + name},
+			Spec: corev1.PersistentVolumeSpec{NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{on}}},
+			}}}}},
+		}
+		pvc.Spec.VolumeName = pv.Name
+		return pv, pvc
+	}
+	for _, c := range []struct {
+		name, on    string
+		wantWaiting bool
+		wantGone    bool
+	}{
+		{"leaving", "a", true, true},
+		{"there", "b", false, false},
+		{"untied", "", false, false},
+	} {
+		mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: c.name, Annotations: map[string]string{avsysv1.AnnotationMoving: "b", avsysv1.AnnotationNode: "b"}}}
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: c.name}, Spec: corev1.PodSpec{NodeName: c.on}}
+		pv, pvc := volumeOn(c.name, c.on)
+		objects := []client.Object{&a, &b, mc, pod, pvc}
+		if pv != nil {
+			objects = append(objects, pv)
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+		r := &Reconciler{Client: cl, Reader: cl}
+		waiting, err := r.moveVolume(context.Background(), mc, "b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if waiting != c.wantWaiting {
+			t.Errorf("%s: waiting %v, want %v", c.name, waiting, c.wantWaiting)
+		}
+		podErr := cl.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{})
+		pvcErr := cl.Get(context.Background(), client.ObjectKeyFromObject(pvc), &corev1.PersistentVolumeClaim{})
+		if gone := apierrors.IsNotFound(podErr) && apierrors.IsNotFound(pvcErr); gone != c.wantGone {
+			t.Errorf("%s: pod and volume deleted %v, want %v (%v, %v)", c.name, gone, c.wantGone, podErr, pvcErr)
+		}
+		if c.wantGone {
+			// With the volume gone, a new one can be made.
+			if waiting, _ := r.moveVolume(context.Background(), mc, "b"); waiting {
+				t.Errorf("%s: still waiting once the volume is gone", c.name)
+			}
+		}
+	}
+}
+
+// A server being moved says so while it is held, and is not put back on the
+// node its old volume is on.
+func TestMovingServer(t *testing.T) {
+	moving := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "moving", Annotations: map[string]string{
+		avsysv1.AnnotationNode: "b", avsysv1.AnnotationMoving: "b", avsysv1.AnnotationRestoring: "abcd1234",
+	}}}
+	moving.Spec.State = avsysv1.StateRunning
+	if phase, message := phaseOf(moving, nil); phase != avsysv1.PhaseStopped || message != "Being moved to b, and held stopped until its files are there." {
+		t.Errorf("phase %s, %q", phase, message)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	a := node("a", "16Gi", "")
+	a.Labels[corev1.LabelHostname] = "a"
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "pv-moving"},
+		Spec: corev1.PersistentVolumeSpec{NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+			MatchExpressions: []corev1.NodeSelectorRequirement{{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"a"}}},
+		}}}}},
+	}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: DataPVCName("moving")}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: pv.Name}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&a, pv, pvc, moving).Build()
+	r := &Reconciler{Client: c, Reader: c}
+	if err := r.ensurePlacement(context.Background(), moving); err != nil {
+		t.Fatal(err)
+	}
+	got := &avsysv1.MinecraftServer{}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(moving), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Annotations[avsysv1.AnnotationNode] != "b" {
+		t.Errorf("recorded node %q while moving to b, want it left", got.Annotations[avsysv1.AnnotationNode])
 	}
 }

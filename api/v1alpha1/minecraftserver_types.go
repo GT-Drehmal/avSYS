@@ -36,6 +36,13 @@ const (
 	// it with nothing running never received all of its files. There is
 	// nothing in it worth keeping: it is deleted and made again.
 	AnnotationCreating = "avsys.dev/creating"
+	// AnnotationMoving is set, to a node's name, while a server is being
+	// moved there: a volume of it that is tied to another node is deleted,
+	// with its pod, and one is made on that node. The server's files are in
+	// a snapshot taken before it is set, and are put back from there; it is
+	// held stopped by AnnotationRestoring meanwhile. The panel removes it
+	// once they are; a volume already on that node is left alone.
+	AnnotationMoving = "avsys.dev/moving"
 	// AnnotationAutoOps lists the players the panel has made operators on a
 	// server for their role in its organization, separated by commas. Only
 	// these are ever taken off again by it: operators made any other way

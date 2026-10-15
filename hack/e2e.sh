@@ -304,6 +304,28 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 expect "a server put on a node runs there" "$(call "$API/orgs/$ORG/servers/placed" | field "d['status'].get('node')")" "$NODE"
+# With another node, the server is moved there, its files with it.
+OTHER_NODE=$(call "$API/nodes?memory=1Gi" | field "next((n['name'] for n in d['nodes'] if n['ready'] and n['name'] != '$NODE'), '')")
+if [ -n "$OTHER_NODE" ]; then
+  PLACED="$API/orgs/$ORG/servers/placed"
+  for _ in $(seq 1 90); do
+    echo "moved with it" | call -f -X PUT --data-binary @- "$PLACED/files/content?path=/moved.txt" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  expect "its files are on its node's own disk" "$(call "$PLACED/placement" | field "(d['node'], d['local'])")" "('$NODE', True)"
+  moved=$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move?wait=true")
+  case "$moved" in *'"code"'*) fail "moving the server: $moved" ;; esac
+  expect "a server is moved to another node" "$(call "$PLACED" | field "d['status'].get('node')")" "$OTHER_NODE"
+  expect "with its files" "$(call "$PLACED/files/content?path=/moved.txt")" "moved with it"
+  expect "and is as it was, stopped" "$(call "$PLACED" | field "(d['spec']['state'], d['status']['phase'])")" "('Stopped', 'Stopped')"
+  expect "the snapshot that carried them is kept" "$(call "$PLACED/snapshots" | field "[s['trigger'] for s in d['snapshots']]")" "'move'"
+  expect "and it cannot be moved to where it is" "$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move" | field "d['message']")" "on $OTHER_NODE already"
+  # Its snapshot is let go of, so that the organization's are the probe's.
+  ids=$(call "$PLACED/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
+  call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
+else
+  echo "skip: moving a server needs a second node"
+fi
 call -X DELETE "$API/orgs/$ORG/servers/placed?snapshot=false" >/dev/null
 
 step "domains"

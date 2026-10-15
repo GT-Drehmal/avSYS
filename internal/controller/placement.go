@@ -81,8 +81,20 @@ func pickNode(nodes []corev1.Node, reserved map[string]int64, need int64) string
 // nodeOfVolume returns the node a server's existing volume is tied to, if it
 // is tied to one, as node-local storage is.
 func (r *Reconciler) nodeOfVolume(ctx context.Context, mc *avsysv1.MinecraftServer) (string, error) {
+	return volumeNode(ctx, r.Client, r.Reader, mc)
+}
+
+// VolumeNode is nodeOfVolume for the panel: the node a move has to carry a
+// server's files from, or "" if they are not tied to one.
+func VolumeNode(ctx context.Context, reader client.Reader, mc *avsysv1.MinecraftServer) (string, error) {
+	return volumeNode(ctx, reader, reader, mc)
+}
+
+// volumeNode reads the claim through claims, which may be a cache, and the
+// volume and nodes through reader, which are not cached.
+func volumeNode(ctx context.Context, claims, reader client.Reader, mc *avsysv1.MinecraftServer) (string, error) {
 	pvc := &corev1.PersistentVolumeClaim{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: DataPVCName(mc.Name)}, pvc)
+	err := claims.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: DataPVCName(mc.Name)}, pvc)
 	if apierrors.IsNotFound(err) || (err == nil && pvc.Spec.VolumeName == "") {
 		return "", nil
 	}
@@ -90,7 +102,7 @@ func (r *Reconciler) nodeOfVolume(ctx context.Context, mc *avsysv1.MinecraftServ
 		return "", err
 	}
 	pv := &corev1.PersistentVolume{}
-	if err := r.Reader.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv); err != nil {
+	if err := reader.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv); err != nil {
 		return "", client.IgnoreNotFound(err)
 	}
 	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
@@ -99,7 +111,7 @@ func (r *Reconciler) nodeOfVolume(ctx context.Context, mc *avsysv1.MinecraftServ
 	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
 		for _, expr := range term.MatchExpressions {
 			if expr.Key == corev1.LabelHostname && expr.Operator == corev1.NodeSelectorOpIn && len(expr.Values) == 1 {
-				return r.nodeNamed(ctx, expr.Values[0])
+				return nodeNamed(ctx, reader, expr.Values[0])
 			}
 		}
 	}
@@ -134,9 +146,9 @@ func (r *Reconciler) renameRecordedNode(ctx context.Context, mc *avsysv1.Minecra
 
 // nodeNamed returns the name of the node whose hostname label is this, which
 // is usually but not always its name.
-func (r *Reconciler) nodeNamed(ctx context.Context, hostname string) (string, error) {
+func nodeNamed(ctx context.Context, reader client.Reader, hostname string) (string, error) {
 	var nodes corev1.NodeList
-	if err := r.Reader.List(ctx, &nodes, client.MatchingLabels{corev1.LabelHostname: hostname}); err != nil {
+	if err := reader.List(ctx, &nodes, client.MatchingLabels{corev1.LabelHostname: hostname}); err != nil {
 		return "", err
 	}
 	if len(nodes.Items) == 1 {
@@ -152,6 +164,11 @@ func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftS
 		return nil
 	}
 	if recorded := mc.Annotations[avsysv1.AnnotationNode]; recorded != "" {
+		// Being moved, it is recorded on the node it is going to while its
+		// volume is still on the one it leaves.
+		if mc.Annotations[avsysv1.AnnotationMoving] != "" {
+			return nil
+		}
 		return r.renameRecordedNode(ctx, mc, recorded)
 	}
 

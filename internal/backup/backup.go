@@ -60,6 +60,9 @@ const (
 	TriggerFinal = "final"
 	// TriggerCopy is the snapshot a copy of a server is made from.
 	TriggerCopy = "copy"
+	// TriggerMove is the snapshot that carries a server's files to the
+	// node it is moved to.
+	TriggerMove = "move"
 )
 
 var (
