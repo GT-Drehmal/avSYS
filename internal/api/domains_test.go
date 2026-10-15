@@ -82,4 +82,17 @@ func TestOwnZoneIsTheOrganizations(t *testing.T) {
 	if code, msg := p.do("outsider", "POST", "/orgs/beta/servers", `{"name":"own","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"own.beta.mc.example.org"}}}`); code != 201 {
 		t.Errorf("beta in its own zone: %d %s", code, msg)
 	}
+	// Nor in the zone of an organization not made yet.
+	if code, name := p.do("outsider", "POST", "/orgs/beta/servers", `{"name":"early","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"lobby.gamma.mc.example.org"}}}`); code != 409 || name != "domain_claimed" {
+		t.Errorf("beta in a zone of no organization yet: %d %s, want 409 domain_claimed", code, name)
+	}
+	// A name right under the router's domain is in no organization's zone.
+	if code, msg := p.do("outsider", "POST", "/orgs/beta/servers", `{"name":"apex","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"apex.mc.example.org"}}}`); code != 201 {
+		t.Errorf("beta right under the router's domain: %d %s", code, msg)
+	}
+	// The router's domain as configured may be written another way.
+	p.srv.Config.RouterDomain = "MC.Example.org."
+	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"second","spec":{"eula":true,"version":"1.21.4"}}`); code != 201 {
+		t.Errorf("alpha's own default name with the router's domain written another way: %d %s", code, msg)
+	}
 }
