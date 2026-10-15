@@ -46,7 +46,7 @@ type Config struct {
 type Server struct {
 	Config Config
 	// placing holds servers put on a node by hand to one at a time: see
-	// createServer.
+	// createPlaced.
 	placing sync.Mutex
 	Store   *store.Store
 	Client  client.Client
