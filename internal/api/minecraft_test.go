@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -39,6 +40,33 @@ func TestWantedOps(t *testing.T) {
 	// A viewer is never one, whatever they linked.
 	if got := wantedOps(&avsysv1.MinecraftServerSpec{}, members[3:4]); len(got) != 0 {
 		t.Errorf("a viewer was made an operator: %v", got)
+	}
+}
+
+// Members picked one by one are on a list whatever their role, and those
+// left out are not, by the ID that follows them.
+func TestPickedMembers(t *testing.T) {
+	members := []store.Member{
+		{UserID: "u-olive", Role: store.RoleOwner, MinecraftName: "Olive"},
+		{UserID: "u-ada", Role: store.RoleAdmin, MinecraftName: "Ada"},
+		{UserID: "u-vera", Role: store.RoleViewer, MinecraftName: "Vera"},
+		{UserID: "u-nolink", Role: store.RoleViewer},
+	}
+	picks := &avsysv1.MemberPicks{Also: []string{"u-vera", "u-nolink", "u-gone"}, Except: []string{"u-ada"}}
+	if got := strings.Join(wantedFrom(store.RoleAdmin, picks, members), " "); got != "Olive Vera" {
+		t.Errorf("admins and up, plus Vera, less Ada: %q", got)
+	}
+	// With nobody by role, only those picked.
+	if got := strings.Join(wantedFrom("", picks, members), " "); got != "Vera" {
+		t.Errorf("nobody by role, plus Vera: %q", got)
+	}
+	// The lists read their own picks.
+	spec := &avsysv1.MinecraftServerSpec{AutoOp: "owner", OpMembers: &avsysv1.MemberPicks{Also: []string{"u-ada"}}, WhitelistMembers: picks}
+	for _, list := range roleLists {
+		got := strings.Join(wantedFrom(list.from(spec), list.picks(spec), members), " ")
+		if want := map[string]string{"operators": "Ada Olive", "whitelist": "Vera"}[list.what]; got != want {
+			t.Errorf("%s: %q, want %q", list.what, got, want)
+		}
 	}
 }
 
@@ -246,14 +274,14 @@ func TestWhitelistByRole(t *testing.T) {
 		"owner":    "Olive",
 	} {
 		spec := &avsysv1.MinecraftServerSpec{AutoWhitelist: setting}
-		if got := wantedFrom(whitelistRole(spec), members); strings.Join(got, " ") != want {
+		if got := wantedFrom(whitelistRole(spec), spec.WhitelistMembers, members); strings.Join(got, " ") != want {
 			t.Errorf("autoWhitelist %q: %q, want %q", setting, strings.Join(got, " "), want)
 		}
 	}
 	// The two lists go by their own settings and their own kept names.
 	spec := &avsysv1.MinecraftServerSpec{AutoOp: "owner", AutoWhitelist: "viewer", Ops: []string{"Steve"}, Whitelist: []string{"Friend"}}
 	for _, list := range roleLists {
-		wanted := wantedFrom(list.from(spec), members)
+		wanted := wantedFrom(list.from(spec), list.picks(spec), members)
 		kept := list.kept(spec)
 		switch list.what {
 		case "operators":
@@ -325,5 +353,27 @@ func TestApplyNamesNotesWhatWentThrough(t *testing.T) {
 	// What it was handed is not written over.
 	if strings.Join(made, " ") != "Ada Otto" {
 		t.Errorf("the note it started from was changed: %v", made)
+	}
+}
+
+// Picks are kept as members now, each once; one both put on and left off is
+// put on; and none left is none at all.
+func TestPicksAreTidiedOnSave(t *testing.T) {
+	p := newPanel(t)
+	p.addServer("alpha", "picks", "")
+	viewer, admin, outsider := p.users["viewer"].ID, p.users["admin"].ID, p.users["outsider"].ID
+	body := `{"spec":{"whitelistMembers":{"also":["` + viewer + `","` + viewer + `","` + outsider + `","` + admin + `"],"except":["` + admin + `"]},"opMembers":{"also":["` + outsider + `"]}}}`
+	if code, msg := p.do("admin", "PATCH", "/orgs/alpha/servers/picks", body); code != 200 {
+		t.Fatalf("saving picks: %d %s", code, msg)
+	}
+	var mc avsysv1.MinecraftServer
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "picks"}, &mc); err != nil {
+		t.Fatal(err)
+	}
+	if got := mc.Spec.WhitelistMembers; got == nil || !reflect.DeepEqual(got.Also, []string{viewer, admin}) || len(got.Except) != 0 {
+		t.Errorf("whitelist picks: %+v", got)
+	}
+	if mc.Spec.OpMembers != nil {
+		t.Errorf("operator picks of no member: %+v", mc.Spec.OpMembers)
 	}
 }

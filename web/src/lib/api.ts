@@ -166,6 +166,9 @@ export interface ServerSpec {
   autoOp?: "" | "operator" | "admin" | "owner" | "off";
   /** From which role members are on the whitelist: "viewer" is every member; "" and "off" are nobody. */
   autoWhitelist?: "" | "viewer" | "operator" | "admin" | "owner" | "off";
+  /** Members put on, or left off, the operators and the whitelist whatever their role, by user ID. */
+  opMembers?: { also?: string[]; except?: string[] } | null;
+  whitelistMembers?: { also?: string[]; except?: string[] } | null;
   /** Where the server's scheduled snapshots depart from its organization's. Absent, it follows them. */
   backups?: BackupOverride | null;
   image?: string;

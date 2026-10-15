@@ -109,3 +109,30 @@ test("the console says a server is starting, and only a stopped one is not runni
   await page.reload();
   await expect(page.getByText("The game is starting. Its log appears here as soon as it is up.")).toBeVisible();
 });
+
+test("members can be put on a server's whitelist and operators one by one, beside their role", async ({ page, as, api }) => {
+  await as("owner");
+  const members: { userId: string; username: string }[] = await api("owner").get("/orgs/friends/members");
+  const id = (name: string) => members.find((m) => m.username === name)!.userId;
+  const sent: { spec: Record<string, unknown> }[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival", (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+  });
+  await page.goto("/o/friends/s/survival/settings");
+  // Nobody is whitelisted by role here; operators and above are operators.
+  const viewerWhitelisted = page.getByRole("checkbox", { name: /^Whitelisted: Viewer$/ });
+  const ownerOp = page.getByRole("checkbox", { name: /^Operator: Owner$/ });
+  await expect(viewerWhitelisted).not.toBeChecked();
+  await expect(ownerOp).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /^Operator: Viewer$/ })).not.toBeChecked();
+  await viewerWhitelisted.check();
+  await ownerOp.uncheck();
+  await expect(page.getByRole("row", { name: /^Viewer/ })).toContainText("picked");
+  await expect(page.getByRole("row", { name: /^Owner/ })).toContainText("left out");
+  await page.getByRole("button", { name: /^Save/ }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].spec.whitelistMembers).toEqual({ also: [id("viewer")], except: [] });
+  expect(sent[0].spec.opMembers).toEqual({ also: [], except: [id("owner")] });
+});

@@ -95,6 +95,8 @@ type roleList struct {
 	add, remove string
 	// from is the role from which a member is on it, or "" for nobody.
 	from func(*avsysv1.MinecraftServerSpec) store.Role
+	// picks are members put on it, or left off it, one by one.
+	picks func(*avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks
 	// kept is who is on it by the server's own settings, whom the panel
 	// never takes off.
 	kept func(*avsysv1.MinecraftServerSpec) []string
@@ -103,11 +105,13 @@ type roleList struct {
 var roleLists = []roleList{
 	{
 		what: "operators", note: avsysv1.AnnotationAutoOps, add: "op ", remove: "deop ", from: opRole,
-		kept: func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Ops },
+		picks: func(spec *avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks { return spec.OpMembers },
+		kept:  func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Ops },
 	},
 	{
 		what: "whitelist", note: avsysv1.AnnotationAutoWhitelist, add: "whitelist add ", remove: "whitelist remove ", from: whitelistRole,
-		kept: func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Whitelist },
+		picks: func(spec *avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks { return spec.WhitelistMembers },
+		kept:  func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Whitelist },
 	},
 }
 
@@ -139,17 +143,25 @@ func whitelistRole(spec *avsysv1.MinecraftServerSpec) store.Role {
 	return store.Role(spec.AutoWhitelist)
 }
 
-// wantedFrom is who should be on a list for their role: the linked players
-// of every member at or above min, by name. With no min it is nobody.
-func wantedFrom(min store.Role, members []store.Member) []string {
+// wantedFrom is who should be on a list for being a member: the linked
+// players of every member at or above min (with no min, nobody), and of
+// those picked, less those left out. By name.
+func wantedFrom(min store.Role, picks *avsysv1.MemberPicks, members []store.Member) []string {
 	var out []string
-	if min == "" {
-		return out
+	also, except := map[string]bool{}, map[string]bool{}
+	if picks != nil {
+		for _, id := range picks.Also {
+			also[id] = true
+		}
+		for _, id := range picks.Except {
+			except[id] = true
+		}
 	}
 	seen := map[string]bool{}
 	for _, m := range members {
 		key := strings.ToLower(m.MinecraftName)
-		if m.MinecraftName != "" && m.Role.AtLeast(min) && !seen[key] {
+		byRole := min != "" && m.Role.AtLeast(min) && !except[m.UserID]
+		if m.MinecraftName != "" && (byRole || also[m.UserID]) && !seen[key] {
 			seen[key] = true
 			out = append(out, m.MinecraftName)
 		}
@@ -160,7 +172,7 @@ func wantedFrom(min store.Role, members []store.Member) []string {
 
 // wantedOps is who should be an operator on a server for their role.
 func wantedOps(spec *avsysv1.MinecraftServerSpec, members []store.Member) []string {
-	return wantedFrom(opRole(spec), members)
+	return wantedFrom(opRole(spec), spec.OpMembers, members)
 }
 
 // splitNames reads a note of player names. Anything in it that could not
@@ -236,7 +248,7 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	var failed error
 	for _, list := range roleLists {
 		made := splitNames(fresh.Annotations[list.note])
-		wanted := wantedFrom(list.from(&fresh.Spec), members)
+		wanted := wantedFrom(list.from(&fresh.Spec), list.picks(&fresh.Spec), members)
 		add, remove := opChanges(made, wanted, list.kept(&fresh.Spec))
 		if len(add) == 0 && len(remove) == 0 {
 			continue

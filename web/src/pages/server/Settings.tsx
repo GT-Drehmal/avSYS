@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button, Confirm, Field, Input, Notice, Section, Select, Textarea, Toggle } from "../../components/ui";
-import { api, serverPath, type ExposeType, type Loader, type ServerSpec, type SpecPatch } from "../../lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { api, serverPath, type ExposeType, type Loader, type Member, type Role, type ServerSpec, type SpecPatch } from "../../lib/api";
 import { parseProperties, worldKeys } from "../../lib/properties";
-import { useAction, useMeta, useUpdateServer } from "../../lib/queries";
+import { keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
-import { autoOpOptions, exposeOptions, GameplayFields, memberRoleOptions, triState } from "../../components/ServerFields";
+import { autoOpOptions, exposeOptions, GameplayFields, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -38,6 +39,8 @@ interface Draft {
   autoOp: string;
   autoWhitelist: string;
   whitelist: string;
+  opMembers: Picks;
+  whitelistMembers: Picks;
   packURL: string;
   packSHA1: string;
   packEnforce: boolean;
@@ -45,6 +48,10 @@ interface Draft {
   env: string;
   image: string;
 }
+
+const picksOf = (p: ServerSpec["opMembers"]): Picks => ({ also: p?.also ?? [], except: p?.except ?? [] });
+// None picked is sent as null, which takes the field away.
+const picksFor = (p: Picks) => (p.also.length || p.except.length ? p : null);
 
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
 
@@ -79,6 +86,8 @@ function toDraft(spec: ServerSpec): Draft {
     // Not set is the same as "off".
     autoWhitelist: spec.autoWhitelist || "off",
     whitelist: (spec.whitelist ?? []).join("\n"),
+    opMembers: picksOf(spec.opMembers),
+    whitelistMembers: picksOf(spec.whitelistMembers),
     packURL: spec.resourcePack?.url ?? "",
     packSHA1: spec.resourcePack?.sha1 ?? "",
     packEnforce: !!spec.resourcePack?.enforce,
@@ -116,6 +125,8 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     autoOp: d.autoOp as ServerSpec["autoOp"],
     autoWhitelist: d.autoWhitelist as ServerSpec["autoWhitelist"],
     whitelist: lines(d.whitelist),
+    opMembers: picksFor(d.opMembers),
+    whitelistMembers: picksFor(d.whitelistMembers),
     resourcePack: d.packURL.trim() ? { url: d.packURL.trim(), sha1: d.packSHA1.trim(), enforce: d.packEnforce, prompt: d.packPrompt } : null,
     env: lines(d.env).flatMap((line) => {
       const i = line.indexOf("=");
@@ -156,6 +167,7 @@ export function Settings() {
     set("packSHA1", sha1);
   });
   const meta = useMeta();
+  const members = useQuery({ queryKey: keys.members(server.org), queryFn: () => api.get<Member[]>(`/orgs/${server.org}/members`) });
   // A last snapshot is taken unless this is switched off, so that what is
   // deleted can be brought back.
   const [finalSnapshot, setFinalSnapshot] = useState(true);
@@ -294,6 +306,20 @@ export function Settings() {
             )}
           </Field>
         </div>
+        {(members.data?.length ?? 0) > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <div className="text-[13px] font-medium text-fg">Members</div>
+            <p className="text-xs text-muted">By role unless picked otherwise. A pick follows the person: a new Minecraft name, or leaving the organization.</p>
+            <MemberLists
+              members={members.data ?? []}
+              whitelistFrom={draft.autoWhitelist === "off" ? "" : (draft.autoWhitelist as Role)}
+              opFrom={draft.autoOp === "off" ? "" : ((draft.autoOp || "operator") as Role)}
+              whitelist={draft.whitelistMembers}
+              ops={draft.opMembers}
+              onChange={({ whitelist, ops }) => setDraft((d) => ({ ...d, whitelistMembers: whitelist, opMembers: ops }))}
+            />
+          </div>
+        )}
       </Section>
 
       <Section title="Resource pack" description="The URL must be reachable by players.">

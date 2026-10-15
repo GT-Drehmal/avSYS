@@ -185,6 +185,26 @@ sleep 2
 expect "and is then from the server" "$(call -N --max-time 4 "$SRV/console" 2>/dev/null || true)" "[Server] hello from the panel"
 expect "one command at a time" "$(call -o /dev/null -w '%{http_code}' -d '{"command":"say a\nsay b","as":"server"}' "$SRV/console")" 400
 
+step "members picked for the whitelist"
+# The player this user says they are: the one linked already, or one linked
+# for the run and taken off after.
+ME=$(call "$API/me" | field "d['user']['id']")
+PLAYER=$(call "$API/me" | field "(d.get('minecraft') or {}).get('name', '')")
+linked_here=""
+if [ -z "$PLAYER" ]; then
+  PLAYER=$(call -X PUT -d '{"name":"Notch"}' "$API/me/minecraft" | field "d['name']")
+  linked_here=1
+fi
+whitelisted() { call -d '{"command":"whitelist list"}' "$SRV/console" | field "d['output']"; }
+call -X PATCH -d '{"spec":{"autoWhitelist":"off","whitelistMembers":{"also":["'"$ME"'"]}}}' "$SRV" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -q "$PLAYER" && break; sleep 1; done
+expect "a member picked is put on the whitelist, though no role is" "$(whitelisted)" "$PLAYER"
+call -X PATCH -d '{"spec":{"autoWhitelist":"viewer","whitelistMembers":{"also":[],"except":["'"$ME"'"]}}}' "$SRV" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -q "$PLAYER" || break; sleep 1; done
+case "$(whitelisted)" in *"$PLAYER"*) fail "a member left out stays off the whitelist, though every member is on it" ;; *) echo "ok: a member left out stays off the whitelist, though every member is on it" ;; esac
+call -X PATCH -d '{"spec":{"autoWhitelist":"off","whitelistMembers":null}}' "$SRV" >/dev/null
+if [ -n "$linked_here" ]; then call -X DELETE "$API/me/minecraft" >/dev/null; fi
+
 step "files"
 echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
 expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
