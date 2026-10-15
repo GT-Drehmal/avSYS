@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Camera, Play, Plus, RotateCw, Square, Trash2 } from "lucide-react";
+import { Camera, Copy, Play, Plus, RotateCw, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { scheduleOf } from "../components/BackupSchedule";
 import { Picture } from "../components/Picture";
 import { ServerActions } from "../components/ServerActions";
@@ -10,6 +10,7 @@ import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, SelectionBar
 import { api, ApiError, atLeast, serverIcon, serverPath, type Server } from "../lib/api";
 import { ago, describeSoftware, displayName } from "../lib/format";
 import { keys, useBackupPolicy, useMeta, useServers } from "../lib/queries";
+import { newFrom } from "../lib/origin";
 import { useSelection } from "../lib/selection";
 import { toast } from "../lib/toast";
 
@@ -70,6 +71,7 @@ const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: Server[]; canAdmin: boolean; onDone: (failed: string[]) => void }) {
   const qc = useQueryClient();
   const meta = useMeta();
+  const navigate = useNavigate();
   const [running, setRunning] = useState<Act | null>(null);
   const [deleting, setDeleting] = useState(false);
   // A last snapshot of each is taken unless this is switched off.
@@ -114,6 +116,12 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
       {button("restart", "Restart", <RotateCw className="size-3.5" />)}
       {button("stop", "Stop", <Square className="size-3" />)}
       {meta.data?.snapshots && button("snapshot", "Snapshot", <Camera className="size-3.5" />)}
+      {/* One at a time: the form it opens is filled in from that one server. */}
+      {canAdmin && chosen.length === 1 && (
+        <Button size="sm" icon={<Copy className="size-3.5" />} disabled={running !== null} onClick={() => navigate(newFrom(org, { kind: "server", name: chosen[0].name }))}>
+          Duplicate
+        </Button>
+      )}
       {canAdmin && (
         <Button size="sm" variant="danger" icon={<Trash2 className="size-3.5" />} disabled={running !== null} onClick={() => setDeleting(true)}>
           Delete
