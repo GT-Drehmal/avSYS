@@ -8,6 +8,7 @@ import { Shell } from "./components/Shell";
 import { Loading, Spinner, Toaster } from "./components/ui";
 import { queryClient, useMe } from "./lib/queries";
 import { Account } from "./pages/Account";
+import { Nodes } from "./pages/Nodes";
 import { Backups } from "./pages/Backups";
 import { Home } from "./pages/Home";
 import { Invite } from "./pages/Invite";
@@ -53,6 +54,7 @@ createRoot(document.getElementById("root")!).render(
             <Route element={<Shell />}>
               <Route index element={<Home />} />
               <Route path="account" element={<Account />} />
+              <Route path="nodes" element={<Nodes />} />
               <Route path="o/:org">
                 <Route index element={<Servers />} />
                 <Route path="new" element={<NewServer />} />

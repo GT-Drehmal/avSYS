@@ -198,6 +198,24 @@ test("earlier logs and crash reports can be opened from the console, searched an
   await expect(page.getByLabel("Search this log")).toHaveCount(0);
 });
 
+test("a page open while the panel is updated says so, and offers to reload", async ({ page, as }) => {
+  await as("viewer");
+  let updated = false;
+  await page.route("**/api/v1/meta", async (route) => {
+    const meta = await (await route.fetch()).json();
+    return route.fulfill({ json: updated ? { ...meta, version: "sha-next" } : meta });
+  });
+  await page.goto("/o/friends");
+  await expect(page.getByRole("heading", { name: "Servers" })).toBeVisible();
+  await expect(page.getByText(/avSYS was updated/)).toHaveCount(0);
+  updated = true;
+  // Coming back to the tab asks again.
+  await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByRole("status").filter({ hasText: "avSYS was updated to sha-next." })).toBeVisible();
+  await page.getByRole("button", { name: "Reload" }).click();
+  await expect(page.getByText(/avSYS was updated/)).toHaveCount(0);
+});
+
 test("an organization's domains are set by the panel's administrator, and shown to its members", async ({ page, as, org }) => {
   const a = await org([]);
   const b = await org([]);

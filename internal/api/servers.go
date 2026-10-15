@@ -278,6 +278,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// FromServer makes the server a copy of another in the organization,
 		// as that one is now.
 		FromServer string `json:"fromServer"`
+		// Node is the node to put it on, rather than the one the panel would
+		// choose. Its world lives on that node's disk.
+		Node string `json:"node"`
 		// Picture is, for one made from a snapshot or another server, a
 		// picture of its own in place of the one its files bring: base64,
 		// or null for none.
@@ -311,9 +314,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 		if raw.FromServer != "" {
-			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture)
+			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture, raw.Node)
 		}
-		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture)
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture, raw.Node)
 	}
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given its picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once it is made.")
@@ -357,7 +360,12 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: in.Name},
 		Spec:       in.Spec,
 	}
-	if err := s.withHostname(r.Context(), a.Org, mc.Spec.Expose.Hostname, func() error { return s.Client.Create(r.Context(), mc) }); err != nil {
+	if raw.Node != "" {
+		// Placed where asked, which the controller then keeps to.
+		mc.Annotations = map[string]string{avsysv1.AnnotationNode: raw.Node}
+		mc.Spec.NodeSelector = nil
+	}
+	if err := s.withHostname(r.Context(), a.Org, mc.Spec.Expose.Hostname, func() error { return s.createPlaced(r.Context(), mc, raw.Node) }); err != nil {
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "server.create", in.Name, "")
@@ -635,7 +643,11 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 		// With nothing new to apply, asking the game to stop is enough: its
 		// container restarts in place and open shells and editors survive.
 		// Otherwise the pod is replaced so the new spec takes effect.
-		if mc.Status.Phase == avsysv1.PhaseRunning && !mc.Status.PendingRestart {
+		live, err := s.live(r.Context(), mc)
+		if err != nil {
+			return err
+		}
+		if restartsInPlace(live) {
 			if _, err := s.rcon(r.Context(), mc, "stop"); err == nil {
 				break
 			}
@@ -654,6 +666,29 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 	s.audit(r.Context(), u, a.Org, "server."+action, mc.Name, "")
 	writeJSON(w, http.StatusOK, s.view(mc))
 	return nil
+}
+
+// restartsInPlace says whether a restart can be the game stopping and its
+// container starting again in the same pod, with the settings it has. Only
+// when the controller has seen the server's latest settings and found
+// nothing new in them: a change made a moment ago, such as content taken
+// off, would otherwise be started without, and the old settings put back
+// what was removed.
+func restartsInPlace(mc *avsysv1.MinecraftServer) bool {
+	return mc.Status.Phase == avsysv1.PhaseRunning && !mc.Status.PendingRestart && mc.Status.ObservedGeneration == mc.Generation
+}
+
+// live reads a server as it is now, where the cache may lag a change just
+// made.
+func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv1.MinecraftServer, error) {
+	if s.Reader == nil {
+		return mc, nil
+	}
+	now := &avsysv1.MinecraftServer{}
+	if err := s.Reader.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
+		return nil, err
+	}
+	return now, nil
 }
 
 // rcon runs a console command on a running server.
