@@ -150,13 +150,14 @@ const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
  */
 export function NodeChoice({ memory, value, kept, onChange }: { memory: string; value: string; kept?: Record<string, string>; onChange: (node: string) => void }) {
   const wanted = fromGigabytes(memory);
-  const nodes = useQuery({ queryKey: ["nodes", wanted], queryFn: () => api.get<{ nodes: NodeInfo[]; automatic?: string }>(`/nodes?memory=${encodeURIComponent(wanted)}`) });
+  // The last answer stays up while the memory typed is asked about, so the
+  // field does not blink away and back.
+  const nodes = useQuery({ queryKey: ["nodes", wanted], queryFn: () => api.get<{ nodes: NodeInfo[]; automatic?: string }>(`/nodes?memory=${encodeURIComponent(wanted)}`), placeholderData: (last) => last });
   const list = nodes.data?.nodes ?? [];
   // A copy of a server kept to some nodes is kept to them too, unless asked.
   const keptTo = kept && Object.keys(kept).length > 0 ? Object.entries(kept).map(([k, v]) => `${k}=${v}`).join(", ") : "";
-  // Only worth asking where there is more than one, or the original's
-  // nodes could be let go of.
-  if (list.length < 2 && !value && !keptTo) return null;
+  // Shown with one node too, so that where it goes is never a guess.
+  if (list.length === 0 && !value && !keptTo) return null;
   // What the server's pod asks for: its memory and a little for its workspace.
   const need = (Number(memory) || 0) * 1024 ** 3 + 32 * 1024 ** 2;
   const automatic = nodes.data?.automatic;
@@ -168,7 +169,9 @@ export function NodeChoice({ memory, value, kept, onChange }: { memory: string; 
           ? "Its world is kept on this node's disk."
           : keptTo && !value
             ? "Where the original may run, as the nodes are labelled. Its world is kept on that node's disk."
-            : "Chosen by speed and free memory. Its world is kept on that node's disk."
+            : list.length === 1
+              ? "The only node there is. Its world is kept on its disk."
+              : "Chosen by speed and free memory. Its world is kept on that node's disk."
       }
     >
       {(id) => (

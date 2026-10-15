@@ -455,6 +455,20 @@ test("a node can be chosen for a new server, any that has room, slow ones includ
   expect(sent[0].node).toBe("pi");
 });
 
+test("with one node, the node is still shown", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.route("**/api/v1/nodes?*", (route) => route.fulfill({ json: { automatic: "fast", nodes: [twoNodes.nodes[0]] } }));
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
+  const choice = page.getByLabel("Node", { exact: true });
+  await expect(choice.locator("option")).toHaveText(["Automatic (now fast)", /^fast · speed 2\.00/]);
+  await expect(page.getByText("The only node there is.")).toBeVisible();
+  // Changing the memory asks again, and the field stays.
+  await page.getByLabel("Memory (GB)").fill("2");
+  await expect(choice).toBeVisible();
+});
+
 test("a copy of a server kept to some nodes is kept to them, unless Automatic is chosen", async ({ page, as }) => {
   await as("owner");
   await page.route("**/api/v1/nodes?*", (route) => route.fulfill({ json: twoNodes }));
