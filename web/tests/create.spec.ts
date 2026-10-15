@@ -455,6 +455,32 @@ test("a node can be chosen for a new server, any that has room, slow ones includ
   expect(sent[0].node).toBe("pi");
 });
 
+test("a copy of a server kept to some nodes is kept to them, unless Automatic is chosen", async ({ page, as }) => {
+  await as("owner");
+  await page.route("**/api/v1/nodes?*", (route) => route.fulfill({ json: twoNodes }));
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() === "POST") {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+    }
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, nodeSelector: { disk: "ssd" } } } : s)) });
+  });
+  const sent: { node?: string; spec: { nodeSelector?: object } }[] = [];
+  await page.goto("/o/friends/new?from=server:survival");
+  const choice = page.getByLabel("Node", { exact: true });
+  await expect(choice.locator("option").first()).toHaveText("As the original: nodes with disk=ssd");
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).not.toHaveProperty("node");
+  expect(sent[0].spec).not.toHaveProperty("nodeSelector");
+  await choice.selectOption({ label: "Automatic (now fast)" });
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(sent[1]).not.toHaveProperty("node");
+  expect(sent[1].spec.nodeSelector).toEqual({});
+});
+
 test("the panel's administrator sees the nodes and what runs on each; nobody else is offered them", async ({ page, as }) => {
   await page.route("**/api/v1/nodes", (route) => route.fulfill({ json: twoNodes }));
   await as("owner");

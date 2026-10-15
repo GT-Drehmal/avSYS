@@ -62,3 +62,37 @@ func TestPickNode(t *testing.T) {
 		}
 	}
 }
+
+// A node's score that is not a number counts as not measured.
+func TestNodeScoreNotANumber(t *testing.T) {
+	for _, label := range []string{"NaN", "Inf", "-Inf", "-1", "fast"} {
+		n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{avsysv1.LabelNodeScore: label}}}
+		if got := NodeScore(n); got != 0 {
+			t.Errorf("score %q read as %v", label, got)
+		}
+	}
+}
+
+// What the scheduler holds for a pod: its containers and sidecars, or more
+// if an init container needs it, and its overhead.
+func TestPodMemory(t *testing.T) {
+	gi := func(n int64) corev1.ResourceRequirements {
+		return corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(n<<30, resource.BinarySI)}}
+	}
+	always := corev1.ContainerRestartPolicyAlways
+	for _, c := range []struct {
+		name string
+		pod  corev1.PodSpec
+		want int64
+	}{
+		{"containers", corev1.PodSpec{Containers: []corev1.Container{{Resources: gi(2)}, {Resources: gi(1)}}}, 3},
+		{"a bigger init container", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(5)}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 5},
+		{"a smaller init container", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(1)}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 2},
+		{"a sidecar", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(1), RestartPolicy: &always}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 3},
+		{"overhead", corev1.PodSpec{Containers: []corev1.Container{{Resources: gi(2)}}, Overhead: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(1<<30, resource.BinarySI)}}, 3},
+	} {
+		if got := podMemory(&corev1.Pod{Spec: c.pod}); got != c.want<<30 {
+			t.Errorf("%s: %d GiB, want %d", c.name, got>>30, c.want)
+		}
+	}
+}

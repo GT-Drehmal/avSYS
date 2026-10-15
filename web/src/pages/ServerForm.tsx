@@ -341,7 +341,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         const from = source.origin.kind === "server" ? { fromServer: source.origin.name } : { fromSnapshot: source.origin.id };
         // Left out, it keeps the one its files bring.
         const pictured = v.picture.kind === "file" ? { picture: await pictureForRequest(v.picture.file) } : v.picture.kind === "none" ? { picture: null } : {};
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...(v.node ? { node: v.node } : {}), spec: copyRequest() });
+        // "auto" lets the panel choose for a copy of a server kept to some
+        // nodes, which would otherwise be kept to them too.
+        const placed = v.node === "auto" ? { spec: { ...copyRequest(), nodeSelector: {} } } : { ...(v.node ? { node: v.node } : {}), spec: copyRequest() };
+        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files are in.
         navigate(`/o/${org}/s/${server.name}`);
@@ -650,7 +653,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={v.memory} onChange={(e) => set("memory", e.target.value)} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={v.storage} onChange={(e) => set("storage", e.target.value)} />}</Field>
         </div>
-        <NodeChoice memory={v.memory} value={v.node} onChange={(node) => set("node", node)} />
+        <NodeChoice memory={v.memory} value={v.node} kept={source?.live?.spec.nodeSelector} onChange={(node) => set("node", node)} />
       </Section>
 
       <Section title="Network">

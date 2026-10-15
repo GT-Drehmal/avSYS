@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strconv"
 
@@ -33,7 +34,7 @@ func nodeUsable(n *corev1.Node) bool {
 
 func nodeScore(n *corev1.Node) float64 {
 	score, err := strconv.ParseFloat(n.Labels[avsysv1.LabelNodeScore], 64)
-	if err != nil || score < 0 {
+	if err != nil || score < 0 || math.IsNaN(score) || math.IsInf(score, 0) {
 		// Unmeasured nodes can host, after every measured one.
 		return 0
 	}
@@ -166,11 +167,34 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 		if p.Spec.NodeName == "" || p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
 			continue
 		}
-		for _, c := range p.Spec.Containers {
-			reserved[p.Spec.NodeName] += c.Resources.Requests.Memory().Value()
-		}
+		reserved[p.Spec.NodeName] += podMemory(p)
 	}
 	return nodes.Items, reserved, nil
+}
+
+// podMemory is the memory the scheduler holds on a node for a pod: its
+// containers and the init containers that keep running beside them, or, if
+// more, any one init container that runs before them with those started so
+// far; and the pod's overhead.
+func podMemory(p *corev1.Pod) int64 {
+	var running, sidecars, most int64
+	for _, c := range p.Spec.Containers {
+		running += c.Resources.Requests.Memory().Value()
+	}
+	for _, c := range p.Spec.InitContainers {
+		m := c.Resources.Requests.Memory().Value()
+		if c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			sidecars += m
+			most = max(most, sidecars)
+			continue
+		}
+		most = max(most, sidecars+m)
+	}
+	total := max(running+sidecars, most)
+	if mem, ok := p.Spec.Overhead[corev1.ResourceMemory]; ok {
+		total += mem.Value()
+	}
+	return total
 }
 
 // ServerNeeds is the memory a server's pod asks a node for: its game and
