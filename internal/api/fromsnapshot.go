@@ -199,6 +199,14 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	if !said("autoWhitelist") {
 		spec.AutoWhitelist = recorded.AutoWhitelist
 	}
+	// Members picked one by one: of the same organization, and those who
+	// have left it since are dropped as the copy is checked.
+	if !said("opMembers") {
+		spec.OpMembers = recorded.OpMembers
+	}
+	if !said("whitelistMembers") {
+		spec.WhitelistMembers = recorded.WhitelistMembers
+	}
 
 	spec.EULA = spec.EULA || recorded.EULA
 	if spec.DisplayName == "" {

@@ -693,16 +693,18 @@ func fill(v reflect.Value) {
 // notRestored names every setting a restore leaves as it is now, and why.
 // Everything else goes back to what the snapshot recorded.
 var notRestored = map[string]string{
-	"DisplayName":   "a restore puts back files, not what the server is called",
-	"State":         "whether it runs is settled by the restore itself",
-	"EULA":          "accepted for the server, not for its files",
-	"Resources":     "what it is given to run on stays as it is now",
-	"Storage":       "what it is given to run on stays as it is now",
-	"Expose":        "its address stays as it is now",
-	"Sleep":         "what it is given to run on stays as it is now",
-	"Backups":       "when it is snapshotted is not recorded",
-	"AutoOp":        "who is an operator by role is decided now, not by the files",
-	"AutoWhitelist": "who can join by role is decided now, not by the files",
+	"DisplayName":      "a restore puts back files, not what the server is called",
+	"State":            "whether it runs is settled by the restore itself",
+	"EULA":             "accepted for the server, not for its files",
+	"Resources":        "what it is given to run on stays as it is now",
+	"Storage":          "what it is given to run on stays as it is now",
+	"Expose":           "its address stays as it is now",
+	"Sleep":            "what it is given to run on stays as it is now",
+	"Backups":          "when it is snapshotted is not recorded",
+	"AutoOp":           "who is an operator by role is decided now, not by the files",
+	"AutoWhitelist":    "who can join by role is decided now, not by the files",
+	"OpMembers":        "as AutoOp: the members picked are decided now",
+	"WhitelistMembers": "as AutoWhitelist: the members picked are decided now",
 	// For the reason given at restoreSoftware.
 	"Image":        "not taken from a record the server could have written",
 	"Env":          "not taken from a record the server could have written",

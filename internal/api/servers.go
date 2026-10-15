@@ -12,6 +12,7 @@ import (
 	"time"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -126,6 +127,52 @@ func checkJVM(jvm *avsysv1.JVMSpec) error {
 	return nil
 }
 
+// tidyPicks keeps, of the members picked one by one for a server's lists,
+// those who are members now, each once. One both put on a list and left off
+// it is put on. None left is the same as none picked.
+func (s *Server) tidyPicks(ctx context.Context, namespace string, spec *avsysv1.MinecraftServerSpec) error {
+	if spec.OpMembers == nil && spec.WhitelistMembers == nil {
+		return nil
+	}
+	slug, _ := s.orgOfNamespace(namespace)
+	org, err := s.Store.OrgBySlug(ctx, slug)
+	if err != nil {
+		return err
+	}
+	members, err := s.Store.Members(ctx, org.ID)
+	if err != nil {
+		return err
+	}
+	member := map[string]bool{}
+	for _, m := range members {
+		member[m.UserID] = true
+	}
+	tidy := func(picks *avsysv1.MemberPicks) *avsysv1.MemberPicks {
+		if picks == nil {
+			return nil
+		}
+		seen := map[string]bool{}
+		keep := func(ids []string) []string {
+			var out []string
+			for _, id := range ids {
+				if member[id] && !seen[id] {
+					seen[id] = true
+					out = append(out, id)
+				}
+			}
+			return out
+		}
+		out := &avsysv1.MemberPicks{Also: keep(picks.Also)}
+		out.Except = keep(picks.Except)
+		if len(out.Also) == 0 && len(out.Except) == 0 {
+			return nil
+		}
+		return out
+	}
+	spec.OpMembers, spec.WhitelistMembers = tidy(spec.OpMembers), tidy(spec.WhitelistMembers)
+	return nil
+}
+
 func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec *avsysv1.MinecraftServerSpec) error {
 	if !spec.EULA {
 		return errBadRequest("Accept the Minecraft EULA to run a server.")
@@ -186,6 +233,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	case "", "off", string(store.RoleViewer), string(store.RoleOperator), string(store.RoleAdmin), string(store.RoleOwner):
 	default:
 		return errBadRequest("The whitelist goes by role: viewer for every member, operator, admin, owner, or off. %q is none of those.", spec.AutoWhitelist)
+	}
+	if err := s.tidyPicks(ctx, namespace, spec); err != nil {
+		return err
 	}
 	if spec.Backups != nil {
 		// Held to the limits an organization's own schedule is.
@@ -493,7 +543,8 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
 	// From which role members are operators in game, acted on now and not
 	// with the next look.
-	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist {
+	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist ||
+		!equality.Semantic.DeepEqual(previous.OpMembers, mc.Spec.OpMembers) || !equality.Semantic.DeepEqual(previous.WhitelistMembers, mc.Spec.WhitelistMembers) {
 		s.syncOpsFor(a.Org, mc)
 	}
 	writeJSON(w, http.StatusOK, s.view(mc))

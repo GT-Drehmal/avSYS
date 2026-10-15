@@ -477,6 +477,28 @@ spec:
                 description: NodeSelector constrains which nodes the server may run
                   on.
                 type: object
+              opMembers:
+                description: |-
+                  OpMembers and WhitelistMembers pick members one by one, besides by
+                  role. They go by the member's user ID in the panel, so a pick follows
+                  the person through a change of Minecraft account and goes when they
+                  leave the organization.
+                properties:
+                  also:
+                    description: Also are members on the list though their role would
+                      not put them there.
+                    items:
+                      type: string
+                    maxItems: 1000
+                    type: array
+                  except:
+                    description: Except are members left off it though their role
+                      would put them there.
+                    items:
+                      type: string
+                    maxItems: 1000
+                    type: array
+                type: object
               ops:
                 items:
                   type: string
@@ -565,6 +587,25 @@ spec:
                 items:
                   type: string
                 type: array
+              whitelistMembers:
+                description: MemberPicks are members put on a list, or left off it,
+                  whatever their role.
+                properties:
+                  also:
+                    description: Also are members on the list though their role would
+                      not put them there.
+                    items:
+                      type: string
+                    maxItems: 1000
+                    type: array
+                  except:
+                    description: Except are members left off it though their role
+                      would put them there.
+                    items:
+                      type: string
+                    maxItems: 1000
+                    type: array
+                type: object
             required:
             - eula
             type: object

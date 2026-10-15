@@ -120,6 +120,16 @@ type ContentRef struct {
 	IconURL     string `json:"iconUrl,omitempty"`
 }
 
+// MemberPicks are members put on a list, or left off it, whatever their role.
+type MemberPicks struct {
+	// Also are members on the list though their role would not put them there.
+	// +kubebuilder:validation:MaxItems=1000
+	Also []string `json:"also,omitempty"`
+	// Except are members left off it though their role would put them there.
+	// +kubebuilder:validation:MaxItems=1000
+	Except []string `json:"except,omitempty"`
+}
+
 // ModpackSpec installs a whole modpack. The pack decides the loader and game version.
 type ModpackSpec struct {
 	// +kubebuilder:validation:Enum=modrinth;curseforge
@@ -302,6 +312,12 @@ type MinecraftServerSpec struct {
 	// whitelist has to be switched on for it to be asked.
 	// +kubebuilder:validation:Enum="";viewer;operator;admin;owner;off
 	AutoWhitelist string `json:"autoWhitelist,omitempty"`
+	// OpMembers and WhitelistMembers pick members one by one, besides by
+	// role. They go by the member's user ID in the panel, so a pick follows
+	// the person through a change of Minecraft account and goes when they
+	// leave the organization.
+	OpMembers        *MemberPicks `json:"opMembers,omitempty"`
+	WhitelistMembers *MemberPicks `json:"whitelistMembers,omitempty"`
 
 	// Image overrides the server image. By default a tag of itzg/minecraft-server
 	// with the right Java for the game version is chosen.

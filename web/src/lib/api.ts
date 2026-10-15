@@ -170,6 +170,9 @@ export interface ServerSpec {
   autoWhitelist?: "" | "viewer" | "operator" | "admin" | "owner" | "off";
   /** Labels of the nodes it is kept to, set outside the panel. */
   nodeSelector?: Record<string, string>;
+  /** Members put on, or left off, the operators and the whitelist whatever their role, by user ID. */
+  opMembers?: { also?: string[]; except?: string[] } | null;
+  whitelistMembers?: { also?: string[]; except?: string[] } | null;
   /** Where the server's scheduled snapshots depart from its organization's. Absent, it follows them. */
   backups?: BackupOverride | null;
   image?: string;
