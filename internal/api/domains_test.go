@@ -11,13 +11,15 @@ func TestDomainsAreTheirOrganizations(t *testing.T) {
 	p := newPanel(t)
 	// Beta's server had its address before alpha claimed the domain it is under.
 	p.addServer("beta", "early", "early.alpha.example.org")
+	// And one made outside the panel, its name in another case, with a final dot.
+	p.addServer("beta", "manual", "Manual.Alpha.Example.org.")
 
 	code, got := p.get("root", "PUT", "/orgs/alpha/domains", `{"domains":["Alpha.Example.org.", "alpha.example.org"]}`)
 	if code != 200 || len(got["domains"].([]any)) != 1 || got["domains"].([]any)[0] != "alpha.example.org" {
 		t.Fatalf("claiming: %d %v", code, got)
 	}
 	inUse, _ := got["inUse"].([]any)
-	if len(inUse) != 1 || inUse[0].(map[string]any)["server"] != "early" || inUse[0].(map[string]any)["org"] != "beta" {
+	if len(inUse) != 2 || inUse[0].(map[string]any)["server"] != "early" || inUse[0].(map[string]any)["org"] != "beta" || inUse[1].(map[string]any)["hostname"] != "manual.alpha.example.org" {
 		t.Errorf("servers already under it: %v", inUse)
 	}
 	if code, name := p.do("admin", "PUT", "/orgs/alpha/domains", `{"domains":["mine.example.org"]}`); code != 403 {
@@ -48,6 +50,9 @@ func TestDomainsAreTheirOrganizations(t *testing.T) {
 	// move to another name under alpha's domain.
 	if code, msg := p.do("outsider", "PATCH", "/orgs/beta/servers/early", `{"spec":{"displayName":"Early"}}`); code != 200 {
 		t.Errorf("changing something else on a server that had it already: %d %s", code, msg)
+	}
+	if code, msg := p.do("outsider", "PATCH", "/orgs/beta/servers/manual", `{"spec":{"displayName":"Manual"}}`); code != 200 {
+		t.Errorf("changing something else on one whose name is written another way: %d %s", code, msg)
 	}
 	if code, name := p.do("outsider", "PATCH", "/orgs/beta/servers/early", `{"spec":{"expose":{"type":"Router","hostname":"later.alpha.example.org"}}}`); code != 409 || name != "domain_claimed" {
 		t.Errorf("moving to another name under it: %d %s, want 409 domain_claimed", code, name)

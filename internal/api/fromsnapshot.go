@@ -384,7 +384,9 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 			mc.Annotations[note] = strings.Join(made, ",")
 		}
 	}
-	if err := s.Client.Create(ctx, mc); err != nil {
+	// Checked again as it is made: a domain may have been claimed while
+	// the original was being snapshotted.
+	if err := s.withHostname(ctx, a.Org, mc.Spec.Expose.Hostname, func() error { return s.Client.Create(ctx, mc) }); err != nil {
 		s.ops.end(a.Namespace, name)
 		return err
 	}

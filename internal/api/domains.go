@@ -7,7 +7,10 @@ import (
 	"sort"
 	"strings"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/router"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -69,6 +72,32 @@ func (s *Server) putDomains(w http.ResponseWriter, r *http.Request, u *store.Use
 			domains = append(domains, n)
 		}
 	}
+	s.hostnames.Lock()
+	defer s.hostnames.Unlock()
+	// Servers of other organizations already under one of them keep working;
+	// whoever claimed it is told which.
+	inUse := []hostnameInUse{}
+	// As the cluster is now: a server given a name a moment ago is in it.
+	var reader client.Reader = s.Client
+	if s.Reader != nil {
+		reader = s.Reader
+	}
+	var all avsysv1.MinecraftServerList
+	if err := reader.List(r.Context(), &all); err != nil {
+		return err
+	}
+	for _, mc := range all.Items {
+		host := router.NormalizeHostname(mc.Spec.Expose.Hostname)
+		if host == "" || mc.Namespace == a.Namespace {
+			continue
+		}
+		for _, d := range domains {
+			if host == d || strings.HasSuffix(host, "."+d) {
+				org, _ := s.orgOfNamespace(mc.Namespace)
+				inUse = append(inUse, hostnameInUse{Org: org, Server: mc.Name, Hostname: host})
+			}
+		}
+	}
 	if err := s.Store.SetDomains(r.Context(), a.Org.ID, domains); err != nil {
 		if c, ok := store.IsClaimed(err); ok {
 			other := "another organization"
@@ -80,27 +109,20 @@ func (s *Server) putDomains(w http.ResponseWriter, r *http.Request, u *store.Use
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "org.domains", a.Org.Slug, strings.Join(domains, " "))
-	// Servers of other organizations already under one of them keep working;
-	// whoever claimed it is told which.
-	inUse := []hostnameInUse{}
-	var all avsysv1.MinecraftServerList
-	if err := s.Client.List(r.Context(), &all); err == nil {
-		for _, mc := range all.Items {
-			host := mc.Spec.Expose.Hostname
-			if host == "" || mc.Namespace == a.Namespace {
-				continue
-			}
-			for _, d := range domains {
-				if host == d || strings.HasSuffix(host, "."+d) {
-					org, _ := s.orgOfNamespace(mc.Namespace)
-					inUse = append(inUse, hostnameInUse{Org: org, Server: mc.Name, Hostname: host})
-				}
-			}
-		}
-	}
 	sort.Slice(inUse, func(i, j int) bool { return inUse[i].Hostname < inUse[j].Hostname })
 	writeJSON(w, http.StatusOK, map[string]any{"domains": domains, "editable": true, "inUse": inUse})
 	return nil
+}
+
+// withHostname does write, which gives a server host, if host may be its
+// organization's: checked and written while no domain is being claimed.
+func (s *Server) withHostname(ctx context.Context, org *store.Org, host string, write func() error) error {
+	s.hostnames.Lock()
+	defer s.hostnames.Unlock()
+	if err := s.checkHostnameOwner(ctx, org, host); err != nil {
+		return err
+	}
+	return write()
 }
 
 // checkHostnameOwner refuses a hostname under a domain another organization

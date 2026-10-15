@@ -318,7 +318,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: in.Name},
 		Spec:       in.Spec,
 	}
-	if err := s.Client.Create(r.Context(), mc); err != nil {
+	if err := s.withHostname(r.Context(), a.Org, mc.Spec.Expose.Hostname, func() error { return s.Client.Create(r.Context(), mc) }); err != nil {
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "server.create", in.Name, "")
@@ -422,16 +422,19 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	// A hostname it has already is left alone, even under a domain claimed
-	// by another since; only a new one is held to who claims what.
-	if spec.Expose.Hostname != previous.Expose.Hostname {
-		if err := s.checkHostnameOwner(r.Context(), a.Org, spec.Expose.Hostname); err != nil {
-			return err
-		}
-	}
+	// by another since; only a new one is held to who claims what. It is
+	// compared as the router reads it: a server made outside the panel may
+	// have it in another case, or with a final dot.
 	mc.Spec = spec
+	update := func() error { return s.Client.Update(r.Context(), mc) }
+	if spec.Expose.Hostname != router.NormalizeHostname(previous.Expose.Hostname) {
+		err = s.withHostname(r.Context(), a.Org, spec.Expose.Hostname, update)
+	} else {
+		err = update()
+	}
 	// Update carries the resource version read above, so a concurrent edit
 	// is rejected instead of silently overwritten.
-	if err := s.Client.Update(r.Context(), mc); apierrors.IsConflict(err) {
+	if apierrors.IsConflict(err) {
 		return &Error{Status: http.StatusConflict, Code: "stale", Message: "This server was changed by someone else just now. Try again."}
 	} else if err != nil {
 		return err
