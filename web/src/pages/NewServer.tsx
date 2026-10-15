@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { PictureChoice } from "../components/Picture";
@@ -11,6 +11,8 @@ import { Button, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea
 import { api, ApiError, serverPath, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
 import { keys, useMe } from "../lib/queries";
+import { originOf } from "../lib/origin";
+import { NewFromSource } from "./NewFromSource";
 import { toast } from "../lib/toast";
 import { fromGigabytes, loaders, useGameVersions } from "../lib/software";
 
@@ -21,7 +23,18 @@ const slugify = (name: string) =>
     .replace(/^[-0-9]+|-+$/g, "")
     .slice(0, 40);
 
+/**
+ * The page for making a server: from nothing, or, when its address names
+ * one, out of a server or a snapshot.
+ */
 export function NewServer() {
+  const { org = "" } = useParams();
+  const [search] = useSearchParams();
+  const origin = originOf(search.get("from"));
+  return origin ? <NewFromSource org={org} origin={origin} /> : <NewFromNothing />;
+}
+
+function NewFromNothing() {
   const { org = "" } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();

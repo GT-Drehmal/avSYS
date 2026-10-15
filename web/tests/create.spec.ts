@@ -102,28 +102,58 @@ test("the game versions offered are the ones the server type has", async ({ page
   await expect(versions.filter({ hasText: /^26\.3$/ })).toHaveCount(1);
 });
 
-test("duplicating a server starts from its settings and sends only what was changed", async ({ page, as }) => {
+test("duplicating a server is the same page, filled in from the original, and sends only what was changed", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/s/survival");
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog.getByLabel("Short name")).toHaveValue("survival-copy");
-  const more = dialog.getByRole("button", { name: /More options/ });
-  await more.click();
-  await expect(dialog.getByLabel("Game version")).toHaveValue("1.21.4");
-  await dialog.getByLabel("Game version").selectOption("1.21.5");
-  await dialog.getByLabel("Difficulty").selectOption("peaceful");
-  await expect(more).toContainText("2 changed");
+  await expect(page).toHaveURL(/\/o\/friends\/new\?from=server:survival$/);
+  await expect(page.getByRole("heading", { name: "Duplicate survival" })).toBeVisible();
+
+  // The sections a new server has, in the same order.
+  const sections = page.locator("form h2");
+  await expect(sections).toHaveText(["Starting point", "Name and picture", "Content", "World", "Players", "Resources", "Network", "Backups", "Duplicate"]);
+
+  // Filled in from the original, with a name of its own.
+  await expect(page.getByLabel("Short name")).toHaveValue("survival-copy");
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  await expect(page.getByLabel("Memory (GB)")).toHaveValue("4");
+  await expect(page.getByText("LuckPerms", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Game version").selectOption("1.21.5");
+  await page.getByLabel("Difficulty").selectOption("peaceful");
+  await page.getByLabel("Who can join").selectOption("admin");
 
   // What would be sent is looked at and not sent: nothing here can copy files.
   const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
   await page.route("**/api/v1/orgs/friends/servers", (route) =>
     route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
   );
-  await dialog.getByRole("button", { name: "Duplicate" }).click();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   const body = (await sent).postDataJSON();
   expect(body).toMatchObject({ name: "survival-copy", fromServer: "survival" });
-  expect(body.spec).toMatchObject({ version: "1.21.5", properties: { difficulty: "peaceful" } });
-  expect(body.spec).not.toHaveProperty("autoOp");
-  await expect(dialog.getByText("Not sent by the test.")).toBeVisible();
+  expect(body.spec).toMatchObject({ version: "1.21.5", autoWhitelist: "admin", properties: { difficulty: "peaceful", "white-list": "true" } });
+  // What was left alone is not named, so that it comes from the original.
+  for (const untouched of ["autoOp", "sleep", "backups", "mods"]) expect(body.spec).not.toHaveProperty(untouched);
+  await expect(page.getByText("Not sent by the test.")).toBeVisible();
+});
+
+test("the new-server page has the same sections in the same order", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/new");
+  await expect(page.locator("form h2")).toHaveText(["Software", "Name and picture", "Content", "World", "Players", "Resources", "Network", "Backups", "Minecraft EULA"]);
+});
+
+test("a server that is not there cannot be copied", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/new?from=server:nobody");
+  await expect(page.getByText("There is no server named nobody to copy.")).toBeVisible();
+});
+
+test("with the list of servers unavailable, nothing is guessed about the original", async ({ page, as }) => {
+  await as("owner");
+  await page.route("**/api/v1/orgs/friends/servers", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "unavailable", message: "The cluster did not answer." }) }));
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByText("The cluster did not answer.")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/There is no server named/)).toHaveCount(0);
+  await expect(page.getByLabel("Short name")).toHaveCount(0);
 });

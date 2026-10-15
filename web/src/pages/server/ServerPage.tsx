@@ -1,7 +1,7 @@
 import { ChevronLeft, Code2, Copy, Plug } from "lucide-react";
 import { useState } from "react";
-import { Link, NavLink, Outlet, useLocation, useOutletContext, useParams } from "react-router";
-import { DuplicateServer } from "../../components/NewFromSnapshot";
+import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from "react-router";
+import { newFrom } from "../../lib/origin";
 import { Picture } from "../../components/Picture";
 import { ServerActions } from "../../components/ServerActions";
 import { useOrg } from "../../components/Shell";
@@ -105,7 +105,7 @@ export function ServerPage() {
   const { data: server, isPending } = useServer(org, name);
   const action = useServerAction(org, name);
   const [connecting, setConnecting] = useState(false);
-  const [duplicating, setDuplicating] = useState(false);
+  const navigate = useNavigate();
   const meta = useMeta().data;
 
   if (isPending) return <Loading />;
@@ -140,7 +140,7 @@ export function ServerPage() {
             </Button>
             {/* A copy is made from a snapshot, and making a server is for admins. */}
             {atLeast(role, "admin") && meta?.snapshots && (
-              <Button icon={<Copy className="size-3.5" />} onClick={() => setDuplicating(true)}>
+              <Button icon={<Copy className="size-3.5" />} onClick={() => navigate(newFrom(server.org, { kind: "server", name: server.name }))}>
                 Duplicate
               </Button>
             )}
@@ -220,7 +220,6 @@ export function ServerPage() {
         </ErrorBoundary>
       </div>
       <ConnectDialog server={server} open={connecting} onOpenChange={setConnecting} />
-      <DuplicateServer server={server} open={duplicating} onClose={() => setDuplicating(false)} />
     </div>
   );
 }
