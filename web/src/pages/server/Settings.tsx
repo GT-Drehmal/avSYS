@@ -3,13 +3,14 @@ import { useNavigate } from "react-router";
 import { Button, Confirm, Field, Input, Notice, Section, Select, Textarea, Toggle } from "../../components/ui";
 import { useQuery } from "@tanstack/react-query";
 import { api, serverPath, type ExposeType, type Loader, type Member, type Role, type ServerSpec, type SpecPatch } from "../../lib/api";
+import { launchOf } from "../../lib/launch";
 import { parseProperties, worldKeys } from "../../lib/properties";
 import { keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
-import { autoOpOptions, exposeOptions, GameplayFields, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
+import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -47,6 +48,8 @@ interface Draft {
   packPrompt: string;
   env: string;
   image: string;
+  aikar: boolean;
+  extraFlags: string;
 }
 
 const picksOf = (p: ServerSpec["opMembers"]): Picks => ({ also: p?.also ?? [], except: p?.except ?? [] });
@@ -57,6 +60,7 @@ const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boo
 
 function toDraft(spec: ServerSpec): Draft {
   const p = spec.properties ?? {};
+  const launch = launchOf(spec);
   const typed = new Set<string>(typedProperties);
   return {
     displayName: spec.displayName ?? "",
@@ -92,8 +96,10 @@ function toDraft(spec: ServerSpec): Draft {
     packSHA1: spec.resourcePack?.sha1 ?? "",
     packEnforce: !!spec.resourcePack?.enforce,
     packPrompt: spec.resourcePack?.prompt ?? "",
-    env: (spec.env ?? []).map((e) => `${e.name}=${e.value ?? ""}`).join("\n"),
+    env: (launch.env ?? []).map((e) => `${e.name}=${e.value ?? ""}`).join("\n"),
     image: spec.image ?? "",
+    aikar: launch.aikar,
+    extraFlags: launch.extraFlags,
   };
 }
 
@@ -133,6 +139,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
       return i > 0 ? [{ name: line.slice(0, i).trim(), value: line.slice(i + 1) }] : [];
     }),
     image: d.image.trim(),
+    jvm: { aikarFlags: d.aikar, extraFlags: d.extraFlags },
   };
 }
 
@@ -347,6 +354,7 @@ export function Settings() {
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} {...text("memory")} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={toGigabytes(server.spec.storage.size) || 1} step={1} {...text("storage")} />}</Field>
         </div>
+        <LaunchFlags aikar={draft.aikar} extra={draft.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} />
       </Section>
 
       <Section title="Network">
@@ -382,7 +390,7 @@ export function Settings() {
 
       <Section title="Advanced" description="Options of the itzg/minecraft-server image.">
         <Field label="Environment" hint="One NAME=value per line.">
-          {(id) => <Textarea id={id} rows={3} {...text("env")} placeholder="USE_AIKAR_FLAGS=true" className="font-mono" spellCheck={false} />}
+          {(id) => <Textarea id={id} rows={3} {...text("env")} placeholder="ENABLE_ROLLING_LOGS=true" className="font-mono" spellCheck={false} />}
         </Field>
         <Field label="Image" hint="Leave empty for the default.">
           {(id) => <Input id={id} {...text("image")} placeholder="itzg/minecraft-server:java21" className="font-mono" spellCheck={false} />}

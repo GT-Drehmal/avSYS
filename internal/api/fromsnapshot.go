@@ -74,7 +74,7 @@ func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request, u *store.Us
 // could make a server out of it.
 func recordFor(role store.Role, spec avsysv1.MinecraftServerSpec) avsysv1.MinecraftServerSpec {
 	if !role.AtLeast(store.RoleAdmin) {
-		spec.Image, spec.Env = "", nil
+		spec.Image, spec.Env, spec.JVM.ExtraFlags = "", nil, ""
 	}
 	return spec
 }
@@ -218,6 +218,13 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	// A CPU limit given as null is none, and not the original's.
 	if spec.Resources.CPU == nil && !namedIn(given["resources"], "cpu") {
 		spec.Resources.CPU = recorded.Resources.CPU
+	}
+	// Aikar's flags, on or off, as the original has them unless the request
+	// says. Its extra flags run code, like an image, so they are not taken
+	// from a record the server could have written: fromLive takes them from
+	// a server that is there.
+	if !namedInJVM(given, "aikarFlags") {
+		spec.JVM.AikarFlags = recorded.JVM.AikarFlags
 	}
 	if spec.Storage.Size.IsZero() {
 		spec.Storage.Size = recorded.Storage.Size
@@ -403,7 +410,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		defer stop()
 		ctx, cancel := context.WithTimeout(working, operationTimeout)
 		defer cancel()
-		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, record.Spec.Mods, picture)
+		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, &record.Spec, picture)
 		if err != nil {
 			err = fmt.Errorf("making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again: %w", err)
 		}
@@ -508,6 +515,20 @@ func fromLive(requested *avsysv1.MinecraftServerSpec, given map[string]json.RawM
 	if _, said := given["nodeSelector"]; !said {
 		requested.NodeSelector = maps.Clone(live.NodeSelector)
 	}
+	if !namedInJVM(given, "extraFlags") {
+		requested.JVM.ExtraFlags = live.JVM.ExtraFlags
+	}
+}
+
+// namedInJVM reports whether a request's jvm names a key at all, null
+// included.
+func namedInJVM(given map[string]json.RawMessage, key string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(given["jvm"], &fields) != nil {
+		return false
+	}
+	_, ok := fields[key]
+	return ok
 }
 
 // newestOf returns a server's newest snapshot.
@@ -527,11 +548,12 @@ func (s *Server) newestOf(ctx context.Context, org, server string) (*backup.Snap
 // populate copies a snapshot's files into a server that has just been
 // created, and then lets it go.
 //
-// copied is the content the original had. A file uploaded to it that the new
-// server was not given is deleted once the files are in. A picture of its
+// original is the spec of the server the snapshot is of. Content it had that
+// the new server was not given, and that only the panel removes, is deleted
+// once the files are in. A picture of its
 // own goes in then too, over the one the files brought, before the game
 // first starts.
-func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, copied []avsysv1.ContentRef, picture newPicture) error {
+func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, original *avsysv1.MinecraftServerSpec, picture newPicture) error {
 	key := client.ObjectKeyFromObject(created)
 	// A new server's volume has to be provisioned and the workspace image may
 	// have to be pulled, which on a node that has never run one takes a while.
@@ -568,8 +590,15 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 	// and a connection kept from it would reach its volume instead.
 	if files, err := sftp.NewClient(ws); err != nil {
 		s.Log.Warn("could not reach a new server's files to tidy them", "server", key.String(), "error", err)
+		// Noted, for the look once a minute to remove when it can. The
+		// picture is given up on: the files brought one, or none.
+		if gone := leftBehind(&created.Spec, withSavedNames(ctx, &created.Spec, original)); len(gone) > 0 {
+			if err := s.setContentLeft(ctx, key, func(was []string) []string { return union(was, gone) }); err != nil {
+				s.Log.Warn("could not note content left to remove", "server", key.String(), "error", err)
+			}
+		}
 	} else {
-		s.removeDroppedUploadsWith(ctx, files, key.Namespace, key.Name, copied, created.Spec.Mods)
+		s.removeDroppedUploadsWith(ctx, files, key.Namespace, key.Name, &created.Spec, original)
 		// As with a new server's picture, the server is never held back over it.
 		if err := s.placePicture(files, key.Namespace, key.Name, picture); err != nil {
 			s.Log.Warn("a new server's own picture was not put in place", "server", key.String(), "error", err)
