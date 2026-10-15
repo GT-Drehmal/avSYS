@@ -45,6 +45,8 @@ type Config struct {
 
 type Server struct {
 	Config Config
+	// contentLocks holds a lock per server, by namespace/name: see lockContent.
+	contentLocks sync.Map
 	// hostnames holds the panel to one change at a time of who may have
 	// which hostname: a domain claimed, or a server given a name. A claim
 	// and a server taking a name under it then cannot pass each other.
@@ -339,6 +341,8 @@ func (s *Server) Handler() http.Handler {
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
 	api("GET /orgs/{org}/servers/{server}/console", s.authed(s.streamConsole))
 	api("POST /orgs/{org}/servers/{server}/console", s.authed(s.runCommand))
+	api("GET /orgs/{org}/servers/{server}/logs", s.authed(s.listLogs))
+	api("GET /orgs/{org}/servers/{server}/logs/file", s.authed(s.readLogFile))
 	api("GET /orgs/{org}/servers/{server}/snapshots", s.authed(s.listServerSnapshots))
 	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
 	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))
