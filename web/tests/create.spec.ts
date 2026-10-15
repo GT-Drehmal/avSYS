@@ -113,6 +113,10 @@ test("duplicating a server is the same page, filled in from the original, and se
   const sections = page.locator("form h2");
   await expect(sections).toHaveText(["Starting point", "Name and picture", "Content", "World", "Players", "Resources", "Network", "Backups", "Duplicate"]);
 
+  // What it starts from, and nothing more.
+  await expect(page.getByText("Paper 1.21.4", { exact: true })).toBeVisible();
+  await expect(page.getByText(/as it is now|is not touched/)).toHaveCount(0);
+
   // Filled in from the original, with a name of its own.
   await expect(page.getByLabel("Short name")).toHaveValue("survival-copy");
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
@@ -195,6 +199,7 @@ test("a server made from a snapshot shows the picture the snapshot holds", async
 
   await page.goto(`/o/friends/new?from=snapshot:${id}`);
   await expect(page.getByRole("heading", { name: "New server from a snapshot of survival" })).toBeVisible();
+  await expect(page.getByText(/^Snapshot from 1 hour ago · .* · Paper 1\.21\.4$/)).toBeVisible();
   // On the starting point, and next to the name.
   await expect(page.locator(`img[src*="/snapshots/${id}/icon"]`)).toHaveCount(2);
   for (const img of await page.locator(`img[src*="/snapshots/${id}/icon"]`).all()) await expect(img).toBeVisible();
