@@ -2,6 +2,7 @@ package api
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -17,9 +18,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -105,10 +108,18 @@ func checkMeta(e *zip.File) error {
 	if err != nil {
 		return bad
 	}
+	// A pack has a description, and the formats it is for: pack_format,
+	// or min_format from the game's 1.21.9 on.
 	var meta struct {
-		Pack json.RawMessage `json:"pack"`
+		Pack *struct {
+			Description json.RawMessage `json:"description"`
+			Format      json.Number     `json:"pack_format"`
+			MinFormat   json.RawMessage `json:"min_format"`
+		} `json:"pack"`
 	}
-	if json.Unmarshal(data, &meta) != nil || len(meta.Pack) == 0 {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+	if d.Decode(&meta) != nil || meta.Pack == nil || len(meta.Pack.Description) == 0 || (meta.Pack.Format == "" && len(meta.Pack.MinFormat) == 0) {
 		return bad
 	}
 	return nil
@@ -131,7 +142,9 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	if err != nil {
 		return err
 	}
-	release, err := s.changing(mc, false)
+	// Not while it is snapshotted either: the snapshot's record of its pack
+	// and the file in it would not be of the same pack.
+	release, err := s.changing(mc, true)
 	if err != nil {
 		return err
 	}
@@ -166,6 +179,15 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 		return err
 	}
 	sha := hex.EncodeToString(h.Sum(nil))
+	// Its version as it is now, which a change a moment ago may have
+	// lowered, before anything is written.
+	now, err := s.live(r.Context(), mc)
+	if err != nil {
+		return err
+	}
+	if limit := packLimit(now.Spec.Version); size > limit {
+		return errBadRequest("That pack is over %d MB, the most the game takes for %s.", limit>>20, now.Spec.Version)
+	}
 
 	// Into the server's files first, written beside its place and moved in.
 	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
@@ -190,10 +212,6 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	if name == "." || name == "/" {
 		name = ""
 	}
-	now, err := s.live(r.Context(), mc)
-	if err != nil {
-		return err
-	}
 	orig := now.DeepCopy()
 	pack := &avsysv1.ResourcePackSpec{URL: s.packURL(sha), SHA1: sha, Uploaded: &avsysv1.UploadedPack{Name: name, Size: size, Time: metav1.Now()}}
 	if old := now.Spec.ResourcePack; old != nil {
@@ -215,7 +233,7 @@ func (s *Server) deleteResourcePack(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return err
 	}
-	release, err := s.changing(mc, false)
+	release, err := s.changing(mc, true)
 	if err != nil {
 		return err
 	}
@@ -274,9 +292,11 @@ func writePack(sc *sftp.Client, src io.Reader) error {
 const packGrace = 10 * time.Minute
 
 // prunePacks deletes the packs the panel keeps that none of these servers
-// has. One brought back on a server later, from a snapshot, is read out of
-// its files again when it is first asked for.
-func (s *Server) prunePacks(servers []avsysv1.MinecraftServer) {
+// has, and no game of theirs still offers: one running from before its pack
+// was replaced offers the old one until it is restarted. One brought back
+// on a server later, from a snapshot, is read out of its files again when
+// it is first asked for.
+func (s *Server) prunePacks(ctx context.Context, servers []avsysv1.MinecraftServer) {
 	if s.Config.PackDir == "" {
 		return
 	}
@@ -284,6 +304,20 @@ func (s *Server) prunePacks(servers []avsysv1.MinecraftServer) {
 	for i := range servers {
 		if rp := servers[i].Spec.ResourcePack; rp != nil && rp.Uploaded != nil {
 			used[rp.SHA1] = true
+		}
+	}
+	var pods corev1.PodList
+	if err := s.nodeReader().List(ctx, &pods, client.HasLabels{avsysv1.LabelServer}); err != nil {
+		// Not knowing what games offer, nothing is pruned.
+		return
+	}
+	for _, pod := range pods.Items {
+		for _, c := range pod.Spec.Containers {
+			for _, e := range c.Env {
+				if e.Name == "RESOURCE_PACK_SHA1" && e.Value != "" {
+					used[e.Value] = true
+				}
+			}
 		}
 	}
 	entries, err := os.ReadDir(s.Config.PackDir)
@@ -310,7 +344,7 @@ func (s *Server) prunePacks(servers []avsysv1.MinecraftServer) {
 func (s *Server) prunePacksNow(ctx context.Context) {
 	var all avsysv1.MinecraftServerList
 	if err := s.nodeReader().List(ctx, &all); err == nil {
-		s.prunePacks(all.Items)
+		s.prunePacks(ctx, all.Items)
 	}
 }
 
@@ -340,9 +374,15 @@ func (s *Server) PackHandler() http.Handler {
 		sha := m[1]
 		f, err := os.Open(s.cachedPack(sha))
 		if errors.Is(err, fs.ErrNotExist) {
-			if err = s.fetchPack(r.Context(), sha); err == nil {
-				f, err = os.Open(s.cachedPack(sha))
+			// One copy, which everyone asking meanwhile waits for.
+			mu, _ := s.packFetches.LoadOrStore(sha, &sync.Mutex{})
+			mu.(*sync.Mutex).Lock()
+			if f, err = os.Open(s.cachedPack(sha)); errors.Is(err, fs.ErrNotExist) {
+				if err = s.fetchPack(r.Context(), sha); err == nil {
+					f, err = os.Open(s.cachedPack(sha))
+				}
 			}
+			mu.(*sync.Mutex).Unlock()
 		}
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, errNoSuchPack) {

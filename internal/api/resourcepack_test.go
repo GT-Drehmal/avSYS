@@ -3,6 +3,7 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -75,11 +79,20 @@ func TestCheckPack(t *testing.T) {
 		"a folder of that name": {"pack.mcmeta/": "", "assets/x.json": "{}"},
 		"not JSON":              {"pack.mcmeta": "not json"},
 		"no pack in it":         {"pack.mcmeta": `{"other":1}`},
+		"a pack of null":        {"pack.mcmeta": `{"pack":null}`},
+		"a pack of a string":    {"pack.mcmeta": `{"pack":"x"}`},
+		"an empty pack":         {"pack.mcmeta": `{"pack":{}}`},
+		"no format":             {"pack.mcmeta": `{"pack":{"description":"x"}}`},
 	} {
 		f, size := zipWith(t, files)
 		if err := checkPack(f, size); err == nil || !strings.Contains(err.Error(), "not a pack's metadata") {
 			t.Errorf("%s: %v", what, err)
 		}
+	}
+	// From 1.21.9 a pack may say min_format instead.
+	newer, size := zipWith(t, map[string]string{"pack.mcmeta": `{"pack":{"description":{"text":"x"},"min_format":[69,0],"max_format":70}}`})
+	if err := checkPack(newer, size); err != nil {
+		t.Errorf("a pack with min_format: %v", err)
 	}
 	ok, size := zipOf(t, "pack.mcmeta", "assets/minecraft/lang/en_us.json")
 	if err := checkPack(ok, size); err != nil {
@@ -161,6 +174,11 @@ func TestKeepUploadedPack(t *testing.T) {
 	if err := keepUploadedPack(spec, uploaded()); err != nil || spec.ResourcePack.Uploaded != nil {
 		t.Errorf("elsewhere: %v %+v", err, spec.ResourcePack)
 	}
+	// Settings from before it was uploaded, saying none: it is kept.
+	spec = &avsysv1.MinecraftServerSpec{}
+	if err := keepUploadedPack(spec, uploaded()); err != nil || spec.ResourcePack == nil || spec.ResourcePack.Uploaded == nil {
+		t.Errorf("none said: %v %+v", err, spec.ResourcePack)
+	}
 	// Made up, or its hash changed by hand: refused.
 	if err := keepUploadedPack(uploaded(), &avsysv1.MinecraftServerSpec{}); err == nil {
 		t.Error("an uploaded pack made up was taken")
@@ -188,9 +206,17 @@ func TestPackFits(t *testing.T) {
 func TestPrunePacks(t *testing.T) {
 	p := newPanel(t)
 	dir := p.srv.Config.PackDir
-	used, unused, fresh := strings.Repeat("aa", 20), strings.Repeat("bb", 20), strings.Repeat("cc", 20)
+	used, unused, fresh, offered := strings.Repeat("aa", 20), strings.Repeat("bb", 20), strings.Repeat("cc", 20), strings.Repeat("dd", 20)
+	// A game started before its pack was replaced still offers the old one.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-alpha", Name: "world", Labels: map[string]string{avsysv1.LabelServer: "world"}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "minecraft", Env: []corev1.EnvVar{{Name: "RESOURCE_PACK_SHA1", Value: offered}}}}},
+	}
+	if err := p.srv.Client.Create(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
 	old := time.Now().Add(-time.Hour)
-	for _, name := range []string{used + ".zip", unused + ".zip", fresh + ".zip", "upload-123", "notes.txt"} {
+	for _, name := range []string{used + ".zip", unused + ".zip", fresh + ".zip", offered + ".zip", "upload-123", "notes.txt"} {
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte("x"), 0o640); err != nil {
 			t.Fatal(err)
@@ -201,8 +227,8 @@ func TestPrunePacks(t *testing.T) {
 	}
 	server := avsysv1.MinecraftServer{}
 	server.Spec.ResourcePack = &avsysv1.ResourcePackSpec{SHA1: used, Uploaded: &avsysv1.UploadedPack{Size: 1}}
-	p.srv.prunePacks([]avsysv1.MinecraftServer{server})
-	for name, want := range map[string]bool{used + ".zip": true, unused + ".zip": false, fresh + ".zip": true, "upload-123": false, "notes.txt": true} {
+	p.srv.prunePacks(context.Background(), []avsysv1.MinecraftServer{server})
+	for name, want := range map[string]bool{used + ".zip": true, unused + ".zip": false, fresh + ".zip": true, offered + ".zip": true, "upload-123": false, "notes.txt": true} {
 		_, err := os.Stat(filepath.Join(dir, name))
 		if (err == nil) != want {
 			t.Errorf("%s kept %v, want %v", name, err == nil, want)

@@ -51,6 +51,9 @@ type Config struct {
 
 type Server struct {
 	Config Config
+	// packFetches holds a lock per pack hash, so that a pack the panel has
+	// not kept is copied in once however many ask for it at a time.
+	packFetches sync.Map
 	// packsPruned is when the packs the panel keeps were last cleared of
 	// those no server has; see prunePacks. Only opsTick reads and sets it.
 	packsPruned time.Time

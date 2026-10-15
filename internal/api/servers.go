@@ -757,11 +757,16 @@ func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv
 // server: one can be kept, as it is, but not made up. A pack given another
 // address is one hosted elsewhere now, and no longer the uploaded one.
 func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
-	rp := spec.ResourcePack
+	rp, was := spec.ResourcePack, previous.ResourcePack
+	// Saying none is not how an uploaded pack is removed, which takes its
+	// file too: it is what settings from before it was uploaded say.
+	if (rp == nil || rp.URL == "") && was != nil && was.Uploaded != nil {
+		spec.ResourcePack = was.DeepCopy()
+		return nil
+	}
 	if rp == nil || rp.Uploaded == nil {
 		return nil
 	}
-	was := previous.ResourcePack
 	if was == nil || was.Uploaded == nil {
 		return errBadRequest("A resource pack is uploaded with PUT /orgs/{org}/servers/{server}/resource-pack.")
 	}

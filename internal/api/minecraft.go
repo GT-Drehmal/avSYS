@@ -426,7 +426,7 @@ func (s *Server) opsTick(ctx context.Context) {
 	// Packs the panel keeps that no server has any more, once an hour.
 	if time.Since(s.packsPruned) > time.Hour {
 		s.packsPruned = time.Now()
-		s.prunePacks(all.Items)
+		s.prunePacks(ctx, all.Items)
 	}
 	// Content taken off a server that could not be deleted then.
 	for i := range all.Items {
