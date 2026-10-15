@@ -92,3 +92,20 @@ test("a picture still on its way is not stood in for by a letter, and one seen b
   await expect(row("Survival").locator("img")).toBeVisible();
   await expect(row("Survival").locator("span[aria-hidden]")).toHaveCount(0);
 });
+
+test("the console says a server is starting, and only a stopped one is not running", async ({ page, as }) => {
+  await as("owner");
+  // As the panel answers while the game is not up.
+  await page.route("**/api/v1/orgs/friends/servers/creative/console", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: waiting\ndata: null\n\n" }),
+  );
+  await page.goto("/o/friends/s/creative");
+  await expect(page.getByText("This server is not running. Its log appears here once it starts.")).toBeVisible();
+
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((s: { name: string; status: object }) => (s.name === "creative" ? { ...s, status: { ...s.status, phase: "Starting" } } : s)) });
+  });
+  await page.reload();
+  await expect(page.getByText("The game is starting. Its log appears here as soon as it is up.")).toBeVisible();
+});
