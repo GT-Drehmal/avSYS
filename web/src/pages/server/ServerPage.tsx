@@ -111,6 +111,8 @@ export function ServerPage() {
   // A server being made from a snapshot, or restored, is held stopped until
   // its files are in, and says so. How far along that is shows on every tab.
   const held = server?.status.phase === "Stopped" && !!server.status.message;
+  // Asked for while it is held; what is already known of it, as after a
+  // restore was started from its Backups tab, is shown from the start.
   const holding = useServerSnapshots(org, name, held).data?.operations.find(holdsTheServer);
 
   if (isPending) return <Loading />;
@@ -181,7 +183,7 @@ export function ServerPage() {
 
       <div className="mt-3 flex flex-col gap-2 empty:hidden">
         {status.message && <Notice tone={status.phase === "Error" ? "danger" : "info"}>{status.message}</Notice>}
-        {held && holding && <OperationRow op={holding} />}
+        {holding && <OperationRow op={holding} />}
         {status.snapshots?.error && (
           <Notice
             tone="danger"

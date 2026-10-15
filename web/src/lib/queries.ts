@@ -107,6 +107,11 @@ export function useLiveServers() {
     source.addEventListener("operation.progress", (e) => applyOperation(qc, JSON.parse(e.data)));
     source.addEventListener("operation.done", (e) => {
       const done: OperationDone = JSON.parse(e.data);
+      // Over: taken out of every list that shows it, also those not asked
+      // for again below because no page has them open.
+      const without = (list: SnapshotList | undefined) => list && { ...list, operations: list.operations.filter((o) => o.server !== done.server) };
+      qc.setQueryData<SnapshotList>(keys.snapshots(done.org), without);
+      qc.setQueryData<SnapshotList>(keys.serverSnapshots(done.org, done.server), without);
       // Both lists are refetched: the snapshot is new to them, or gone.
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
       // And it is new to the offsite copy, or still to be removed there.
