@@ -371,6 +371,10 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given its picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once it is made.")
 	}
+	// An uploaded pack is the server's own, and comes by uploading it.
+	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
+		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made.")
+	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// A new server has Aikar's flags unless asked not to. Only here: one
 	// made before they were offered keeps starting as it always has.
@@ -515,6 +519,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		}
 	}
 	previous := mc.Spec.DeepCopy()
+	if err := keepUploadedPack(&spec, previous); err != nil {
+		return err
+	}
 	if err := s.resolveContent(r.Context(), &spec, previous); err != nil {
 		return err
 	}
@@ -740,6 +747,29 @@ func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv
 		return nil, err
 	}
 	return now, nil
+}
+
+// keepUploadedPack holds a change of settings to the pack uploaded to the
+// server: one can be kept, as it is, but not made up. A pack given another
+// address is one hosted elsewhere now, and no longer the uploaded one.
+func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
+	rp := spec.ResourcePack
+	if rp == nil || rp.Uploaded == nil {
+		return nil
+	}
+	was := previous.ResourcePack
+	if was == nil || was.Uploaded == nil {
+		return errBadRequest("A resource pack is uploaded with PUT /orgs/{org}/servers/{server}/resource-pack.")
+	}
+	if rp.URL != was.URL {
+		rp.Uploaded = nil
+		return nil
+	}
+	if rp.SHA1 != was.SHA1 {
+		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
+	}
+	rp.Uploaded = was.Uploaded.DeepCopy()
+	return nil
 }
 
 // rcon runs a console command on a running server.

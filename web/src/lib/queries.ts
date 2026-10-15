@@ -76,7 +76,7 @@ function upsert(list: Server[] | undefined, server: Server) {
   return next;
 }
 
-const applyServer = (qc: QueryClient, server: Server) =>
+export const applyServer = (qc: QueryClient, server: Server) =>
   qc.setQueryData<Server[]>(keys.servers(server.org), (list) => upsert(list, server));
 
 /**

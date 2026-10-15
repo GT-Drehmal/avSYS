@@ -35,6 +35,9 @@ type Config struct {
 	// RouterPublicPort is the port players reach the router on, when not 25565.
 	RouterPublicPort int
 	CurseForgeAPIKey string
+	// PackURL is where the panel serves uploaded resource packs, at
+	// /packs/<sha1>.zip under it.
+	PackURL string
 }
 
 type Reconciler struct {

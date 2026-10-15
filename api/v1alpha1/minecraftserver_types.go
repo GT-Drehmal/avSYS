@@ -154,6 +154,18 @@ type ResourcePackSpec struct {
 	SHA1    string `json:"sha1,omitempty"`
 	Enforce bool   `json:"enforce,omitempty"`
 	Prompt  string `json:"prompt,omitempty"`
+	// Uploaded is set for a pack uploaded to the panel. It is kept in the
+	// server's files, where snapshots and copies take it along, and the
+	// panel serves it, at an address of its SHA1: URL is that address.
+	Uploaded *UploadedPack `json:"uploaded,omitempty"`
+}
+
+// UploadedPack is what is known of a resource pack uploaded to the panel.
+type UploadedPack struct {
+	// Name is the file's name as it was uploaded.
+	Name string      `json:"name,omitempty"`
+	Size int64       `json:"size"`
+	Time metav1.Time `json:"time"`
 }
 
 type ExposeType string

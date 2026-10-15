@@ -41,6 +41,12 @@ type Config struct {
 	AllowSignups bool
 	Providers    map[string]*auth.Provider
 	Version      string
+	// PackDir is where the panel keeps the resource packs uploaded to it,
+	// by hash, to serve them. Empty, packs cannot be uploaded.
+	PackDir string
+	// PackURL is the address players' games fetch uploaded packs from, at
+	// /packs/<sha1>.zip under it. Empty, it is PublicURL.
+	PackURL string
 }
 
 type Server struct {
@@ -351,6 +357,8 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/servers/{server}/icon", s.authed(s.getServerIcon))
 	api("PUT /orgs/{org}/servers/{server}/icon", s.authed(s.putServerIcon))
 	api("DELETE /orgs/{org}/servers/{server}/icon", s.authed(s.deleteServerIcon))
+	api("PUT /orgs/{org}/servers/{server}/resource-pack", s.authed(s.putResourcePack))
+	api("DELETE /orgs/{org}/servers/{server}/resource-pack", s.authed(s.deleteResourcePack))
 	api("GET /orgs/{org}/servers/{server}/files", s.authed(s.listFiles))
 	api("DELETE /orgs/{org}/servers/{server}/files", s.authed(s.deleteFile))
 	api("GET /orgs/{org}/servers/{server}/files/content", s.authed(s.readFile))
@@ -367,6 +375,8 @@ func (s *Server) Handler() http.Handler {
 	api("GET /catalog/modrinth/projects/{id}/versions", s.authed(s.modrinthVersions))
 	api("POST /catalog/sha1", s.authed(s.hashURL))
 
+	// Uploaded resource packs, fetched by players' games with no session.
+	mux.Handle("/packs/", s.PackHandler())
 	mux.Handle("/api/", s.public(func(http.ResponseWriter, *http.Request) error { return errNotFound }))
 	if s.Static != nil {
 		mux.Handle("/", s.staticHandler())

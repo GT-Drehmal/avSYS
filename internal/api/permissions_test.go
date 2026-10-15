@@ -69,7 +69,7 @@ func newPanel(t *testing.T) *panel {
 	p := &panel{
 		t: t,
 		srv: &Server{
-			Config: Config{NamespacePrefix: "mc-", PublicURL: "http://panel.test"},
+			Config: Config{NamespacePrefix: "mc-", PublicURL: "http://panel.test", PackDir: t.TempDir()},
 			Store:  db,
 			Client: cluster,
 			Events: NewHub(),
@@ -255,6 +255,9 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET " + server + "/icon", "", "", store.RoleViewer, 0},
 		{"PUT " + server + "/icon", "", "not a picture", store.RoleAdmin, 400},
 		{"DELETE " + server + "/icon", "", "", store.RoleAdmin, 0},
+		// 400: allowed, and that is no zip. 200: allowed, and it had none.
+		{"PUT " + server + "/resource-pack", "", "not a zip", store.RoleAdmin, 400},
+		{"DELETE " + server + "/resource-pack", "", "", store.RoleAdmin, 200},
 		{"GET " + server + "/terminal", "", "", store.RoleOperator, 0},
 		{"PUT " + server + "/content", "", "x", store.RoleAdmin, 0},
 		{"GET " + server + "/files", "", "", store.RoleOperator, 0},

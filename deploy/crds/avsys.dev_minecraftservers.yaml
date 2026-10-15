@@ -522,6 +522,25 @@ spec:
                     description: SHA1 of the pack. The panel fills this in when it
                       can fetch the URL.
                     type: string
+                  uploaded:
+                    description: |-
+                      Uploaded is set for a pack uploaded to the panel. It is kept in the
+                      server's files, where snapshots and copies take it along, and the
+                      panel serves it, at an address of its SHA1: URL is that address.
+                    properties:
+                      name:
+                        description: Name is the file's name as it was uploaded.
+                        type: string
+                      size:
+                        format: int64
+                        type: integer
+                      time:
+                        format: date-time
+                        type: string
+                    required:
+                    - size
+                    - time
+                    type: object
                   url:
                     type: string
                 required:

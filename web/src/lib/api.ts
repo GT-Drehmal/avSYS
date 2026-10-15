@@ -141,6 +141,8 @@ export interface ResourcePack {
   sha1?: string;
   enforce?: boolean;
   prompt?: string;
+  /** Set for a pack uploaded to the panel, which keeps it and serves it at url. */
+  uploaded?: { name?: string; size: number; time: string } | null;
 }
 
 export type ExposeType = "Router" | "LoadBalancer" | "NodePort" | "None";
