@@ -151,7 +151,9 @@ func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftS
 }
 
 // NodeUsage lists the cluster's nodes and the memory the pods already on
-// each have asked for.
+// each have asked for. A server given a node that is to run there counts in
+// full from then on, before its pod is made or bound: two servers placed a
+// moment apart are not both given the same memory.
 func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[string]int64, error) {
 	var nodes corev1.NodeList
 	if err := reader.List(ctx, &nodes); err != nil {
@@ -161,13 +163,34 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 	if err := reader.List(ctx, &pods); err != nil {
 		return nil, nil, err
 	}
+	var servers avsysv1.MinecraftServerList
+	if err := reader.List(ctx, &servers); err != nil {
+		return nil, nil, err
+	}
 	reserved := map[string]int64{}
+	bound := map[types.NamespacedName]*corev1.Pod{}
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		if p.Spec.NodeName == "" || p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
 			continue
 		}
 		reserved[p.Spec.NodeName] += podMemory(p)
+		bound[types.NamespacedName{Namespace: p.Namespace, Name: p.Name}] = p
+	}
+	for i := range servers.Items {
+		mc := &servers.Items[i]
+		if !wantsMinecraft(mc) {
+			continue
+		}
+		// A server's pod has its name. Where it is bound already, only
+		// what it has yet to ask for there is added: a stopped server's
+		// workspace becoming the game.
+		need := ServerNeeds(mc.Spec.Resources.Memory)
+		if p := bound[client.ObjectKeyFromObject(mc)]; p != nil {
+			reserved[p.Spec.NodeName] += max(0, need-podMemory(p))
+		} else if node := mc.Annotations[avsysv1.AnnotationNode]; node != "" && len(mc.Spec.NodeSelector) == 0 {
+			reserved[node] += need
+		}
 	}
 	return nodes.Items, reserved, nil
 }

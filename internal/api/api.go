@@ -45,8 +45,11 @@ type Config struct {
 
 type Server struct {
 	Config Config
-	Store  *store.Store
-	Client client.Client
+	// placing holds servers put on a node by hand to one at a time: see
+	// createServer.
+	placing sync.Mutex
+	Store   *store.Store
+	Client  client.Client
 	// Reader reads the cluster as it is now, where Client may lag a change
 	// by a moment. It is optional: Client is used where there is none.
 	Reader  client.Reader

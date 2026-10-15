@@ -319,6 +319,11 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		Spec:       in.Spec,
 	}
 	if raw.Node != "" {
+		// One at a time from the check to the server being there, which
+		// then counts on its node: two asked for at once do not both get
+		// the same room.
+		s.placing.Lock()
+		defer s.placing.Unlock()
 		if err := s.checkNode(r.Context(), raw.Node, in.Spec.Resources.Memory); err != nil {
 			return err
 		}

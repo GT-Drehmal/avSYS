@@ -499,6 +499,20 @@ test("a copy of a server kept to some nodes is kept to them, unless Automatic is
   await page.route("**/api/v1/nodes?*", (route) => route.fulfill({ json: { automatic: "fast", nodes: twoNodes.nodes.slice(0, 1) } }));
   await page.reload();
   await expect(page.getByLabel("Node", { exact: true }).locator("option")).toHaveText(["As the original: nodes with disk=ssd", "Automatic (now fast)", /^fast/]);
+
+  // A new server from its snapshot is not kept to them: the panel places it.
+  const id = "abcd1234";
+  await page.route(`**/api/v1/orgs/friends/snapshots/${id}`, (route) =>
+    route.fulfill({
+      json: {
+        id, time: new Date(Date.now() - 3600_000).toISOString(), server: "survival", trigger: "manual", size: 1 << 20, added: 1024, files: 10,
+        spec: { displayName: "Survival", version: "1.21.4", loader: "paper", eula: true, resources: { memory: "4Gi" }, storage: { size: "10Gi" }, mods: [] },
+        retention: { scheduled: true },
+      },
+    }),
+  );
+  await page.goto(`/o/friends/new?from=snapshot:${id}`);
+  await expect(page.getByLabel("Node", { exact: true }).locator("option")).toHaveText(["Automatic (now fast)", /^fast/]);
 });
 
 test("the panel's administrator sees the nodes and what runs on each; nobody else is offered them", async ({ page, as }) => {

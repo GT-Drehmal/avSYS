@@ -1,11 +1,15 @@
 package controller
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -95,5 +99,42 @@ func TestPodMemory(t *testing.T) {
 		if got := podMemory(&corev1.Pod{Spec: c.pod}); got != c.want<<30 {
 			t.Errorf("%s: %d GiB, want %d", c.name, got>>30, c.want)
 		}
+	}
+}
+
+// A server given a node counts there from then on, though its pod is not
+// made or bound yet; one bound counts what its pod has yet to ask for.
+func TestNodeUsageCountsPlacedServers(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	n := node("a", "16Gi", "")
+	server := func(name, state, node string) *avsysv1.MinecraftServer {
+		mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: name, Annotations: map[string]string{avsysv1.AnnotationNode: node}}}
+		mc.Spec.State = avsysv1.DesiredState(state)
+		mc.Spec.Resources.Memory = resource.MustParse("4Gi")
+		return mc
+	}
+	// Stopped, its workspace bound: only the workspace counts until it runs.
+	workspace := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "starting"},
+		Spec:       corev1.PodSpec{NodeName: "a", Containers: []corev1.Container{{Name: "w", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Mi")}}}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n, workspace,
+		server("new", "Running", "a"),      // placed, no pod yet: 4Gi + 32Mi
+		server("starting", "Running", "a"), // bound workspace of 32Mi: 4Gi more
+		server("stopped", "Stopped", "a"),  // nothing
+	).Build()
+	_, reserved, err := NodeUsage(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 2*(4*gi) + 2*(32<<20)
+	if reserved["a"] != want {
+		t.Errorf("reserved on a = %d, want %d", reserved["a"], want)
 	}
 }

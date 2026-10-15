@@ -653,7 +653,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={v.memory} onChange={(e) => set("memory", e.target.value)} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={v.storage} onChange={(e) => set("storage", e.target.value)} />}</Field>
         </div>
-        <NodeChoice memory={v.memory} value={v.node} kept={source?.live?.spec.nodeSelector} onChange={(node) => set("node", node)} />
+        <NodeChoice memory={v.memory} value={v.node} kept={source?.origin.kind === "server" ? source.live?.spec.nodeSelector : undefined} onChange={(node) => set("node", node)} />
       </Section>
 
       <Section title="Network">
