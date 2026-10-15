@@ -127,7 +127,13 @@ export function Console() {
           <LogLine key={line.id} line={line} />
         ))}
         {lines.length === 0 && (
-          <p className="font-sans text-[13px] text-muted">{waiting ? "This server is not running. Its log appears here once it starts." : "Waiting for output…"}</p>
+          <p className="font-sans text-[13px] text-muted">
+            {!waiting
+              ? "Waiting for output…"
+              : server.status.phase === "Starting"
+                ? "The game is starting. Its log appears here as soon as it is up."
+                : "This server is not running. Its log appears here once it starts."}
+          </p>
         )}
       </div>
       {!pinned && (
