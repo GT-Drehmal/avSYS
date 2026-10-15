@@ -10,7 +10,7 @@ import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../co
 import { Button, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { api, ApiError, serverPath, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
-import { keys, useMe } from "../lib/queries";
+import { keys, useMe, useOrgSnapshots, useServers } from "../lib/queries";
 import { originOf } from "../lib/origin";
 import { NewFromSource } from "./NewFromSource";
 import { toast } from "../lib/toast";
@@ -86,6 +86,15 @@ function NewFromNothing() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const name = customName ?? slugify(displayName);
+  // Said before it is sent: a name a server has, or that snapshots of an
+  // earlier server are under, is not free.
+  const servers = useServers(org);
+  const snapshots = useOrgSnapshots(org);
+  const nameHint = servers.data?.some((s) => s.name === name)
+    ? `There is already a server named ${name}.`
+    : snapshots.data?.snapshots.some((s) => s.server === name)
+      ? `Snapshots of an earlier server named ${name} go with the name. Choose another, or bring that server back from the Backups page.`
+      : "It cannot be changed later.";
   // What content fits. Until a pack is picked, what it will accept is still
   // that of a modpack, whose own loader is the one that counts.
   const software: Software | null =
@@ -255,7 +264,7 @@ function NewFromNothing() {
       <Section title="Name and picture" description="How it appears in the panel and in a player's server list.">
         <PictureChoice name={displayName} file={picture} onChange={setPicture} hint="Optional. Shown to players in their server list." />
         <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
-        <Field label="Short name" hint="It cannot be changed later.">
+        <Field label="Short name" hint={nameHint}>
           {(id) => <Input id={id} required value={name} onChange={(e) => setCustomName(e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
         </Field>
         <Field label="Message of the day" hint="Optional. The line under its name in a player's server list.">

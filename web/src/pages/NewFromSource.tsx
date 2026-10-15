@@ -9,7 +9,7 @@ import { Button, Field, Input, Loading, Notice, PageHeader, Section, Select, Tog
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Server, type ServerSpec, type SnapshotDetail } from "../lib/api";
 import { ago, loaderNames } from "../lib/format";
-import { keys, useServers } from "../lib/queries";
+import { keys, useOrgSnapshots, useServers } from "../lib/queries";
 import { type Origin } from "../lib/origin";
 import { fromGigabytes, toGigabytes, useGameVersions } from "../lib/software";
 
@@ -31,6 +31,8 @@ function freeName(wanted: string, taken: Set<string>) {
  */
 export function NewFromSource({ org, origin }: { org: string; origin: Origin }) {
   const servers = useServers(org);
+  // Names that snapshots are under go with them: a new server cannot take one.
+  const snapshots = useOrgSnapshots(org);
   const snapshot = useQuery({
     queryKey: ["snapshot", org, origin.kind === "snapshot" ? origin.id : ""],
     queryFn: () => api.get<SnapshotDetail>(`/orgs/${org}/snapshots/${origin.kind === "snapshot" ? origin.id : ""}`),
@@ -43,7 +45,7 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
       Servers
     </Link>
   );
-  if (servers.isPending || (origin.kind === "snapshot" && snapshot.isPending)) return <Loading />;
+  if (servers.isPending || snapshots.isPending || (origin.kind === "snapshot" && snapshot.isPending)) return <Loading />;
   // Without the list of servers it cannot be said which names are taken, or
   // whether the original still exists: nothing is guessed from its absence.
   if (!servers.data) {
@@ -56,6 +58,9 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
     );
   }
   const taken = new Set(servers.data.map((s) => s.name));
+  // Without the snapshots (backups switched off, say) none are known of: the
+  // panel says so if a name turns out to have some.
+  const history = new Set((snapshots.data?.snapshots ?? []).map((s) => s.server));
   const live = origin.kind === "server" ? servers.data?.find((s) => s.name === origin.name) : undefined;
   const source: Source | null =
     origin.kind === "server"
@@ -83,7 +88,7 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
   return (
     <>
       {back}
-      <Form key={`${origin.kind}:${source.name}`} org={org} origin={origin} source={source} taken={taken} />
+      <Form key={`${origin.kind}:${source.name}`} org={org} origin={origin} source={source} taken={taken} history={history} />
     </>
   );
 }
@@ -165,7 +170,7 @@ function changesOf(now: Options, was: Options): Partial<ServerSpec> {
   return changes;
 }
 
-function Form({ org, origin, source, taken }: { org: string; origin: Origin; source: Source; taken: Set<string> }) {
+function Form({ org, origin, source, taken, history }: { org: string; origin: Origin; source: Source; taken: Set<string>; history: Set<string> }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { spec } = source;
@@ -189,7 +194,14 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
   const [moreWorld, setMoreWorld] = useState(false);
 
   const [displayName, setDisplayName] = useState((spec.displayName || source.name) + (copying ? " copy" : ""));
-  const [name, setName] = useState(freeName(copying ? `${source.name}-copy` : source.name, taken));
+  // One that is gone is brought back under its own name, and its history goes
+  // on. A copy is a new server, and takes a name no server or snapshot has.
+  const [name, setName] = useState(copying ? freeName(`${source.name}-copy`, new Set([...taken, ...history])) : source.name);
+  const nameHint = taken.has(name)
+    ? `There is already a server named ${name}.`
+    : history.has(name) && !(name === source.name && !copying)
+      ? `Snapshots of an earlier server named ${name} go with the name. Choose another.`
+      : "It cannot be changed later.";
   const [memory, setMemory] = useState(toGigabytes(spec.resources.memory) || "4");
   const [storage, setStorage] = useState(String(Math.max(Number(toGigabytes(spec.storage.size)) || 10, leastStorage)));
   const [hostname, setHostname] = useState("");
@@ -278,7 +290,7 @@ function Form({ org, origin, source, taken }: { org: string; origin: Origin; sou
           <p className="text-xs leading-relaxed text-muted">Its picture comes with its files. It can be changed in the new server's settings.</p>
         </div>
         <Field label="Display name">{(id) => <Input id={id} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
-        <Field label="Short name" hint="It cannot be changed later.">
+        <Field label="Short name" hint={nameHint}>
           {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
         </Field>
         <Field label="Message of the day" hint="The line under its name in a player's server list.">
