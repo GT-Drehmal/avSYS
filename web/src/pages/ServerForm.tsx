@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, More, type Join } from "../components/ServerFields";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, More, NodeChoice, type Join } from "../components/ServerFields";
 import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
@@ -75,6 +75,8 @@ interface Values {
   autoOp: string;
   memory: string;
   storage: string;
+  /** The node to put it on; empty for the panel to choose. */
+  node: string;
   hostname: string;
   exposeType: ExposeType;
   sleep: boolean;
@@ -110,6 +112,7 @@ const fresh: Values = {
   autoOp: "operator",
   memory: "4",
   storage: "10",
+  node: "",
   hostname: "",
   exposeType: "Router",
   sleep: false,
@@ -149,6 +152,9 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     autoOp: spec.autoOp || "operator",
     memory: toGigabytes(spec.resources.memory) || "4",
     storage: String(Math.max(Number(toGigabytes(spec.storage.size)) || 10, leastStorage)),
+    // The panel chooses for a copy too, unless asked: the original's node
+    // may have no room for both.
+    node: "",
     // A server's address is its own, and not taken along.
     hostname: "",
     exposeType: spec.expose?.type ?? "Router",
@@ -335,13 +341,13 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         const from = source.origin.kind === "server" ? { fromServer: source.origin.name } : { fromSnapshot: source.origin.id };
         // Left out, it keeps the one its files bring.
         const pictured = v.picture.kind === "file" ? { picture: await pictureForRequest(v.picture.file) } : v.picture.kind === "none" ? { picture: null } : {};
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, spec: copyRequest() });
+        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...(v.node ? { node: v.node } : {}), spec: copyRequest() });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files are in.
         navigate(`/o/${org}/s/${server.name}`);
         return;
       }
-      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, spec: newRequest() });
+      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...(v.node ? { node: v.node } : {}), spec: newRequest() });
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
       // Its picture goes onto its volume, which is not there yet. The panel
       // waits for that, puts the picture in place and then starts the
@@ -644,6 +650,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={v.memory} onChange={(e) => set("memory", e.target.value)} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={v.storage} onChange={(e) => set("storage", e.target.value)} />}</Field>
         </div>
+        <NodeChoice memory={v.memory} value={v.node} onChange={(node) => set("node", node)} />
       </Section>
 
       <Section title="Network">

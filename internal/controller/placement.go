@@ -25,24 +25,10 @@ import (
 // workspaceMemory is what the workspace container requests, on top of the game.
 var workspaceMemory = resource.MustParse("32Mi")
 
-// nodeUsable reports whether game servers may be placed on a node at all.
+// nodeUsable reports whether game servers may be placed on a node
+// automatically: it is ready, and not kept out of placement by its label.
 func nodeUsable(n *corev1.Node) bool {
-	if n.Spec.Unschedulable || n.Labels[avsysv1.LabelNodeHosts] == "false" {
-		return false
-	}
-	// Servers carry no tolerations, so any taint that repels pods rules the
-	// node out. This is also what an unreachable node looks like.
-	for _, t := range n.Spec.Taints {
-		if t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute {
-			return false
-		}
-	}
-	for _, c := range n.Status.Conditions {
-		if c.Type == corev1.NodeReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
+	return n.Labels[avsysv1.LabelNodeHosts] != "false" && NodeReady(n)
 }
 
 func nodeScore(n *corev1.Node) float64 {
@@ -141,26 +127,11 @@ func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftS
 	}
 
 	if node == "" {
-		var nodes corev1.NodeList
-		if err := r.Reader.List(ctx, &nodes); err != nil {
+		nodes, reserved, err := NodeUsage(ctx, r.Reader)
+		if err != nil {
 			return err
 		}
-		var pods corev1.PodList
-		if err := r.Reader.List(ctx, &pods); err != nil {
-			return err
-		}
-		reserved := map[string]int64{}
-		for i := range pods.Items {
-			p := &pods.Items[i]
-			if p.Spec.NodeName == "" || p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
-				continue
-			}
-			for _, c := range p.Spec.Containers {
-				reserved[p.Spec.NodeName] += c.Resources.Requests.Memory().Value()
-			}
-		}
-		need := mc.Spec.Resources.Memory.Value() + workspaceMemory.Value()
-		node = pickNode(nodes.Items, reserved, need)
+		node = pickNode(nodes, reserved, ServerNeeds(mc.Spec.Resources.Memory))
 		if node == "" {
 			// Nothing fits. Leave the pod unpinned so the scheduler reports
 			// why, and so it starts as soon as room appears anywhere.
@@ -177,3 +148,67 @@ func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftS
 	mc.Annotations[avsysv1.AnnotationNode] = node
 	return r.Patch(ctx, mc, client.MergeFrom(orig))
 }
+
+// NodeUsage lists the cluster's nodes and the memory the pods already on
+// each have asked for.
+func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[string]int64, error) {
+	var nodes corev1.NodeList
+	if err := reader.List(ctx, &nodes); err != nil {
+		return nil, nil, err
+	}
+	var pods corev1.PodList
+	if err := reader.List(ctx, &pods); err != nil {
+		return nil, nil, err
+	}
+	reserved := map[string]int64{}
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Spec.NodeName == "" || p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		for _, c := range p.Spec.Containers {
+			reserved[p.Spec.NodeName] += c.Resources.Requests.Memory().Value()
+		}
+	}
+	return nodes.Items, reserved, nil
+}
+
+// ServerNeeds is the memory a server's pod asks a node for: its game and
+// its workspace.
+func ServerNeeds(memory resource.Quantity) int64 {
+	return memory.Value() + workspaceMemory.Value()
+}
+
+// PickNode is the node automatic placement would choose for a server that
+// needs need bytes, or "" if none has room.
+func PickNode(nodes []corev1.Node, reserved map[string]int64, need int64) string {
+	return pickNode(nodes, reserved, need)
+}
+
+// NodeUsable reports whether game servers may be placed on a node
+// automatically.
+func NodeUsable(n *corev1.Node) bool { return nodeUsable(n) }
+
+// NodeReady reports whether a node is up and takes pods, whether or not it
+// is kept out of automatic placement. Servers carry no tolerations, so any
+// taint that repels pods rules it out; that is also what an unreachable
+// node looks like.
+func NodeReady(n *corev1.Node) bool {
+	if n.Spec.Unschedulable {
+		return false
+	}
+	for _, t := range n.Spec.Taints {
+		if t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute {
+			return false
+		}
+	}
+	for _, c := range n.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// NodeScore is a node's measured single-core speed, 0 if unmeasured.
+func NodeScore(n *corev1.Node) float64 { return nodeScore(n) }

@@ -234,6 +234,18 @@ step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"
 
+step "nodes"
+NODE=$(call "$API/nodes?memory=1Gi" | field "d['nodes'][0]['name']") || fail "no node is listed"
+expect "the cluster's nodes are listed, with where a server would go" "$(call "$API/nodes?memory=1Gi" | field "(d['nodes'][0]['ready'], d['nodes'][0]['free'] > 0, d['automatic'] == d['nodes'][0]['name'])")" "(True, True, True)"
+expect "a node that is not there cannot be chosen" "$(call -o /dev/null -w '%{http_code}' -d '{"name":"placed","node":"no-such-node","spec":{"eula":true,"loader":"vanilla","version":"1.21.4","state":"Stopped"}}' "$API/orgs/$ORG/servers")" 400
+call -d "{\"name\":\"placed\",\"node\":\"$NODE\",\"spec\":{\"eula\":true,\"loader\":\"vanilla\",\"version\":\"1.21.4\",\"state\":\"Stopped\",\"resources\":{\"memory\":\"1Gi\"},\"storage\":{\"size\":\"1Gi\"}}}" "$API/orgs/$ORG/servers" >/dev/null
+for _ in $(seq 1 60); do
+  [ "$(call "$API/orgs/$ORG/servers/placed" | field "d['status'].get('node', '')")" = "$NODE" ] && break
+  sleep 1
+done
+expect "a server put on a node runs there" "$(call "$API/orgs/$ORG/servers/placed" | field "d['status'].get('node')")" "$NODE"
+call -X DELETE "$API/orgs/$ORG/servers/placed?snapshot=false" >/dev/null
+
 step "stop keeps the workspace"
 call -X POST "$SRV/stop" >/dev/null
 wait_phase Stopped

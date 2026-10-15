@@ -420,3 +420,55 @@ test("a copy's picture can be taken away even when it could not be shown", async
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].picture).toBeNull();
 });
+
+const twoNodes = {
+  automatic: "fast",
+  nodes: [
+    { name: "fast", ready: true, automatic: true, score: 2, memory: 16 * 1024 ** 3, free: 12 * 1024 ** 3, servers: [{ org: "friends", name: "survival", memory: "4Gi", phase: "Running" }] },
+    { name: "pi", ready: true, automatic: false, score: 0.4, memory: 3 * 1024 ** 3, free: 2.5 * 1024 ** 3, servers: [] },
+  ],
+};
+
+test("a node can be chosen for a new server, any that has room, slow ones included", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.route("**/api/v1/nodes?*", (route) => route.fulfill({ json: twoNodes }));
+  const sent: { node?: string }[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers`, (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+  });
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
+  await page.getByLabel("Display name").fill("Small");
+  const choice = page.getByLabel("Node", { exact: true });
+  await expect(choice.locator("option").first()).toHaveText("Automatic (now fast)");
+  // 4 GB does not fit on the small one; 2 GB does.
+  await expect(choice.locator('option[value="pi"]')).toBeDisabled();
+  await page.getByLabel("Memory (GB)").fill("2");
+  await expect(choice.locator('option[value="pi"]')).toBeEnabled();
+  await choice.selectOption("pi");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].node).toBe("pi");
+});
+
+test("the panel's administrator sees the nodes and what runs on each; nobody else is offered them", async ({ page, as }) => {
+  await page.route("**/api/v1/nodes", (route) => route.fulfill({ json: twoNodes }));
+  await as("owner");
+  await page.goto("/o/friends");
+  await page.getByRole("button", { name: /owner/ }).click();
+  await page.getByRole("menuitem", { name: "Nodes" }).click();
+  await expect(page).toHaveURL(/\/nodes$/);
+  await expect(page.getByRole("heading", { name: "Nodes" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /friends\/survival/ })).toBeVisible();
+  await expect(page.getByText("only when chosen")).toBeVisible();
+
+  await as("admin");
+  await page.goto("/o/friends");
+  await page.getByRole("button", { name: /admin/ }).click();
+  await expect(page.getByRole("menuitem", { name: "Account" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Nodes" })).toHaveCount(0);
+});

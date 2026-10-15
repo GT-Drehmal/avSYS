@@ -296,7 +296,7 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 // was deleted, to bring it back, or of one that still exists, to copy it.
 // The server exists as soon as this answers, stopped and held, and its files
 // follow; with ?wait=true the answer waits for them.
-func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, picture newPicture) error {
+func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, picture newPicture, node string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -344,6 +344,11 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 			return err
 		}
 	}
+	if node != "" {
+		if err := s.checkNode(ctx, node, spec.Resources.Memory); err != nil {
+			return err
+		}
+	}
 	if spec.Storage.Size.Value() < snap.Size {
 		return errBadRequest("The snapshot holds %s of files. Give the server more storage than that.", sizeOf(snap.Size))
 	}
@@ -373,6 +378,11 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 			Annotations: map[string]string{avsysv1.AnnotationRestoring: snap.ID, avsysv1.AnnotationCreating: snap.ID},
 		},
 		Spec: spec,
+	}
+	// Placed where asked rather than where the original was kept.
+	if node != "" {
+		mc.Annotations[avsysv1.AnnotationNode] = node
+		mc.Spec.NodeSelector = nil
 	}
 	// Its files come with operators in them, some of whom the panel made
 	// for their role in the organization as it was then.
@@ -422,7 +432,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 //
 // The request waits for the snapshot. What follows is as for any server made
 // from a snapshot: it exists once this answers, and its files follow.
-func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string, picture newPicture) error {
+func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string, picture newPicture, node string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -458,6 +468,11 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 			return err
 		}
 	}
+	if node != "" {
+		if err := s.checkNode(ctx, node, wanted.Resources.Memory); err != nil {
+			return err
+		}
+	}
 	if err := unfinished(mc); err != nil {
 		return err
 	}
@@ -485,7 +500,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	// The snapshot was seen through although the caller may have hung up
 	// meanwhile, and so is making the server from it: otherwise a dropped
 	// connection would leave the snapshot and nothing to show for it.
-	return s.createFromSnapshot(w, r.WithContext(context.WithoutCancel(ctx)), u, a, name, requested, given, snap.ID, picture)
+	return s.createFromSnapshot(w, r.WithContext(context.WithoutCancel(ctx)), u, a, name, requested, given, snap.ID, picture, node)
 }
 
 // fromLive fills in what a copy of a server takes from the server itself

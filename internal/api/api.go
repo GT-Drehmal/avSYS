@@ -278,6 +278,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /auth/{provider}/callback", s.public(s.oauthCallback))
 
 	api("GET /me", s.authed(s.getMe))
+	api("GET /nodes", s.authed(s.listNodes))
 	api("PATCH /me", s.authed(s.updateMe))
 	api("POST /me/password", s.authed(s.setPassword))
 	api("PUT /me/minecraft", s.authed(s.setMinecraftAccount))

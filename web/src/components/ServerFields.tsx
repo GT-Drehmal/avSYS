@@ -1,6 +1,9 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { api, type NodeInfo } from "../lib/api";
 import { difficulties, gameModes } from "../lib/properties";
+import { fromGigabytes } from "../lib/software";
 import { Field, Input, Select } from "./ui";
 
 /** The server.properties entries that have a control of their own here. */
@@ -136,5 +139,37 @@ export function More({ label, changed = 0, open, onToggle }: { label: string; ch
       {label}
       {changed > 0 && <span className="text-accent">· {changed} changed</span>}
     </button>
+  );
+}
+
+const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+
+/**
+ * Where a new server goes: where the panel would put it, or a node chosen by
+ * hand, slow ones included. Its world lives on that node's disk.
+ */
+export function NodeChoice({ memory, value, onChange }: { memory: string; value: string; onChange: (node: string) => void }) {
+  const wanted = fromGigabytes(memory);
+  const nodes = useQuery({ queryKey: ["nodes", wanted], queryFn: () => api.get<{ nodes: NodeInfo[]; automatic?: string }>(`/nodes?memory=${encodeURIComponent(wanted)}`) });
+  const list = nodes.data?.nodes ?? [];
+  // Only worth asking where there is more than one.
+  if (list.length < 2 && !value) return null;
+  // What the server's pod asks for: its memory and a little for its workspace.
+  const need = (Number(memory) || 0) * 1024 ** 3 + 32 * 1024 ** 2;
+  const automatic = nodes.data?.automatic;
+  return (
+    <Field label="Node" hint={value ? "Its world is kept on this node's disk." : "Chosen by speed and free memory. Its world is kept on that node's disk."}>
+      {(id) => (
+        <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">{automatic ? `Automatic (now ${automatic})` : "Automatic"}</option>
+          {list.map((n) => (
+            <option key={n.name} value={n.name} disabled={!n.ready || n.free < need}>
+              {n.name} · {n.score > 0 ? `speed ${n.score.toFixed(2)}` : "speed not measured"} · {gb(n.free)} free
+              {!n.ready ? " · down" : n.free < need ? " · too little memory" : !n.automatic ? " · not used automatically" : ""}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
   );
 }
