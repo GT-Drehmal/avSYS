@@ -111,6 +111,18 @@ wait_phase() {
     looks=$((looks - 1))
     phase=$(call "$target" | field "d['status'].get('phase')")
     [ "$phase" = "$1" ] && return 0
+    # The panel itself waits out a name it could not look up, as starting.
+    # That is said here, so that it shows in the run.
+    if [ "$phase" = Starting ]; then
+      message=$(call "$target" | field "d['status'].get('message') or ''")
+      case "$message" in *"could not look up"*)
+        if [ "$message" != "${noted:-}" ]; then
+          noted=$message
+          REFETCHED=$((REFETCHED + 1))
+          printf 'note: %s\n' "$message"
+        fi ;;
+      esac
+    fi
     if [ "$phase" = Error ]; then
       message=$(call "$target" | field "d['status'].get('message')")
       # Why it stopped is in the log of the game that exited. The console

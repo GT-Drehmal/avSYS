@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -264,6 +267,98 @@ func TestPhaseOf(t *testing.T) {
 		if got, _ := phaseOf(c.mc, c.pod); got != c.want {
 			t.Errorf("%s: phase = %s, want %s", c.name, got, c.want)
 		}
+	}
+}
+
+// A game that could not look up where it downloads from is starting again,
+// and says so, until it has failed that way too many times. The logs are the
+// ends of two real ones, as the cluster keeps them: Fabric's installer on a
+// home cluster, and the image's helper fetching Paper in CI.
+func TestPhaseOfLookupFailure(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	backingOff := func(log string, restarts int32) *corev1.Pod {
+		pod := buildPod(server(nil), Config{})
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name:                 MinecraftContainer,
+			RestartCount:         restarts,
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: log}},
+		}}
+		return pod
+	}
+	// notReady is how long ago the pod's containers stopped being ready.
+	notReady := func(pod *corev1.Pod, ago time.Duration) *corev1.Pod {
+		pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{
+			Type: corev1.ContainersReady, Status: corev1.ConditionFalse,
+			LastTransitionTime: metav1.NewTime(time.Now().Add(-ago)),
+		})
+		return pod
+	}
+	fabric := read("fabric-unknown-host.log")
+	// A plugin could not look something up while the game ran, and later
+	// the game crashed for another reason.
+	pluginThenCrash := "[12:00:01] [Server thread/WARN]: [Updater] java.net.UnknownHostException: api.example.org\n" +
+		"[12:30:00] [Server thread/ERROR]: Encountered an unexpected exception\n" +
+		"java.lang.IllegalStateException: broken chunk\n\tat net.minecraft.server.Main.main(Main.java:1)\n" +
+		"2026-10-14T06:00:55.213Z\tWARN\tmc-server-runner\tMinecraft server failed.\n"
+	justExited := func(log string) *corev1.Pod {
+		pod := buildPod(server(nil), Config{})
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name:  MinecraftContainer,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: log}},
+		}}
+		return pod
+	}
+
+	cases := []struct {
+		name    string
+		pod     *corev1.Pod
+		want    avsysv1.Phase
+		message string
+	}{
+		{"fabric, backing off", backingOff(read("fabric-unknown-host.log"), 1), avsysv1.PhaseStarting, "could not look up piston-data.mojang.com"},
+		{"fabric, just exited", justExited(read("fabric-unknown-host.log")), avsysv1.PhaseStarting, "piston-data.mojang.com"},
+		{"paper", backingOff(read("paper-dns-timeout.log"), 2), avsysv1.PhaseStarting, "could not look up fill.papermc.io "},
+		{"curl", backingOff("curl: (6) Could not resolve host: cdn.modrinth.com\n", 0), avsysv1.PhaseStarting, "cdn.modrinth.com"},
+		{"go", backingOff(`Get "https://meta.fabricmc.net/v2": dial tcp: lookup meta.fabricmc.net. on 10.43.0.10:53: no such host`, 0), avsysv1.PhaseStarting, "meta.fabricmc.net "},
+		{"going on", notReady(backingOff(fabric, lookupRetries), lookupGrace+time.Minute), avsysv1.PhaseError, "kept failing for 6 minutes. Check that the cluster can reach the internet"},
+		{"not yet as many restarts", notReady(backingOff(fabric, lookupRetries-1), time.Hour), avsysv1.PhaseStarting, "being started again"},
+		// Restarts from earlier in the pod's life are not counted against it.
+		{"after earlier restarts", notReady(backingOff(fabric, 40), time.Minute), avsysv1.PhaseStarting, "being started again"},
+		{"a lookup before another crash", backingOff(pluginThenCrash, 1), avsysv1.PhaseError, "keeps crashing"},
+		{"in colour", backingOff("\x1b[0;39mCaused by: java.net.UnknownHostException: piston-meta.mojang.com\x1b[0m\n\tat x.y(Z.java:1)\n", 0), avsysv1.PhaseStarting, "piston-meta.mojang.com "},
+		{"a crash", backingOff("Exception in thread \"main\" java.lang.NoClassDefFoundError: foo\n", 1), avsysv1.PhaseError, "keeps crashing"},
+		{"a pod from before the log was kept", backingOff("", 1), avsysv1.PhaseError, "keeps crashing"},
+	}
+	for _, c := range cases {
+		phase, message := phaseOf(server(nil), c.pod)
+		if phase != c.want || !strings.Contains(message, c.message) {
+			t.Errorf("%s: %s %q, want %s and %q", c.name, phase, message, c.want, c.message)
+		}
+	}
+}
+
+// The game keeps the end of its log when it fails, and adding that does not
+// ask servers that are already running to restart.
+func TestGameKeepsItsLogWithoutARestart(t *testing.T) {
+	pod := buildPod(server(nil), Config{})
+	for _, c := range pod.Spec.Containers {
+		if c.Name == MinecraftContainer && c.TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
+			t.Errorf("the game's termination message policy is %q", c.TerminationMessagePolicy)
+		}
+	}
+	for i := range pod.Spec.Containers {
+		pod.Spec.Containers[i].TerminationMessagePolicy = ""
+	}
+	pod.Spec.NodeSelector = nil
+	if hashOf(pod.Spec) != pod.Annotations[annotationSpecHash] {
+		t.Error("the hash covers the termination message policy")
 	}
 }
 

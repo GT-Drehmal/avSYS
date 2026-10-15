@@ -1,0 +1,27 @@
+n-data.mojang.com
+	at net.fabricmc.installer.util.HttpClient.tryWithProxies(HttpClient.java:148)
+	at net.fabricmc.installer.util.HttpClient.downloadFile(HttpClient.java:59)
+	at net.fabricmc.installer.server.MinecraftServerDownloader.downloadMinecraftServer(MinecraftServerDownloader.java:45)
+	at net.fabricmc.installer.ServerLauncher.initialise(ServerLauncher.java:102)
+	at net.fabricmc.installer.ServerLauncher.main(ServerLauncher.java:54)
+Caused by: java.net.UnknownHostException: piston-data.mojang.com
+	at java.base/sun.nio.ch.NioSocketImpl.connect(Unknown Source)
+	at java.base/java.net.SocksSocketImpl.connect(Unknown Source)
+	at java.base/java.net.Socket.connect(Unknown Source)
+	at java.base/sun.security.ssl.SSLSocketImpl.connect(Unknown Source)
+	at java.base/sun.net.NetworkClient.doConnect(Unknown Source)
+	at java.base/sun.net.www.http.HttpClient.openServer(Unknown Source)
+	at java.base/sun.net.www.http.HttpClient.openServer(Unknown Source)
+	at java.base/sun.net.www.protocol.https.HttpsClient.<init>(Unknown Source)
+	at java.base/sun.net.www.protocol.https.HttpsClient.New(Unknown Source)
+	at java.base/sun.net.www.protocol.https.AbstractDelegateHttpsURLConnection.getNewHttpClient(Unknown Source)
+	at java.base/sun.net.www.protocol.http.HttpURLConnection.plainConnect0(Unknown Source)
+	at java.base/sun.net.www.protocol.http.HttpURLConnection.plainConnect(Unknown Source)
+	at java.base/sun.net.www.protocol.http.HttpURLConnection.connect(Unknown Source)
+	at java.base/sun.net.www.protocol.https.AbstractDelegateHttpsURLConnection.connect(Unknown Source)
+	at java.base/sun.net.www.protocol.https.HttpsURLConnectionImpl.connect(Unknown Source)
+	at net.fabricmc.installer.util.HttpClient.openUrl(HttpClient.java:80)
+	at net.fabricmc.installer.util.HttpClient.tryWithProxies(HttpClient.java:144)
+	... 4 more
+2026-10-14T06:00:55.213Z	WARN	mc-server-runner	Minecraft server failed. Inspect logs above for errors that indicate cause. DO NOT report this line as an error.	{"exitCode": 1}
+2026-10-14T06:00:55.213Z	INFO	mc-server-runner	Done
