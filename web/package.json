@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "lint": "biome lint ."
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",
@@ -30,6 +31,7 @@
     "react-router": "^8.4.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
     "@playwright/test": "^1.64.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.3.0",

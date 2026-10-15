@@ -35,7 +35,8 @@ export function useSelection(ids: string[], scope: string): Selection {
     last.current = null;
   }
   const key = ids.join("\n");
-  const order = useMemo(() => ids, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the list is a new array on every render; what it holds is what counts
+  const order = useMemo(() => ids, [key]);
 
   // What is no longer listed is no longer selected.
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { ArrowDown, ChevronRight } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cx } from "../../components/ui";
 import { api, ApiError, atLeast, serverPath } from "../../lib/api";
 import { plain } from "../../lib/format";
@@ -56,7 +56,7 @@ export function Console() {
   const running = server.status.phase === "Running";
   const canRun = atLeast(role, "operator");
 
-  const append = (more: Line[]) => setLines((prev) => [...prev, ...more].slice(-maxLines));
+  const append = useCallback((more: Line[]) => setLines((prev) => [...prev, ...more].slice(-maxLines)), []);
 
   useEffect(() => {
     setLines([]);
@@ -71,7 +71,7 @@ export function Console() {
     });
     source.addEventListener("waiting", () => setWaiting(true));
     return () => source.close();
-  }, [path]);
+  }, [path, append]);
 
   // Follow new output unless the reader has scrolled up to look at something.
   useLayoutEffect(() => {

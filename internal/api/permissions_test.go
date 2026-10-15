@@ -41,10 +41,7 @@ type panel struct {
 	tokens map[string]string
 }
 
-var (
-	alphaMembers = []string{"owner", "admin", "operator", "viewer"}
-	everyone     = []string{"", "outsider", "viewer", "operator", "admin", "owner", "root"}
-)
+var everyone = []string{"", "outsider", "viewer", "operator", "admin", "owner", "root"}
 
 func newPanel(t *testing.T) *panel {
 	t.Helper()

@@ -130,7 +130,8 @@ export function Settings() {
   const navigate = useNavigate();
   const update = useUpdateServer(server.org, server.name);
   const specKey = JSON.stringify(server.spec);
-  const saved = useMemo(() => toDraft(server.spec), [specKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the spec is a new object on every update; what it says is what counts
+  const saved = useMemo(() => toDraft(server.spec), [specKey]);
   const [draft, setDraft] = useState(saved);
   const versions = useGameVersions(draft.loader);
   const [previews, setPreviews] = useState(false);

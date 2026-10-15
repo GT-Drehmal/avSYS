@@ -5,6 +5,14 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  # Every night, on main as it stands. A run can start failing with no
+  # change here: a new build of Paper, a new game image, a change at Modrinth.
+  # This is where that shows up, and not on whoever opens the next pull
+  # request.
+  schedule:
+    - cron: "17 7 * * *"
+  # And by hand, from the Actions tab.
+  workflow_dispatch:
 
 # Nothing here may write to the repository. The one job that publishes asks
 # for what it needs itself.
@@ -36,6 +44,11 @@ jobs:
           test -z "$(gofmt -l .)"
           go vet ./...
           go test ./...
+      # Mistakes the compiler lets through: results not used, conditions
+      # that cannot be true, code nothing reaches. Configured in
+      # staticcheck.conf.
+      - name: Static checks
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
       # Fails on a known vulnerability in code this project actually calls,
       # its own or the standard library's, and says which release fixes it.
       - name: Known vulnerabilities
@@ -52,10 +65,14 @@ jobs:
         run: |
           make generate
           git diff --exit-code -- api deploy/crds
+      # The lint is two rules about React hooks, which the type checker
+      # cannot see: a hook called conditionally, and an effect that does not
+      # say what it depends on. Configured in web/biome.json.
       - name: Web
         working-directory: web
         run: |
           bun install --frozen-lockfile
+          bun run lint
           bun run build
       # Pushes build the images in the publish job below; pull requests only
       # need to know that they still build.
@@ -133,6 +150,33 @@ jobs:
           name: browser-test-results
           path: web/test-results
           retention-days: 7
+
+  # A nightly run that fails says so where it will be seen: an issue, opened
+  # once and added to on each night it keeps failing, and closed by hand
+  # when it is dealt with.
+  nightly-failed:
+    needs: [test, e2e, browser]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Say so in an issue
+        run: |
+          title="The nightly run on main is failing"
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          body="The nightly run of $(date -u +%Y-%m-%d) failed on \`${GITHUB_SHA::7}\`: $RUN
+
+          Nothing was merged to cause it at that hour, so look first at what the run depends on outside this repository: the game image, Paper's builds, Modrinth."
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
 
   # Publishes the panel and workspace images to GitHub's container registry,
   # once the tests above pass.

@@ -78,6 +78,7 @@ export function Editor({ name, initial, onChange, onSave }: Props) {
   const handlers = useRef({ onChange, onSave });
   handlers.current = { onChange, onSave };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the text is only what the editor starts with; making it anew on every keystroke would lose the cursor
   useEffect(() => {
     const view = new EditorView({
       parent: host.current!,
@@ -101,7 +102,6 @@ export function Editor({ name, initial, onChange, onSave }: Props) {
     });
     return () => view.destroy();
     // The editor is created once per file; later edits flow outward only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name]);
 
   return <div ref={host} className="h-full min-h-0 overflow-hidden" />;

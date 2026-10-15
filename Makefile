@@ -18,10 +18,12 @@ CONTROLLER_GEN_VERSION ?= v0.22.0
 generate:
 	go run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) object crd paths=./api/... output:crd:dir=deploy/crds
 
+STATICCHECK_VERSION ?= v0.8.2
 test:
 	go vet ./...
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
 	go test ./...
-	cd web && bun run typecheck
+	cd web && bun run typecheck && bun run lint
 
 # The snapshot engine against a real workspace container. Needs Docker and
 # restic.
