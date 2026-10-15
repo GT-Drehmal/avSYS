@@ -227,6 +227,38 @@ test("a name that snapshots of a deleted server are under is not suggested, and 
   await expect(page.getByText(/Snapshots of an earlier server named survival-copy go with the name/)).toBeVisible();
 });
 
+test("a copy opens where any new server does, with how its copying goes on every tab", async ({ page, as }) => {
+  await as("owner");
+  // Nothing here can copy files: the copy is lobby, made a moment ago and
+  // held until its files are in, with its copying a third done.
+  const held = { phase: "Stopped", message: "Made from a snapshot, and held stopped until all of its files are in place." };
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() === "POST") {
+      const list = await (await route.fetch({ method: "GET" })).json();
+      const lobby = list.find((s: { name: string }) => s.name === "lobby");
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ...lobby, status: { ...lobby.status, ...held } }) });
+    }
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((s: { name: string; status: object }) => (s.name === "lobby" ? { ...s, status: { ...s.status, ...held } } : s)) });
+  });
+  await page.route("**/api/v1/orgs/friends/servers/lobby/snapshots", (route) =>
+    route.fulfill({ json: { available: true, snapshots: [], operations: [{ kind: "create", org: "friends", server: "lobby", stage: "Copying files", percent: 33 }] } }),
+  );
+
+  await page.goto("/o/friends/new?from=server:survival");
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect(page).toHaveURL(/\/o\/friends\/s\/lobby$/);
+  const progress = page.getByRole("progressbar", { name: "Creation of lobby: Copying files" });
+  await expect(progress).toBeVisible();
+  // Above every tab, and once only on its Backups tab.
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/s\/lobby\/files$/);
+  await expect(progress).toBeVisible();
+  await page.locator('a[href="/o/friends/s/lobby/backups"]').click();
+  await expect(page).toHaveURL(/\/s\/lobby\/backups$/);
+  await expect(progress).toHaveCount(1);
+});
+
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new");
