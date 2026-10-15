@@ -3,10 +3,16 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
@@ -302,6 +308,48 @@ func (s *Server) offsiteSnapshots(w http.ResponseWriter, r *http.Request, u *sto
 // copy, after the panel's own storage was lost. It only does so into an
 // organization that has none: anything else would bring back snapshots that
 // were deleted here on purpose and not yet removed there.
+// offsiteNamesFree refuses to bring back snapshots under the name of a server
+// that is not the one they are of. Snapshots are kept by server name, and a
+// server that took the name of a deleted one while its history was only
+// offsite would otherwise be given that history: listed as its own, to be
+// restored, and thinned by its schedule.
+//
+// A server that exists and has snapshots offsite is the server they are of
+// if it was made before the newest of them; one made after all of them is
+// a new server under an old name. Bringing back the history of servers that
+// are still there, after the panel's storage was lost, is what fetching is for.
+func (s *Server) offsiteNamesFree(ctx context.Context, a *access) error {
+	far, err := s.Backups.OffsiteSnapshots(ctx, a.Org.Slug)
+	if err != nil {
+		return offsiteFailed(err)
+	}
+	newest := map[string]time.Time{}
+	for _, snap := range far {
+		if snap.Time.After(newest[snap.Server]) {
+			newest[snap.Server] = snap.Time
+		}
+	}
+	var list avsysv1.MinecraftServerList
+	if err := s.Client.List(ctx, &list, client.InNamespace(a.Namespace)); err != nil {
+		return err
+	}
+	var taken []string
+	for _, mc := range list.Items {
+		last, ok := newest[mc.Name]
+		made := mc.CreationTimestamp.Time
+		if ok && !made.IsZero() && made.After(last) {
+			taken = append(taken, mc.Name)
+		}
+	}
+	if len(taken) > 0 {
+		sort.Strings(taken)
+		return &Error{Status: http.StatusConflict, Code: "name_has_history", Message: fmt.Sprintf(
+			"The offsite copy has snapshots of earlier servers named %s, and servers of those names were made since. Bringing the snapshots back would make them those servers' history. Delete those servers first, then bring the snapshots back.",
+			strings.Join(taken, ", "))}
+	}
+	return nil
+}
+
 func (s *Server) fetchOffsite(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleViewer)
 	if err != nil {
@@ -318,6 +366,9 @@ func (s *Server) fetchOffsite(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	if n, known := s.Backups.Holds(r.Context(), a.Org.Slug); !known || n > 0 {
 		return errHasSnapshots
+	}
+	if err := s.offsiteNamesFree(r.Context(), a); err != nil {
+		return err
 	}
 	release, ok := s.offsite.claim(a.Org.Slug)
 	if !ok {

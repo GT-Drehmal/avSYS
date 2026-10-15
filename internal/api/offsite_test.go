@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,6 +11,10 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 )
 
@@ -183,5 +188,70 @@ func TestOffsiteCopiesAFewAtATime(t *testing.T) {
 	done()
 	if o.isRunning("alpha") {
 		t.Error("an organization stayed claimed after its copy")
+	}
+}
+
+// Snapshots brought back from offsite are not handed to a server that took
+// their server's name after them; those of a server that is still there go
+// back to it, which is what fetching is for.
+func TestFetchingOffsiteKeepsHistoriesApart(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	p := newPanel(t)
+	dir := p.withOffsite("restic")
+	repo, key := filepath.Join(dir, "alpha"), filepath.Join(dir, "alpha.key")
+	run := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("restic", append([]string{"--repo", repo, "--password-file", key}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("restic %v: %v: %s", args, err, out)
+		}
+	}
+	files := t.TempDir()
+	if err := os.WriteFile(filepath.Join(files, "level.dat"), []byte("a world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, []byte("local\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("init")
+	// Of world, which exists, now; and of gone, deleted long ago.
+	run("backup", files, "--host", "world", "--tag", "avsys", "--tag", "trigger=manual")
+	run("backup", files, "--host", "gone", "--tag", "avsys", "--tag", "trigger=final", "--time", "2026-01-01 12:00:00")
+	if code, got := p.get("admin", "POST", "/orgs/alpha/offsite/run?wait=true", ""); code != 200 || got["copied"] != float64(2) {
+		t.Fatalf("copy now: %d %v", code, got)
+	}
+	// The panel's storage is lost, and a new server is made under the old name.
+	for _, path := range []string{repo, key, filepath.Join(dir, "alpha.offsite")} {
+		if err := os.RemoveAll(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.addServer("alpha", "gone", "")
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: "mc-alpha", Name: "gone"}, mc); err != nil {
+		t.Fatal(err)
+	}
+	if mc.CreationTimestamp.IsZero() {
+		mc.CreationTimestamp = metav1.Now()
+		if err := p.srv.Client.Update(context.Background(), mc); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	code, name := p.do("root", "POST", "/orgs/alpha/offsite/fetch", "")
+	if code != 409 || name != "name_has_history" {
+		t.Fatalf("fetch with a new server under an old name: %d %s, want 409 name_has_history", code, name)
+	}
+	if code, got := p.get("viewer", "GET", "/orgs/alpha/snapshots", ""); code != 200 || len(got["snapshots"].([]any)) != 0 {
+		t.Errorf("something was brought back anyway: %v", got)
+	}
+
+	// Once the new one is gone, both histories come back, world's to world.
+	if err := p.srv.Client.Delete(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	if code, got := p.get("root", "POST", "/orgs/alpha/offsite/fetch", ""); code != 200 || got["fetched"] != float64(2) {
+		t.Fatalf("fetch: %d %v", code, got)
 	}
 }
