@@ -109,3 +109,29 @@ test("a viewer sees the snapshots and is offered nothing to do to them", async (
   await expect(page.getByRole("button", { name: /^New server from the snapshot/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Delete the snapshot/ })).toHaveCount(0);
 });
+
+test("a server's picture is its own while it exists, and its newest snapshot's once it is gone", async ({ page }) => {
+  // Answered here: what reads a picture out of a snapshot is restic, and this
+  // panel's restic is a stand-in.
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGM4oREFRAwQCgAl3gUpEzqvXwAAAABJRU5ErkJggg==", "base64");
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/snapshots/*/icon*", (route) => {
+    asked.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ contentType: "image/png", body: png });
+  });
+  await page.reload();
+  const gone = page.getByRole("button", { expanded: false }).filter({ hasText: "oldworld" });
+  await expect(gone.locator('img[src*="/snapshots/"]')).toBeVisible();
+  // Those that exist show their own, and no snapshot is read for them.
+  await expect(page.getByRole("button", { expanded: false }).filter({ hasText: "Survival" }).locator('img[src*="/snapshots/"]')).toHaveCount(0);
+  expect(new Set(asked).size).toBe(1);
+
+  // By time, the deleted server's rows have the same picture.
+  await page.getByRole("button", { name: "By time" }).click();
+  await expect(page.locator('img[src*="/snapshots/"]')).toHaveCount(1);
+
+  // A snapshot's own details show the picture among its files.
+  await page.getByRole("button", { name: /^About the snapshot of survival/ }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator('img[src*="/snapshots/"]')).toBeVisible();
+});

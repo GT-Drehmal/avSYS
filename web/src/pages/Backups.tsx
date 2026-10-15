@@ -7,7 +7,7 @@ import { Picture } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { OperationRow, SnapshotRows, SnapshotSelectionBar } from "../components/Snapshots";
 import { Chip, cx, Empty, Loading, Notice, PageHeader, Select } from "../components/ui";
-import { atLeast, serverIcon, type Server, type Snapshot } from "../lib/api";
+import { atLeast, serverIcon, snapshotIcon, type Server, type Snapshot } from "../lib/api";
 import { ago, bytes, displayName } from "../lib/format";
 import { useBackupPolicy, useOrgSnapshots, useServers } from "../lib/queries";
 import { useSelection, type Selection } from "../lib/selection";
@@ -168,7 +168,7 @@ export function Backups() {
                   selection={selection}
                   lead={(s) => (
                     <span className="flex w-36 shrink-0 items-center gap-2 max-sm:w-24">
-                      <ServerPicture name={s.server} server={byName.get(s.server)} size={24} />
+                      <ServerPicture org={org} name={s.server} server={byName.get(s.server)} known={!!servers.data} newest={groups.get(s.server)?.[0]?.id} size={24} />
                       <span className="truncate text-[13px] font-medium">{s.server}</span>
                     </span>
                   )}
@@ -203,9 +203,15 @@ export function Backups() {
   );
 }
 
-/** A server's picture, or its initial for one that has none or is gone. */
-function ServerPicture({ name, server, size }: { name: string; server?: Server; size: number }) {
-  return <Picture name={server ? displayName(server) : name} url={server ? serverIcon(server) : undefined} size={size} retryKey={server?.status.phase} />;
+/**
+ * A server's picture: its own while it exists, and once it is gone the one in
+ * its newest snapshot, which is what bringing it back would give it. Its
+ * initial for one that has none. Nothing is guessed before the list of
+ * servers has said whether it exists.
+ */
+function ServerPicture({ org, name, server, known, newest, size }: { org: string; name: string; server?: Server; known: boolean; newest?: string; size: number }) {
+  const url = server ? serverIcon(server) : known && newest ? snapshotIcon(org, newest) : undefined;
+  return <Picture name={server ? displayName(server) : name} url={url} size={size} retryKey={server ? `${server.status.phase}|${server.status.message ?? ""}` : ""} />;
 }
 
 interface GroupProps {
@@ -233,7 +239,7 @@ function ServerGroup({ org, name, server, known, items, concern, open, onToggle,
     <li className="overflow-hidden rounded-lg border border-line bg-surface">
       <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-raised">
         {open ? <ChevronDown className="size-4 shrink-0 text-muted" /> : <ChevronRight className="size-4 shrink-0 text-muted" />}
-        <ServerPicture name={name} server={server} size={32} />
+        <ServerPicture org={org} name={name} server={server} known={known} newest={newest?.id} size={32} />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className="truncate text-[13px] font-medium">{server ? displayName(server) : name}</span>
