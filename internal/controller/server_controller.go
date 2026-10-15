@@ -181,6 +181,15 @@ func (r *Reconciler) moveVolume(ctx context.Context, mc *avsysv1.MinecraftServer
 	if pvc.DeletionTimestamp.IsZero() && (pvc.Spec.VolumeName == "" || node == "" || node == target) {
 		return false, nil
 	}
+	// Nothing is deleted on a mark read from a cache, which a move given
+	// up a moment ago may have taken off: it is read again as it is now.
+	live := &avsysv1.MinecraftServer{}
+	if err := r.Reader.Get(ctx, client.ObjectKeyFromObject(mc), live); err != nil {
+		return true, client.IgnoreNotFound(err)
+	}
+	if live.Annotations[avsysv1.AnnotationMoving] != target {
+		return false, nil
+	}
 	pod := &corev1.Pod{}
 	switch err := r.Get(ctx, client.ObjectKeyFromObject(mc), pod); {
 	case err == nil && pod.DeletionTimestamp.IsZero():
@@ -336,12 +345,13 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 		switch {
 		case gameInPod:
 			return avsysv1.PhaseStopping, ""
+		// Before its stopped state, which a move sets too.
+		case mc.Annotations[avsysv1.AnnotationRestoring] != "" && mc.Annotations[avsysv1.AnnotationMoving] != "":
+			return avsysv1.PhaseStopped, fmt.Sprintf("Being moved to %s, and held stopped until its files are there.", mc.Annotations[avsysv1.AnnotationMoving])
 		case mc.Annotations[avsysv1.AnnotationCreating] != "":
 			return avsysv1.PhaseStopped, "Made from a snapshot, and held stopped until all of its files are in place."
 		case mc.Spec.State == avsysv1.StateStopped:
 			return avsysv1.PhaseStopped, ""
-		case mc.Annotations[avsysv1.AnnotationRestoring] != "" && mc.Annotations[avsysv1.AnnotationMoving] != "":
-			return avsysv1.PhaseStopped, fmt.Sprintf("Being moved to %s, and held stopped until its files are there.", mc.Annotations[avsysv1.AnnotationMoving])
 		case mc.Annotations[avsysv1.AnnotationRestoring] != "":
 			return avsysv1.PhaseStopped, "Held stopped until a restore of its files has completed."
 		default:

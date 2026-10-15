@@ -269,6 +269,11 @@ func holdsMemory(mc *avsysv1.MinecraftServer) bool {
 	if _, asleep := mc.Annotations[avsysv1.AnnotationAsleep]; asleep {
 		return false
 	}
+	// Being moved, it is held stopped while its files are put back on the
+	// node it goes to, and may be started there as soon as they are.
+	if mc.Annotations[avsysv1.AnnotationMoving] != "" {
+		return true
+	}
 	if mc.Annotations[avsysv1.AnnotationCreating] != "" {
 		// Until making it failed, which is recorded on it: it then waits
 		// to be deleted, and starts on nothing.

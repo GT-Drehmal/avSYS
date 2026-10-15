@@ -143,6 +143,20 @@ func (o *operations) change(namespace, server string, blockedBy ...string) (rele
 
 // remove admits the deletion of a snapshot, unless a restore is using it.
 // Until release is called no restore to that snapshot can start.
+// carry records the snapshot an operation is carrying a server's files in,
+// which may not be deleted until it is over. ok is false if it is being
+// deleted already.
+func (o *operations) carry(namespace string, op *operation, snapshot string) (ok bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.init()
+	if o.deleting[namespace+"/"+snapshot] {
+		return false
+	}
+	op.Snapshot = snapshot
+	return true
+}
+
 func (o *operations) remove(namespace, snapshot string) (release func(), ok bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -230,6 +244,7 @@ func snapshotError(err error) error {
 var (
 	errRestoring    = &Error{Status: http.StatusConflict, Code: "restoring", Message: "This server is being restored. Wait for that to finish."}
 	errDeleting     = &Error{Status: http.StatusConflict, Code: "deleting", Message: "This server is being deleted."}
+	errMoving       = &Error{Status: http.StatusConflict, Code: "moving", Message: "This server is being moved to another node. Wait for that to finish."}
 	errCreating     = &Error{Status: http.StatusConflict, Code: "creating", Message: "This server is still being made from a snapshot. Wait for that to finish."}
 	errSnapshotting = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot of this server is being taken. Try again when it has finished."}
 	// errRestoreIncomplete is returned to anything that would run the game
@@ -250,7 +265,7 @@ var (
 //
 // The caller must call release once its change has been made.
 func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
-	kinds := []string{kindRestore, kindCreate, kindDeleteServer}
+	kinds := []string{kindRestore, kindCreate, kindDeleteServer, kindMove}
 	if alsoDuringSnapshot {
 		kinds = append(kinds, kindSnapshot)
 	}
@@ -270,6 +285,8 @@ func heldBy(kind string) error {
 		return errCreating
 	case kindDeleteServer:
 		return errDeleting
+	case kindMove:
+		return errMoving
 	}
 	return errSnapshotting
 }

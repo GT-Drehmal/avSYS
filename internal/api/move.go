@@ -169,6 +169,12 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 		restart()
 		return nil, fmt.Errorf("its files could not be saved, so it was not moved: %w", err)
 	}
+	// The snapshot is all there is of its files once the old volume goes:
+	// it is not to be deleted until the move is over.
+	if !s.ops.carry(mc.Namespace, op, snap.ID) {
+		restart()
+		return nil, fmt.Errorf("its newest snapshot, %s, is being deleted, so it was not moved", shortID(snap.ID))
+	}
 
 	// From here its files on the old node are let go of. The game is held
 	// stopped until they are back, by the same mark as a restore.
@@ -189,8 +195,17 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 		if now, gerr := s.fresh(live, mc); gerr == nil {
 			if still, verr := controller.VolumeNode(live, s.nodeReader(), now); verr == nil && still == from && !s.claimGoing(live, key) {
 				if uerr := s.unplace(live, key, from); uerr == nil {
-					restart()
-					return snap, fmt.Errorf("its volume on %s was not ready, so it was put back on %s as it was: %w", target, from, err)
+					// The controller reads the mark live before deleting
+					// anything; one already past that look is given a
+					// moment to show, and then it is not put back.
+					time.Sleep(5 * time.Second)
+					if !s.claimGoing(live, key) {
+						restart()
+						return snap, fmt.Errorf("its volume on %s was not ready, so it was put back on %s as it was: %w", target, from, err)
+					}
+					// Going after all: held again, to be moved on, so
+					// that the game never starts on an empty volume.
+					_ = s.remark(live, key, target, snap.ID)
 				}
 			}
 		}
@@ -274,6 +289,19 @@ func (s *Server) unplace(ctx context.Context, key client.ObjectKey, node string)
 	mc.Annotations[avsysv1.AnnotationNode] = node
 	delete(mc.Annotations, avsysv1.AnnotationMoving)
 	delete(mc.Annotations, avsysv1.AnnotationRestoring)
+	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// remark holds a server whose old volume is going as one being moved again.
+func (s *Server) remark(ctx context.Context, key client.ObjectKey, node, snapshot string) error {
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, mc); err != nil {
+		return err
+	}
+	orig := mc.DeepCopy()
+	mc.Annotations[avsysv1.AnnotationNode] = node
+	mc.Annotations[avsysv1.AnnotationMoving] = node
+	mc.Annotations[avsysv1.AnnotationRestoring] = snapshot
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }
 

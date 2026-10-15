@@ -317,7 +317,8 @@ func TestMovingServer(t *testing.T) {
 	moving := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "moving", Annotations: map[string]string{
 		avsysv1.AnnotationNode: "b", avsysv1.AnnotationMoving: "b", avsysv1.AnnotationRestoring: "abcd1234",
 	}}}
-	moving.Spec.State = avsysv1.StateRunning
+	// Stopped for the move, as a move does: it says it is being moved.
+	moving.Spec.State = avsysv1.StateStopped
 	if phase, message := phaseOf(moving, nil); phase != avsysv1.PhaseStopped || message != "Being moved to b, and held stopped until its files are there." {
 		t.Errorf("phase %s, %q", phase, message)
 	}
@@ -349,5 +350,48 @@ func TestMovingServer(t *testing.T) {
 	}
 	if got.Annotations[avsysv1.AnnotationNode] != "b" {
 		t.Errorf("recorded node %q while moving to b, want it left", got.Annotations[avsysv1.AnnotationNode])
+	}
+}
+
+// A move given up, its mark taken off since the cache was read, deletes
+// nothing.
+func TestMoveVolumeGivenUp(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	a := node("a", "16Gi", "")
+	a.Labels[corev1.LabelHostname] = "a"
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "pv-given-up"},
+		Spec: corev1.PersistentVolumeSpec{NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+			MatchExpressions: []corev1.NodeSelectorRequirement{{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"a"}}},
+		}}}}},
+	}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: DataPVCName("given-up")}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: pv.Name}}
+	stored := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "given-up", Annotations: map[string]string{avsysv1.AnnotationNode: "a"}}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&a, pv, pvc, stored).Build()
+	r := &Reconciler{Client: c, Reader: c}
+	// What a reconcile read a moment before the move was given up.
+	stale := stored.DeepCopy()
+	stale.Annotations[avsysv1.AnnotationMoving] = "b"
+	if waiting, err := r.moveVolume(context.Background(), stale, "b"); err != nil || waiting {
+		t.Fatalf("waiting %v, %v", waiting, err)
+	}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(pvc), &corev1.PersistentVolumeClaim{}); err != nil {
+		t.Errorf("the volume was deleted on a stale mark: %v", err)
+	}
+}
+
+// A server being moved holds its memory on the node it goes to, held
+// stopped meanwhile though it may be.
+func TestMovingHoldsMemory(t *testing.T) {
+	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{avsysv1.AnnotationMoving: "b"}}}
+	mc.Spec.State = avsysv1.StateStopped
+	if !holdsMemory(mc) {
+		t.Error("a server being moved holds no memory")
 	}
 }
