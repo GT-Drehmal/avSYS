@@ -4,7 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -96,5 +99,47 @@ func TestPreferReleases(t *testing.T) {
 	onlyBeta := []modrinthVersion{{ID: "b1", VersionType: "beta"}, {ID: "b2", VersionType: "beta"}}
 	if got := preferReleases(onlyBeta); len(got) != 2 {
 		t.Errorf("with no release, betas should be kept: got %+v", got)
+	}
+}
+
+// What is deleted for content taken off a server: an upload's stored file,
+// and a datapack's installed one when it came from a URL or an upload. What
+// the image removes itself, and what is still listed, is left alone.
+func TestLeftBehind(t *testing.T) {
+	url := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: "https://cdn.example.org/packs/Veinminer-1.2.4.zip?x=1"}
+	upload := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "ours.zip"}
+	uploadedMod := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "mod.jar"}
+	modrinth := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindDatapack, Project: "terralith", Version: "abc"}
+	urlMod := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindMod, Project: "https://example.org/mod.jar"}
+	before := []avsysv1.ContentRef{url, upload, uploadedMod, modrinth, urlMod}
+
+	got := leftBehind(&avsysv1.MinecraftServerSpec{}, before)
+	want := []string{
+		"/data/world/datapacks/Veinminer-1.2.4.zip",
+		"/data/.avsys/content/ours.zip",
+		"/data/world/datapacks/ours.zip",
+		"/data/.avsys/content/mod.jar",
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("all taken off:\n got %v\nwant %v", got, want)
+	}
+	// Still listed: nothing.
+	if got := leftBehind(&avsysv1.MinecraftServerSpec{Mods: before}, before); len(got) != 0 {
+		t.Errorf("nothing taken off: %v", got)
+	}
+	// A world of another name, by the server's own LEVEL.
+	spec := &avsysv1.MinecraftServerSpec{Env: []corev1.EnvVar{{Name: "LEVEL", Value: "drehmal"}}}
+	if got := leftBehind(spec, []avsysv1.ContentRef{url}); len(got) != 1 || got[0] != "/data/drehmal/datapacks/Veinminer-1.2.4.zip" {
+		t.Errorf("with LEVEL: %v", got)
+	}
+	// A LEVEL that would lead outside /data is not followed.
+	spec = &avsysv1.MinecraftServerSpec{Env: []corev1.EnvVar{{Name: "LEVEL", Value: "../etc"}}}
+	if got := leftBehind(spec, []avsysv1.ContentRef{url}); len(got) != 1 || got[0] != "/data/world/datapacks/Veinminer-1.2.4.zip" {
+		t.Errorf("with a LEVEL outside: %v", got)
+	}
+	// A URL that names no zip file is not guessed at.
+	odd := avsysv1.ContentRef{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: "https://example.org/download?id=7"}
+	if got := leftBehind(&avsysv1.MinecraftServerSpec{}, []avsysv1.ContentRef{odd}); len(got) != 0 {
+		t.Errorf("a URL with no file name: %v", got)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -552,34 +553,89 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 	return nil
 }
 
-// removeDroppedUploads deletes the stored files of uploads that are no longer
-// listed. The game's copy is removed by the server image on the next start.
-func (s *Server) removeDroppedUploads(ctx context.Context, namespace, server string, before, after []avsysv1.ContentRef) {
-	s.removeDroppedUploadsWith(ctx, nil, namespace, server, before, after)
+// removeDroppedUploads deletes what content taken out of a server's list left
+// behind that nothing else removes: the stored file of an upload, and the
+// installed file of a datapack from a URL or an upload.
+//
+// The image removes what it installed from Modrinth, CurseForge, or as mods
+// and plugins from a URL or an upload, once it is no longer asked for. A
+// datapack from a URL or an upload it only ever adds: it can be told to clear
+// the whole datapacks folder, which would take Modrinth's and any put there
+// by hand with it. So the panel removes exactly the file it had put there.
+func (s *Server) removeDroppedUploads(ctx context.Context, namespace, server string, spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef) {
+	s.removeDroppedUploadsWith(ctx, nil, namespace, server, spec, before)
 }
 
 // removeDroppedUploadsWith is removeDroppedUploads through a connection to the
 // server's files that the caller has made sure of, or the shared one if nil.
-func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Client, namespace, server string, before, after []avsysv1.ContentRef) {
-	kept := map[string]bool{}
-	for _, m := range after {
-		if m.Source == avsysv1.SourceUpload {
-			kept[m.Project] = true
+func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Client, namespace, server string, spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef) {
+	gone := leftBehind(spec, before)
+	if len(gone) == 0 {
+		return
+	}
+	sc, err := through, error(nil)
+	if sc == nil {
+		if sc, err = s.workspaces.get(ctx, namespace, server); err != nil {
+			s.Log.Warn("could not reach a server's files to remove content taken off it", "server", server, "error", err)
+			return
 		}
 	}
+	for _, file := range gone {
+		if err := sc.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.Log.Warn("could not delete content taken off a server", "server", server, "file", file, "error", err)
+		}
+	}
+}
+
+// leftBehind lists the files to delete for content that was in before and is
+// not in spec's list.
+func leftBehind(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef) []string {
+	kept := map[string]bool{}
+	for _, m := range spec.Mods {
+		kept[string(m.Source)+":"+m.Project] = true
+	}
+	var gone []string
 	for _, m := range before {
-		if m.Source != avsysv1.SourceUpload || kept[m.Project] {
+		if kept[string(m.Source)+":"+m.Project] {
 			continue
 		}
-		sc, err := through, error(nil)
-		if sc == nil {
-			sc, err = s.workspaces.get(ctx, namespace, server)
+		if m.Source == avsysv1.SourceUpload {
+			gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
 		}
-		if err == nil {
-			err = sc.Remove(path.Join(controller.ContentDir, path.Base(m.Project)))
-		}
-		if err != nil {
-			s.Log.Warn("could not delete uploaded file", "server", server, "file", m.Project, "error", err)
+		if m.Kind == avsysv1.KindDatapack && (m.Source == avsysv1.SourceUpload || m.Source == avsysv1.SourceURL) {
+			if name := installedDatapack(m); name != "" {
+				gone = append(gone, path.Join(dataRoot, levelOf(spec), "datapacks", name))
+			}
 		}
 	}
+	return gone
+}
+
+// installedDatapack is the name the image gives a datapack from a URL or an
+// upload in the world's datapacks folder: the upload's own name, or the last
+// part of the URL's path.
+func installedDatapack(m avsysv1.ContentRef) string {
+	if m.Source == avsysv1.SourceUpload {
+		return path.Base(m.Project)
+	}
+	u, err := url.Parse(m.Project)
+	if err != nil {
+		return ""
+	}
+	name := path.Base(u.Path)
+	if name == "." || name == "/" || !strings.HasSuffix(strings.ToLower(name), ".zip") {
+		return ""
+	}
+	return name
+}
+
+// levelOf is the world's folder, where the image puts datapacks: what LEVEL
+// says in a server's own environment, or "world".
+func levelOf(spec *avsysv1.MinecraftServerSpec) string {
+	for _, e := range spec.Env {
+		if e.Name == "LEVEL" && e.Value != "" && !strings.Contains(e.Value, "/") && e.Value != ".." {
+			return e.Value
+		}
+	}
+	return "world"
 }

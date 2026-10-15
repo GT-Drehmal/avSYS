@@ -190,6 +190,30 @@ echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e
 expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "managed server.properties" "$(call "$SRV/files/content?path=/server.properties")" "motd=e2e probe"
 
+step "datapacks"
+# restarted asks for a restart and waits it out: down first, then up.
+restarted() {
+  call -X POST "$SRV/restart" >/dev/null
+  for _ in $(seq 1 90); do
+    [ "$(call "$SRV" | field "d['status'].get('phase')")" != Running ] && break
+    sleep 1
+  done
+  wait_phase Running
+}
+# One from a URL, which the image only ever adds: taking it off has to take
+# its file away too, or the game goes on loading it.
+PACK=https://cdn.modrinth.com/data/OhduvhIc/versions/8cEJouzY/Veinminer-1.2.4.zip
+mods=$(call "$SRV" | field "__import__('json').dumps(d['spec']['mods'])")
+with=$(python3 -c 'import json, sys; m = json.loads(sys.argv[1]); m.append({"source": "url", "kind": "datapack", "project": sys.argv[2]}); print(json.dumps({"spec": {"mods": m}}))' "$mods" "$PACK")
+call -X PATCH -d "$with" "$SRV" >/dev/null
+restarted
+expect "a datapack from a URL is installed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/world/datapacks/Veinminer-1.2.4.zip")" 200
+expect "and enabled" "$(call -d '{"command":"datapack list enabled"}' "$SRV/console" | field "d['output']")" "Veinminer-1.2.4.zip"
+call -X PATCH -d "{\"spec\":{\"mods\":$mods}}" "$SRV" >/dev/null
+expect "taken off, its file is removed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/world/datapacks/Veinminer-1.2.4.zip")" 404
+restarted
+expect "and the game no longer has it" "$(call -d '{"command":"datapack list"}' "$SRV/console" | field "'Veinminer' not in d['output']")" True
+
 step "snapshots"
 snap=$(call -X POST "$SRV/snapshots?wait=true")
 SNAP=$(echo "$snap" | field "d['id']") || fail "no snapshot was taken: $snap"

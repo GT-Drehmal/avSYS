@@ -550,7 +550,7 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 	if files, err := sftp.NewClient(ws); err != nil {
 		s.Log.Warn("could not reach a new server's files to tidy them", "server", key.String(), "error", err)
 	} else {
-		s.removeDroppedUploadsWith(ctx, files, key.Namespace, key.Name, copied, created.Spec.Mods)
+		s.removeDroppedUploadsWith(ctx, files, key.Namespace, key.Name, &created.Spec, copied)
 		// As with a new server's picture, the server is never held back over it.
 		if err := s.placePicture(files, key.Namespace, key.Name, picture); err != nil {
 			s.Log.Warn("a new server's own picture was not put in place", "server", key.String(), "error", err)
