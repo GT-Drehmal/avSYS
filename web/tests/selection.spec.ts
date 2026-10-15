@@ -112,3 +112,26 @@ test("a snapshot of several servers is asked for at once, and one that could not
   await expect(bar).toContainText("1 server selected");
   await expect(page.getByLabel("Select bravo")).toBeChecked();
 });
+
+test("one selected server can be duplicated from the list; several cannot", async ({ page, as, org }) => {
+  const slug = await org(["alpha", "bravo"]);
+  await as("owner");
+  await page.goto(`/o/${slug}`);
+  const bar = page.getByRole("region", { name: "Selection" });
+  await page.getByLabel("Select alpha").click();
+  await page.getByLabel("Select bravo").click();
+  await expect(bar.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
+  await page.getByLabel("Select bravo").click();
+  await bar.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/new\\?from=server:alpha$`));
+  await expect(page.getByRole("heading", { name: "Duplicate alpha" })).toBeVisible();
+});
+
+test("an operator is not offered to duplicate", async ({ page, as }) => {
+  await as("operator");
+  await page.goto("/o/friends");
+  await page.getByLabel("Select survival").click();
+  const bar = page.getByRole("region", { name: "Selection" });
+  await expect(bar.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
+});
