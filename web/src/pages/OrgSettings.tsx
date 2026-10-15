@@ -93,7 +93,7 @@ function Domains({ org }: { org: string }) {
   if (!d) return null;
   const shown = text ?? d.domains.join("\n");
   return (
-    <Section title="Domains" description="A hostname under one of these can only be one of this organization's servers. Under no organization's domain, any may use it.">
+    <Section title="Domains" description="Hostnames under these, such as mc.play.example.org, are for this organization's servers only. Any organization may use a hostname outside them.">
       {d.editable ? (
         <form
           className="flex flex-col gap-4"
@@ -109,7 +109,7 @@ function Domains({ org }: { org: string }) {
             });
           }}
         >
-          <Field label="Its domains" hint="One per line, as play.example.org. Only you, as the panel's administrator, can change them.">
+          <Field label="One per line" hint="Only you, as the panel's administrator, can change them.">
             {(id) => <Textarea id={id} rows={3} value={shown} onChange={(e) => setText(e.target.value)} placeholder="play.example.org" className="font-mono" spellCheck={false} />}
           </Field>
           {inUse && inUse.length > 0 && (

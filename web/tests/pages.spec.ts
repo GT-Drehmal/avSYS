@@ -117,14 +117,14 @@ test("an organization's domains are set by the panel's administrator, and shown 
   const mine = `play.${a}.example`;
   await as("owner");
   await page.goto(`/o/${a}/settings`);
-  await page.getByLabel("Its domains").fill(`${mine}\n${mine.toUpperCase()}`);
+  await page.getByLabel("One per line").fill(`${mine}\n${mine.toUpperCase()}`);
   await page.getByRole("button", { name: "Save domains" }).click();
   await expect(page.getByText("Domains saved")).toBeVisible();
-  await expect(page.getByLabel("Its domains")).toHaveValue(mine);
+  await expect(page.getByLabel("One per line")).toHaveValue(mine);
 
   // Another organization cannot take one overlapping it.
   await page.goto(`/o/${b}/settings`);
-  await page.getByLabel("Its domains").fill(`mc.${mine}`);
+  await page.getByLabel("One per line").fill(`mc.${mine}`);
   await page.getByRole("button", { name: "Save domains" }).click();
   await expect(page.getByText(`mc.${mine} overlaps ${mine}`, { exact: false })).toBeVisible();
 
@@ -138,5 +138,5 @@ test("an organization's admin sees its domains and cannot change them", async ({
   await page.goto("/o/friends/settings");
   await expect(page.getByRole("heading", { name: "Domains" })).toBeVisible();
   await expect(page.getByText(/Given by the panel's administrator/)).toBeVisible();
-  await expect(page.getByLabel("Its domains")).toHaveCount(0);
+  await expect(page.getByLabel("One per line")).toHaveCount(0);
 });
