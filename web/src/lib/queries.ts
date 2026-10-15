@@ -121,6 +121,7 @@ export function useLiveServers() {
       qc.setQueryData<SnapshotList>(keys.serverSnapshots(done.org, done.server), without);
       // Only the end of what was running: a snapshot deleted meanwhile is
       // done too, with the server's snapshot still going.
+      qc.cancelQueries({ queryKey: keys.running(done.org, done.server) });
       qc.setQueryData<Operation | null>(keys.running(done.org, done.server), (running) => (running && running.kind !== done.kind ? running : null));
       // Both lists are refetched: the snapshot is new to them, or gone.
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
@@ -152,6 +153,8 @@ export function useLiveServers() {
  * and notes it for the server whether or not any list of it was loaded.
  */
 function applyOperation(qc: QueryClient, op: Operation) {
+  // Newer than any answer still on its way, which is not to overwrite it.
+  qc.cancelQueries({ queryKey: keys.running(op.org, op.server) });
   qc.setQueryData<Operation | null>(keys.running(op.org, op.server), op);
   const merge = (list: SnapshotList | undefined) =>
     list && { ...list, operations: [...list.operations.filter((o) => o.server !== op.server), op] };
@@ -160,11 +163,13 @@ function applyOperation(qc: QueryClient, op: Operation) {
 }
 
 /**
- * What is being done to a server's snapshots now: asked of the panel once,
- * which is quick, and kept current by the event stream from then on.
+ * What is being done to a server's snapshots now: asked of the panel each
+ * time a page of it opens, which is quick, and kept current by the event
+ * stream meanwhile. An event cancels an answer still on its way, which is
+ * older than it.
  */
 export const useRunning = (org: string, server: string) =>
-  useQuery({ queryKey: keys.running(org, server), queryFn: () => api.get<Operation | null>(`${serverPath(org, server)}/operation`), staleTime: Number.POSITIVE_INFINITY }).data ?? null;
+  useQuery({ queryKey: keys.running(org, server), queryFn: () => api.get<Operation | null>(`${serverPath(org, server)}/operation`), refetchOnMount: "always" }).data ?? null;
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });

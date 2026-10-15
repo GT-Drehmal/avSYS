@@ -235,6 +235,7 @@ test("the header's Snapshot waits while one is being taken, as the event stream 
       body: running ? `event: operation.progress\ndata: ${JSON.stringify(op)}\n\n` : "event: waiting\ndata: null\n\n",
     }),
   );
+  await page.route("**/api/v1/orgs/friends/servers/survival/operation", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(running ? op : null) }));
   await page.goto("/o/friends/s/survival");
   const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
   await expect(snapshot).toBeEnabled();
@@ -250,6 +251,8 @@ test("a snapshot deleted while one is being taken does not end it; its own end d
   const done = { kind: "snapshot", org: "friends", server: "survival" };
   let body = `event: operation.progress\ndata: ${JSON.stringify(op)}\n\nevent: operation.done\ndata: ${JSON.stringify(deleted)}\n\n`;
   await page.route("**/api/v1/events", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body }));
+  // The panel's own record says the same as the stream.
+  await page.route("**/api/v1/orgs/friends/servers/survival/operation", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(body.includes("progress") ? op : null) }));
   await page.goto("/o/friends/s/survival");
   const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
   await expect(snapshot).toBeDisabled();
@@ -295,4 +298,18 @@ test("a server's page opened while a snapshot of it is being taken waits for it,
   await page.route("**/api/v1/orgs/friends/servers/survival/operation", (route) => route.fulfill({ json: op }));
   await page.goto("/o/friends/s/survival");
   await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toBeDisabled();
+});
+
+test("coming back to a server's page asks again what is being done to it", async ({ page }) => {
+  const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Starting", percent: 0, startedAt: new Date().toISOString() };
+  let running = false;
+  await page.route("**/api/v1/orgs/friends/servers/survival/operation", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(running ? op : null) }));
+  await page.goto("/o/friends/s/survival");
+  const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
+  await expect(snapshot).toBeEnabled();
+  await page.getByRole("link", { name: "Servers", exact: true }).first().click();
+  // Started from elsewhere, with nothing said on the stream yet.
+  running = true;
+  await page.getByRole("link", { name: /Survival/ }).first().click();
+  await expect(snapshot).toBeDisabled();
 });
