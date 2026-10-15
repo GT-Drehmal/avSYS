@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
@@ -180,5 +181,35 @@ func TestNodeNamedByHostnameLabel(t *testing.T) {
 	}
 	if got, _ := r.nodeNamed(context.Background(), "unknown"); got != "unknown" {
 		t.Errorf("nodeNamed(unknown) = %q; want it as given", got)
+	}
+}
+
+// A server whose record holds its node's hostname label, as an older panel
+// wrote it, has it renamed to the node's name, which its pod is kept to.
+func TestRecordedHostnameRenamed(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	n := node("node-1", "16Gi", "")
+	n.Labels[corev1.LabelHostname] = "host-1"
+	older := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "older", Annotations: map[string]string{avsysv1.AnnotationNode: "host-1"}}}
+	named := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "named", Annotations: map[string]string{avsysv1.AnnotationNode: "node-1"}}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n, older, named).Build()
+	r := &Reconciler{Client: c, Reader: c}
+	for _, mc := range []*avsysv1.MinecraftServer{older, named} {
+		if err := r.ensurePlacement(context.Background(), mc); err != nil {
+			t.Fatal(err)
+		}
+		got := &avsysv1.MinecraftServer{}
+		if err := c.Get(context.Background(), client.ObjectKeyFromObject(mc), got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Annotations[avsysv1.AnnotationNode] != "node-1" {
+			t.Errorf("%s: recorded node %q, want node-1", mc.Name, got.Annotations[avsysv1.AnnotationNode])
+		}
 	}
 }

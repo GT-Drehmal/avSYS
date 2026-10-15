@@ -117,6 +117,24 @@ func LockPlacement() (unlock func()) {
 	return placing.Unlock
 }
 
+// renameRecordedNode puts the name of a server's node in its record where an
+// older panel wrote that node's hostname label, read off its volume: the pod
+// is kept to the node by name, and no node may have that one.
+func (r *Reconciler) renameRecordedNode(ctx context.Context, mc *avsysv1.MinecraftServer, recorded string) error {
+	err := r.Reader.Get(ctx, types.NamespacedName{Name: recorded}, &corev1.Node{})
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+	name, err := r.nodeNamed(ctx, recorded)
+	if err != nil || name == recorded {
+		return err
+	}
+	orig := mc.DeepCopy()
+	mc.Annotations[avsysv1.AnnotationNode] = name
+	log.FromContext(ctx).Info("recorded node renamed from its hostname label", "label", recorded, "node", name)
+	return r.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
 // nodeNamed returns the name of the node whose hostname label is this, which
 // is usually but not always its name.
 func (r *Reconciler) nodeNamed(ctx context.Context, hostname string) (string, error) {
@@ -133,8 +151,11 @@ func (r *Reconciler) nodeNamed(ctx context.Context, hostname string) (string, er
 // ensurePlacement records the node a server lives on, choosing one for a new
 // server. Servers that select nodes themselves are left to the scheduler.
 func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftServer) error {
-	if len(mc.Spec.NodeSelector) > 0 || mc.Annotations[avsysv1.AnnotationNode] != "" {
+	if len(mc.Spec.NodeSelector) > 0 {
 		return nil
+	}
+	if recorded := mc.Annotations[avsysv1.AnnotationNode]; recorded != "" {
+		return r.renameRecordedNode(ctx, mc, recorded)
 	}
 
 	// A server that already has a home keeps it: one that predates this
