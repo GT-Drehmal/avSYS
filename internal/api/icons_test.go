@@ -477,6 +477,33 @@ func TestServerIconsAnswerWhatTheyHaveWhileReadingAgain(t *testing.T) {
 	if icon, _ := c.get("ns/world"); string(icon.data) != "new" || icon.failed {
 		t.Errorf("a failed read replaced what was known: %+v", icon)
 	}
+	// And it is tried again soon, not after the full time.
+	c.mu.Lock()
+	icon := c.icons["ns/world"]
+	c.mu.Unlock()
+	if !icon.retrySoon {
+		t.Error("a failed read again is not tried again soon")
+	}
+	c.mu.Lock()
+	c.icons["ns/world"] = serverIcon{data: icon.data, at: time.Now().Add(-serverIconRetry - time.Second), retrySoon: true}
+	c.mu.Unlock()
+	if _, fresh := c.get("ns/world"); fresh {
+		t.Error("still fresh after the short wait")
+	}
+}
+
+// Pictures answer only to who may see them, so the browser checks every time
+// rather than keeping one for whoever signs in next.
+func TestPicturesAreCheckedEveryTime(t *testing.T) {
+	p := newPanel(t)
+	if rec := p.send("operator", "PUT", "/me/avatar", asPNG(t, picture(64, 64))); rec.Code != 204 {
+		t.Fatalf("setting an avatar: %d", rec.Code)
+	}
+	id := p.users["operator"].ID
+	rec := p.send("viewer", "GET", "/users/"+id+"/avatar", nil)
+	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "private, no-cache" || rec.Header().Get("ETag") == "" {
+		t.Errorf("got %d, Cache-Control %q, ETag %q", rec.Code, rec.Header().Get("Cache-Control"), rec.Header().Get("ETag"))
+	}
 }
 
 // A snapshot's picture is the server-icon.png among its files, redrawn as any
@@ -589,5 +616,28 @@ func TestPictureOf(t *testing.T) {
 	p := newPanel(t)
 	if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"pictured","picture":null,"spec":{"eula":true,"version":"1.21.4"}}`); got != 400 {
 		t.Errorf("a picture with a new server: %d %s, want 400", got, code)
+	}
+}
+
+// A load decided on before the icon was forgotten reads nothing, however
+// late it starts.
+func TestServerIconsLoadAsOf(t *testing.T) {
+	ctx := t.Context()
+	var c serverIcons
+	c.init()
+	asOf := c.changes["ns/gone"]
+	c.forget("ns/gone")
+	if data, ok := c.loadAsOf(ctx, "ns/gone", asOf, func(context.Context) ([]byte, error) {
+		t.Error("read after it was forgotten")
+		return []byte("old"), nil
+	}); ok || data != nil {
+		t.Errorf("got %q %v", data, ok)
+	}
+	if _, known := c.get("ns/gone"); known {
+		t.Error("something was remembered for it")
+	}
+	// Unchanged, it reads as usual.
+	if data, ok := c.loadAsOf(ctx, "ns/kept", c.changes["ns/kept"], func(context.Context) ([]byte, error) { return []byte("icon"), nil }); !ok || string(data) != "icon" {
+		t.Errorf("unchanged: %q %v", data, ok)
 	}
 }

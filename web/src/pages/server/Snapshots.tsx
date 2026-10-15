@@ -37,7 +37,7 @@ export function Snapshots() {
   const failure = server.status.snapshots?.error;
 
   return (
-    <div className={`flex flex-col gap-4 ${selection.count > 0 ? "pb-16" : ""}`}>
+    <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] text-muted">
           {snapshots.length === 0 ? "No snapshots yet." : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"}, the newest from ${ago(snapshots[0].time)}.`}

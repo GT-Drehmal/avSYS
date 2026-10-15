@@ -411,13 +411,15 @@ func (m *Manager) Usage(ctx context.Context, org string) (Usage, error) {
 
 // Record returns the description of the server stored inside a snapshot.
 func (m *Manager) Record(ctx context.Context, org, id string) ([]byte, error) {
-	snap, err := m.Get(ctx, org, id)
-	if err != nil {
-		return nil, err
-	}
+	// Held from finding the snapshot to reading out of it, so that it cannot
+	// be deleted in between.
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	snap, err := m.get(ctx, org, id)
+	if err != nil {
+		return nil, err
+	}
 	return m.restic(ctx, org, "dump", "--no-lock", snap.ID, RecordPath)
 }
 

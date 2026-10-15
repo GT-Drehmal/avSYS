@@ -802,3 +802,20 @@ func TestANameGoesWithItsHistory(t *testing.T) {
 		t.Errorf("a new server from its snapshot: got %d %q, want 422 no_record", got, code)
 	}
 }
+
+// A CPU limit asked to be none is none; one not mentioned is the original's.
+func TestACopysCPULimit(t *testing.T) {
+	two := resource.MustParse("2")
+	recorded := &avsysv1.MinecraftServerSpec{Resources: avsysv1.ResourcesSpec{Memory: resource.MustParse("4Gi"), CPU: &two}}
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil); got.Resources.CPU == nil || got.Resources.CPU.String() != "2" {
+		t.Errorf("not mentioned: %v", got.Resources.CPU)
+	}
+	given := map[string]json.RawMessage{"resources": json.RawMessage(`{"memory":"4Gi","cpu":null}`)}
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, given); got.Resources.CPU != nil {
+		t.Errorf("asked for none: %v", got.Resources.CPU)
+	}
+	given = map[string]json.RawMessage{"resources": json.RawMessage(`{"memory":"8Gi"}`)}
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, given); got.Resources.CPU == nil {
+		t.Error("memory alone changed the CPU limit")
+	}
+}

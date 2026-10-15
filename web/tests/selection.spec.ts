@@ -105,7 +105,7 @@ test("a snapshot of several servers is asked for at once, and one that could not
   await page.getByLabel("Select every server").click();
   const bar = page.getByRole("region", { name: "Selection" });
   await bar.getByRole("button", { name: "Snapshot", exact: true }).click();
-  await expect(page.getByText("Taking a snapshot of 1 server")).toBeVisible();
+  await expect(page.getByText("Taking a snapshot of alpha")).toBeVisible();
   await expect(page.getByText(/1 of 2 failed\. bravo: Something else is being done/)).toBeVisible();
   expect(asked.sort()).toEqual(["POST alpha", "POST bravo"]);
   // What failed stays selected.
@@ -147,4 +147,28 @@ test("Duplicate is not offered where the panel cannot take snapshots", async ({ 
   const bar = page.getByRole("region", { name: "Selection" });
   await expect(bar.getByRole("button", { name: "Start", exact: true })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
+});
+
+test("the selection bar never covers the end of the list, however many rows it wraps to", async ({ page, as, org }) => {
+  // Enough servers that the list runs past the bottom of the window.
+  const names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima"];
+  const slug = await org(names);
+  await as("owner");
+  for (const width of [820, 1280, 390]) {
+    await page.setViewportSize({ width, height: 600 });
+    await page.goto(`/o/${slug}`);
+    // One at a time: on a phone there is no box for all of them.
+    for (const name of ["alpha", "lima"]) await page.getByLabel(`Select ${name}`, { exact: true }).click();
+    const bar = page.getByRole("region", { name: "Selection" });
+    await expect(bar).toContainText("2 servers selected");
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const last = page.getByRole("link", { name: /^lima / }).first();
+    await expect(last).toBeVisible();
+    // Settled: the bar's height is known once it has been laid out.
+    await page.waitForTimeout(100);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const row = await last.boundingBox();
+    const box = await bar.boundingBox();
+    expect(row && box && row.y + row.height <= box.y + 1, `at ${width} pixels the last row ends at ${row && row.y + row.height}, the bar starts at ${box?.y}`).toBe(true);
+  }
 });

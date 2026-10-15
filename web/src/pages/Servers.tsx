@@ -73,18 +73,22 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
       targets.map((s) =>
         act === "delete"
           ? api.del(serverPath(org, s.name) + (keeps ? "" : "?snapshot=false"))
-          : // Each is started here and goes on in the panel, which says when it is taken.
-            api.post(`${serverPath(org, s.name)}/${act === "snapshot" ? "snapshots" : act}`),
+          : act === "snapshot"
+            ? // Each goes on in the panel once it is started, and is said to
+              // be under way the moment it is: a small one can be taken, and
+              // said to be, before the others have answered.
+              api.post(`${serverPath(org, s.name)}/snapshots`).then(() => toast.info(`Taking a snapshot of ${s.name}`))
+            : api.post(`${serverPath(org, s.name)}/${act}`),
       ),
     );
-    await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), act === "delete" || act === "snapshot" ? qc.invalidateQueries({ queryKey: ["snapshots", org] }) : null]);
-    setRunning(null);
-    setDeleting(false);
     const failed = targets.filter((_, i) => results[i].status === "rejected");
     const reasons = results.flatMap((r, i) => (r.status === "rejected" ? [`${targets[i].name}: ${r.reason instanceof ApiError ? r.reason.message : "it could not be reached"}`] : []));
     const succeeded = targets.length - failed.length;
-    if (succeeded > 0) toast.info(`${done[act]} ${plural(succeeded, "server")}`);
+    if (succeeded > 0 && act !== "snapshot") toast.info(`${done[act]} ${plural(succeeded, "server")}`);
     if (failed.length > 0) toast.error(`${failed.length} of ${targets.length} failed. ${reasons.join(" ")}`);
+    await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), act === "delete" || act === "snapshot" ? qc.invalidateQueries({ queryKey: ["snapshots", org] }) : null]);
+    setRunning(null);
+    setDeleting(false);
     // What failed stays selected, to be tried again or looked at.
     onDone(failed.map((s) => s.name));
   };
@@ -170,7 +174,7 @@ export function Servers() {
       ) : (
         // Room for the bar that the selection brings up, so it covers nothing.
         // On a narrow screen its buttons wrap onto a second row.
-        <div className={`overflow-hidden rounded-lg border border-line bg-surface ${selection.count > 0 ? "mb-16 max-md:mb-28" : ""}`}>
+        <div className="overflow-hidden rounded-lg border border-line bg-surface">
           <div className={`${columns} label-mono relative hidden h-9 border-b border-line md:grid ${canOperate ? "pl-10" : ""}`}>
             {canOperate && (
               <label className="absolute inset-y-0 left-0 flex w-10 cursor-pointer items-center justify-center">
