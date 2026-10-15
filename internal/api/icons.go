@@ -591,16 +591,13 @@ func pictureOf(raw json.RawMessage) (newPicture, error) {
 }
 
 // placePicture puts a server's own picture in place, or takes away the one it
-// has, as a request asked.
-func (s *Server) placePicture(ctx context.Context, namespace, name string, picture newPicture) error {
+// has, as a request asked, through a connection to the server's files that
+// the caller has made sure is to this server's own volume.
+func (s *Server) placePicture(sc *sftp.Client, namespace, name string, picture newPicture) error {
 	if picture.data == nil && !picture.remove {
 		return nil
 	}
 	key := namespace + "/" + name
-	sc, err := s.workspaces.get(ctx, namespace, name)
-	if err != nil {
-		return err
-	}
 	if picture.remove {
 		if err := sc.Remove(serverIconPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
