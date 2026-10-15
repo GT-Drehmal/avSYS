@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ChevronRight, Download, Search } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cx, Input, Select } from "../../components/ui";
+import { toast } from "../../lib/toast";
 import { api, ApiError, atLeast, serverPath } from "../../lib/api";
 import { bytes, plain } from "../../lib/format";
 import { useServerContext } from "./ServerPage";
@@ -140,6 +141,8 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
     try {
       const page = await api.get<LogPage>(`${url}&${query}`);
       if (asked === generation.current) place(page);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "That part of the log could not be read.");
     } finally {
       setLoading(false);
     }
@@ -195,7 +198,15 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
           type="button"
           onClick={firstError}
           disabled={!errorAt || !!search || loading}
-          title={search ? "Clear the search to go to the first error." : errorAt ? `Line ${errorAt}` : "Nothing in this log tells of an error."}
+          title={
+            search
+              ? "Clear the search to go to the first error."
+              : errorAt
+                ? `Line ${errorAt}`
+                : first.data?.truncated
+                  ? "Nothing in the part of this log shown tells of an error."
+                  : "Nothing in this log tells of an error."
+          }
           className="h-7 rounded-md px-2.5 text-xs font-medium text-muted hover:bg-raised hover:text-fg disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
         >
           First error
@@ -217,7 +228,7 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
           </button>
         )}
         {search && first.data?.capped && (
-          <p className="mb-2 font-sans text-xs text-muted">Only the last 1,000 matches are shown. Search for something narrower to see earlier ones.</p>
+          <p className="mb-2 font-sans text-xs text-muted">Only the last matches are shown. Search for something narrower to see earlier ones.</p>
         )}
         {first.isPending && <p className="font-sans text-[13px] text-muted">Reading the log…</p>}
         {first.isError && <p className="font-sans text-[13px] text-danger">{first.error instanceof ApiError ? first.error.message : "The log could not be read."}</p>}
@@ -230,11 +241,13 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
             </div>
           </div>
         ))}
-        {laterToLoad && (
+        {jumped && (
           <div className="mt-2 flex gap-4 font-sans text-xs">
-            <button type="button" onClick={loadLater} disabled={loading} className="text-accent hover:underline disabled:opacity-50">
-              {loading ? "Loading…" : "Load later lines"}
-            </button>
+            {laterToLoad && (
+              <button type="button" onClick={loadLater} disabled={loading} className="text-accent hover:underline disabled:opacity-50">
+                {loading ? "Loading…" : "Load later lines"}
+              </button>
+            )}
             <button type="button" onClick={() => setJumped(null)} className="text-accent hover:underline">
               Go to the end
             </button>

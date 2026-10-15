@@ -73,6 +73,31 @@ func TestSearchLog(t *testing.T) {
 	}
 }
 
+// A search of long lines answers with no more than maxSearchBytes of them.
+func TestSearchLogBytes(t *testing.T) {
+	long := strings.Repeat("x", maxLineBytes-10)
+	lines := make([]string, 200)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("ERROR %d %s", i+1, long)
+	}
+	got, capped := searchLog(lines, "error", 0)
+	size := 0
+	for _, l := range got {
+		size += len(l.Text)
+	}
+	if !capped || size > maxSearchBytes || got[len(got)-1].N != 200 || len(got) < 50 {
+		t.Errorf("%d lines, %d bytes, capped %v", len(got), size, capped)
+	}
+}
+
+// A log of more lines than are held is cut there.
+func TestReadLogManyLines(t *testing.T) {
+	lines, cut, err := readLog(strings.NewReader(strings.Repeat("\n", maxLogLines+10)), false)
+	if err != nil || !cut || len(lines) != maxLogLines {
+		t.Errorf("%d lines, cut %v, err %v", len(lines), cut, err)
+	}
+}
+
 // A line too long to show is cut, and what comes after it still read.
 func TestReadLogLongLine(t *testing.T) {
 	text := "before\n" + strings.Repeat("x", maxLineBytes+5000) + "\n\nafter"

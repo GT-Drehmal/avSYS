@@ -127,8 +127,10 @@ test("earlier logs and crash reports can be opened from the console, searched an
   // An earlier run of 2500 lines, read from its end a page at a time, with one error in it.
   const all = Array.from({ length: 2500 }, (_, i) => (i === 99 ? "[01:00:00] [Server thread/ERROR]: Something broke" : `[01:00:00] [Server thread/INFO]: line ${i + 1}`));
   const asked: string[] = [];
+  let failNext = false;
   await page.route(`${base}/file*`, (route) => {
     const url = new URL(route.request().url());
+    if (failNext && url.searchParams.has("before")) return route.fulfill({ status: 502, json: { code: "workspace", message: "The workspace is gone." } });
     asked.push(url.search);
     const q = url.searchParams.get("q");
     if (q) {
@@ -162,6 +164,15 @@ test("earlier logs and crash reports can be opened from the console, searched an
   await expect(page.getByRole("button", { name: "Load later lines" })).toHaveCount(0);
   await page.getByRole("button", { name: "Load earlier lines" }).click();
   await expect(page.locator('[data-n="1"]')).toHaveCount(1);
+  // All read, and back to the end from there.
+  await page.getByRole("button", { name: "Go to the end" }).click();
+  await expect(page.locator('[data-n="1"]')).toHaveCount(0);
+  await expect(page.getByText("Something broke")).toHaveCount(0);
+  // A page that cannot be read says so.
+  failNext = true;
+  await page.getByRole("button", { name: "Load earlier lines" }).click();
+  await expect(page.getByText("The workspace is gone.")).toBeVisible();
+  failNext = false;
   // Back to the end, read from there as before.
   await picker.selectOption("");
   await picker.selectOption("logs/2026-10-14-1.log.gz");

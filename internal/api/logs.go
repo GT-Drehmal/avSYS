@@ -98,6 +98,13 @@ type logLine struct {
 // plugin may write, is cut, and the rest of the log still read.
 const maxLineBytes = 64 << 10
 
+// maxLogLines bounds how many lines of one log are held: a log of nearly
+// empty lines would otherwise take far more memory than its bytes.
+const maxLogLines = 1_000_000
+
+// maxSearchBytes bounds how much text one search answers with.
+const maxSearchBytes = 4 << 20
+
 // maxMatches is as many matching lines as one search answers with: the last
 // ones, nearest the end, where reading starts.
 const maxMatches = 1000
@@ -133,6 +140,9 @@ func readLog(f io.Reader, gzipped bool) ([]string, bool, error) {
 				}
 				lines = append(lines, text)
 				line, cut = line[:0], 0
+				if len(lines) == maxLogLines {
+					return lines, true, nil
+				}
 			}
 		}
 		if err == io.EOF {
@@ -184,6 +194,13 @@ func searchLog(lines []string, q string, context int) (out []logLine, capped boo
 	for i, l := range lines {
 		if keep[i] {
 			out = append(out, logLine{N: i + 1, Text: l, Match: match[i]})
+		}
+	}
+	// And no more text than maxSearchBytes, again keeping the last.
+	size := 0
+	for i := len(out) - 1; i >= 0; i-- {
+		if size += len(out[i].Text); size > maxSearchBytes {
+			return out[i+1:], true
 		}
 	}
 	return out, capped
