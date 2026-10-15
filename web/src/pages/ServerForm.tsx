@@ -1,11 +1,11 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, type Join } from "../components/ServerFields";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, NodeChoice, type Join } from "../components/ServerFields";
 import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
@@ -76,6 +76,8 @@ interface Values {
   autoOp: string;
   memory: string;
   storage: string;
+  /** The node to put it on; empty for the panel to choose. */
+  node: string;
   aikar: boolean;
   extraFlags: string;
   hostname: string;
@@ -113,6 +115,7 @@ const fresh: Values = {
   autoOp: "operator",
   memory: "4",
   storage: "10",
+  node: "",
   // Recommended for every server, and on unless switched off.
   aikar: true,
   extraFlags: "",
@@ -155,6 +158,9 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     autoOp: spec.autoOp || "operator",
     memory: toGigabytes(spec.resources.memory) || "4",
     storage: String(Math.max(Number(toGigabytes(spec.storage.size)) || 10, leastStorage)),
+    // The panel chooses for a copy too, unless asked: the original's node
+    // may have no room for both.
+    node: "",
     aikar: launchOf(spec).aikar,
     // Not taken from a snapshot, which the server could have written: they
     // run code. A copy of a server that is there takes its own.
@@ -202,6 +208,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const navigate = useNavigate();
   const qc = useQueryClient();
   const me = useMe().data;
+  // A hostname under another organization's domain is refused; its own are said here.
+  const domains = useQuery({ queryKey: ["domains", org], queryFn: () => api.get<{ domains: string[] }>(`/orgs/${org}/domains`) });
   const spec = source?.spec;
   const duplicating = source?.origin.kind === "server";
   // A server that still exists is being copied; one that is gone gets its name back.
@@ -354,13 +362,16 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         const from = source.origin.kind === "server" ? { fromServer: source.origin.name } : { fromSnapshot: source.origin.id };
         // Left out, it keeps the one its files bring.
         const pictured = v.picture.kind === "file" ? { picture: await pictureForRequest(v.picture.file) } : v.picture.kind === "none" ? { picture: null } : {};
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, spec: copyRequest() });
+        // "auto" lets the panel choose for a copy of a server kept to some
+        // nodes, which would otherwise be kept to them too.
+        const placed = v.node === "auto" ? { spec: { ...copyRequest(), nodeSelector: {} } } : { ...(v.node ? { node: v.node } : {}), spec: copyRequest() };
+        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files are in.
         navigate(`/o/${org}/s/${server.name}`);
         return;
       }
-      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, spec: newRequest() });
+      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...(v.node ? { node: v.node } : {}), spec: newRequest() });
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
       // Its picture goes onto its volume, which is not there yet. The panel
       // waits for that, puts the picture in place and then starts the
@@ -663,12 +674,21 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={v.memory} onChange={(e) => set("memory", e.target.value)} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={v.storage} onChange={(e) => set("storage", e.target.value)} />}</Field>
         </div>
+        <NodeChoice memory={v.memory} value={v.node} kept={source?.origin.kind === "server" ? source.live?.spec.nodeSelector : undefined} onChange={(node) => set("node", node)} />
         <More label="Launch flags" changed={(v.aikar !== start.aikar ? 1 : 0) + (v.extraFlags !== start.extraFlags ? 1 : 0)} open={moreLaunch} onToggle={() => setMoreLaunch(!moreLaunch)} />
         {moreLaunch && <LaunchFlags aikar={v.aikar} extra={v.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} fromSnapshot={source?.origin.kind === "snapshot"} />}
       </Section>
 
       <Section title="Network">
-        <Field label="Hostname" hint={source ? "Optional. Its own: the original's address is not taken along." : "Optional. Point this name's DNS at the avSYS router."}>
+        <Field
+          label="Hostname"
+          hint={[
+            source ? "Optional. Its own: the original's address is not taken along." : "Optional. Point this name's DNS at the avSYS router.",
+            (domains.data?.domains.length ?? 0) > 0 ? `This organization's domains: ${domains.data?.domains.join(", ")}.` : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           {(id) => <Input id={id} value={v.hostname} disabled={v.exposeType === "None"} onChange={(e) => set("hostname", e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
         </Field>
         <More label="How it is reached, and sleep" changed={networkChanged} open={moreNetwork} onToggle={() => setMoreNetwork(!moreNetwork)} />

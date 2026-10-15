@@ -168,6 +168,8 @@ export interface ServerSpec {
   autoOp?: "" | "operator" | "admin" | "owner" | "off";
   /** From which role members are on the whitelist: "viewer" is every member; "" and "off" are nobody. */
   autoWhitelist?: "" | "viewer" | "operator" | "admin" | "owner" | "off";
+  /** Labels of the nodes it is kept to, set outside the panel. */
+  nodeSelector?: Record<string, string>;
   /** Members put on, or left off, the operators and the whitelist whatever their role, by user ID. */
   opMembers?: { also?: string[]; except?: string[] } | null;
   whitelistMembers?: { also?: string[]; except?: string[] } | null;
@@ -403,3 +405,18 @@ export interface MinecraftVersions {
 }
 
 export const serverPath = (org: string, name: string) => `/orgs/${org}/servers/${name}`;
+
+/** A node of the cluster, as one is chosen for a server. */
+export interface NodeInfo {
+  name: string;
+  /** Up and taking pods. */
+  ready: boolean;
+  /** New servers may be placed on it without asking. */
+  automatic: boolean;
+  /** Measured single-core speed; 0 when not measured. */
+  score: number;
+  memory: number;
+  free: number;
+  /** What runs on it, for the panel's administrator. */
+  servers?: { org: string; name: string; memory: string; phase?: string }[];
+}

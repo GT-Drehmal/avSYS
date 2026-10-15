@@ -1,11 +1,16 @@
 package controller
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -59,6 +64,183 @@ func TestPickNode(t *testing.T) {
 	for _, c := range cases {
 		if got := pickNode(c.nodes, c.reserved, c.need); got != c.want {
 			t.Errorf("%s: picked %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// A node's score that is not a number counts as not measured.
+func TestNodeScoreNotANumber(t *testing.T) {
+	for _, label := range []string{"NaN", "Inf", "-Inf", "-1", "fast"} {
+		n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{avsysv1.LabelNodeScore: label}}}
+		if got := NodeScore(n); got != 0 {
+			t.Errorf("score %q read as %v", label, got)
+		}
+	}
+}
+
+// What the scheduler holds for a pod: its containers and sidecars, or more
+// if an init container needs it, and its overhead.
+func TestPodMemory(t *testing.T) {
+	gi := func(n int64) corev1.ResourceRequirements {
+		return corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(n<<30, resource.BinarySI)}}
+	}
+	always := corev1.ContainerRestartPolicyAlways
+	for _, c := range []struct {
+		name string
+		pod  corev1.PodSpec
+		want int64
+	}{
+		{"containers", corev1.PodSpec{Containers: []corev1.Container{{Resources: gi(2)}, {Resources: gi(1)}}}, 3},
+		{"a bigger init container", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(5)}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 5},
+		{"a smaller init container", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(1)}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 2},
+		{"a sidecar", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: gi(1), RestartPolicy: &always}}, Containers: []corev1.Container{{Resources: gi(2)}}}, 3},
+		{"the pod as a whole", corev1.PodSpec{Containers: []corev1.Container{{Resources: gi(2)}}, Resources: &corev1.ResourceRequirements{Requests: gi(6).Requests}}, 6},
+		{"overhead", corev1.PodSpec{Containers: []corev1.Container{{Resources: gi(2)}}, Overhead: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(1<<30, resource.BinarySI)}}, 3},
+	} {
+		if got := podMemory(&corev1.Pod{Spec: c.pod}); got != c.want<<30 {
+			t.Errorf("%s: %d GiB, want %d", c.name, got>>30, c.want)
+		}
+	}
+	// Being made smaller in place: what it has now, until it is done.
+	resizing := &corev1.Pod{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "game", Resources: gi(2)}}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "game", AllocatedResources: gi(4).Requests, Resources: &corev1.ResourceRequirements{Requests: gi(4).Requests},
+		}}},
+	}
+	if got := podMemory(resizing); got != 4<<30 {
+		t.Errorf("resizing: %d GiB, want 4", got>>30)
+	}
+}
+
+// A server given a node counts there from then on, though its pod is not
+// made or bound yet, or it is being made from a snapshot; one bound counts
+// what its pod has yet to ask for.
+func TestNodeUsageCountsPlacedServers(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	n, b := node("a", "16Gi", ""), node("b", "16Gi", "")
+	yes := true
+	server := func(name, state, node string) *avsysv1.MinecraftServer {
+		mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: name, Annotations: map[string]string{avsysv1.AnnotationNode: node}}}
+		mc.Spec.State = avsysv1.DesiredState(state)
+		mc.Spec.Resources.Memory = resource.MustParse("4Gi")
+		return mc
+	}
+	// Stopped, its workspace bound: only the workspace counts until it runs.
+	workspace := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "starting"},
+		Spec:       corev1.PodSpec{NodeName: "a", Containers: []corev1.Container{{Name: "w", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Mi")}}}}},
+	}
+	creating := server("copy", "Stopped", "a")
+	creating.Annotations[avsysv1.AnnotationCreating] = "abcd1234"
+	creating.Annotations[avsysv1.AnnotationRestoring] = "abcd1234"
+	asleep := server("asleep", "Running", "a")
+	asleep.Annotations[avsysv1.AnnotationAsleep] = "true"
+	// Making it failed: it waits to be deleted, holding its workspace.
+	failed := server("failed", "Stopped", "a")
+	failed.Annotations[avsysv1.AnnotationCreating] = "abcd1234"
+	failed.Status.Snapshots = &avsysv1.SnapshotStatus{Error: "making this server from the snapshot did not finish"}
+	// Made again under the name of a deleted server whose pod, on node b,
+	// is still going: it counts on its own node, a.
+	again := server("again", "Running", "a")
+	again.UID = "new"
+	leftover := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "again", OwnerReferences: []metav1.OwnerReference{{APIVersion: "avsys.dev/v1alpha1", Kind: "MinecraftServer", Name: "again", UID: "old", Controller: &yes}}},
+		Spec:       corev1.PodSpec{NodeName: "b", Containers: []corev1.Container{{Name: "w", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Mi")}}}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n, workspace,
+		server("new", "Running", "a"),      // placed, no pod yet: 4Gi + 32Mi
+		server("starting", "Running", "a"), // bound workspace of 32Mi: 4Gi more
+		server("stopped", "Stopped", "a"),  // its workspace: 32Mi
+		creating,                           // being made from a snapshot, held stopped: 4Gi + 32Mi
+		asleep,                             // gives the game's memory back: 32Mi
+		failed, again, leftover, &b,
+	).Build()
+	_, reserved, err := NodeUsage(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Four to run, and three that hold only their workspace: stopped,
+	// asleep, and the one whose making failed.
+	want := 4*(4*gi) + 4*(32<<20) + 3*(32<<20)
+	if reserved["a"] != want {
+		t.Errorf("reserved on a = %d, want %d", reserved["a"], want)
+	}
+	if reserved["b"] != 32<<20 {
+		t.Errorf("reserved on b = %d, want only the leftover pod's %d", reserved["b"], 32<<20)
+	}
+}
+
+// A volume tied to a node by its hostname label is on the node of that
+// label, whose name may differ.
+func TestNodeNamedByHostnameLabel(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	n := node("node-1", "16Gi", "")
+	n.Labels[corev1.LabelHostname] = "host-1"
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n).Build()
+	r := &Reconciler{Client: c, Reader: c}
+	if got, err := r.nodeNamed(context.Background(), "host-1"); err != nil || got != "node-1" {
+		t.Errorf("nodeNamed(host-1) = %q, %v; want node-1", got, err)
+	}
+	if got, _ := r.nodeNamed(context.Background(), "unknown"); got != "unknown" {
+		t.Errorf("nodeNamed(unknown) = %q; want it as given", got)
+	}
+}
+
+// A server whose record holds its node's hostname label, as an older panel
+// wrote it, has it set to the name of the node its volume is on, which its
+// pod is kept to: also where that label is another node's name.
+func TestRecordedHostnameRenamed(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	// Node one's hostname label is node two's name.
+	one, two := node("one", "16Gi", ""), node("two", "16Gi", "")
+	one.Labels[corev1.LabelHostname] = "two"
+	two.Labels[corev1.LabelHostname] = "host-of-two"
+	objects := []client.Object{&one, &two}
+	server := func(name, recorded, label string) *avsysv1.MinecraftServer {
+		mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: name, Annotations: map[string]string{avsysv1.AnnotationNode: recorded}}}
+		pv := &corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{Name: "pv-" + name},
+			Spec: corev1.PersistentVolumeSpec{NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{label}}},
+			}}}}},
+		}
+		pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: DataPVCName(name)}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: pv.Name}}
+		objects = append(objects, mc, pv, pvc)
+		return mc
+	}
+	cases := map[*avsysv1.MinecraftServer]string{
+		server("older", "two", "two"):                 "one", // its volume is on one
+		server("named", "two", "host-of-two"):         "two", // already right
+		server("plain", "host-of-two", "host-of-two"): "two",
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+	r := &Reconciler{Client: c, Reader: c}
+	for mc, want := range cases {
+		if err := r.ensurePlacement(context.Background(), mc); err != nil {
+			t.Fatal(err)
+		}
+		got := &avsysv1.MinecraftServer{}
+		if err := c.Get(context.Background(), client.ObjectKeyFromObject(mc), got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Annotations[avsysv1.AnnotationNode] != want {
+			t.Errorf("%s: recorded node %q, want %s", mc.Name, got.Annotations[avsysv1.AnnotationNode], want)
 		}
 	}
 }

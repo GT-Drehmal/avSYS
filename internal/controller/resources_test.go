@@ -3,6 +3,7 @@ package controller
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -184,15 +185,19 @@ func TestPodKeepsWorkspaceWhenGameIsOff(t *testing.T) {
 
 func TestPodFollowsRecordedNode(t *testing.T) {
 	placed := server(func(mc *avsysv1.MinecraftServer) { mc.Annotations = map[string]string{avsysv1.AnnotationNode: "pc"} })
-	if got := buildPod(placed, Config{}).Spec.NodeSelector; got[corev1.LabelHostname] != "pc" {
-		t.Errorf("recorded node not used: %v", got)
+	// By the node's name, which its hostname label need not be.
+	pinned := buildPod(placed, Config{}).Spec
+	if a := pinned.Affinity; len(pinned.NodeSelector) != 0 || a == nil || a.NodeAffinity == nil ||
+		!reflect.DeepEqual(a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchFields,
+			[]corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"pc"}}}) {
+		t.Errorf("recorded node not used: %+v %+v", pinned.NodeSelector, pinned.Affinity)
 	}
 	own := server(func(mc *avsysv1.MinecraftServer) {
 		mc.Annotations = map[string]string{avsysv1.AnnotationNode: "pc"}
 		mc.Spec.NodeSelector = map[string]string{"disk": "fast"}
 	})
-	if got := buildPod(own, Config{}).Spec.NodeSelector; len(got) != 1 || got["disk"] != "fast" {
-		t.Errorf("a server's own selector should win: %v", got)
+	if got := buildPod(own, Config{}).Spec; len(got.NodeSelector) != 1 || got.NodeSelector["disk"] != "fast" || got.Affinity != nil {
+		t.Errorf("a server's own selector should win: %v %+v", got.NodeSelector, got.Affinity)
 	}
 	// Recording the node must not look like a settings change.
 	if buildPod(server(nil), Config{}).Annotations[annotationSpecHash] != buildPod(placed, Config{}).Annotations[annotationSpecHash] {
