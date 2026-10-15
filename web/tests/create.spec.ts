@@ -279,3 +279,17 @@ test("with the list of servers unavailable, nothing is guessed about the origina
   await expect(page.getByText(/There is no server named/)).toHaveCount(0);
   await expect(page.getByLabel("Short name")).toHaveCount(0);
 });
+
+test("a restore's progress shows before the server is held, once, and on every tab", async ({ page, as }) => {
+  await as("owner");
+  // A restore begins by snapshotting what is there; the server is not held yet.
+  await page.route("**/api/v1/orgs/friends/servers/creative/snapshots", (route) =>
+    route.fulfill({ json: { available: true, snapshots: [], operations: [{ kind: "restore", org: "friends", server: "creative", stage: "Saving what is there now", percent: 10 }] } }),
+  );
+  await page.goto("/o/friends/s/creative/backups");
+  const progress = page.getByRole("progressbar", { name: /^Restore of creative/ });
+  await expect(progress).toHaveCount(1);
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/s\/creative\/files$/);
+  await expect(progress).toBeVisible();
+});
