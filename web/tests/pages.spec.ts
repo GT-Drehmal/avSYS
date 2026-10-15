@@ -117,7 +117,8 @@ test("an organization's domains are set by the panel's administrator, and shown 
   const mine = `play.${a}.example`;
   await as("owner");
   await page.goto(`/o/${a}/settings`);
-  await page.getByLabel("One per line").fill(`${mine}\n${mine.toUpperCase()}`);
+  // Written as a wildcard too, it is the same domain.
+  await page.getByLabel("One per line").fill(`${mine}\n*.${mine.toUpperCase()}`);
   await page.getByRole("button", { name: "Save domains" }).click();
   await expect(page.getByText("Domains saved")).toBeVisible();
   await expect(page.getByLabel("One per line")).toHaveValue(mine);

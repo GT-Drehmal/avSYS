@@ -19,8 +19,11 @@ import (
 // one of them is that organization's alone; one under no claimed domain is
 // anyone's, so a panel with a single organization needs none of this.
 
+// normalizeDomain tidies a domain as typed. *.example.org is taken as
+// example.org, which covers every name under it already.
 func normalizeDomain(d string) (string, error) {
 	d = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
+	d = strings.TrimPrefix(d, "*.")
 	if !hostnamePattern.MatchString(d) {
 		return "", errBadRequest("%q is not a domain, such as play.example.org.", d)
 	}

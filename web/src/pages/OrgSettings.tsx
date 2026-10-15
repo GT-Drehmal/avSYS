@@ -109,7 +109,7 @@ function Domains({ org }: { org: string }) {
             });
           }}
         >
-          <Field label="One per line" hint="Only you, as the panel's administrator, can change them.">
+          <Field label="One per line" hint="Each covers itself and every name under it, so example.org and *.example.org are the same. Only you, as the panel's administrator, can change them.">
             {(id) => <Textarea id={id} rows={3} value={shown} onChange={(e) => setText(e.target.value)} placeholder="play.example.org" className="font-mono" spellCheck={false} />}
           </Field>
           {inUse && inUse.length > 0 && (

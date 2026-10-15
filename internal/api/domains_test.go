@@ -14,7 +14,7 @@ func TestDomainsAreTheirOrganizations(t *testing.T) {
 	// And one made outside the panel, its name in another case, with a final dot.
 	p.addServer("beta", "manual", "Manual.Alpha.Example.org.")
 
-	code, got := p.get("root", "PUT", "/orgs/alpha/domains", `{"domains":["Alpha.Example.org.", "alpha.example.org"]}`)
+	code, got := p.get("root", "PUT", "/orgs/alpha/domains", `{"domains":["Alpha.Example.org.", "*.alpha.example.org"]}`)
 	if code != 200 || len(got["domains"].([]any)) != 1 || got["domains"].([]any)[0] != "alpha.example.org" {
 		t.Fatalf("claiming: %d %v", code, got)
 	}
@@ -30,8 +30,10 @@ func TestDomainsAreTheirOrganizations(t *testing.T) {
 			t.Errorf("beta claiming %s: %d %s, want 409 domain_claimed", d, code, name)
 		}
 	}
-	if code, _ := p.do("root", "PUT", "/orgs/beta/domains", `{"domains":["not a domain"]}`); code != 400 {
-		t.Errorf("a claim that is no domain: %d, want 400", code)
+	for _, d := range []string{"not a domain", "*", "*.", "a.*.example.org", "*.com"} {
+		if code, _ := p.do("root", "PUT", "/orgs/beta/domains", `{"domains":["`+d+`"]}`); code != 400 {
+			t.Errorf("a claim of %q, which is no domain: %d, want 400", d, code)
+		}
 	}
 
 	// Beta cannot make a server under alpha's domain; alpha can.
