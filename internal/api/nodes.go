@@ -127,6 +127,21 @@ func (s *Server) checkNode(ctx context.Context, name string, memory resource.Qua
 	return nil
 }
 
+// createPlaced creates a server, put on the node given if there is one. That
+// node is checked to have room for it again here, one at a time from the
+// check until the server is there and counts on it: two asked for at once
+// do not both get the same room.
+func (s *Server) createPlaced(ctx context.Context, mc *avsysv1.MinecraftServer, node string) error {
+	if node != "" {
+		s.placing.Lock()
+		defer s.placing.Unlock()
+		if err := s.checkNode(ctx, node, mc.Spec.Resources.Memory); err != nil {
+			return err
+		}
+	}
+	return s.Client.Create(ctx, mc)
+}
+
 func gib(b int64) string {
 	return fmt.Sprintf("%.1f GB", float64(max(b, 0))/(1<<30))
 }

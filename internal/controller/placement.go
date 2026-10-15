@@ -153,7 +153,8 @@ func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftS
 // NodeUsage lists the cluster's nodes and the memory the pods already on
 // each have asked for. A server given a node that is to run there counts in
 // full from then on, before its pod is made or bound: two servers placed a
-// moment apart are not both given the same memory.
+// moment apart are not both given the same memory. One being made from a
+// snapshot counts too, as it may be started once its files are in.
 func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[string]int64, error) {
 	var nodes corev1.NodeList
 	if err := reader.List(ctx, &nodes); err != nil {
@@ -179,7 +180,7 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 	}
 	for i := range servers.Items {
 		mc := &servers.Items[i]
-		if !wantsMinecraft(mc) {
+		if !holdsMemory(mc) {
 			continue
 		}
 		// A server's pod has its name. Where it is bound already, only
@@ -193,6 +194,17 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 		}
 	}
 	return nodes.Items, reserved, nil
+}
+
+// holdsMemory says whether a server's memory is kept for it on its node:
+// one that is to run, though held stopped for a moment while a restore puts
+// its files back, or while it is made from a snapshot. One asleep gives it
+// back until woken.
+func holdsMemory(mc *avsysv1.MinecraftServer) bool {
+	if _, asleep := mc.Annotations[avsysv1.AnnotationAsleep]; asleep {
+		return false
+	}
+	return mc.Spec.State != avsysv1.StateStopped || mc.Annotations[avsysv1.AnnotationCreating] != ""
 }
 
 // podMemory is the memory the scheduler holds on a node for a pod: its

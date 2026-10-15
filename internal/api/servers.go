@@ -319,19 +319,11 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		Spec:       in.Spec,
 	}
 	if raw.Node != "" {
-		// One at a time from the check to the server being there, which
-		// then counts on its node: two asked for at once do not both get
-		// the same room.
-		s.placing.Lock()
-		defer s.placing.Unlock()
-		if err := s.checkNode(r.Context(), raw.Node, in.Spec.Resources.Memory); err != nil {
-			return err
-		}
 		// Placed where asked, which the controller then keeps to.
 		mc.Annotations = map[string]string{avsysv1.AnnotationNode: raw.Node}
 		mc.Spec.NodeSelector = nil
 	}
-	if err := s.Client.Create(r.Context(), mc); err != nil {
+	if err := s.createPlaced(r.Context(), mc, raw.Node); err != nil {
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "server.create", in.Name, "")

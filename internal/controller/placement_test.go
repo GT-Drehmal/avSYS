@@ -103,7 +103,8 @@ func TestPodMemory(t *testing.T) {
 }
 
 // A server given a node counts there from then on, though its pod is not
-// made or bound yet; one bound counts what its pod has yet to ask for.
+// made or bound yet, or it is being made from a snapshot; one bound counts
+// what its pod has yet to ask for.
 func TestNodeUsageCountsPlacedServers(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
@@ -124,16 +125,23 @@ func TestNodeUsageCountsPlacedServers(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "starting"},
 		Spec:       corev1.PodSpec{NodeName: "a", Containers: []corev1.Container{{Name: "w", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Mi")}}}}},
 	}
+	creating := server("copy", "Stopped", "a")
+	creating.Annotations[avsysv1.AnnotationCreating] = "abcd1234"
+	creating.Annotations[avsysv1.AnnotationRestoring] = "abcd1234"
+	asleep := server("asleep", "Running", "a")
+	asleep.Annotations[avsysv1.AnnotationAsleep] = "true"
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n, workspace,
 		server("new", "Running", "a"),      // placed, no pod yet: 4Gi + 32Mi
 		server("starting", "Running", "a"), // bound workspace of 32Mi: 4Gi more
 		server("stopped", "Stopped", "a"),  // nothing
+		creating,                           // being made from a snapshot, held stopped: 4Gi + 32Mi
+		asleep,                             // gives its memory back: nothing
 	).Build()
 	_, reserved, err := NodeUsage(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := 2*(4*gi) + 2*(32<<20)
+	want := 3*(4*gi) + 3*(32<<20)
 	if reserved["a"] != want {
 		t.Errorf("reserved on a = %d, want %d", reserved["a"], want)
 	}

@@ -391,7 +391,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 			mc.Annotations[note] = strings.Join(made, ",")
 		}
 	}
-	if err := s.Client.Create(ctx, mc); err != nil {
+	if err := s.createPlaced(ctx, mc, node); err != nil {
 		s.ops.end(a.Namespace, name)
 		return err
 	}
