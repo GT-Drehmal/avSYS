@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Camera } from "lucide-react";
 import { useState } from "react";
 import { ServerSchedule } from "../../components/BackupSchedule";
-import { OperationRow, SnapshotRows, SnapshotSelectionBar } from "../../components/Snapshots";
+import { holdsTheServer, OperationRow, SnapshotRows, SnapshotSelectionBar } from "../../components/Snapshots";
 import { Button, Empty, Loading, Modal, Notice } from "../../components/ui";
 import { api, atLeast, serverPath, type Operation, type Snapshot } from "../../lib/api";
 import { ago } from "../../lib/format";
@@ -51,7 +51,8 @@ export function Snapshots() {
       </div>
       <ServerSchedule server={server} canAdmin={canAdmin} />
       {failure && !op && <Notice tone="danger">The last snapshot or restore failed: {failure}</Notice>}
-      {op && <OperationRow op={op} />}
+      {/* One that holds the server is shown above every tab. */}
+      {op && !holdsTheServer(op) && <OperationRow op={op} />}
       {snapshots.length === 0 ? (
         !op && (
           <Empty title="Nothing saved yet">

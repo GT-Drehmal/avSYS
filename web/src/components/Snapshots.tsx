@@ -30,6 +30,9 @@ const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   "delete-server": ["Deleting", "Deletion"],
 };
 
+/** Whether an operation holds its server stopped, and is shown on all of its pages rather than with its snapshots. */
+export const holdsTheServer = (op: Operation) => op.kind === "create" || op.kind === "restore";
+
 /** A snapshot or restore that is running, with how far along it is. */
 export function OperationRow({ op }: { op: Operation }) {
   const [title, noun] = doing[op.kind];

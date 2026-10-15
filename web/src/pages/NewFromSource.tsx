@@ -237,8 +237,9 @@ function Form({ org, origin, source, taken, history }: { org: string; origin: Or
       const from = origin.kind === "server" ? { fromServer: origin.name } : { fromSnapshot: origin.id };
       const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, spec: request });
       await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
-      // Its Backups tab is where the copying is shown.
-      navigate(`/o/${org}/s/${server.name}/backups`);
+      // Where any new server opens. How the copying goes shows there, as on
+      // every tab, until its files are in.
+      navigate(`/o/${org}/s/${server.name}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create the server.");
       setBusy(false);
