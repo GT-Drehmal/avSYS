@@ -289,3 +289,10 @@ test("a snapshot shown as running on a tab left earlier is let go of when the st
   await page.getByRole("link", { name: "Console" }).click();
   await expect(snapshot).toBeEnabled({ timeout: 15_000 });
 });
+
+test("a server's page opened while a snapshot of it is being taken waits for it, on any tab", async ({ page }) => {
+  const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Copying files", percent: 40, startedAt: new Date().toISOString() };
+  await page.route("**/api/v1/orgs/friends/servers/survival/operation", (route) => route.fulfill({ json: op }));
+  await page.goto("/o/friends/s/survival");
+  await expect(page.getByRole("button", { name: "Snapshot", exact: true })).toBeDisabled();
+});

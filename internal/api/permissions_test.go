@@ -252,6 +252,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET " + server + "/snapshots", "", "", store.RoleViewer, 200},
 		{"POST " + server + "/snapshots", "", "", store.RoleOperator, 503},
 		{"POST " + server + "/snapshots/{id}/restore", "", "", store.RoleAdmin, 503},
+		{"GET " + server + "/operation", "", "", store.RoleViewer, 200},
 		{"GET " + server + "/icon", "", "", store.RoleViewer, 0},
 		{"PUT " + server + "/icon", "", "not a picture", store.RoleAdmin, 400},
 		{"DELETE " + server + "/icon", "", "", store.RoleAdmin, 0},

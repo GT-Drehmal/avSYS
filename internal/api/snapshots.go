@@ -762,6 +762,18 @@ func restoreSoftware(dst, src *avsysv1.MinecraftServerSpec) {
 	dst.Properties, dst.Ops, dst.Whitelist = src.Properties, src.Ops, src.Whitelist
 }
 
+// getOperation says what is being done to a server's snapshots now, as a
+// snapshot, restore or copy, or null. It is the panel's own record, quick
+// to read, which a page starts from before the event stream tells it more.
+func (s *Server) getOperation(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	a, mc, err := s.server(r, u, store.RoleViewer)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, s.ops.current(a.Namespace, mc.Name))
+	return nil
+}
+
 // restoreSnapshot puts a server back to one of its own snapshots. The game is
 // stopped for it, and what is there now is snapshotted first so that the
 // restore can itself be undone.
