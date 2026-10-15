@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -98,11 +99,35 @@ func (r *Reconciler) nodeOfVolume(ctx context.Context, mc *avsysv1.MinecraftServ
 	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
 		for _, expr := range term.MatchExpressions {
 			if expr.Key == corev1.LabelHostname && expr.Operator == corev1.NodeSelectorOpIn && len(expr.Values) == 1 {
-				return expr.Values[0], nil
+				return r.nodeNamed(ctx, expr.Values[0])
 			}
 		}
 	}
 	return "", nil
+}
+
+// placing holds placements to one at a time, the controller's and the
+// panel's: from the look at what is free until the server placed is
+// recorded on its node, and so counts there for the next.
+var placing sync.Mutex
+
+// LockPlacement holds placements until the function it returns is called.
+func LockPlacement() (unlock func()) {
+	placing.Lock()
+	return placing.Unlock
+}
+
+// nodeNamed returns the name of the node whose hostname label is this, which
+// is usually but not always its name.
+func (r *Reconciler) nodeNamed(ctx context.Context, hostname string) (string, error) {
+	var nodes corev1.NodeList
+	if err := r.Reader.List(ctx, &nodes, client.MatchingLabels{corev1.LabelHostname: hostname}); err != nil {
+		return "", err
+	}
+	if len(nodes.Items) == 1 {
+		return nodes.Items[0].Name, nil
+	}
+	return hostname, nil
 }
 
 // ensurePlacement records the node a server lives on, choosing one for a new
@@ -128,6 +153,7 @@ func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftS
 	}
 
 	if node == "" {
+		defer LockPlacement()()
 		nodes, reserved, err := NodeUsage(ctx, r.Reader)
 		if err != nil {
 			return err
@@ -187,7 +213,9 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 		// what it has yet to ask for there is added: a stopped server's
 		// workspace becoming the game.
 		need := ServerNeeds(mc.Spec.Resources.Memory)
-		if p := bound[client.ObjectKeyFromObject(mc)]; p != nil {
+		// A pod of its name that another server owns is a deleted one's,
+		// on its way out, and not where this one runs.
+		if p := bound[client.ObjectKeyFromObject(mc)]; p != nil && !leftOf(p, mc) {
 			reserved[p.Spec.NodeName] += max(0, need-podMemory(p))
 		} else if node := mc.Annotations[avsysv1.AnnotationNode]; node != "" && len(mc.Spec.NodeSelector) == 0 {
 			reserved[node] += need
@@ -204,7 +232,12 @@ func holdsMemory(mc *avsysv1.MinecraftServer) bool {
 	if _, asleep := mc.Annotations[avsysv1.AnnotationAsleep]; asleep {
 		return false
 	}
-	return mc.Spec.State != avsysv1.StateStopped || mc.Annotations[avsysv1.AnnotationCreating] != ""
+	if mc.Annotations[avsysv1.AnnotationCreating] != "" {
+		// Until making it failed, which is recorded on it: it then waits
+		// to be deleted, and starts on nothing.
+		return mc.Status.Snapshots == nil || mc.Status.Snapshots.Error == ""
+	}
+	return mc.Spec.State != avsysv1.StateStopped
 }
 
 // podMemory is the memory the scheduler holds on a node for a pod: its

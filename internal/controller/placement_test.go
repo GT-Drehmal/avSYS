@@ -113,7 +113,8 @@ func TestNodeUsageCountsPlacedServers(t *testing.T) {
 	if err := avsysv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	n := node("a", "16Gi", "")
+	n, b := node("a", "16Gi", ""), node("b", "16Gi", "")
+	yes := true
 	server := func(name, state, node string) *avsysv1.MinecraftServer {
 		mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: name, Annotations: map[string]string{avsysv1.AnnotationNode: node}}}
 		mc.Spec.State = avsysv1.DesiredState(state)
@@ -130,19 +131,54 @@ func TestNodeUsageCountsPlacedServers(t *testing.T) {
 	creating.Annotations[avsysv1.AnnotationRestoring] = "abcd1234"
 	asleep := server("asleep", "Running", "a")
 	asleep.Annotations[avsysv1.AnnotationAsleep] = "true"
+	// Making it failed: it waits to be deleted, and holds nothing.
+	failed := server("failed", "Stopped", "a")
+	failed.Annotations[avsysv1.AnnotationCreating] = "abcd1234"
+	failed.Status.Snapshots = &avsysv1.SnapshotStatus{Error: "making this server from the snapshot did not finish"}
+	// Made again under the name of a deleted server whose pod, on node b,
+	// is still going: it counts on its own node, a.
+	again := server("again", "Running", "a")
+	again.UID = "new"
+	leftover := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "again", OwnerReferences: []metav1.OwnerReference{{APIVersion: "avsys.dev/v1alpha1", Kind: "MinecraftServer", Name: "again", UID: "old", Controller: &yes}}},
+		Spec:       corev1.PodSpec{NodeName: "b", Containers: []corev1.Container{{Name: "w", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Mi")}}}}},
+	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n, workspace,
 		server("new", "Running", "a"),      // placed, no pod yet: 4Gi + 32Mi
 		server("starting", "Running", "a"), // bound workspace of 32Mi: 4Gi more
 		server("stopped", "Stopped", "a"),  // nothing
 		creating,                           // being made from a snapshot, held stopped: 4Gi + 32Mi
 		asleep,                             // gives its memory back: nothing
+		failed, again, leftover, &b,
 	).Build()
 	_, reserved, err := NodeUsage(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := 3*(4*gi) + 3*(32<<20)
+	want := 4*(4*gi) + 4*(32<<20)
 	if reserved["a"] != want {
 		t.Errorf("reserved on a = %d, want %d", reserved["a"], want)
+	}
+	if reserved["b"] != 32<<20 {
+		t.Errorf("reserved on b = %d, want only the leftover pod's %d", reserved["b"], 32<<20)
+	}
+}
+
+// A volume tied to a node by its hostname label is on the node of that
+// label, whose name may differ.
+func TestNodeNamedByHostnameLabel(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	n := node("node-1", "16Gi", "")
+	n.Labels[corev1.LabelHostname] = "host-1"
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&n).Build()
+	r := &Reconciler{Client: c, Reader: c}
+	if got, err := r.nodeNamed(context.Background(), "host-1"); err != nil || got != "node-1" {
+		t.Errorf("nodeNamed(host-1) = %q, %v; want node-1", got, err)
+	}
+	if got, _ := r.nodeNamed(context.Background(), "unknown"); got != "unknown" {
+		t.Errorf("nodeNamed(unknown) = %q; want it as given", got)
 	}
 }

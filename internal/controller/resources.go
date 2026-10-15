@@ -446,8 +446,14 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 		}
 	}
 	spec.NodeSelector = mc.Spec.NodeSelector
+	// Kept to its node by the node's name, which its hostname label need
+	// not be.
 	if node := mc.Annotations[avsysv1.AnnotationNode]; len(spec.NodeSelector) == 0 && node != "" {
-		spec.NodeSelector = map[string]string{corev1.LabelHostname: node}
+		spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node}}},
+			}}},
+		}}
 	}
 	if v := mc.Annotations[avsysv1.AnnotationRestart]; v != "" {
 		annotations[avsysv1.AnnotationRestart] = v
