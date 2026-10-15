@@ -38,6 +38,12 @@ type Config struct {
 	// PortRange is the public ports given out to the extra ports of
 	// servers that share the router's address.
 	PortRange PortRange
+	// PortsServiceAnnotations go on those servers' Services of extra
+	// ports, as the load balancer's way of sharing the router's address.
+	PortsServiceAnnotations map[string]string
+	// RouterService is the panel's own Service, whose address extra ports
+	// are compared with: where theirs is another, it is the one shown.
+	RouterService types.NamespacedName
 }
 
 type Reconciler struct {

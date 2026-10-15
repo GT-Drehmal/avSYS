@@ -47,8 +47,9 @@ func sharesAddress(mc *avsysv1.MinecraftServer) bool {
 	return mc.Spec.Expose.Type == "" || mc.Spec.Expose.Type == avsysv1.ExposeRouter
 }
 
-// portServiceName is the name a port has in a Service.
-func portServiceName(p avsysv1.ExtraPort) string { return "x-" + p.Name }
+// portServiceName is the name a port has in a Service: its own, which is
+// never the game's.
+func portServiceName(p avsysv1.ExtraPort) string { return p.Name }
 
 func protocolOf(p avsysv1.ExtraPort) corev1.Protocol {
 	if p.Protocol == "" {
@@ -172,6 +173,7 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, own, func() error {
 		own.Labels = labelsFor(mc)
+		own.Annotations = r.Config.PortsServiceAnnotations
 		own.Spec.Selector = map[string]string{avsysv1.LabelServer: mc.Name}
 		own.Spec.Type = corev1.ServiceTypeNodePort
 		if r.Config.PortRange.First != 0 {
@@ -195,7 +197,51 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 	if err != nil {
 		return nil, err
 	}
-	return portStatus(mc, own, public, r.Config), nil
+	st := portStatus(mc, own, public, r.Config)
+	// Where the load balancer put these ports on an address of their own,
+	// not the router's that the hostname points at, that address is shown.
+	if host := r.ownAddress(ctx, own); host != "" {
+		for i := range st {
+			if st[i].PublicPort != 0 {
+				st[i].Address = net.JoinHostPort(host, strconv.Itoa(int(st[i].PublicPort)))
+			}
+		}
+	}
+	return st, nil
+}
+
+// ownAddress is the address a server's Service of extra ports was given by
+// the load balancer, if that is not the router's, or "".
+func (r *Reconciler) ownAddress(ctx context.Context, own *corev1.Service) string {
+	mine := ingressOf(own)
+	if len(mine) == 0 || r.Config.RouterService.Name == "" {
+		return ""
+	}
+	router := &corev1.Service{}
+	if err := r.Reader.Get(ctx, r.Config.RouterService, router); err != nil {
+		return ""
+	}
+	theirs := ingressOf(router)
+	for _, a := range mine {
+		for _, b := range theirs {
+			if a == b {
+				return ""
+			}
+		}
+	}
+	return mine[0]
+}
+
+func ingressOf(svc *corev1.Service) []string {
+	var out []string
+	for _, ing := range svc.Status.LoadBalancer.Ingress {
+		if ing.Hostname != "" {
+			out = append(out, ing.Hostname)
+		} else if ing.IP != "" {
+			out = append(out, ing.IP)
+		}
+	}
+	return out
 }
 
 // portStatus says where each extra port is reached, by the Service that

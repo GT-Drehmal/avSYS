@@ -375,7 +375,7 @@ export function Settings() {
           </Field>
         )}
         <Field label="Extra ports" hint="What mods and plugins listen on beside the game: voice chat, Geyser, a web map.">
-          {() => <ExtraPorts ports={draft.ports} onChange={(ports) => set("ports", ports)} mods={server.spec.mods ?? []} status={server.status.ports ?? []} expose={draft.exposeType} />}
+          {() => <ExtraPorts ports={draft.ports} onChange={(ports) => set("ports", ports)} mods={server.spec.mods ?? []} status={server.status.ports ?? []} expose={draft.exposeType} sleeps={draft.sleepEnabled && draft.exposeType === "Router"} />}
         </Field>
         {draft.exposeType === "LoadBalancer" && (
           <Field label="Requested IP" hint="Optional.">

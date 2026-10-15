@@ -154,3 +154,38 @@ func TestOwnAddressPorts(t *testing.T) {
 		t.Errorf("a server not exposed opened %+v", svc.Spec.Ports)
 	}
 }
+
+// Where the load balancer gives a server's ports an address of their own,
+// not the router's, that address is shown; on the router's, the hostname.
+func TestPortsOwnAddress(t *testing.T) {
+	scheme := portsScheme(t)
+	router := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "avsys", Name: "avsys"}}
+	router.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "203.0.113.1"}}
+	mc := withPorts("probe", avsysv1.ExposeRouter, voice)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(router, mc).WithStatusSubresource(&corev1.Service{}).Build()
+	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25699}, RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"}, PortsServiceAnnotations: map[string]string{"metallb.universe.tf/allow-shared-ip": "avsys"}}}
+	if _, err := r.ensurePorts(context.Background(), mc, nil); err != nil {
+		t.Fatal(err)
+	}
+	own := &corev1.Service{}
+	key := client.ObjectKey{Namespace: "mc-x", Name: PortsServiceName("probe")}
+	if err := c.Get(context.Background(), key, own); err != nil {
+		t.Fatal(err)
+	}
+	if own.Annotations["metallb.universe.tf/allow-shared-ip"] != "avsys" {
+		t.Errorf("annotations: %v", own.Annotations)
+	}
+	for ip, want := range map[string]string{"203.0.113.1": "probe.example.org:25600", "203.0.113.9": "203.0.113.9:25600"} {
+		own.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: ip}}
+		if err := c.Status().Update(context.Background(), own); err != nil {
+			t.Fatal(err)
+		}
+		ports, err := r.ensurePorts(context.Background(), mc, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ports[0].Address != want {
+			t.Errorf("given %s: shown %s, want %s", ip, ports[0].Address, want)
+		}
+	}
+}

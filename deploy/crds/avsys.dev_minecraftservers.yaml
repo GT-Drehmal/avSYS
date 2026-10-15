@@ -537,6 +537,8 @@ spec:
                   x-kubernetes-validations:
                   - message: 25565 is the game's and 25575 its console's
                     rule: self.port != 25565 && self.port != 25575
+                  - message: minecraft is the game port's name
+                    rule: self.name != 'minecraft'
                 maxItems: 8
                 type: array
                 x-kubernetes-list-map-keys:

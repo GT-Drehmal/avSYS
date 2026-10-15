@@ -758,6 +758,9 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 		if !portName.MatchString(p.Name) {
 			return errBadRequest("A port's name is up to 15 lowercase letters, digits and dashes, starting with a letter, as voice-chat.")
 		}
+		if p.Name == "minecraft" {
+			return errBadRequest("minecraft is the game port's name; call it something else.")
+		}
 		if p.Port < 1 || p.Port > 65535 {
 			return errBadRequest("%d is not a port.", p.Port)
 		}

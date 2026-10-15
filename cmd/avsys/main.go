@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -63,6 +64,7 @@ type options struct {
 	sshAddr             string
 	routerAddr          string
 	extraPorts          string
+	extraPortsNotes     string
 	publicURL           string
 	sshPublicHost       string
 	sshPublicPort       int
@@ -110,6 +112,7 @@ func parseFlags() options {
 	flag.IntVar(&o.sshPublicPort, "ssh-public-port", envInt("ssh-public-port", 0), "port shown in SSH instructions (default: the port of ssh-addr)")
 	flag.IntVar(&o.routerPort, "router-public-port", envInt("router-public-port", 25565), "port players reach the router on")
 	str(&o.extraPorts, "extra-ports", "", "range of public ports, as 25600-25699, given out to the extra ports (voice chat, Geyser, maps) of servers that share the router's address, on a LoadBalancer Service each (empty: the cluster gives each a node port)")
+	str(&o.extraPortsNotes, "extra-ports-annotations", "", "annotations, as key=value,..., put on the Services of those extra ports: how the load balancer is told to share the router's address, as metallb.universe.tf/allow-shared-ip=avsys")
 	str(&o.routerDomain, "router-domain", "", "domain with a wildcard DNS record pointing at the router; new servers default to <server>.<org>.<domain>")
 	str(&o.namespacePrefix, "namespace-prefix", "mc-", "prefix of the namespace created for each organization")
 	str(&o.workspaceImage, "workspace-image", "ghcr.io/gt-drehmal/avsys-workspace:"+version, "image for the SSH workspace next to each server")
@@ -244,6 +247,8 @@ func run(opts options, log *slog.Logger) error {
 			RouterPublicPort:         opts.routerPort,
 			CurseForgeAPIKey:         os.Getenv("AVSYS_CURSEFORGE_API_KEY"),
 			PortRange:                portRange,
+			PortsServiceAnnotations:  annotationsOf(opts.extraPortsNotes),
+			RouterService:            routerService(),
 		},
 	}).SetupWithManager(mgr); err != nil {
 		return err
@@ -463,4 +468,28 @@ func staticFiles(dir string, log *slog.Logger) fs.FS {
 		return nil
 	}
 	return web.Dist
+}
+
+// annotationsOf reads key=value,... into a map, or nil for none.
+func annotationsOf(s string) map[string]string {
+	var out map[string]string
+	for _, pair := range strings.Split(s, ",") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(pair), "="); ok && k != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// routerService is the panel's own Service, which carries the router: avsys
+// in the namespace the panel runs in, as deploy/install.yaml makes it.
+func routerService() types.NamespacedName {
+	ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		return types.NamespacedName{}
+	}
+	return types.NamespacedName{Namespace: strings.TrimSpace(string(ns)), Name: env("router-service", "avsys")}
 }

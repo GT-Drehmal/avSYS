@@ -24,7 +24,9 @@ const known: { slugs: string[]; label: string; port: PortDraft }[] = [
  * the game's. Installed ones that need a port are said, with a button that
  * adds it; where each is reached is shown once it is open.
  */
-export function ExtraPorts({ ports, onChange, mods, status, expose }: { ports: PortDraft[]; onChange: (ports: PortDraft[]) => void; mods: ContentRef[]; status: PortStatus[]; expose: ExposeType }) {
+export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { ports: PortDraft[]; onChange: (ports: PortDraft[]) => void; mods: ContentRef[]; status: PortStatus[]; expose: ExposeType; sleeps?: boolean }) {
+  // As many as a server may have: presets too stop there.
+  const full = ports.length >= 8;
   const set = (i: number, change: Partial<PortDraft>) => onChange(ports.map((p, j) => (j === i ? { ...p, ...change } : p)));
   const has = (p: PortDraft) => ports.some((q) => q.port === p.port && q.protocol === p.protocol);
   const installed = new Set(mods.map((m) => m.project));
@@ -38,7 +40,7 @@ export function ExtraPorts({ ports, onChange, mods, status, expose }: { ports: P
           <span>
             {k.label} is installed and listens on {k.port.protocol} {k.port.port}.
           </span>
-          <Button size="sm" onClick={() => onChange([...ports, k.port])}>
+          <Button size="sm" disabled={full} title={full ? "A server has up to 8 extra ports." : undefined} onClick={() => onChange([...ports, k.port])}>
             Open it
           </Button>
         </div>
@@ -69,10 +71,11 @@ export function ExtraPorts({ ports, onChange, mods, status, expose }: { ports: P
         );
       })}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" icon={<Plus className="size-3.5" />} disabled={ports.length >= 8} onClick={() => onChange([...ports, { name: "", port: "", protocol: "TCP" }])}>
+        <Button size="sm" icon={<Plus className="size-3.5" />} disabled={full} onClick={() => onChange([...ports, { name: "", port: "", protocol: "TCP" }])}>
           Add a port
         </Button>
-        {known
+        {!full &&
+          known
           .filter((k) => !has(k.port) && !needed.includes(k))
           .slice(0, 3)
           .map((k) => (
@@ -81,6 +84,9 @@ export function ExtraPorts({ ports, onChange, mods, status, expose }: { ports: P
             </button>
           ))}
       </div>
+      {ports.length > 0 && sleeps && (
+        <p className="text-xs text-warn">It sleeps when empty, and only joining through the game's own address wakes it: these ports do not answer while it sleeps, so Bedrock players through Geyser cannot wake it.</p>
+      )}
       {ports.length > 0 && (
         <p className="text-xs text-muted">
           {expose === "Router"

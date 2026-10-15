@@ -262,6 +262,7 @@ type JVMSpec struct {
 
 // ExtraPort is a port a mod or plugin listens on in the server.
 // +kubebuilder:validation:XValidation:rule="self.port != 25565 && self.port != 25575",message="25565 is the game's and 25575 its console's"
+// +kubebuilder:validation:XValidation:rule="self.name != 'minecraft'",message="minecraft is the game port's name"
 type ExtraPort struct {
 	// Name says what it is for, as voice-chat.
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]{0,14}$`

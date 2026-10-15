@@ -59,3 +59,13 @@ test("a server not reachable from outside opens no ports", async ({ page }) => {
   await expect(page.getByText("Not reachable from outside, so no port is opened.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Add a port" })).toHaveCount(0);
 });
+
+test("with eight ports no preset adds a ninth, and a sleeping server says its ports do not wake it", async ({ page }) => {
+  const eight = Array.from({ length: 8 }, (_, i) => ({ name: `p${i}`, port: 1000 + i, protocol: "TCP" }));
+  await survivalWith(page, { ports: eight, mods: [{ source: "modrinth", kind: "plugin", project: "geyser" }], sleep: { enabled: true, idleMinutes: 15 } });
+  await page.goto("/o/friends/s/survival/settings");
+  await expect(page.getByRole("button", { name: "Open it" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Add a port" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "BlueMap" })).toHaveCount(0);
+  await expect(page.getByText(/these ports do not answer while it sleeps/)).toBeVisible();
+});
