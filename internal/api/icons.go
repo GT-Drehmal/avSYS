@@ -18,6 +18,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/sftp"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -31,6 +36,10 @@ const (
 	avatarSide = 128
 	// serverIconSide is the only size the game shows for a server.
 	serverIconSide = 64
+	// newServerIconWait is how long a picture waits for a new server's
+	// volume. Provisioning one and pulling the workspace image on a node
+	// that has never run one is the slow case.
+	newServerIconWait = 3 * time.Minute
 	// serverIconPath is where the game looks for it.
 	serverIconPath = dataRoot + "/server-icon.png"
 )
@@ -563,8 +572,28 @@ func (s *Server) getServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 
 // putServerIcon writes an uploaded picture as the server's icon, at the
 // size the game wants. The game reads it when it starts.
+//
+// With ?wait=true it is for a server made a moment ago, which has nowhere
+// to put a picture until its volume is there: that is waited for. With
+// &start=true the server is then started. That pair is how a picture chosen
+// while making a server reaches it before the game first looks: the server
+// is made stopped, given its picture, and started, here and not by the page,
+// so that it happens whether or not the page is still open. A server is
+// never left stopped over a picture: it is started even if the picture
+// could not be put in place.
 func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	q := r.URL.Query()
+	wait := q.Get("wait") == "true"
 	a, mc, err := s.server(r, u, store.RoleAdmin)
+	if wait && apierrors.IsNotFound(err) {
+		// Asked for straight after it was made, before the panel's own view
+		// of the cluster has caught up with it.
+		if a, err = s.org(r, u, store.RoleAdmin); err != nil {
+			return err
+		}
+		mc = &avsysv1.MinecraftServer{}
+		err = s.Reader.Get(r.Context(), client.ObjectKey{Namespace: a.Namespace, Name: r.PathValue("server")}, mc)
+	}
 	if err != nil {
 		return err
 	}
@@ -577,12 +606,40 @@ func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 	if err != nil {
 		return err
 	}
-	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
-	if err != nil {
-		return err
+	key := a.Namespace + "/" + mc.Name
+	if !wait {
+		sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
+		if err != nil {
+			return err
+		}
+		if err := writeServerIcon(sc, data); err != nil {
+			return err
+		}
+	} else {
+		// From here on it no longer matters whether whoever asked is still
+		// there: the picture is in hand, and the server is waiting on this.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), newServerIconWait)
+		defer cancel()
+		placed := s.placeNewServerIcon(ctx, mc, data)
+		if q.Get("start") == "true" {
+			if err := s.startAfterIcon(ctx, mc); err != nil {
+				return err
+			}
+		}
+		if placed != nil {
+			s.Log.Warn("a new server's picture was not put in place", "server", key, "error", placed)
+			return &Error{Status: http.StatusGatewayTimeout, Code: "not_ready", Message: "The server's storage was not ready in time to take its picture. Set it in the server's settings."}
+		}
 	}
-	// Written beside it and moved into place, so that the game never finds
-	// half an icon.
+	s.serverIcons.set(key, data)
+	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.icon", mc.Name, "")
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// writeServerIcon puts a picture where the game looks for it. It is written
+// beside its place and moved in, so that the game never finds half an icon.
+func writeServerIcon(sc *sftp.Client, data []byte) error {
 	tmp := serverIconPath + ".avsys-upload"
 	f, err := sc.Create(tmp)
 	if err != nil {
@@ -599,10 +656,43 @@ func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 		_ = sc.Remove(tmp)
 		return fileError(err)
 	}
-	s.serverIcons.set(a.Namespace+"/"+mc.Name, data)
-	s.audit(r.Context(), u, a.Org, "server.icon", mc.Name, "")
-	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+// placeNewServerIcon waits for a new server's volume and puts its picture
+// there. It goes by the pod made for this server and a connection of its
+// own: a server made under the name of one just deleted finds the old one's
+// pod, and a connection kept to it, still there for a while.
+func (s *Server) placeNewServerIcon(ctx context.Context, mc *avsysv1.MinecraftServer, data []byte) error {
+	if err := s.ownPod(ctx, mc); err != nil {
+		return err
+	}
+	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, newServerIconWait)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+	sc, err := sftp.NewClient(ws)
+	if err != nil {
+		return err
+	}
+	defer sc.Close()
+	return writeServerIcon(sc, data)
+}
+
+// startAfterIcon starts a server that was made stopped to be given its
+// picture first.
+func (s *Server) startAfterIcon(ctx context.Context, mc *avsysv1.MinecraftServer) error {
+	now := &avsysv1.MinecraftServer{}
+	if err := s.Reader.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
+		return err
+	}
+	if now.Spec.State == avsysv1.StateRunning {
+		return nil
+	}
+	orig := now.DeepCopy()
+	now.Spec.State = avsysv1.StateRunning
+	return s.Client.Patch(ctx, now, client.MergeFrom(orig))
 }
 
 func (s *Server) deleteServerIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {
