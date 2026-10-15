@@ -47,8 +47,12 @@ type Server struct {
 	Config Config
 	// contentLocks holds a lock per server, by namespace/name: see lockContent.
 	contentLocks sync.Map
-	Store        *store.Store
-	Client       client.Client
+	// hostnames holds the panel to one change at a time of who may have
+	// which hostname: a domain claimed, or a server given a name. A claim
+	// and a server taking a name under it then cannot pass each other.
+	hostnames sync.Mutex
+	Store     *store.Store
+	Client    client.Client
 	// Reader reads the cluster as it is now, where Client may lag a change
 	// by a moment. It is optional: Client is used where there is none.
 	Reader  client.Reader
@@ -327,6 +331,8 @@ func (s *Server) Handler() http.Handler {
 	api("DELETE /orgs/{org}/snapshots", s.authed(s.deleteSnapshots))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
 
+	api("GET /orgs/{org}/domains", s.authed(s.getDomains))
+	api("PUT /orgs/{org}/domains", s.authed(s.putDomains))
 	api("GET /orgs/{org}/servers", s.authed(s.listServers))
 	api("POST /orgs/{org}/servers", s.authed(s.createServer))
 	api("GET /orgs/{org}/servers/{server}", s.authed(s.getServer))

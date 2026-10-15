@@ -350,6 +350,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := s.nameIsFree(r.Context(), a, in.Name); err != nil {
 		return err
 	}
+	if err := s.checkHostnameOwner(r.Context(), a.Org, in.Spec.Expose.Hostname); err != nil {
+		return err
+	}
 	if err := s.ensureNamespace(r.Context(), a.Org.Slug); err != nil {
 		return err
 	}
@@ -362,7 +365,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		mc.Annotations = map[string]string{avsysv1.AnnotationNode: raw.Node}
 		mc.Spec.NodeSelector = nil
 	}
-	if err := s.createPlaced(r.Context(), mc, raw.Node); err != nil {
+	if err := s.withHostname(r.Context(), a.Org, mc.Spec.Expose.Hostname, func() error { return s.createPlaced(r.Context(), mc, raw.Node) }); err != nil {
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "server.create", in.Name, "")
@@ -465,13 +468,23 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := s.resolveContent(r.Context(), &spec, previous); err != nil {
 		return err
 	}
+	// A hostname it has already is left alone, even under a domain claimed
+	// by another since; only a new one is held to who claims what. It is
+	// compared as the router reads it: a server made outside the panel may
+	// have it in another case, or with a final dot.
 	mc.Spec = spec
-	// Update carries the resource version read above, so a concurrent edit
-	// is rejected instead of silently overwritten.
 	// The server's content is held still from here until what was taken
 	// off it is removed.
 	defer s.lockContent(client.ObjectKeyFromObject(mc))()
-	if err := s.Client.Update(r.Context(), mc); apierrors.IsConflict(err) {
+	update := func() error { return s.Client.Update(r.Context(), mc) }
+	if spec.Expose.Hostname != router.NormalizeHostname(previous.Expose.Hostname) {
+		err = s.withHostname(r.Context(), a.Org, spec.Expose.Hostname, update)
+	} else {
+		err = update()
+	}
+	// Update carries the resource version read above, so a concurrent edit
+	// is rejected instead of silently overwritten.
+	if apierrors.IsConflict(err) {
 		return &Error{Status: http.StatusConflict, Code: "stale", Message: "This server was changed by someone else just now. Try again."}
 	} else if err != nil {
 		return err

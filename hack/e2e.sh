@@ -286,6 +286,16 @@ done
 expect "a server put on a node runs there" "$(call "$API/orgs/$ORG/servers/placed" | field "d['status'].get('node')")" "$NODE"
 call -X DELETE "$API/orgs/$ORG/servers/placed?snapshot=false" >/dev/null
 
+step "domains"
+# The organization claims its domain; another cannot use a name under it.
+expect "an organization is given its domain" "$(call -X PUT -d "{\"domains\":[\"$ORG.test\"]}" "$API/orgs/$ORG/domains" | field "d['domains']")" "['$ORG.test']"
+OTHER=$ORG-other
+call -d "{\"name\":\"Other $ORG\",\"slug\":\"$OTHER\"}" "$API/orgs" >/dev/null
+expect "another organization's server cannot take a name under it" "$(call -d "{\"name\":\"squat\",\"spec\":{\"eula\":true,\"loader\":\"vanilla\",\"version\":\"1.21.4\",\"state\":\"Stopped\",\"expose\":{\"hostname\":\"squat.$ORG.test\"}}}" "$API/orgs/$OTHER/servers" | field "d['code']")" domain_claimed
+expect "nor claim one overlapping it" "$(call -X PUT -d "{\"domains\":[\"x.$ORG.test\"]}" "$API/orgs/$OTHER/domains" | field "d['code']")" domain_claimed
+expect "and its own server keeps its name" "$(call -X PATCH -d '{"spec":{"displayName":"Probe"}}' "$SRV" | field "d['spec']['expose']['hostname']")" "$HOST"
+call -X DELETE "$API/orgs/$OTHER" >/dev/null
+
 step "stop keeps the workspace"
 call -X POST "$SRV/stop" >/dev/null
 wait_phase Stopped

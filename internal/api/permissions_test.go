@@ -219,6 +219,9 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"DELETE /orgs/{org}/icon", "", "", store.RoleOwner, 204},
 		{"GET /orgs/{org}/offsite", "", "", store.RoleViewer, 200},
 		{"POST /orgs/{org}/offsite/run", "", "", store.RoleAdmin, 503},
+		{"GET /orgs/{org}/domains", "", "", store.RoleViewer, 200},
+		// In rootOnly: domains are given by who runs the install and its DNS.
+		{"PUT /orgs/{org}/domains", "", `{"domains":["alpha.example.org"]}`, store.RoleViewer, 200},
 		// The two below are in rootOnly.
 		{"GET /orgs/{org}/offsite/snapshots", "", "", store.RoleViewer, 503},
 		{"POST /orgs/{org}/offsite/fetch", "", "", store.RoleViewer, 503},
@@ -265,7 +268,7 @@ func TestOrganizationRoutes(t *testing.T) {
 	// rootOnly are for those who run the install: members get 403 whatever
 	// their role. What is offsite under an organization's name may be a
 	// deleted organization's, so it is not its members' to list or take.
-	rootOnly := map[string]bool{"GET /orgs/{org}/offsite/snapshots": true, "POST /orgs/{org}/offsite/fetch": true}
+	rootOnly := map[string]bool{"GET /orgs/{org}/offsite/snapshots": true, "POST /orgs/{org}/offsite/fetch": true, "PUT /orgs/{org}/domains": true}
 
 	p := newPanel(t)
 	for _, who := range everyone {

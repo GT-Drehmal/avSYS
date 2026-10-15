@@ -343,6 +343,9 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return err
 	}
+	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
+		return err
+	}
 	// Mods were picked to fit one game version and loader, and are picked
 	// again for another, as when a server's own version is changed. Any the
 	// request added are pinned, as for any new server.
@@ -398,7 +401,9 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 			mc.Annotations[note] = strings.Join(made, ",")
 		}
 	}
-	if err := s.createPlaced(ctx, mc, node); err != nil {
+	// Checked again as it is made: a domain may have been claimed while
+	// the original was being snapshotted.
+	if err := s.withHostname(ctx, a.Org, mc.Spec.Expose.Hostname, func() error { return s.createPlaced(ctx, mc, node) }); err != nil {
 		s.ops.end(a.Namespace, name)
 		return err
 	}
@@ -468,6 +473,9 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	// That includes its mods having a build for the game version asked for.
 	wanted, err := s.specFromSnapshot(ctx, a, name, &requested, &mc.Spec, given)
 	if err != nil {
+		return err
+	}
+	if err := s.checkHostnameOwner(ctx, a.Org, wanted.Expose.Hostname); err != nil {
 		return err
 	}
 	if _, said := given["mods"]; said || targetOf(&wanted) != targetOf(&mc.Spec) {

@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -208,6 +208,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const navigate = useNavigate();
   const qc = useQueryClient();
   const me = useMe().data;
+  // A hostname under another organization's domain is refused; its own are said here.
+  const domains = useQuery({ queryKey: ["domains", org], queryFn: () => api.get<{ domains: string[] }>(`/orgs/${org}/domains`) });
   const spec = source?.spec;
   const duplicating = source?.origin.kind === "server";
   // A server that still exists is being copied; one that is gone gets its name back.
@@ -678,7 +680,15 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       </Section>
 
       <Section title="Network">
-        <Field label="Hostname" hint={source ? "Optional. Its own: the original's address is not taken along." : "Optional. Point this name's DNS at the avSYS router."}>
+        <Field
+          label="Hostname"
+          hint={[
+            source ? "Optional. Its own: the original's address is not taken along." : "Optional. Point this name's DNS at the avSYS router.",
+            (domains.data?.domains.length ?? 0) > 0 ? `This organization's domains: ${domains.data?.domains.join(", ")}.` : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           {(id) => <Input id={id} value={v.hostname} disabled={v.exposeType === "None"} onChange={(e) => set("hostname", e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
         </Field>
         <More label="How it is reached, and sleep" changed={networkChanged} open={moreNetwork} onToggle={() => setMoreNetwork(!moreNetwork)} />

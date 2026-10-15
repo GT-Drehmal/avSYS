@@ -215,3 +215,35 @@ test("a page open while the panel is updated says so, and offers to reload", asy
   await page.getByRole("button", { name: "Reload" }).click();
   await expect(page.getByText(/avSYS was updated/)).toHaveCount(0);
 });
+
+test("an organization's domains are set by the panel's administrator, and shown to its members", async ({ page, as, org }) => {
+  const a = await org([]);
+  const b = await org([]);
+  // Of this organization: both engines run at once against one panel.
+  const mine = `play.${a}.example`;
+  await as("owner");
+  await page.goto(`/o/${a}/settings`);
+  // Written as a wildcard too, it is the same domain.
+  await page.getByLabel("One per line").fill(`${mine}\n*.${mine.toUpperCase()}`);
+  await page.getByRole("button", { name: "Save domains" }).click();
+  await expect(page.getByText("Domains saved")).toBeVisible();
+  await expect(page.getByLabel("One per line")).toHaveValue(mine);
+
+  // Another organization cannot take one overlapping it.
+  await page.goto(`/o/${b}/settings`);
+  await page.getByLabel("One per line").fill(`mc.${mine}`);
+  await page.getByRole("button", { name: "Save domains" }).click();
+  await expect(page.getByText(`mc.${mine} overlaps ${mine}`, { exact: false })).toBeVisible();
+
+  // The new-server form says which are its own.
+  await page.goto(`/o/${a}/new`);
+  await expect(page.getByText(`This organization's domains: ${mine}.`)).toBeVisible();
+});
+
+test("an organization's admin sees its domains and cannot change them", async ({ page, as }) => {
+  await as("admin");
+  await page.goto("/o/friends/settings");
+  await expect(page.getByRole("heading", { name: "Domains" })).toBeVisible();
+  await expect(page.getByText(/Given by the panel's administrator/)).toBeVisible();
+  await expect(page.getByLabel("One per line")).toHaveCount(0);
+});
