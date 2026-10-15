@@ -133,12 +133,17 @@ test("earlier logs and crash reports can be opened from the console, searched an
     const q = url.searchParams.get("q");
     if (q) {
       const hits = all.flatMap((text, i) => (text.toLowerCase().includes(q.toLowerCase()) ? [{ n: i + 1, text, match: true }] : []));
-      return route.fulfill({ json: { name: "logs/2026-10-14-1.log.gz", total: all.length, truncated: false, lines: hits, search: q } });
+      return route.fulfill({ json: { name: "logs/2026-10-14-1.log.gz", total: all.length, truncated: false, firstError: 100, lines: hits, search: q } });
+    }
+    if (url.searchParams.has("from")) {
+      const from = Number(url.searchParams.get("from"));
+      const lines = all.slice(from - 1, from - 1 + 2000).map((text, i) => ({ n: from + i, text }));
+      return route.fulfill({ json: { name: "logs/2026-10-14-1.log.gz", total: all.length, truncated: false, firstError: 100, lines } });
     }
     const before = Number(url.searchParams.get("before") ?? 0) || all.length + 1;
     const start = Math.max(0, before - 1 - 2000);
     const lines = all.slice(start, before - 1).map((text, i) => ({ n: start + i + 1, text }));
-    return route.fulfill({ json: { name: "logs/2026-10-14-1.log.gz", total: all.length, truncated: false, lines, more: start > 0 } });
+    return route.fulfill({ json: { name: "logs/2026-10-14-1.log.gz", total: all.length, truncated: false, firstError: 100, lines, more: start > 0 } });
   });
 
   await page.goto("/o/friends/s/survival");
@@ -146,6 +151,20 @@ test("earlier logs and crash reports can be opened from the console, searched an
   await expect(picker.locator("option")).toHaveCount(4);
   await picker.selectOption("logs/2026-10-14-1.log.gz");
   await expect(page.getByText("line 2500", { exact: false })).toBeVisible();
+  await expect(page.getByText("Something broke")).toHaveCount(0);
+  // The first error is before the page read: it is gone to, and read on from.
+  await page.getByRole("button", { name: "First error" }).click();
+  await expect(page.getByText("Something broke")).toBeInViewport();
+  expect(asked.some((q) => q.includes("from=80"))).toBe(true);
+  await expect(page.locator('[data-n="80"]')).toBeVisible();
+  await page.getByRole("button", { name: "Load later lines" }).click();
+  await expect(page.locator('[data-n="2500"]')).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Load later lines" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load earlier lines" }).click();
+  await expect(page.locator('[data-n="1"]')).toHaveCount(1);
+  // Back to the end, read from there as before.
+  await picker.selectOption("");
+  await picker.selectOption("logs/2026-10-14-1.log.gz");
   await expect(page.getByText("Something broke")).toHaveCount(0);
   await page.getByRole("button", { name: "Load earlier lines" }).click();
   await expect(page.getByText("Something broke")).toBeVisible();
@@ -155,6 +174,10 @@ test("earlier logs and crash reports can be opened from the console, searched an
   await page.keyboard.press("Enter");
   await expect(page.locator("[data-n]")).toHaveCount(1);
   await expect(page.locator('[data-n="100"]')).toContainText("Something broke");
+  await expect(page.getByRole("button", { name: "First error" })).toBeDisabled();
+  await page.getByLabel("Search this log").fill("no line says this");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Nothing in this log matches")).toBeVisible();
 
   await expect(page.getByRole("link", { name: "Download" })).toHaveAttribute("href", /download=gz$/);
   await expect(page.getByRole("link", { name: "Unpacked" })).toHaveAttribute("href", /download=text$/);

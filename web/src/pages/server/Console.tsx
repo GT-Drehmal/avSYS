@@ -58,6 +58,9 @@ interface LogPage {
   lines: { n: number; text: string; match?: boolean }[];
   more?: boolean;
   search?: string;
+  capped?: boolean;
+  /** The first line, in all of the log, that tells of an error; 0 if none does. */
+  firstError: number;
 }
 
 /** How an earlier log or crash report is named in the picker. */
@@ -105,7 +108,11 @@ export function Console() {
 function EarlierLog({ path, name }: { path: string; name: string }) {
   const [typed, setTyped] = useState("");
   const [search, setSearch] = useState("");
+  // Pages read going back from the end; or, once jumped into the middle,
+  // the pages from there.
   const [pages, setPages] = useState<LogPage[]>([]);
+  const [jumped, setJumped] = useState<LogPage[] | null>(null);
+  const [target, setTarget] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
   const url = `${path}/logs/file?name=${encodeURIComponent(name)}`;
   const first = useQuery({
@@ -113,31 +120,62 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
     queryFn: () => api.get<LogPage>(search ? `${url}&q=${encodeURIComponent(search)}` : url),
     retry: false,
   });
-  // A new search, or a new log, starts again from its end.
-  useEffect(() => setPages([]), [search]);
-  const shown = [...pages, ...(first.data ? [first.data] : [])];
+  // A new search starts again from the end; a page asked for before it is
+  // not added to what it finds.
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current++;
+    setPages([]);
+    setJumped(null);
+  }, [search]);
+  const shown = jumped ?? [...pages, ...(first.data ? [first.data] : [])];
   const lines = shown.flatMap((p) => p.lines);
-  const more = !search && (pages[0] ?? first.data)?.more;
+  const total = first.data?.total ?? 0;
+  const earlierToLoad = !search && (lines[0]?.n ?? 1) > 1;
+  const laterToLoad = !!jumped && (lines.at(-1)?.n ?? total) < total;
   const [loading, setLoading] = useState(false);
-  const loadEarlier = async () => {
-    const top = lines[0]?.n;
-    if (!top) return;
+  const load = async (query: string, place: (page: LogPage) => void) => {
+    const asked = generation.current;
     setLoading(true);
     try {
-      const page = await api.get<LogPage>(`${url}&before=${top}`);
-      setPages((p) => [page, ...p]);
+      const page = await api.get<LogPage>(`${url}&${query}`);
+      if (asked === generation.current) place(page);
     } finally {
       setLoading(false);
     }
   };
+  const loadEarlier = () => {
+    const top = lines[0]?.n;
+    if (!top) return;
+    return load(`before=${top}`, (page) => (jumped ? setJumped((j) => [page, ...(j ?? [])]) : setPages((p) => [page, ...p])));
+  };
+  const loadLater = () => {
+    const bottom = lines.at(-1)?.n;
+    if (!bottom) return;
+    return load(`from=${bottom + 1}`, (page) => setJumped((j) => [...(j ?? []), page]));
+  };
   // The newest is at the end, which is where reading starts.
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el && first.data) el.scrollTop = el.scrollHeight;
-  }, [first.data]);
+    if (el && first.data && !jumped) el.scrollTop = el.scrollHeight;
+  }, [first.data, jumped]);
+  // A line jumped to is brought into view once it is there.
+  useLayoutEffect(() => {
+    if (!target) return;
+    const el = scroller.current?.querySelector(`[data-n="${target}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center" });
+      setTarget(0);
+    }
+  }, [target, lines]);
+  const errorAt = first.data?.firstError ?? 0;
   const firstError = () => {
-    const at = lines.findIndex((l) => /\b(ERROR|FATAL)\b|Exception/.test(l.text));
-    scroller.current?.querySelector(`[data-n="${lines[at]?.n}"]`)?.scrollIntoView({ block: "center" });
+    if (lines.some((l) => l.n === errorAt)) return setTarget(errorAt);
+    // Earlier than what is read: from a little before it, onwards.
+    void load(`from=${Math.max(1, errorAt - 20)}`, (page) => {
+      setJumped([page]);
+      setTarget(errorAt);
+    });
   };
   const gz = name.endsWith(".gz");
   return (
@@ -153,7 +191,13 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" />
           <Input aria-label="Search this log" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Search, then Enter" className="h-7 pl-8 font-mono text-xs" spellCheck={false} />
         </div>
-        <button type="button" onClick={firstError} className="h-7 rounded-md px-2.5 text-xs font-medium text-muted hover:bg-raised hover:text-fg">
+        <button
+          type="button"
+          onClick={firstError}
+          disabled={!errorAt || !!search || loading}
+          title={search ? "Clear the search to go to the first error." : errorAt ? `Line ${errorAt}` : "Nothing in this log tells of an error."}
+          className="h-7 rounded-md px-2.5 text-xs font-medium text-muted hover:bg-raised hover:text-fg disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
+        >
           First error
         </button>
         <a href={`/api/v1${url}&download=${gz ? "gz" : "text"}`} className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted hover:bg-raised hover:text-fg">
@@ -167,10 +211,13 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
         )}
       </form>
       <div ref={scroller} className="flex-1 overflow-y-auto px-4 py-3 font-mono text-xs leading-[1.65] break-words whitespace-pre-wrap">
-        {more && (
+        {earlierToLoad && (
           <button type="button" onClick={loadEarlier} disabled={loading} className="mb-2 font-sans text-xs text-accent hover:underline disabled:opacity-50">
             {loading ? "Loading…" : "Load earlier lines"}
           </button>
+        )}
+        {search && first.data?.capped && (
+          <p className="mb-2 font-sans text-xs text-muted">Only the last 1,000 matches are shown. Search for something narrower to see earlier ones.</p>
         )}
         {first.isPending && <p className="font-sans text-[13px] text-muted">Reading the log…</p>}
         {first.isError && <p className="font-sans text-[13px] text-danger">{first.error instanceof ApiError ? first.error.message : "The log could not be read."}</p>}
@@ -183,6 +230,16 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
             </div>
           </div>
         ))}
+        {laterToLoad && (
+          <div className="mt-2 flex gap-4 font-sans text-xs">
+            <button type="button" onClick={loadLater} disabled={loading} className="text-accent hover:underline disabled:opacity-50">
+              {loading ? "Loading…" : "Load later lines"}
+            </button>
+            <button type="button" onClick={() => setJumped(null)} className="text-accent hover:underline">
+              Go to the end
+            </button>
+          </div>
+        )}
         {first.data?.truncated && <p className="mt-2 font-sans text-xs text-muted">Only the first 64 MB of this log are shown. Download it for the rest.</p>}
       </div>
     </div>

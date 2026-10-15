@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -93,6 +94,14 @@ type logLine struct {
 	Match bool   `json:"match,omitempty"`
 }
 
+// maxLineBytes is as much of one line as is shown. A longer one, as a
+// plugin may write, is cut, and the rest of the log still read.
+const maxLineBytes = 64 << 10
+
+// maxMatches is as many matching lines as one search answers with: the last
+// ones, nearest the end, where reading starts.
+const maxMatches = 1000
+
 // readLog streams a log's lines, unpacked, up to maxLogBytes.
 func readLog(f io.Reader, gzipped bool) ([]string, bool, error) {
 	if gzipped {
@@ -104,39 +113,80 @@ func readLog(f io.Reader, gzipped bool) ([]string, bool, error) {
 		f = z
 	}
 	limited := &io.LimitedReader{R: f, N: maxLogBytes + 1}
-	scan := bufio.NewScanner(limited)
-	scan.Buffer(make([]byte, 64<<10), 1<<20)
+	rd := bufio.NewReaderSize(limited, 64<<10)
 	var lines []string
-	for scan.Scan() {
-		lines = append(lines, scan.Text())
-	}
-	if err := scan.Err(); err != nil && err != bufio.ErrTooLong {
-		return nil, false, err
+	var line []byte
+	cut := 0
+	for {
+		part, more, err := rd.ReadLine()
+		if len(part) > 0 || (err == nil && !more) {
+			if room := maxLineBytes - len(line); room > 0 {
+				line = append(line, part[:min(room, len(part))]...)
+				cut += len(part) - min(room, len(part))
+			} else {
+				cut += len(part)
+			}
+			if !more {
+				text := string(line)
+				if cut > 0 {
+					text += fmt.Sprintf(" … (%d more bytes on this line)", cut)
+				}
+				lines = append(lines, text)
+				line, cut = line[:0], 0
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, false, err
+		}
 	}
 	return lines, limited.N <= 0, nil
 }
 
-// searchLog keeps the lines that hold q, ignoring case, with context lines
-// around each. Line numbers start at 1.
-func searchLog(lines []string, q string, context int) []logLine {
-	q = strings.ToLower(q)
-	keep := make([]bool, len(lines))
-	match := make([]bool, len(lines))
+// errorLine is a line that tells of something going wrong.
+var errorLine = regexp.MustCompile(`\b(ERROR|FATAL)\b|Exception`)
+
+// firstError is the number of the first line that tells of an error, or 0.
+func firstError(lines []string) int {
 	for i, l := range lines {
-		if strings.Contains(strings.ToLower(l), q) {
-			match[i] = true
-			for j := max(0, i-context); j <= min(len(lines)-1, i+context); j++ {
-				keep[j] = true
-			}
+		if errorLine.MatchString(l) {
+			return i + 1
 		}
 	}
-	var out []logLine
+	return 0
+}
+
+// searchLog keeps the lines that hold q, ignoring case, with context lines
+// around each. Line numbers start at 1. Of more than maxMatches matches,
+// the last are kept, and capped says so.
+func searchLog(lines []string, q string, context int) (out []logLine, capped bool) {
+	q = strings.ToLower(q)
+	var matches []int
+	for i, l := range lines {
+		if strings.Contains(strings.ToLower(l), q) {
+			matches = append(matches, i)
+		}
+	}
+	if len(matches) > maxMatches {
+		matches, capped = matches[len(matches)-maxMatches:], true
+	}
+	keep := make([]bool, len(lines))
+	match := make([]bool, len(lines))
+	for _, i := range matches {
+		match[i] = true
+		for j := max(0, i-context); j <= min(len(lines)-1, i+context); j++ {
+			keep[j] = true
+		}
+	}
+	out = []logLine{}
 	for i, l := range lines {
 		if keep[i] {
 			out = append(out, logLine{N: i + 1, Text: l, Match: match[i]})
 		}
 	}
-	return out
+	return out, capped
 }
 
 // pageOf is the page of lines ending just before line before (1-based, 0 for
@@ -147,11 +197,22 @@ func pageOf(lines []string, before int) ([]logLine, int) {
 		end = before - 1
 	}
 	start := max(0, end-logPage)
+	return linesOf(lines, start, end), start
+}
+
+// pageFrom is the page of lines starting at line from (1-based), for going
+// forward from somewhere in the middle, as from an error.
+func pageFrom(lines []string, from int) []logLine {
+	start := min(max(0, from-1), len(lines))
+	return linesOf(lines, start, min(len(lines), start+logPage))
+}
+
+func linesOf(lines []string, start, end int) []logLine {
 	out := make([]logLine, 0, end-start)
 	for i := start; i < end; i++ {
 		out = append(out, logLine{N: i + 1, Text: lines[i]})
 	}
-	return out, start
+	return out
 }
 
 func (s *Server) readLogFile(w http.ResponseWriter, r *http.Request, u *store.User) error {
@@ -195,23 +256,33 @@ func (s *Server) readLogFile(w http.ResponseWriter, r *http.Request, u *store.Us
 				return errBadRequest("%s is not a gzip file.", name)
 			}
 			defer z.Close()
-			body, file = io.LimitReader(z, maxLogBytes), strings.TrimSuffix(file, ".gz")
+			// All of it: a download is how a log too long to show is read.
+			body, file = z, strings.TrimSuffix(file, ".gz")
 		}
 		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(file))
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		_, err := io.Copy(w, body)
-		return err
+		if _, err := io.Copy(w, body); err != nil {
+			// The download has begun, and an error said now would be taken
+			// as part of the file. Breaking it off makes the browser say it
+			// failed instead.
+			s.Log.Warn("a log's download broke off", "server", mc.Name, "log", name, "error", err)
+			panic(http.ErrAbortHandler)
+		}
+		return nil
 	}
 
 	lines, truncated, err := readLog(f, gzipped)
 	if err != nil {
 		return errBadRequest("%s could not be read: %v", name, err)
 	}
-	out := map[string]any{"name": name, "total": len(lines), "truncated": truncated}
+	out := map[string]any{"name": name, "total": len(lines), "truncated": truncated, "firstError": firstError(lines)}
 	if search := strings.TrimSpace(q.Get("q")); search != "" {
-		found := searchLog(lines, search, 2)
-		out["lines"], out["search"] = found, search
+		found, capped := searchLog(lines, search, 2)
+		out["lines"], out["search"], out["capped"] = found, search, capped
+	} else if q.Has("from") {
+		from, _ := strconv.Atoi(q.Get("from"))
+		out["lines"] = pageFrom(lines, from)
 	} else {
 		before, _ := strconv.Atoi(q.Get("before"))
 		page, start := pageOf(lines, before)
