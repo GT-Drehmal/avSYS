@@ -117,7 +117,8 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
       {button("stop", "Stop", <Square className="size-3" />)}
       {meta.data?.snapshots && button("snapshot", "Snapshot", <Camera className="size-3.5" />)}
       {/* One at a time: the form it opens is filled in from that one server. */}
-      {canAdmin && chosen.length === 1 && (
+      {/* A copy is made through a snapshot, so only where the panel can take them, as on the server's own page. */}
+      {canAdmin && chosen.length === 1 && meta.data?.snapshots && (
         <Button size="sm" icon={<Copy className="size-3.5" />} disabled={running !== null} onClick={() => navigate(newFrom(org, { kind: "server", name: chosen[0].name }))}>
           Duplicate
         </Button>

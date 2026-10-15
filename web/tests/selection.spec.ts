@@ -135,3 +135,16 @@ test("an operator is not offered to duplicate", async ({ page, as }) => {
   await expect(bar.getByRole("button", { name: "Start", exact: true })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
 });
+
+test("Duplicate is not offered where the panel cannot take snapshots", async ({ page, as }) => {
+  await as("owner");
+  await page.route("**/api/v1/meta", async (route) => {
+    const meta = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...meta, snapshots: false } });
+  });
+  await page.goto("/o/friends");
+  await page.getByLabel("Select survival").click();
+  const bar = page.getByRole("region", { name: "Selection" });
+  await expect(bar.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
+});
