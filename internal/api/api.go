@@ -333,6 +333,8 @@ func (s *Server) Handler() http.Handler {
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
 	api("GET /orgs/{org}/servers/{server}/console", s.authed(s.streamConsole))
 	api("POST /orgs/{org}/servers/{server}/console", s.authed(s.runCommand))
+	api("GET /orgs/{org}/servers/{server}/logs", s.authed(s.listLogs))
+	api("GET /orgs/{org}/servers/{server}/logs/file", s.authed(s.readLogFile))
 	api("GET /orgs/{org}/servers/{server}/snapshots", s.authed(s.listServerSnapshots))
 	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
 	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))

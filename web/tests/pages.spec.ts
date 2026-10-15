@@ -109,3 +109,57 @@ test("the console says a server is starting, and only a stopped one is not runni
   await page.reload();
   await expect(page.getByText("The game is starting. Its log appears here as soon as it is up.")).toBeVisible();
 });
+
+test("earlier logs and crash reports can be opened from the console, searched and downloaded", async ({ page, as }) => {
+  await as("viewer");
+  const base = "**/api/v1/orgs/friends/servers/survival/logs";
+  await page.route(base, (route) =>
+    route.fulfill({
+      json: {
+        logs: [
+          { name: "logs/latest.log", kind: "current", size: 2048, modTime: new Date().toISOString() },
+          { name: "crash-reports/crash-2026-10-14_03.00.00-server.txt", kind: "crash", size: 9000, modTime: "2026-10-14T03:00:00Z" },
+          { name: "logs/2026-10-14-1.log.gz", kind: "log", size: 1800, modTime: "2026-10-14T01:00:00Z" },
+        ],
+      },
+    }),
+  );
+  // An earlier run of 2500 lines, read from its end a page at a time, with one error in it.
+  const all = Array.from({ length: 2500 }, (_, i) => (i === 99 ? "[01:00:00] [Server thread/ERROR]: Something broke" : `[01:00:00] [Server thread/INFO]: line ${i + 1}`));
+  const asked: string[] = [];
+  await page.route(`${base}/file*`, (route) => {
+    const url = new URL(route.request().url());
+    asked.push(url.search);
+    const q = url.searchParams.get("q");
+    if (q) {
+      const hits = all.flatMap((text, i) => (text.toLowerCase().includes(q.toLowerCase()) ? [{ n: i + 1, text, match: true }] : []));
+      return route.fulfill({ json: { name: "logs/2026-10-14-1.log.gz", total: all.length, truncated: false, lines: hits, search: q } });
+    }
+    const before = Number(url.searchParams.get("before") ?? 0) || all.length + 1;
+    const start = Math.max(0, before - 1 - 2000);
+    const lines = all.slice(start, before - 1).map((text, i) => ({ n: start + i + 1, text }));
+    return route.fulfill({ json: { name: "logs/2026-10-14-1.log.gz", total: all.length, truncated: false, lines, more: start > 0 } });
+  });
+
+  await page.goto("/o/friends/s/survival");
+  const picker = page.getByLabel("Log", { exact: true });
+  await expect(picker.locator("option")).toHaveCount(4);
+  await picker.selectOption("logs/2026-10-14-1.log.gz");
+  await expect(page.getByText("line 2500", { exact: false })).toBeVisible();
+  await expect(page.getByText("Something broke")).toHaveCount(0);
+  await page.getByRole("button", { name: "Load earlier lines" }).click();
+  await expect(page.getByText("Something broke")).toBeVisible();
+  expect(asked.some((q) => q.includes("before=501"))).toBe(true);
+
+  await page.getByLabel("Search this log").fill("ERROR");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-n]")).toHaveCount(1);
+  await expect(page.locator('[data-n="100"]')).toContainText("Something broke");
+
+  await expect(page.getByRole("link", { name: "Download" })).toHaveAttribute("href", /download=gz$/);
+  await expect(page.getByRole("link", { name: "Unpacked" })).toHaveAttribute("href", /download=text$/);
+
+  // Back to the game as it runs.
+  await picker.selectOption("");
+  await expect(page.getByLabel("Search this log")).toHaveCount(0);
+});

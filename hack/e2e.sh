@@ -205,6 +205,12 @@ wait_phase Running
 expect "a changed file is put back" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "a file added since is removed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/stray.txt")" 404
 expect "the settings come back with the files" "$(call "$SRV" | field "sorted(m['project'] for m in d['spec']['mods'])")" "['luckperms', 'worldedit']"
+# The game started again, and packed the log of its run before.
+earlier=$(call "$SRV/logs" | field "[l['name'] for l in d['logs'] if l['kind'] == 'log'][0]") || fail "no earlier run is listed"
+expect "the run before a restart is listed" "$(call "$SRV/logs" | field "(d['logs'][0]['name'], d['logs'][0]['kind'])")" "('logs/latest.log', 'current')"
+expect "and reads unpacked, to where it got going" "$(call "$SRV/logs/file?name=$earlier" | field "any('Done (' in l['text'] for l in d['lines'])")" True
+expect "and is searched where it is" "$(call "$SRV/logs/file?name=$earlier&q=Done%20(" | field "all('Done (' in l['text'] for l in d['lines'] if l.get('match')) and len(d['lines']) > 0")" True
+expect "nothing but the game's logs is read" "$(call -o /dev/null -w '%{http_code}' "$SRV/logs/file?name=logs/../server.properties")" 400
 expect "the plugin runs again" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit
 listed=$(call "$SRV/snapshots")
 expect "what was there before the restore is kept too" "$(echo "$listed" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'pre-restore']"
