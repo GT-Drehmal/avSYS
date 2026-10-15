@@ -47,6 +47,30 @@ test("a server is opened to see its snapshots, and one of them to see what it ho
   await expect(dialog).toContainText("Until it is deleted by hand.");
 });
 
+test("by server, each server that exists is snapshotted from its row, one with none yet too", async ({ page }) => {
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/*/snapshots", (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    asked.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 202, json: { kind: "snapshot", org: "friends", server: "survival", stage: "Starting", percent: 0, startedAt: new Date().toISOString() } });
+  });
+  // A server with no snapshot yet has a row of its own, to take its first.
+  const lobby = page.getByRole("listitem").filter({ hasText: "Lobby" });
+  await expect(lobby).toContainText("No snapshots yet");
+  await expect(lobby.getByRole("button", { expanded: false })).toHaveCount(0);
+  await lobby.getByRole("button", { name: "Snapshot lobby now" }).click();
+  await expect.poll(() => asked).toEqual(["/api/v1/orgs/friends/servers/lobby/snapshots"]);
+
+  // Pressing it does not open or close the row.
+  const survival = page.getByRole("listitem").filter({ hasText: "Survival" });
+  await survival.getByRole("button", { name: "Snapshot survival now" }).click();
+  await expect.poll(() => asked.length).toBe(2);
+  await expect(survival.getByRole("button", { expanded: false })).toBeVisible();
+
+  // A deleted server has nothing to snapshot.
+  await expect(page.getByRole("listitem").filter({ hasText: "oldworld" }).getByRole("button", { name: /^Snapshot / })).toHaveCount(0);
+});
+
 test("by time: everything in order, each with its server, and narrowed by server or reason", async ({ page }) => {
   await page.getByRole("button", { name: "By time" }).click();
   const snapshots = page.getByRole("button", { name: /^About the snapshot of / });
@@ -108,6 +132,7 @@ test("a viewer sees the snapshots and is offered nothing to do to them", async (
   await expect(page.getByLabel(/^Select the snapshot of /)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^New server from the snapshot/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Delete the snapshot/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Snapshot .* now$/ })).toHaveCount(0);
 });
 
 test("a server's picture is its own while it exists, and its newest snapshot's once it is gone", async ({ page }) => {

@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Camera, ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { backupConcern, BackupSchedule, scheduleOf } from "../components/BackupSchedule";
@@ -6,10 +7,10 @@ import { OffsiteCopy } from "../components/OffsiteCopy";
 import { Picture } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, type RowsProps } from "../components/Snapshots";
-import { Chip, cx, Empty, Loading, Notice, PageHeader, Select } from "../components/ui";
-import { atLeast, serverIcon, snapshotIcon, type Server, type Snapshot } from "../lib/api";
+import { Button, Chip, cx, Empty, Loading, Notice, PageHeader, Select } from "../components/ui";
+import { api, atLeast, serverIcon, serverPath, snapshotIcon, type Operation, type Server, type Snapshot } from "../lib/api";
 import { ago, bytes, displayName } from "../lib/format";
-import { useBackupPolicy, useOrgSnapshots, useServers } from "../lib/queries";
+import { keys, useAction, useBackupPolicy, useOrgSnapshots, useServers } from "../lib/queries";
 import { useSelection, type Selection } from "../lib/selection";
 
 /** How the page lays the snapshots out: a row to a server, or all of them in order of time. */
@@ -50,6 +51,7 @@ export function Backups() {
   const servers = useServers(org);
   const policy = useBackupPolicy(org);
   const canAdmin = atLeast(membership?.role, "admin");
+  const canOperate = atLeast(membership?.role, "operator");
   const [view, setView] = useState<View>(storedView);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [all, setAll] = useState<ReadonlySet<string>>(new Set());
@@ -70,12 +72,17 @@ export function Backups() {
   // Newest first within a server, as the list comes.
   const groups = new Map<string, Snapshot[]>();
   for (const s of snapshots) groups.set(s.server, [...(groups.get(s.server) ?? []), s]);
+  // By server, every server is there, one with none yet too: it can be
+  // snapshotted from here.
+  const byServer = new Map(groups);
+  for (const s of servers.data ?? []) if (!byServer.has(s.name)) byServer.set(s.name, []);
   const concernOf = (name: string) => {
     const server = byName.get(name);
     return server ? backupConcern(server, !!policy.data && scheduleOf(policy.data, server.spec.backups).enabled) : null;
   };
   // Servers that need looking at come first, then whichever was snapshotted last.
-  const ordered = [...groups].sort(([a, as], [b, bs]) => Number(!!concernOf(b)) - Number(!!concernOf(a)) || new Date(bs[0].time).getTime() - new Date(as[0].time).getTime());
+  const newestTime = (items: Snapshot[]) => (items[0] ? new Date(items[0].time).getTime() : 0);
+  const ordered = [...byServer].sort(([a, as], [b, bs]) => Number(!!concernOf(b)) - Number(!!concernOf(a)) || newestTime(bs) - newestTime(as) || a.localeCompare(b));
   const filtered = snapshots.filter((s) => (!onlyServer || s.server === onlyServer) && (!onlyReason || s.trigger === onlyReason));
   // What can be ticked is what is on the page, in its order.
   const listed = view === "time" ? filtered : ordered.flatMap(([name, items]) => (open.has(name) ? (all.has(name) ? items : items.slice(0, firstFew)) : []));
@@ -131,9 +138,9 @@ export function Backups() {
         {operations.map((op) => (
           <OperationRow key={op.server} op={op} />
         ))}
-        {snapshots.length === 0 && operations.length === 0 && <Empty title="Nothing saved yet">Take one from a server's Backups tab.</Empty>}
+        {byServer.size === 0 && operations.length === 0 && <Empty title="Nothing saved yet">Snapshots of this organization's servers are listed here.</Empty>}
 
-        {snapshots.length > 0 && (
+        {byServer.size > 0 && (
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div role="group" aria-label="Arrange by" className="flex gap-1 rounded-md border border-line bg-bg p-0.5">
@@ -200,6 +207,8 @@ export function Backups() {
                     showAll={all.has(name)}
                     onShowAll={() => setAll(toggle(all, name))}
                     canAdmin={canAdmin}
+                    canOperate={canOperate}
+                    busy={running.has(name)}
                     selection={selection}
                     restore={restoreProps}
                   />
@@ -240,38 +249,81 @@ interface GroupProps {
   showAll: boolean;
   onShowAll: () => void;
   canAdmin: boolean;
+  /** Whether a snapshot can be asked for here. */
+  canOperate: boolean;
+  /** Whether something is being done to the server's snapshots now. */
+  busy: boolean;
   selection: Selection;
   /** Restoring a snapshot of the server, where it still exists. */
   restore: Pick<RowsProps, "onRestore" | "restorable" | "busy">;
 }
 
-/** One server's snapshots: a line that says how they stand, opened to see them. */
-function ServerGroup({ org, name, server, known, items, concern, open, onToggle, showAll, onShowAll, canAdmin, selection, restore }: GroupProps) {
+/**
+ * One server's snapshots: a line that says how they stand, opened to see
+ * them, with a snapshot of it to be taken from there.
+ */
+function ServerGroup({ org, name, server, known, items, concern, open, onToggle, showAll, onShowAll, canAdmin, canOperate, busy, selection, restore }: GroupProps) {
+  const qc = useQueryClient();
   const newest = items[0];
   const shown = showAll ? items : items.slice(0, firstFew);
-  return (
-    <li className="overflow-hidden rounded-lg border border-line bg-surface">
-      <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-raised">
-        {open ? <ChevronDown className="size-4 shrink-0 text-muted" /> : <ChevronRight className="size-4 shrink-0 text-muted" />}
-        <ServerPicture org={org} name={name} server={server} known={known} newest={newest?.id} size={32} />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="truncate text-[13px] font-medium">{server ? displayName(server) : name}</span>
-            {!server && known && <Chip>deleted server</Chip>}
-          </span>
-          <span className="block truncate text-xs text-muted">
-            Newest {ago(newest.time)}
-            {concern && <span className={concern.tone === "danger" ? "text-danger" : "text-warn"}> · {concern.text}</span>}
-          </span>
+  // Once started, the list is asked for again and shows it as running.
+  const snapshot = useAction(() => api.post<Operation>(`${serverPath(org, name)}/snapshots`));
+  const take = () => snapshot.mutate(undefined, { onSuccess: () => qc.invalidateQueries({ queryKey: keys.snapshots(org) }) });
+  const summary = (
+    <>
+      <ServerPicture org={org} name={name} server={server} known={known} newest={newest?.id} size={32} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span className="truncate text-[13px] font-medium">{server ? displayName(server) : name}</span>
+          {!server && known && <Chip>deleted server</Chip>}
         </span>
+        <span className="block truncate text-xs text-muted">
+          {newest ? `Newest ${ago(newest.time)}` : "No snapshots yet"}
+          {concern && <span className={concern.tone === "danger" ? "text-danger" : "text-warn"}> · {concern.text}</span>}
+        </span>
+      </span>
+      {newest && (
         <span className="text-right max-sm:hidden">
           <span className="block font-mono text-[13px] tabular-nums">{bytes(newest.size)}</span>
           <span className="block text-xs text-faint">
             {items.length} snapshot{items.length === 1 ? "" : "s"}
           </span>
         </span>
-      </button>
-      {open && (
+      )}
+    </>
+  );
+  return (
+    <li className="overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="flex items-center hover:bg-raised">
+        {newest ? (
+          <button type="button" aria-expanded={open} onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left">
+            {open ? <ChevronDown className="size-4 shrink-0 text-muted" /> : <ChevronRight className="size-4 shrink-0 text-muted" />}
+            {summary}
+          </button>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3">
+            <span className="size-4 shrink-0" />
+            {summary}
+          </div>
+        )}
+        {canOperate && (
+          <Button
+            size="sm"
+            icon={<Camera className="size-3.5" />}
+            aria-label={`Snapshot ${name} now`}
+            title={busy ? "Something is being done to its snapshots now." : undefined}
+            disabled={busy || !server}
+            loading={snapshot.isPending}
+            onClick={take}
+            // Kept in place, unseen, on a deleted server's row, so that the
+            // rows' sizes stay in line.
+            className={cx("mr-3 shrink-0", !server && "invisible")}
+          >
+            <span className="max-sm:hidden">Snapshot</span>
+          </Button>
+        )}
+      </div>
+      {open && newest && (
         <div className="flex flex-col gap-2 border-t border-line bg-bg p-3">
           <SnapshotRows org={org} snapshots={shown} canAdmin={canAdmin} selection={selection} {...restore} />
           <div className="flex items-center gap-4 px-1 text-xs">
