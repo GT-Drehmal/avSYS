@@ -1,8 +1,10 @@
-import { ArrowDown, ChevronRight } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowDown, ChevronRight, Download, Search } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cx } from "../../components/ui";
+import { cx, Input, Select } from "../../components/ui";
+import { toast } from "../../lib/toast";
 import { api, ApiError, atLeast, serverPath } from "../../lib/api";
-import { plain } from "../../lib/format";
+import { bytes, plain } from "../../lib/format";
 import { useServerContext } from "./ServerPage";
 
 interface Line {
@@ -43,7 +45,221 @@ function LogLine({ line }: { line: Line }) {
   );
 }
 
+interface LogEntry {
+  name: string;
+  kind: "current" | "log" | "crash";
+  size: number;
+  modTime: string;
+}
+
+interface LogPage {
+  name: string;
+  total: number;
+  truncated: boolean;
+  lines: { n: number; text: string; match?: boolean }[];
+  more?: boolean;
+  search?: string;
+  capped?: boolean;
+  /** The first line, in all of the log, that tells of an error; 0 if none does. */
+  firstError: number;
+}
+
+/** How an earlier log or crash report is named in the picker. */
+function logLabel(e: LogEntry) {
+  const file = e.name.split("/").pop() ?? e.name;
+  if (e.kind === "current") return `latest.log, this run (${bytes(e.size)})`;
+  if (e.kind === "crash") return `Crash report, ${new Date(e.modTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
+  return `${file.replace(/\.log(\.gz)?$/, "")} (${bytes(e.size)})`;
+}
+
+/**
+ * The Console tab: the game as it runs, and what it wrote before. The game
+ * keeps a log of each run and a report of each crash; any of them can be
+ * opened here, searched and downloaded.
+ */
 export function Console() {
+  const { server } = useServerContext();
+  const path = serverPath(server.org, server.name);
+  const [chosen, setChosen] = useState("");
+  const logs = useQuery({ queryKey: ["logs", server.org, server.name], queryFn: () => api.get<{ logs: LogEntry[] }>(`${path}/logs`), retry: false });
+  const earlier = logs.data?.logs ?? [];
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select aria-label="Log" value={chosen} onChange={(e) => setChosen(e.target.value)} onFocus={() => logs.refetch()} className="w-auto max-w-full">
+          <option value="">Live console</option>
+          {earlier.length > 0 && (
+            <optgroup label="Earlier runs and crashes">
+              {earlier.map((e) => (
+                <option key={e.name} value={e.name}>
+                  {logLabel(e)}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </Select>
+        {logs.isError && <span className="text-xs text-muted">Earlier logs can be read once the server's files are reachable.</span>}
+      </div>
+      {chosen ? <EarlierLog key={chosen} path={path} name={chosen} /> : <LiveConsole />}
+    </div>
+  );
+}
+
+/** One of the game's own logs or crash reports, to read, search and download. */
+function EarlierLog({ path, name }: { path: string; name: string }) {
+  const [typed, setTyped] = useState("");
+  const [search, setSearch] = useState("");
+  // Pages read going back from the end; or, once jumped into the middle,
+  // the pages from there.
+  const [pages, setPages] = useState<LogPage[]>([]);
+  const [jumped, setJumped] = useState<LogPage[] | null>(null);
+  const [target, setTarget] = useState(0);
+  const scroller = useRef<HTMLDivElement>(null);
+  const url = `${path}/logs/file?name=${encodeURIComponent(name)}`;
+  const first = useQuery({
+    queryKey: ["log", path, name, search],
+    queryFn: () => api.get<LogPage>(search ? `${url}&q=${encodeURIComponent(search)}` : url),
+    retry: false,
+  });
+  // A new search starts again from the end; a page asked for before it is
+  // not added to what it finds.
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current++;
+    setPages([]);
+    setJumped(null);
+  }, [search]);
+  const shown = jumped ?? [...pages, ...(first.data ? [first.data] : [])];
+  const lines = shown.flatMap((p) => p.lines);
+  const total = first.data?.total ?? 0;
+  const earlierToLoad = !search && (lines[0]?.n ?? 1) > 1;
+  const laterToLoad = !!jumped && (lines.at(-1)?.n ?? total) < total;
+  const [loading, setLoading] = useState(false);
+  const load = async (query: string, place: (page: LogPage) => void) => {
+    const asked = generation.current;
+    setLoading(true);
+    try {
+      const page = await api.get<LogPage>(`${url}&${query}`);
+      if (asked === generation.current) place(page);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "That part of the log could not be read.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const loadEarlier = () => {
+    const top = lines[0]?.n;
+    if (!top) return;
+    return load(`before=${top}`, (page) => (jumped ? setJumped((j) => [page, ...(j ?? [])]) : setPages((p) => [page, ...p])));
+  };
+  const loadLater = () => {
+    const bottom = lines.at(-1)?.n;
+    if (!bottom) return;
+    return load(`from=${bottom + 1}`, (page) => setJumped((j) => [...(j ?? []), page]));
+  };
+  // The newest is at the end, which is where reading starts.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el && first.data && !jumped) el.scrollTop = el.scrollHeight;
+  }, [first.data, jumped]);
+  // A line jumped to is brought into view once it is there.
+  useLayoutEffect(() => {
+    if (!target) return;
+    const el = scroller.current?.querySelector(`[data-n="${target}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center" });
+      setTarget(0);
+    }
+  }, [target, lines]);
+  const errorAt = first.data?.firstError ?? 0;
+  const firstError = () => {
+    if (lines.some((l) => l.n === errorAt)) return setTarget(errorAt);
+    // Earlier than what is read: from a little before it, onwards.
+    void load(`from=${Math.max(1, errorAt - 20)}`, (page) => {
+      setJumped([page]);
+      setTarget(errorAt);
+    });
+  };
+  const gz = name.endsWith(".gz");
+  return (
+    <div className="flex h-[calc(100dvh-380px)] min-h-80 flex-col overflow-hidden rounded-lg border border-line bg-bg">
+      <form
+        className="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-3 py-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setSearch(typed.trim());
+        }}
+      >
+        <div className="relative min-w-48 flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" />
+          <Input aria-label="Search this log" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Search, then Enter" className="h-7 pl-8 font-mono text-xs" spellCheck={false} />
+        </div>
+        <button
+          type="button"
+          onClick={firstError}
+          disabled={!errorAt || !!search || loading}
+          title={
+            search
+              ? "Clear the search to go to the first error."
+              : errorAt
+                ? `Line ${errorAt}`
+                : first.data?.truncated
+                  ? "Nothing in the part of this log shown tells of an error."
+                  : "Nothing in this log tells of an error."
+          }
+          className="h-7 rounded-md px-2.5 text-xs font-medium text-muted hover:bg-raised hover:text-fg disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
+        >
+          First error
+        </button>
+        <a href={`/api/v1${url}&download=${gz ? "gz" : "text"}`} className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted hover:bg-raised hover:text-fg">
+          <Download className="size-3.5" />
+          Download
+        </a>
+        {gz && (
+          <a href={`/api/v1${url}&download=text`} className="inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium text-muted hover:bg-raised hover:text-fg">
+            Unpacked
+          </a>
+        )}
+      </form>
+      <div ref={scroller} className="flex-1 overflow-y-auto px-4 py-3 font-mono text-xs leading-[1.65] break-words whitespace-pre-wrap">
+        {earlierToLoad && (
+          <button type="button" onClick={loadEarlier} disabled={loading} className="mb-2 font-sans text-xs text-accent hover:underline disabled:opacity-50">
+            {loading ? "Loading…" : "Load earlier lines"}
+          </button>
+        )}
+        {search && first.data?.capped && (
+          <p className="mb-2 font-sans text-xs text-muted">Only the last matches are shown. Search for something narrower to see earlier ones.</p>
+        )}
+        {first.isPending && <p className="font-sans text-[13px] text-muted">Reading the log…</p>}
+        {first.isError && <p className="font-sans text-[13px] text-danger">{first.error instanceof ApiError ? first.error.message : "The log could not be read."}</p>}
+        {search && first.data && lines.length === 0 && <p className="font-sans text-[13px] text-muted">Nothing in this log matches “{search}”.</p>}
+        {lines.map((l, i) => (
+          <div key={`${l.n}-${i}`} data-n={l.n} className={cx("flex gap-3", l.match && "bg-accent-wash")}>
+            <span className="w-12 shrink-0 text-right text-faint select-none">{l.n}</span>
+            <div className="min-w-0 flex-1">
+              <LogLine line={{ id: l.n, text: plain(l.text), kind: "log" }} />
+            </div>
+          </div>
+        ))}
+        {jumped && (
+          <div className="mt-2 flex gap-4 font-sans text-xs">
+            {laterToLoad && (
+              <button type="button" onClick={loadLater} disabled={loading} className="text-accent hover:underline disabled:opacity-50">
+                {loading ? "Loading…" : "Load later lines"}
+              </button>
+            )}
+            <button type="button" onClick={() => setJumped(null)} className="text-accent hover:underline">
+              Go to the end
+            </button>
+          </div>
+        )}
+        {first.data?.truncated && <p className="mt-2 font-sans text-xs text-muted">Only the first 64 MB of this log are shown. Download it for the rest.</p>}
+      </div>
+    </div>
+  );
+}
+
+function LiveConsole() {
   const { server, role } = useServerContext();
   const [lines, setLines] = useState<Line[]>([]);
   const [waiting, setWaiting] = useState(false);

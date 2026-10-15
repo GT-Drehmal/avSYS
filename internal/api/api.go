@@ -45,8 +45,10 @@ type Config struct {
 
 type Server struct {
 	Config Config
-	Store  *store.Store
-	Client client.Client
+	// contentLocks holds a lock per server, by namespace/name: see lockContent.
+	contentLocks sync.Map
+	Store        *store.Store
+	Client       client.Client
 	// Reader reads the cluster as it is now, where Client may lag a change
 	// by a moment. It is optional: Client is used where there is none.
 	Reader  client.Reader
@@ -333,6 +335,8 @@ func (s *Server) Handler() http.Handler {
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
 	api("GET /orgs/{org}/servers/{server}/console", s.authed(s.streamConsole))
 	api("POST /orgs/{org}/servers/{server}/console", s.authed(s.runCommand))
+	api("GET /orgs/{org}/servers/{server}/logs", s.authed(s.listLogs))
+	api("GET /orgs/{org}/servers/{server}/logs/file", s.authed(s.readLogFile))
 	api("GET /orgs/{org}/servers/{server}/snapshots", s.authed(s.listServerSnapshots))
 	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
 	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))
