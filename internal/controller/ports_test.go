@@ -282,7 +282,7 @@ func TestPortsServiceOfAnotherServer(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, named, theirs).Build()
 	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25699}}}
-	ports, _, err := r.ensurePorts(context.Background(), mc, nil)
+	ports, retry, err := r.ensurePorts(context.Background(), mc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +292,11 @@ func TestPortsServiceOfAnotherServer(t *testing.T) {
 	// No public port is held for them meanwhile.
 	if got := mc.Annotations[avsysv1.AnnotationPublicPorts]; got != "" {
 		t.Errorf("public ports held: %q", got)
+	}
+	// They are looked at again: that Service going away says nothing to
+	// this server, whose ports are then opened.
+	if !retry {
+		t.Error("ports kept closed by another server's Service are not looked at again")
 	}
 	// Taking the ports away does not remove it either.
 	mc.Spec.Ports = nil
@@ -304,6 +309,19 @@ func TestPortsServiceOfAnotherServer(t *testing.T) {
 	}
 	if got.Spec.Type != corev1.ServiceTypeClusterIP || len(got.Spec.Ports) != 1 || got.Spec.Ports[0].Name != "minecraft" {
 		t.Errorf("the other server's Service was changed: %s %+v", got.Spec.Type, got.Spec.Ports)
+	}
+
+	// Once that Service is gone, as with its server, the ports are opened.
+	mc.Spec.Ports = []avsysv1.ExtraPort{voice}
+	if err := c.Delete(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	ports, _, err = r.ensurePorts(context.Background(), mc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 1 || ports[0].Message != "" || ports[0].PublicPort == 0 {
+		t.Errorf("once that Service is gone: %+v", ports)
 	}
 }
 

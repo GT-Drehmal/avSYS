@@ -173,7 +173,9 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 // ports given out to it, or node ports. One that is not exposed has none.
 //
 // A port that cannot be opened says why, and the server runs without it:
-// retry is set while some wait for a public port to come free.
+// retry is set while some wait for a public port to come free, or for the
+// Service of their name to stop being another server's. Neither says so to
+// this server when it happens.
 func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServer, svc *corev1.Service) (st []avsysv1.PortStatus, retry bool, err error) {
 	own := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: mc.Namespace, Name: PortsServiceName(mc.Name)}}
 	// Its name can be another server's own Service, of a server named so:
@@ -217,7 +219,7 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 				st[i].Message = r.noneFree()
 			}
 		}
-		return st, full, nil
+		return st, full || theirs, nil
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, own, func() error {
 		own.Labels = labelsFor(mc)

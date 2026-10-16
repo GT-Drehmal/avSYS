@@ -77,3 +77,16 @@ test("with eight ports no preset adds a ninth, and a sleeping server says its po
   await expect(page.getByRole("button", { name: "BlueMap" })).toHaveCount(0);
   await expect(page.getByText(/these ports do not answer while it sleeps/)).toBeVisible();
 });
+
+test("a preset is not offered again under a name a port has, as one moved to another number", async ({ page }) => {
+  await survivalWith(page, {
+    mods: [{ source: "modrinth", kind: "plugin", project: "geyser" }],
+    ports: [{ name: "geyser", port: 19133, protocol: "UDP" }],
+  });
+  await page.goto("/o/friends/s/survival/settings");
+  await expect(page.getByLabel("Port name")).toHaveValue("geyser");
+  // Neither said to be needed, nor among the presets: it would be a second port of that name.
+  await expect(page.getByText("Geyser is installed")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Geyser", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Simple Voice Chat", exact: true })).toBeVisible();
+});

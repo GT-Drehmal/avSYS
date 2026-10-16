@@ -28,7 +28,8 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
   // As many as a server may have: presets too stop there.
   const full = ports.length >= 8;
   const set = (i: number, change: Partial<PortDraft>) => onChange(ports.map((p, j) => (j === i ? { ...p, ...change } : p)));
-  const has = (p: PortDraft) => ports.some((q) => q.port === p.port && q.protocol === p.protocol);
+  // Had already: that port, or one by its name, as one set to another number.
+  const has = (p: PortDraft) => ports.some((q) => (q.port === p.port && q.protocol === p.protocol) || q.name === p.name);
   const installed = new Set(mods.map((m) => m.project));
   const needed = known.filter((k) => k.slugs.some((s) => installed.has(s)) && !has(k.port));
   const where = (p: PortDraft) => status.find((s) => s.name === p.name && String(s.port) === p.port && s.protocol === p.protocol);
