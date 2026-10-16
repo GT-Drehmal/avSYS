@@ -303,17 +303,21 @@ func TestInstalledFilesHaveThePack(t *testing.T) {
 
 func TestPackSHA1IsChecked(t *testing.T) {
 	rp := &avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip", SHA1: " " + strings.Repeat("AB", 20) + " "}
-	if err := checkPackSHA1(rp); err != nil {
+	if err := checkPackSHA1(rp, nil); err != nil {
 		t.Fatalf("a good SHA-1, in capitals: %v", err)
 	}
 	if rp.SHA1 != strings.Repeat("ab", 20) {
 		t.Errorf("kept as %q, want it in lower case", rp.SHA1)
 	}
 	rp.SHA1 = "not-a-hash"
-	if err := checkPackSHA1(rp); err == nil || !strings.Contains(err.Error(), "40 hexadecimal") {
+	if err := checkPackSHA1(rp, nil); err == nil || !strings.Contains(err.Error(), "40 hexadecimal") {
 		t.Errorf("a bad SHA-1: %v", err)
 	}
-	if err := checkPackSHA1(&avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip"}); err != nil {
+	// One it had before this was checked does not hold up other changes.
+	if err := checkPackSHA1(rp, &avsysv1.ResourcePackSpec{SHA1: "not-a-hash"}); err != nil {
+		t.Errorf("a bad SHA-1 it had already: %v", err)
+	}
+	if err := checkPackSHA1(&avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip"}, nil); err != nil {
 		t.Errorf("none: %v", err)
 	}
 }

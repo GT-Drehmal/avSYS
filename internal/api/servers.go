@@ -227,9 +227,6 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if rp := spec.ResourcePack; rp != nil && rp.URL != "" && !strings.HasPrefix(rp.URL, "http://") && !strings.HasPrefix(rp.URL, "https://") {
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
-	if err := checkPackSHA1(spec.ResourcePack); err != nil {
-		return err
-	}
 	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
 		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
 			return errBadRequest("A resource pack picked from a project names it: source modrinth, and its id.")
@@ -367,6 +364,11 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
 		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made, or takes the one of the server it is copied from.")
 	}
+	// One given here is checked; one a copy takes from its original is
+	// as the original has it.
+	if err := checkPackSHA1(in.Spec.ResourcePack, nil); err != nil {
+		return err
+	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
 	}
@@ -486,6 +488,12 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	defer release()
+	// The change is made to the server as it is now, not as the cache last
+	// saw it: one made a moment before, as by the request just before this
+	// one, is not taken for someone else's and refused.
+	if mc, err = s.live(r.Context(), mc); err != nil {
+		return err
+	}
 	var in struct{ Spec json.RawMessage }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -532,6 +540,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	previous := mc.Spec.DeepCopy()
 	if err := keepUploadedPack(&spec, previous); err != nil {
+		return err
+	}
+	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return err
 	}
 	// A pack uploaded before, given another address now, has its file
@@ -775,8 +786,10 @@ var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // checkPackSHA1 checks a resource pack's SHA-1, which the game checks the
 // pack it downloads against: a wrong one would have every player refuse it.
-func checkPackSHA1(rp *avsysv1.ResourcePackSpec) error {
-	if rp == nil || rp.SHA1 == "" {
+// One the server had before (was) is left as it is, as one typed before
+// this was checked: it does not hold up changes to anything else.
+func checkPackSHA1(rp, was *avsysv1.ResourcePackSpec) error {
+	if rp == nil || rp.SHA1 == "" || (was != nil && rp.SHA1 == was.SHA1) {
 		return nil
 	}
 	rp.SHA1 = strings.ToLower(strings.TrimSpace(rp.SHA1))

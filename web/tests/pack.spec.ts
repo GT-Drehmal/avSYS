@@ -119,6 +119,28 @@ test("one at a URL is given its SHA-1, or taken without one when the panel canno
   expect(state.sent[1].resourcePack).toMatchObject({ url: "https://players-only.example.org/other.zip", sha1: "" });
 });
 
+test("while one choice is being made, no other can be made on another tab", async ({ page }) => {
+  const state = await survival(page, null);
+  let answer: (() => void) | undefined;
+  await page.route("**/api/v1/catalog/sha1", async (route) => {
+    await new Promise<void>((resolve) => (answer = resolve));
+    return route.fulfill({ json: { sha1: "ef".repeat(20) } });
+  });
+  await page.goto("/o/friends/s/survival/mods");
+  await page.getByRole("button", { name: "Choose one" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "From URL" }).click();
+  await dialog.getByLabel("Download URL").fill("https://packs.example.org/world.zip");
+  await dialog.getByRole("button", { name: "Use this pack" }).click();
+  await expect.poll(() => answer).toBeDefined();
+  await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+  await expect(dialog.getByLabel("Resource pack file")).toBeDisabled();
+  answer?.();
+  await expect(dialog).toHaveCount(0);
+  expect(state.sent).toHaveLength(1);
+  expect(state.asked).toEqual([]);
+});
+
 test("a pack's address that does not decode is shown as it is", async ({ page }) => {
   await survival(page, { url: "https://packs.example.org/bad%E0%A4%A.zip" });
   await page.goto("/o/friends/s/survival/mods");

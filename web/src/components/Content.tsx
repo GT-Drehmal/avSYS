@@ -259,7 +259,11 @@ function PackPane({ pack, tab, filters, fits, onClose }: { pack: PackPicker; tab
   const [sha1, setSha1] = useState("");
   const { sending, send, cancel } = useUpload();
   const current = pack.current?.url ? pack.current : null;
+  // One choice at a time, whichever tab it is made on: one still being
+  // made would otherwise land after, and over, the next.
+  const pending = busy || !!sending;
   const pick = async (make: () => Promise<ResourcePack>) => {
+    if (pending) return;
     setBusy(true);
     try {
       await pack.onPick(await make());
@@ -271,7 +275,7 @@ function PackPane({ pack, tab, filters, fits, onClose }: { pack: PackPicker; tab
     }
   };
   const upload = async (file: File | undefined) => {
-    if (!file || !pack.upload) return;
+    if (!file || !pack.upload || busy) return;
     try {
       pack.upload.onDone(await send<Server>(file.name, `${pack.upload.path}?name=${encodeURIComponent(file.name)}`, file));
       toast.info(`${file.name} is the resource pack now`);
@@ -290,20 +294,20 @@ function PackPane({ pack, tab, filters, fits, onClose }: { pack: PackPicker; tab
             {...filters}
             fits={fits}
             picked={new Set(current?.project ? [current.project.id] : [])}
-            busy={busy}
+            busy={pending}
             pickLabels={["Use this pack", "In use"]}
             placeholder="Search resource packs on Modrinth"
             onPick={(hit) => pick(() => newestPack(projectOf(hit), filters.gameVersion))}
           />
         </div>
       ) : tab === "upload" ? (
-        <label className={cx("flex h-48 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-line-strong px-6 text-center transition-colors", !sending && "cursor-pointer hover:bg-raised")}>
+        <label className={cx("flex h-48 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-line-strong px-6 text-center transition-colors", !pending && "cursor-pointer hover:bg-raised")}>
           <input
             type="file"
             hidden
             accept=".zip,application/zip"
             aria-label="Resource pack file"
-            disabled={!!sending}
+            disabled={pending}
             onChange={(e) => {
               const file = e.target.files?.[0];
               e.target.value = "";
@@ -353,7 +357,7 @@ function PackPane({ pack, tab, filters, fits, onClose }: { pack: PackPicker; tab
             {(id) => <Input id={id} value={sha1} onChange={(e) => setSha1(e.target.value)} pattern="\s*[0-9a-fA-F]{40}\s*" title="40 hexadecimal digits" className="font-mono" spellCheck={false} />}
           </Field>
           <div className="flex justify-end">
-            <Button type="submit" variant="primary" loading={busy}>
+            <Button type="submit" variant="primary" loading={busy} disabled={!!sending}>
               Use this pack
             </Button>
           </div>
