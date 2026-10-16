@@ -11,7 +11,6 @@ import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
-import { PackUpload } from "../../components/PackUpload";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -43,10 +42,6 @@ interface Draft {
   whitelist: string;
   opMembers: Picks;
   whitelistMembers: Picks;
-  packURL: string;
-  packSHA1: string;
-  packEnforce: boolean;
-  packPrompt: string;
   env: string;
   image: string;
   aikar: boolean;
@@ -93,10 +88,6 @@ function toDraft(spec: ServerSpec): Draft {
     whitelist: (spec.whitelist ?? []).join("\n"),
     opMembers: picksOf(spec.opMembers),
     whitelistMembers: picksOf(spec.whitelistMembers),
-    packURL: spec.resourcePack?.url ?? "",
-    packSHA1: spec.resourcePack?.sha1 ?? "",
-    packEnforce: !!spec.resourcePack?.enforce,
-    packPrompt: spec.resourcePack?.prompt ?? "",
     env: (launch.env ?? []).map((e) => `${e.name}=${e.value ?? ""}`).join("\n"),
     image: spec.image ?? "",
     aikar: launch.aikar,
@@ -134,7 +125,6 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     whitelist: lines(d.whitelist),
     opMembers: picksFor(d.opMembers),
     whitelistMembers: picksFor(d.whitelistMembers),
-    resourcePack: d.packURL.trim() ? { url: d.packURL.trim(), sha1: d.packSHA1.trim(), enforce: d.packEnforce, prompt: d.packPrompt } : null,
     env: lines(d.env).flatMap((line) => {
       const i = line.indexOf("=");
       return i > 0 ? [{ name: line.slice(0, i).trim(), value: line.slice(i + 1) }] : [];
@@ -170,10 +160,6 @@ export function Settings() {
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const text = (key: keyof Draft) => ({ value: draft[key] as string, onChange: (e: { target: { value: string } }) => set(key, e.target.value as never) });
 
-  const hash = useAction(async () => {
-    const { sha1 } = await api.post<{ sha1: string }>("/catalog/sha1", { url: draft.packURL });
-    set("packSHA1", sha1);
-  });
   const meta = useMeta();
   const members = useQuery({ queryKey: keys.members(server.org), queryFn: () => api.get<Member[]>(`/orgs/${server.org}/members`) });
   // A last snapshot is taken unless this is switched off, so that what is
@@ -327,38 +313,6 @@ export function Settings() {
               onChange={({ whitelist, ops }) => setDraft((d) => ({ ...d, whitelistMembers: whitelist, opMembers: ops }))}
             />
           </div>
-        )}
-      </Section>
-
-      <Section title="Resource pack" description="Offered to players as they join. Upload one for the panel to serve, or give the address of one hosted elsewhere, which players must be able to reach.">
-        <PackUpload
-          server={server}
-          // A page with unsaved changes keeps them, and takes the pack as it
-          // is now, so that saving them does not put back the one before.
-          onChanged={(next) => setDraft((d) => ({ ...d, packURL: next.spec.resourcePack?.url ?? "", packSHA1: next.spec.resourcePack?.sha1 ?? "", packEnforce: !!next.spec.resourcePack?.enforce, packPrompt: next.spec.resourcePack?.prompt ?? "" }))}
-        />
-        {!server.spec.resourcePack?.uploaded && (
-          <>
-            <Field label="Or its URL">{(id) => <Input id={id} type="url" {...text("packURL")} placeholder="https://example.com/pack.zip" className="font-mono" />}</Field>
-            {draft.packURL && (
-              <Field label="SHA-1" hint="Optional.">
-                {(id) => (
-                  <div className="flex gap-2">
-                    <Input id={id} {...text("packSHA1")} className="font-mono" spellCheck={false} />
-                    <Button loading={hash.isPending} onClick={() => hash.mutate(undefined)}>
-                      Compute
-                    </Button>
-                  </div>
-                )}
-              </Field>
-            )}
-          </>
-        )}
-        {draft.packURL && (
-          <>
-            <Toggle checked={draft.packEnforce} onChange={(v) => set("packEnforce", v)} label="Required" hint="Players who decline the pack are disconnected." />
-            <Field label="Prompt">{(id) => <Input id={id} {...text("packPrompt")} placeholder="Shown when the game asks to download the pack" />}</Field>
-          </>
         )}
       </Section>
 

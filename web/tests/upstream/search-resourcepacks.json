@@ -1,0 +1,30 @@
+{
+ "hits": [
+  {
+   "project_id": "R0000001",
+   "slug": "faithful-32x",
+   "title": "Faithful 32x",
+   "description": "Faithful, described in a sentence for the tests.",
+   "icon_url": null,
+   "downloads": 9000000,
+   "follows": 30000,
+   "author": "someone",
+   "project_type": "resourcepack",
+   "categories": [
+    "32x",
+    "simplistic"
+   ],
+   "display_categories": [
+    "32x"
+   ],
+   "date_modified": "2026-09-20T10:00:00Z",
+   "versions": [
+    "1.21.4"
+   ],
+   "latest_version": "1.21.4"
+  }
+ ],
+ "offset": 0,
+ "limit": 24,
+ "total_hits": 1
+}

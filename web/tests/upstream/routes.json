@@ -1,6 +1,11 @@
 [
  {
   "url": "https://api.modrinth.com/v2/search",
+  "has": "project_type:resourcepack",
+  "file": "search-resourcepacks.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/search",
   "has": "project_type:modpack",
   "file": "search-modpacks.json"
  },
@@ -28,6 +33,11 @@
   "url": "https://api.modrinth.com/v2/projects?",
   "has": "",
   "file": "projects.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/project/",
+  "has": "minecraft",
+  "file": "versions-resourcepack.json"
  },
  {
   "url": "https://api.modrinth.com/v2/project/",

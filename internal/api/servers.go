@@ -227,6 +227,11 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if rp := spec.ResourcePack; rp != nil && rp.URL != "" && !strings.HasPrefix(rp.URL, "http://") && !strings.HasPrefix(rp.URL, "https://") {
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
+	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
+		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
+			return errBadRequest("A resource pack picked from a project names it: source modrinth, and its id.")
+		}
+	}
 	switch spec.AutoOp {
 	case "", "off", string(store.RoleOperator), string(store.RoleAdmin), string(store.RoleOwner):
 	default:
@@ -759,6 +764,12 @@ func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv
 // address is one hosted elsewhere now, and no longer the uploaded one.
 func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 	rp, was := spec.ResourcePack, previous.ResourcePack
+	// A pack picked from a project is that project's file: given another
+	// address, and not another project or version with it, it is no
+	// longer the project's.
+	if rp != nil && rp.Project != nil && was != nil && was.Project != nil && *rp.Project == *was.Project && rp.URL != was.URL {
+		rp.Project = nil
+	}
 	// Saying none is not how an uploaded pack is removed, which takes its
 	// file too: it is what settings from before it was uploaded say.
 	if (rp == nil || rp.URL == "") && was != nil && was.Uploaded != nil {
@@ -780,6 +791,8 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
 	}
 	rp.Uploaded = was.Uploaded.DeepCopy()
+	// The panel's own file is no project's.
+	rp.Project = nil
 	return nil
 }
 

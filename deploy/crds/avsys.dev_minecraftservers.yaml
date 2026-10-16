@@ -516,6 +516,30 @@ spec:
                 properties:
                   enforce:
                     type: boolean
+                  project:
+                    description: |-
+                      Project is set for a pack picked from Modrinth: URL and SHA1 are of
+                      the file of the version picked.
+                    properties:
+                      iconUrl:
+                        type: string
+                      id:
+                        description: ID is the project's slug or ID there.
+                        type: string
+                      source:
+                        enum:
+                        - modrinth
+                        type: string
+                      title:
+                        type: string
+                      version:
+                        type: string
+                      versionName:
+                        type: string
+                    required:
+                    - id
+                    - source
+                    type: object
                   prompt:
                     type: string
                   sha1:

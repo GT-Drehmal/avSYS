@@ -158,6 +158,22 @@ type ResourcePackSpec struct {
 	// server's files, where snapshots and copies take it along, and the
 	// panel serves it, at an address of its SHA1: URL is that address.
 	Uploaded *UploadedPack `json:"uploaded,omitempty"`
+	// Project is set for a pack picked from Modrinth: URL and SHA1 are of
+	// the file of the version picked.
+	Project *PackProject `json:"project,omitempty"`
+}
+
+// PackProject is the project a resource pack was picked from, and which
+// version of it.
+type PackProject struct {
+	// +kubebuilder:validation:Enum=modrinth
+	Source string `json:"source"`
+	// ID is the project's slug or ID there.
+	ID          string `json:"id"`
+	Version     string `json:"version,omitempty"`
+	VersionName string `json:"versionName,omitempty"`
+	Title       string `json:"title,omitempty"`
+	IconURL     string `json:"iconUrl,omitempty"`
 }
 
 // UploadedPack is what is known of a resource pack uploaded to the panel.

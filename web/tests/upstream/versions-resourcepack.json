@@ -1,0 +1,80 @@
+[
+ {
+  "id": "r0000003",
+  "project_id": "R0000001",
+  "name": "1.21.4-b",
+  "version_number": "1.21.4-b",
+  "version_type": "beta",
+  "game_versions": [
+   "1.21.4"
+  ],
+  "loaders": [
+   "minecraft"
+  ],
+  "date_published": "2026-09-25T10:00:00Z",
+  "dependencies": [],
+  "files": [
+   {
+    "url": "https://files.invalid/faithful-1.21.4-b.zip",
+    "filename": "faithful-1.21.4-b.zip",
+    "primary": true,
+    "hashes": {
+     "sha1": "3333333333333333333333333333333333333333"
+    },
+    "size": 13000000
+   }
+  ]
+ },
+ {
+  "id": "r0000002",
+  "project_id": "R0000001",
+  "name": "1.21.4-a",
+  "version_number": "1.21.4-a",
+  "version_type": "release",
+  "game_versions": [
+   "1.21.4"
+  ],
+  "loaders": [
+   "minecraft"
+  ],
+  "date_published": "2026-09-20T10:00:00Z",
+  "dependencies": [],
+  "files": [
+   {
+    "url": "https://files.invalid/faithful-1.21.4-a.zip",
+    "filename": "faithful-1.21.4-a.zip",
+    "primary": true,
+    "hashes": {
+     "sha1": "2222222222222222222222222222222222222222"
+    },
+    "size": 13000000
+   }
+  ]
+ },
+ {
+  "id": "r0000001",
+  "project_id": "R0000001",
+  "name": "1.21.3",
+  "version_number": "1.21.3",
+  "version_type": "release",
+  "game_versions": [
+   "1.21.4"
+  ],
+  "loaders": [
+   "minecraft"
+  ],
+  "date_published": "2026-08-20T10:00:00Z",
+  "dependencies": [],
+  "files": [
+   {
+    "url": "https://files.invalid/faithful-1.21.3.zip",
+    "filename": "faithful-1.21.3.zip",
+    "primary": true,
+    "hashes": {
+     "sha1": "1111111111111111111111111111111111111111"
+    },
+    "size": 13000000
+   }
+  ]
+ }
+]

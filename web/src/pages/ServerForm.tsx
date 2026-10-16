@@ -2,13 +2,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
+import { AddContentDialog, ContentList, kindsFor, kindsPhrase, PackCard, type PickKind, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, NodeChoice, type Join } from "../components/ServerFields";
 import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
+import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Loader, type Modpack, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
 import { ago, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
 import type { Origin } from "../lib/origin";
@@ -63,6 +63,8 @@ interface Values {
   motd: string;
   picture: PictureChange;
   mods: ContentRef[];
+  /** The resource pack offered to players, with whether it is required and its prompt. */
+  pack: ResourcePack | null;
   gamemode: string;
   difficulty: string;
   levelType: string;
@@ -101,6 +103,7 @@ const fresh: Values = {
   motd: "",
   picture: { kind: "none" },
   mods: [],
+  pack: null,
   gamemode: "",
   difficulty: "",
   levelType: "",
@@ -141,6 +144,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     motd: p["motd"] ?? "",
     picture: { kind: "keep" },
     mods: spec.mods ?? [],
+    pack: spec.resourcePack?.url ? spec.resourcePack : null,
     gamemode: p["gamemode"] ?? "",
     difficulty: p["difficulty"] ?? "",
     levelType: p["level-type"] ?? "",
@@ -233,7 +237,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     toast.info(`${loaders.find((l) => l.id === v.loader)?.name ?? "This software"} has no build for ${v.version} yet`);
     setValues((was) => ({ ...was, version: "LATEST" }));
   }, [source, v.version, versions.data, versions.isPlaceholderData, v.loader]);
-  const [addingMods, setAddingMods] = useState(false);
+  const [addingMods, setAddingMods] = useState<PickKind | null>(null);
   const [moreWorld, setMoreWorld] = useState(false);
   const [moreNetwork, setMoreNetwork] = useState(false);
   const [moreLaunch, setMoreLaunch] = useState(false);
@@ -257,6 +261,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const software: Software | null =
     v.kind === "modpack" ? { loader: "vanilla", version: v.version, modpack: v.modpack ?? { source: "modrinth", project: "" } } : v.loader ? { loader: v.loader, version: v.version } : null;
   const modsChanged = JSON.stringify(v.mods) !== JSON.stringify(start.mods);
+  const packChanged = JSON.stringify(v.pack) !== JSON.stringify(start.pack);
   // "Latest release" is whichever version that is now: picked for a copy of
   // a server already on it, nothing changes.
   const effective = (version: string) => (version === "LATEST" ? (versions.data?.latest ?? version) : version);
@@ -287,6 +292,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       storage: { size: fromGigabytes(v.storage) },
       expose: v.exposeType === "None" ? { type: "None" } : { type: v.exposeType, hostname: v.hostname.trim() },
       mods: v.mods,
+      ...(v.pack ? { resourcePack: v.pack } : {}),
       properties,
       // Members from this role up who have linked a Minecraft account are let in.
       ...(v.join !== "anyone" && v.join !== "list" ? { autoWhitelist: v.join } : {}),
@@ -325,6 +331,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     if (sleeps !== start.sleep || (sleeps && v.idleMinutes !== start.idleMinutes)) changes.sleep = { enabled: sleeps, idleMinutes: Number(v.idleMinutes) || 15 };
     if (v.schedule !== start.schedule) changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : null;
     if (modsChanged) changes.mods = v.mods;
+    // Left out, the original's comes with it, an uploaded one in its files.
+    // That one only made required keeps its file: the panel knows it by
+    // its address, and a request does not say a pack was uploaded.
+    if (packChanged) changes.resourcePack = v.pack && { ...v.pack, uploaded: null };
     const jvm: NonNullable<ServerSpec["jvm"]> = {};
     if (v.aikar !== start.aikar) jvm.aikarFlags = v.aikar;
     if (v.extraFlags !== start.extraFlags) jvm.extraFlags = v.extraFlags;
@@ -550,22 +560,46 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           source && software && <p className="text-[13px] text-muted">{v.modpack ? "Nothing on top of its modpack." : `No ${kindsPhrase(software)}.`}</p>
         )}
         <div className="flex flex-wrap items-center gap-3">
-          <Button icon={<Plus className="size-4" />} disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => setAddingMods(true)}>
+          <Button icon={<Plus className="size-4" />} disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => software && setAddingMods(kindsFor(software)[0])}>
             Add {software ? kindsPhrase(software) : "content"}
           </Button>
-          {source && modsChanged && (
-            <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => set("mods", start.mods)}>
+          {!v.pack && (
+            <Button disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => setAddingMods("resourcepack")}>
+              Choose a resource pack
+            </Button>
+          )}
+          {source && (modsChanged || packChanged) && (
+            <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setValues((was) => ({ ...was, mods: start.mods, pack: start.pack }))}>
               Put back as {source.name} has it
             </button>
           )}
         </div>
+        {v.pack && (
+          <div className="flex flex-col gap-3">
+            <PackCard pack={v.pack}>
+              <Button size="sm" disabled={!software} onClick={() => setAddingMods("resourcepack")}>
+                Replace
+              </Button>
+              <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Remove the resource pack" onClick={() => set("pack", null)} />
+            </PackCard>
+            <Toggle checked={!!v.pack.enforce} onChange={(enforce) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, enforce } }))} label="Pack required" hint="Players who decline the pack are disconnected." />
+            <Field label="Pack prompt" hint="Shown when the game asks to download the pack.">
+              {(id) => <Input id={id} value={v.pack?.prompt ?? ""} onChange={(e) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, prompt: e.target.value } }))} placeholder="A pack made for this world" />}
+            </Field>
+          </div>
+        )}
         {addingMods && software && (
           <AddContentDialog
             software={software}
             mods={v.mods}
             description={source ? "Downloaded when the server first starts. Files can be uploaded once it exists." : "Downloaded when the server first starts."}
             onAdd={(ref) => setValues((was) => ({ ...was, mods: [...was.mods, ref] }))}
-            onClose={() => setAddingMods(false)}
+            start={addingMods}
+            pack={{
+              current: v.pack,
+              onPick: async (pack) => setValues((was) => ({ ...was, pack: { ...pack, enforce: !!was.pack?.enforce, prompt: was.pack?.prompt ?? "" } })),
+            }}
+            onClose={() => setAddingMods(null)}
           />
         )}
       </Section>

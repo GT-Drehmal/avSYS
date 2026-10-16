@@ -568,6 +568,30 @@ func TestFromSnapshotKeepsTheStorageClass(t *testing.T) {
 	}
 }
 
+// A copy takes the original's resource pack unless another is asked for.
+// Its uploaded one, only made required or given a prompt, is still the one
+// in its files, which a request cannot say it has.
+func TestFromSnapshotResourcePack(t *testing.T) {
+	sha := strings.Repeat("ab", 20)
+	recorded := &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://panel.example/packs/" + sha + ".zip", SHA1: sha, Uploaded: &avsysv1.UploadedPack{Name: "p.zip", Size: 9}}}
+	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil); got.ResourcePack == nil || got.ResourcePack.Uploaded == nil {
+		t.Errorf("none asked: %+v, want the original's", got.ResourcePack)
+	}
+	said := map[string]json.RawMessage{"resourcePack": json.RawMessage(`{}`)}
+	asked := &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: recorded.ResourcePack.URL, Enforce: true, Prompt: "Please"}}
+	got := fromSnapshot(asked, recorded, said)
+	if rp := got.ResourcePack; rp == nil || rp.Uploaded == nil || rp.SHA1 != sha || !rp.Enforce || rp.Prompt != "Please" {
+		t.Errorf("made required: %+v, want the uploaded one, required", rp)
+	}
+	asked = &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://cdn.modrinth.example/p.zip", SHA1: strings.Repeat("cd", 20), Project: &avsysv1.PackProject{Source: "modrinth", ID: "faithful"}}}
+	if rp := fromSnapshot(asked, recorded, said).ResourcePack; rp == nil || rp.Uploaded != nil || rp.Project == nil {
+		t.Errorf("another picked: %+v, want the picked one", rp)
+	}
+	if rp := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, map[string]json.RawMessage{"resourcePack": json.RawMessage(`null`)}).ResourcePack; rp != nil {
+		t.Errorf("none asked for: %+v, want none", rp)
+	}
+}
+
 // What a snapshot recorded of its server is shown to every member, but what
 // decides which code runs, and may hold secrets, only to those who could
 // make a server out of it.
