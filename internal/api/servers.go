@@ -477,63 +477,44 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if len(in.Spec) == 0 {
 		return errBadRequest("Nothing to change: send {\"spec\": {...}}.")
 	}
-	current, err := json.Marshal(mc.Spec)
-	if err != nil {
-		return err
-	}
-	merged, err := jsonpatch.MergePatch(current, in.Spec)
-	if err != nil {
-		return errBadRequest("Malformed spec patch.")
-	}
-	var spec avsysv1.MinecraftServerSpec
-	if err := json.Unmarshal(merged, &spec); err != nil {
-		return errBadRequest("Invalid spec: %v", err)
-	}
-	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
-	if err := s.validateSpec(r.Context(), a.Namespace, mc.Name, &spec); err != nil {
-		return err
-	}
-	// Only a change of software is checked. A server whose version has since
-	// left its software's list can still have everything else changed.
-	if spec.Loader != mc.Spec.Loader || spec.Version != mc.Spec.Version || spec.LoaderVersion != mc.Spec.LoaderVersion {
-		if err := s.checkVersion(r.Context(), &spec); err != nil {
+	var previous *avsysv1.MinecraftServerSpec
+	var unlock func()
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	// Merged into the server as it is now, not as the cache last saw it,
+	// which can lag a change made a moment ago: by this panel, or the
+	// controller saying how the server is doing. Changed again between that
+	// read and the write, it is read and merged into again: a merge patch
+	// only changes what it names.
+	for attempt := 1; ; attempt++ {
+		if mc, err = s.live(r.Context(), mc); err != nil {
 			return err
 		}
-	}
-	// What Java the version needs is the panel's to say, not the request's.
-	if spec.Version != mc.Spec.Version || spec.GameJava != mc.Spec.GameJava {
-		s.resolveJava(r.Context(), &spec)
-	}
-	// Setting the state to Running here is starting the server by another
-	// route, and is held to the same rules as the start action.
-	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
-		if err := unfinished(mc); err != nil {
+		if previous, err = s.mergeSpec(r.Context(), a, mc, in.Spec); err != nil {
 			return err
 		}
-		if s.ops.current(a.Namespace, mc.Name) != nil {
-			return errSnapshotting
+		// The server's content is held still from here until what was taken
+		// off it is removed.
+		if unlock == nil {
+			unlock = s.lockContent(client.ObjectKeyFromObject(mc))
+		}
+		update := func() error { return s.Client.Update(r.Context(), mc) }
+		// A hostname it has already is left alone, even under a domain claimed
+		// by another since; only a new one is held to who claims what. It is
+		// compared as the router reads it: a server made outside the panel may
+		// have it in another case, or with a final dot.
+		if mc.Spec.Expose.Hostname != router.NormalizeHostname(previous.Expose.Hostname) {
+			err = s.withHostname(r.Context(), a.Org, mc.Spec.Expose.Hostname, update)
+		} else {
+			err = update()
+		}
+		if !apierrors.IsConflict(err) || attempt == 3 {
+			break
 		}
 	}
-	previous := mc.Spec.DeepCopy()
-	if err := s.resolveContent(r.Context(), &spec, previous); err != nil {
-		return err
-	}
-	// A hostname it has already is left alone, even under a domain claimed
-	// by another since; only a new one is held to who claims what. It is
-	// compared as the router reads it: a server made outside the panel may
-	// have it in another case, or with a final dot.
-	mc.Spec = spec
-	// The server's content is held still from here until what was taken
-	// off it is removed.
-	defer s.lockContent(client.ObjectKeyFromObject(mc))()
-	update := func() error { return s.Client.Update(r.Context(), mc) }
-	if spec.Expose.Hostname != router.NormalizeHostname(previous.Expose.Hostname) {
-		err = s.withHostname(r.Context(), a.Org, spec.Expose.Hostname, update)
-	} else {
-		err = update()
-	}
-	// Update carries the resource version read above, so a concurrent edit
-	// is rejected instead of silently overwritten.
 	if apierrors.IsConflict(err) {
 		return &Error{Status: http.StatusConflict, Code: "stale", Message: "This server was changed by someone else just now. Try again."}
 	} else if err != nil {
@@ -549,6 +530,55 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	writeJSON(w, http.StatusOK, s.view(mc))
 	return nil
+}
+
+// mergeSpec applies a merge patch to a server's spec, checks the result and
+// fills in what follows from it, and puts it on mc. It returns the spec as
+// it was.
+func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.MinecraftServer, patch json.RawMessage) (*avsysv1.MinecraftServerSpec, error) {
+	current, err := json.Marshal(mc.Spec)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := jsonpatch.MergePatch(current, patch)
+	if err != nil {
+		return nil, errBadRequest("Malformed spec patch.")
+	}
+	var spec avsysv1.MinecraftServerSpec
+	if err := json.Unmarshal(merged, &spec); err != nil {
+		return nil, errBadRequest("Invalid spec: %v", err)
+	}
+	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
+	if err := s.validateSpec(ctx, a.Namespace, mc.Name, &spec); err != nil {
+		return nil, err
+	}
+	// Only a change of software is checked. A server whose version has since
+	// left its software's list can still have everything else changed.
+	if spec.Loader != mc.Spec.Loader || spec.Version != mc.Spec.Version || spec.LoaderVersion != mc.Spec.LoaderVersion {
+		if err := s.checkVersion(ctx, &spec); err != nil {
+			return nil, err
+		}
+	}
+	// What Java the version needs is the panel's to say, not the request's.
+	if spec.Version != mc.Spec.Version || spec.GameJava != mc.Spec.GameJava {
+		s.resolveJava(ctx, &spec)
+	}
+	// Setting the state to Running here is starting the server by another
+	// route, and is held to the same rules as the start action.
+	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
+		if err := unfinished(mc); err != nil {
+			return nil, err
+		}
+		if s.ops.current(a.Namespace, mc.Name) != nil {
+			return nil, errSnapshotting
+		}
+	}
+	previous := mc.Spec.DeepCopy()
+	if err := s.resolveContent(ctx, &spec, previous); err != nil {
+		return nil, err
+	}
+	mc.Spec = spec
+	return previous, nil
 }
 
 func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.User) error {
