@@ -513,8 +513,12 @@ spec:
                     server.
                   properties:
                     name:
-                      description: Name says what it is for, as voice-chat.
-                      pattern: ^[a-z][a-z0-9-]{0,14}$
+                      description: |-
+                        Name says what it is for, as voice-chat. It is the port's name in a
+                        Service, held to the same rules: a letter first, a letter or digit
+                        last, and no two dashes together.
+                      maxLength: 15
+                      pattern: ^[a-z](-?[a-z0-9])*$
                       type: string
                     port:
                       description: Port is the one it listens on in the server.
@@ -706,6 +710,10 @@ spec:
                     address:
                       description: Address is host:port to reach it at, when the host
                         is known.
+                      type: string
+                    message:
+                      description: Message says why it is not open, when it cannot
+                        be.
                       type: string
                     name:
                       type: string

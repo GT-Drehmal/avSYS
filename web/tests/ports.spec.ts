@@ -53,6 +53,14 @@ test("an open port says where it is reached, and a port is taken off", async ({ 
   expect(sent[0].spec.ports).toEqual([]);
 });
 
+test("a port that cannot be opened says why", async ({ page }) => {
+  const why = "Not open: every public port from 25600 to 25609 is given out to other servers' extra ports. It opens once one is free.";
+  await survivalWith(page, { ports: [{ name: "geyser", port: 19132, protocol: "UDP" }] }, { ports: [{ name: "geyser", port: 19132, protocol: "UDP", message: why }] });
+  await page.goto("/o/friends/s/survival/settings");
+  await expect(page.getByText(why)).toBeVisible();
+  await expect(page.getByText("Being opened.")).toHaveCount(0);
+});
+
 test("a server not reachable from outside opens no ports", async ({ page }) => {
   await survivalWith(page, { expose: { type: "None" } });
   await page.goto("/o/friends/s/survival/settings");

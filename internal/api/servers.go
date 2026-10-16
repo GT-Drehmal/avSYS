@@ -427,6 +427,24 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	return nil
 }
 
+// serviceNameIsFree says whether a new server can have its Service by this
+// name: not when another server's Service has it, as the one its extra
+// ports are opened on, which is named after that server.
+func (s *Server) serviceNameIsFree(ctx context.Context, namespace, name string) error {
+	svc := &corev1.Service{}
+	err := s.nodeReader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, svc)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if owner := metav1.GetControllerOf(svc); owner != nil && owner.Kind == "MinecraftServer" && owner.Name != name {
+		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is the name %s's extra ports are opened under. Choose another.", name, owner.Name)}
+	}
+	return nil
+}
+
 // nameIsFree says whether a new server, other than one brought back, may
 // take this name. One that a server has now is taken. So is one that a
 // deleted server's snapshots are under: snapshots are kept by server name,
@@ -440,6 +458,9 @@ func (s *Server) nameIsFree(ctx context.Context, a *access, name string) error {
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &avsysv1.MinecraftServer{}); err == nil {
 		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
 	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err := s.serviceNameIsFree(ctx, a.Namespace, name); err != nil {
 		return err
 	}
 	if !s.Backups.Available() {
@@ -755,8 +776,8 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 		if p.Protocol == "" {
 			p.Protocol = corev1.ProtocolTCP
 		}
-		if !portName.MatchString(p.Name) {
-			return errBadRequest("A port's name is up to 15 lowercase letters, digits and dashes, starting with a letter, as voice-chat.")
+		if len(p.Name) > 15 || !portName.MatchString(p.Name) {
+			return errBadRequest("A port's name is up to 15 lowercase letters, digits and dashes, starting with a letter and ending with a letter or digit, with no two dashes together, as voice-chat.")
 		}
 		if p.Name == "minecraft" {
 			return errBadRequest("minecraft is the game port's name; call it something else.")
@@ -785,7 +806,9 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 	return nil
 }
 
-var portName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,14}$`)
+// portName is a Service port's name, which a port's is: a letter first, a
+// letter or digit last, no two dashes together.
+var portName = regexp.MustCompile(`^[a-z](-?[a-z0-9])*$`)
 
 // rcon runs a console command on a running server.
 func (s *Server) rcon(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error) {

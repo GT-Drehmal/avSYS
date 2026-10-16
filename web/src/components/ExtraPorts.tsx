@@ -58,7 +58,9 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
               </Select>
               <Button size="sm" aria-label={`Remove ${p.name || "this port"}`} icon={<X className="size-3.5" />} onClick={() => onChange(ports.filter((_, j) => j !== i))} />
             </div>
-            {open?.address ? (
+            {open?.message ? (
+              <span className="text-xs text-warn">{open.message}</span>
+            ) : open?.address ? (
               <span className="flex items-center gap-1.5 text-xs text-muted">
                 Reached at <CopyText value={open.address} />
               </span>

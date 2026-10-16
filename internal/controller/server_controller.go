@@ -98,7 +98,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.ensurePlacement(ctx, mc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("placement: %w", err)
 	}
-	ports, err := r.ensurePorts(ctx, mc, svc)
+	ports, waiting, err := r.ensurePorts(ctx, mc, svc)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ports: %w", err)
 	}
@@ -106,7 +106,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("pod: %w", err)
 	}
-	return ctrl.Result{}, r.updateStatus(ctx, mc, pod, svc, ports, pending)
+	// Ports waiting for a public port are looked at again: another server
+	// giving one back says nothing to this one.
+	var result ctrl.Result
+	if waiting {
+		result.RequeueAfter = time.Minute
+	}
+	return result, r.updateStatus(ctx, mc, pod, svc, ports, pending)
 }
 
 // leftOf reports whether an object belongs to another server than this one,

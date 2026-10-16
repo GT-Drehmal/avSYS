@@ -328,6 +328,9 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
+	if err := s.serviceNameIsFree(ctx, a.Namespace, name); err != nil {
+		return err
+	}
 	// The state asked for is only applied once the files are in, which is too
 	// late to find out that it is not one.
 	if st := requested.State; st != "" && st != avsysv1.StateRunning && st != avsysv1.StateStopped {

@@ -264,8 +264,11 @@ type JVMSpec struct {
 // +kubebuilder:validation:XValidation:rule="self.port != 25565 && self.port != 25575",message="25565 is the game's and 25575 its console's"
 // +kubebuilder:validation:XValidation:rule="self.name != 'minecraft'",message="minecraft is the game port's name"
 type ExtraPort struct {
-	// Name says what it is for, as voice-chat.
-	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]{0,14}$`
+	// Name says what it is for, as voice-chat. It is the port's name in a
+	// Service, held to the same rules: a letter first, a letter or digit
+	// last, and no two dashes together.
+	// +kubebuilder:validation:MaxLength=15
+	// +kubebuilder:validation:Pattern=`^[a-z](-?[a-z0-9])*$`
 	Name string `json:"name"`
 	// Port is the one it listens on in the server.
 	// +kubebuilder:validation:Minimum=1
@@ -286,6 +289,8 @@ type PortStatus struct {
 	PublicPort int32 `json:"publicPort,omitempty"`
 	// Address is host:port to reach it at, when the host is known.
 	Address string `json:"address,omitempty"`
+	// Message says why it is not open, when it cannot be.
+	Message string `json:"message,omitempty"`
 }
 
 type MinecraftServerSpec struct {

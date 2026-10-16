@@ -195,6 +195,8 @@ export interface PortStatus {
   protocol: "TCP" | "UDP";
   publicPort?: number;
   address?: string;
+  /** Why it is not open, when it cannot be. */
+  message?: string;
 }
 
 export interface ServerStatus {

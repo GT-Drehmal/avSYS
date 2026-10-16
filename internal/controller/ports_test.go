@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -11,6 +12,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -64,7 +66,7 @@ func TestSharedAddressPorts(t *testing.T) {
 	mc := withPorts("probe", avsysv1.ExposeRouter, voice, bedrok)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(other, mc).Build()
 	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25699}}}
-	ports, err := r.ensurePorts(context.Background(), mc, nil)
+	ports, _, err := r.ensurePorts(context.Background(), mc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +88,7 @@ func TestSharedAddressPorts(t *testing.T) {
 	if err := c.Update(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
-	if ports, err = r.ensurePorts(context.Background(), now, nil); err != nil || len(ports) != 1 || ports[0].PublicPort != 25602 {
+	if ports, _, err = r.ensurePorts(context.Background(), now, nil); err != nil || len(ports) != 1 || ports[0].PublicPort != 25602 {
 		t.Errorf("after one is taken off: %+v %v", ports, err)
 	}
 	if got := now.Annotations[avsysv1.AnnotationPublicPorts]; got != "geyser=25602" {
@@ -98,7 +100,7 @@ func TestSharedAddressPorts(t *testing.T) {
 	if err := c.Update(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ensurePorts(context.Background(), now, nil); err != nil {
+	if _, _, err := r.ensurePorts(context.Background(), now, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "mc-x", Name: PortsServiceName("probe")}, &corev1.Service{}); err == nil {
@@ -116,7 +118,7 @@ func TestSharedAddressPortsWithoutRange(t *testing.T) {
 	mc := withPorts("probe", avsysv1.ExposeRouter, voice)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc).Build()
 	r := &Reconciler{Client: c, Reader: c, Scheme: scheme}
-	if _, err := r.ensurePorts(context.Background(), mc, nil); err != nil {
+	if _, _, err := r.ensurePorts(context.Background(), mc, nil); err != nil {
 		t.Fatal(err)
 	}
 	svc := &corev1.Service{}
@@ -164,7 +166,7 @@ func TestPortsOwnAddress(t *testing.T) {
 	mc := withPorts("probe", avsysv1.ExposeRouter, voice)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(router, mc).WithStatusSubresource(&corev1.Service{}).Build()
 	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25699}, RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"}, PortsServiceAnnotations: map[string]string{"metallb.universe.tf/allow-shared-ip": "avsys"}}}
-	if _, err := r.ensurePorts(context.Background(), mc, nil); err != nil {
+	if _, _, err := r.ensurePorts(context.Background(), mc, nil); err != nil {
 		t.Fatal(err)
 	}
 	own := &corev1.Service{}
@@ -180,12 +182,83 @@ func TestPortsOwnAddress(t *testing.T) {
 		if err := c.Status().Update(context.Background(), own); err != nil {
 			t.Fatal(err)
 		}
-		ports, err := r.ensurePorts(context.Background(), mc, nil)
+		ports, _, err := r.ensurePorts(context.Background(), mc, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if ports[0].Address != want {
 			t.Errorf("given %s: shown %s, want %s", ip, ports[0].Address, want)
 		}
+	}
+}
+
+// With every public port given out, a server still runs: the ports left
+// over are not opened, say why, and are looked at again.
+func TestPortRangeFull(t *testing.T) {
+	scheme := portsScheme(t)
+	other := withPorts("other", avsysv1.ExposeRouter, voice)
+	other.Annotations = map[string]string{avsysv1.AnnotationPublicPorts: "voice-chat=25600"}
+	mc := withPorts("probe", avsysv1.ExposeRouter, voice, bedrok)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(other, mc).Build()
+	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25601}}}
+	ports, retry, err := r.ensurePorts(context.Background(), mc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retry || len(ports) != 2 || ports[0].PublicPort != 25601 || ports[0].Message != "" || ports[1].PublicPort != 0 || !strings.Contains(ports[1].Message, "every public port from 25600 to 25601") {
+		t.Fatalf("retry %v, ports %+v", retry, ports)
+	}
+	svc := &corev1.Service{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "mc-x", Name: PortsServiceName("probe")}, svc); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.Spec.Ports) != 1 || svc.Spec.Ports[0].Name != "voice-chat" {
+		t.Errorf("service ports: %+v", svc.Spec.Ports)
+	}
+	// None free at all: no Service, which cannot have no ports, and the
+	// server is not held up.
+	lone := withPorts("lone", avsysv1.ExposeRouter, webmap)
+	if err := c.Create(context.Background(), lone); err != nil {
+		t.Fatal(err)
+	}
+	ports, retry, err = r.ensurePorts(context.Background(), lone, nil)
+	if err != nil || !retry || len(ports) != 1 || ports[0].Message == "" {
+		t.Fatalf("lone: %v %v %+v", err, retry, ports)
+	}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "mc-x", Name: PortsServiceName("lone")}, &corev1.Service{}); err == nil {
+		t.Error("a Service with no ports was made")
+	}
+}
+
+// A server named as another's Service of extra ports has its own Service by
+// that name: it is never changed or removed for the other's ports.
+func TestPortsServiceOfAnotherServer(t *testing.T) {
+	scheme := portsScheme(t)
+	mc := withPorts("foo", avsysv1.ExposeRouter, voice)
+	named := withPorts("foo-ports", avsysv1.ExposeRouter)
+	theirs := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "foo-ports"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Ports: []corev1.ServicePort{{Name: "minecraft", Port: 25565}}}}
+	if err := controllerutil.SetControllerReference(named, theirs, scheme); err != nil {
+		t.Fatal(err)
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, named, theirs).Build()
+	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25699}}}
+	ports, _, err := r.ensurePorts(context.Background(), mc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 1 || !strings.Contains(ports[0].Message, "another server's") {
+		t.Errorf("ports: %+v", ports)
+	}
+	// Taking the ports away does not remove it either.
+	mc.Spec.Ports = nil
+	if _, _, err := r.ensurePorts(context.Background(), mc, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := &corev1.Service{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "mc-x", Name: "foo-ports"}, got); err != nil {
+		t.Fatalf("the other server's Service: %v", err)
+	}
+	if got.Spec.Type != corev1.ServiceTypeClusterIP || len(got.Spec.Ports) != 1 || got.Spec.Ports[0].Name != "minecraft" {
+		t.Errorf("the other server's Service was changed: %s %+v", got.Spec.Type, got.Spec.Ports)
 	}
 }

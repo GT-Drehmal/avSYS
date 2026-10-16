@@ -89,8 +89,9 @@ var allocating sync.Mutex
 // allocatePorts gives each extra port of a server sharing the router's
 // address a public port of its own from the range, one that no other server
 // has, and records them on the server. Ports it no longer has give theirs
-// back. Without a range nothing is given out.
-func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftServer) (map[string]int32, error) {
+// back. Without a range nothing is given out. With every one given out, the
+// ports left over get none, and full says so: the server runs without them.
+func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftServer) (given map[string]int32, full bool, err error) {
 	have := publicPorts(mc)
 	want := map[string]int32{}
 	if sharesAddress(mc) && r.Config.PortRange.First != 0 {
@@ -104,7 +105,7 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 			defer allocating.Unlock()
 			var all avsysv1.MinecraftServerList
 			if err := r.Reader.List(ctx, &all); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			taken := map[int32]bool{}
 			for i := range all.Items {
@@ -128,7 +129,8 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 					next++
 				}
 				if next > r.Config.PortRange.Last {
-					return nil, fmt.Errorf("every public port from %d to %d is given out", r.Config.PortRange.First, r.Config.PortRange.Last)
+					full = true
+					continue
 				}
 				want[p.Name], taken[next] = next, true
 			}
@@ -145,10 +147,10 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 			mc.Annotations[avsysv1.AnnotationPublicPorts] = written
 		}
 		if err := r.Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
-	return want, nil
+	return want, full, nil
 }
 
 // ensurePorts opens a server's extra ports and says where they are reached.
@@ -156,20 +158,52 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 // Service (see applyService), at their own numbers or node ports. One that
 // shares the router's address has a Service of their own, on the public
 // ports given out to it, or node ports. One that is not exposed has none.
-func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServer, svc *corev1.Service) ([]avsysv1.PortStatus, error) {
-	public, err := r.allocatePorts(ctx, mc)
+//
+// A port that cannot be opened says why, and the server runs without it:
+// retry is set while some wait for a public port to come free.
+func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServer, svc *corev1.Service) (st []avsysv1.PortStatus, retry bool, err error) {
+	public, full, err := r.allocatePorts(ctx, mc)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	own := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: mc.Namespace, Name: PortsServiceName(mc.Name)}}
-	if !sharesAddress(mc) || len(mc.Spec.Ports) == 0 {
-		if err := r.Delete(ctx, own); client.IgnoreNotFound(err) != nil {
-			return nil, err
+	// Its name can be another server's own Service, of a server named so:
+	// that one is never changed or removed from here.
+	existing := &corev1.Service{}
+	err = r.Reader.Get(ctx, client.ObjectKeyFromObject(own), existing)
+	if client.IgnoreNotFound(err) != nil {
+		return nil, false, err
+	}
+	theirs := err == nil && !metav1.IsControlledBy(existing, mc)
+	// Without a public port they are left off the Service, which cannot be
+	// made with no ports at all.
+	open := make([]avsysv1.ExtraPort, 0, len(mc.Spec.Ports))
+	for _, p := range mc.Spec.Ports {
+		if _, ok := public[p.Name]; ok || r.Config.PortRange.First == 0 {
+			open = append(open, p)
+		}
+	}
+	if !sharesAddress(mc) || len(open) == 0 || theirs {
+		if !theirs {
+			if err := r.Delete(ctx, own); client.IgnoreNotFound(err) != nil {
+				return nil, false, err
+			}
 		}
 		if len(mc.Spec.Ports) == 0 || mc.Spec.Expose.Type == avsysv1.ExposeNone {
-			return nil, nil
+			return nil, false, nil
 		}
-		return portStatus(mc, svc, nil, r.Config), nil
+		if !sharesAddress(mc) {
+			return portStatus(mc, svc, nil, r.Config), false, nil
+		}
+		st = portStatus(mc, nil, nil, r.Config)
+		for i := range st {
+			if theirs {
+				st[i].Message = fmt.Sprintf("Not open: the Service these would be opened on, %s, is another server's. That server and this one cannot both have them.", own.Name)
+			} else {
+				st[i].Message = r.noneFree()
+			}
+		}
+		return st, full, nil
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, own, func() error {
 		own.Labels = labelsFor(mc)
@@ -183,8 +217,8 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		for _, p := range own.Spec.Ports {
 			kept[p.Name] = p.NodePort
 		}
-		ports := make([]corev1.ServicePort, 0, len(mc.Spec.Ports))
-		for _, p := range mc.Spec.Ports {
+		ports := make([]corev1.ServicePort, 0, len(open))
+		for _, p := range open {
 			sp := corev1.ServicePort{Name: portServiceName(p), Port: p.Port, TargetPort: intstr.FromInt32(p.Port), Protocol: protocolOf(p), NodePort: kept[portServiceName(p)]}
 			if n := public[p.Name]; n != 0 {
 				sp.Port = n
@@ -195,9 +229,9 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		return controllerutil.SetControllerReference(mc, own, r.Scheme)
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	st := portStatus(mc, own, public, r.Config)
+	st = portStatus(mc, own, public, r.Config)
 	// Where the load balancer put these ports on an address of their own,
 	// not the router's that the hostname points at, that address is shown.
 	if host := r.ownAddress(ctx, own); host != "" {
@@ -207,7 +241,17 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 			}
 		}
 	}
-	return st, nil
+	for i := range st {
+		if _, ok := public[st[i].Name]; !ok && r.Config.PortRange.First != 0 {
+			st[i].Message = r.noneFree()
+		}
+	}
+	return st, full, nil
+}
+
+// noneFree says a port has no public port as every one is given out.
+func (r *Reconciler) noneFree() string {
+	return fmt.Sprintf("Not open: every public port from %d to %d is given out to other servers' extra ports. It opens once one is free.", r.Config.PortRange.First, r.Config.PortRange.Last)
 }
 
 // ownAddress is the address a server's Service of extra ports was given by
