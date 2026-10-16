@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -150,5 +153,108 @@ func TestHeldForMove(t *testing.T) {
 	}
 	if err := heldForMove(&avsysv1.MinecraftServer{}, "ffff0000"); err != nil {
 		t.Errorf("no move: %v", err)
+	}
+}
+
+// A move that carries a server's files holds it for their restore and marks
+// it as moving in one change: a panel stopped between two would leave it
+// held for a restore that finishes no move, and not put back either.
+func TestPlaceMarksTheMoveAtOnce(t *testing.T) {
+	p := newPanel(t)
+	key := client.ObjectKey{Namespace: "mc-alpha", Name: "world"}
+	patches := 0
+	p.srv.Client = interceptor.NewClient(p.srv.Client.(client.WithWatch), interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patches++
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	})
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "b"}, Status: corev1.NodeStatus{
+		Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Gi")},
+		Conditions:  []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+	}}
+	if err := p.srv.Client.Create(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.srv.place(context.Background(), key, "b", "abcd1234"); err != nil {
+		t.Fatal(err)
+	}
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), key, mc); err != nil {
+		t.Fatal(err)
+	}
+	if patches != 1 || mc.Annotations[avsysv1.AnnotationMoving] != "b" || mc.Annotations[avsysv1.AnnotationRestoring] != "abcd1234" || mc.Annotations[avsysv1.AnnotationNode] != "b" {
+		t.Errorf("%d changes, annotations %v", patches, mc.Annotations)
+	}
+}
+
+// A move that takes no snapshot, over shared storage, leaves what the server
+// says of its snapshots as it was: a failed one stays failed, and its own
+// failure is not one.
+func TestMoveWithoutSnapshotLeavesSnapshotStatus(t *testing.T) {
+	p := newPanel(t)
+	key := client.ObjectKey{Namespace: "mc-alpha", Name: "world"}
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), key, mc); err != nil {
+		t.Fatal(err)
+	}
+	mc.Status.Snapshots = &avsysv1.SnapshotStatus{Error: "the nightly snapshot failed"}
+	if err := p.srv.Client.Status().Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	for _, moved := range []error{nil, errors.New("its pod did not start on b")} {
+		if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindMove, ""); !ok {
+			t.Fatal("the move did not begin")
+		}
+		p.srv.finishUnsaved(context.Background(), "mc-alpha", "world", kindMove, moved)
+		if err := p.srv.Client.Get(context.Background(), key, mc); err != nil {
+			t.Fatal(err)
+		}
+		if mc.Status.Snapshots == nil || mc.Status.Snapshots.Error != "the nightly snapshot failed" {
+			t.Errorf("after a move that ended with %v: %+v", moved, mc.Status.Snapshots)
+		}
+		if p.srv.ops.current("mc-alpha", "world") != nil {
+			t.Error("the move was not ended")
+		}
+	}
+}
+
+// A server placed on another node whose pod is still where it was, as when a
+// move over shared storage did not finish, can be moved back there.
+func TestMoveBackWhilePlacedElsewhere(t *testing.T) {
+	p := newPanel(t)
+	key := client.ObjectKey{Namespace: "mc-alpha", Name: "world"}
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), key, mc); err != nil {
+		t.Fatal(err)
+	}
+	mc.Annotations = map[string]string{avsysv1.AnnotationNode: "b"}
+	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	mc.Status.Node = "a"
+	if err := p.srv.Client.Status().Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	move := func(node string) string {
+		req := httptest.NewRequest("POST", "/api/v1/orgs/alpha/servers/world/move", strings.NewReader(`{"node":"`+node+`"}`))
+		req.Header.Set("Authorization", "Bearer "+p.tokens["owner"])
+		rec := httptest.NewRecorder()
+		p.h.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+	if got := move("a"); strings.Contains(got, "already") {
+		t.Errorf("moving it back to where its pod still is: %s", got)
+	}
+	// Placed where it runs, it is there already.
+	if err := p.srv.Client.Get(context.Background(), key, mc); err != nil {
+		t.Fatal(err)
+	}
+	mc.Annotations[avsysv1.AnnotationNode] = "a"
+	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	if got := move("a"); !strings.Contains(got, "already") {
+		t.Errorf("moving it to where it is: %s", got)
 	}
 }

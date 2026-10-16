@@ -74,7 +74,10 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 	if in.Node == "" {
 		return errBadRequest("Say which node to move it to.")
 	}
-	if in.Node == nodeOf(mc) {
+	// Where it runs, and where it is placed: during a move over shared
+	// storage that did not finish its pod may still be where it was, and
+	// it can be moved back there.
+	if placed := mc.Annotations[avsysv1.AnnotationNode]; in.Node == nodeOf(mc) && (placed == "" || placed == in.Node || mc.Status.Node == "") {
 		return errBadRequest("It is on %s already.", in.Node)
 	}
 	if err := unfinished(mc); err != nil {
@@ -87,6 +90,10 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 	from, err := controller.VolumeNode(r.Context(), s.nodeReader(), mc)
 	if err != nil {
 		return err
+	}
+	// Files on a node's own disk that are on that node already.
+	if from == in.Node {
+		return errBadRequest("It is on %s already.", in.Node)
 	}
 	// Files not on the node's own disk stay where they are, and the new node
 	// has to be one their volume can be used on.
@@ -111,7 +118,13 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 		ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 		defer cancel()
 		snap, err := s.move(ctx, a.Org.Slug, mc, in.Node, from, op, u.Username)
-		s.finishOperation(ctx, a.Namespace, mc.Name, kindMove, snap, snap, err)
+		if from == "" {
+			// Nothing was snapshotted or restored: what the server says of
+			// its snapshots is left as it is.
+			s.finishUnsaved(ctx, a.Namespace, mc.Name, kindMove, err)
+		} else {
+			s.finishOperation(ctx, a.Namespace, mc.Name, kindMove, snap, snap, err)
+		}
 		if err == nil {
 			s.audit(ctx, u, a.Org, "server.move", mc.Name, "to "+in.Node)
 		}
@@ -152,7 +165,7 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 		// Nothing to carry: placed on the new node, and its pod made again
 		// there.
 		s.setOperation(mc.Namespace, op, "Starting it on "+target, 0)
-		if err := s.place(ctx, key, target, false); err != nil {
+		if err := s.place(ctx, key, target, ""); err != nil {
 			return nil, err
 		}
 		return nil, s.waitPodOn(ctx, key, target, 10*time.Minute)
@@ -193,13 +206,10 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	}
 
 	// From here its files on the old node are let go of. The game is held
-	// stopped until they are back, by the same mark as a restore.
-	if err := s.markRestoring(ctx, key, snap.ID); err != nil {
-		restart()
-		return snap, err
-	}
-	if err := s.place(ctx, key, target, true); err != nil {
-		_ = s.markRestoring(context.WithoutCancel(ctx), key, "")
+	// stopped until they are back, by the same mark as a restore, put on in
+	// the same change: a panel that stopped between the two would leave a
+	// server held for a restore that is not one, and not moving either.
+	if err := s.place(ctx, key, target, snap.ID); err != nil {
 		restart()
 		return snap, err
 	}
@@ -263,9 +273,11 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 }
 
 // place records a server on a node, checked to have room for it, one at a
-// time with every other placement. With carry, the controller then takes its
-// volume off the node it leaves; without, its pod is only made again.
-func (s *Server) place(ctx context.Context, key client.ObjectKey, node string, carry bool) error {
+// time with every other placement. Carrying its files over in a snapshot,
+// the controller then takes its volume off the node it leaves, and it is
+// held stopped until the snapshot is restored there; without, its pod is
+// only made again.
+func (s *Server) place(ctx context.Context, key client.ObjectKey, node, carry string) error {
 	defer controller.LockPlacement()()
 	mc := &avsysv1.MinecraftServer{}
 	if err := s.Client.Get(ctx, key, mc); err != nil {
@@ -279,8 +291,9 @@ func (s *Server) place(ctx context.Context, key client.ObjectKey, node string, c
 		mc.Annotations = map[string]string{}
 	}
 	mc.Annotations[avsysv1.AnnotationNode] = node
-	if carry {
+	if carry != "" {
 		mc.Annotations[avsysv1.AnnotationMoving] = node
+		mc.Annotations[avsysv1.AnnotationRestoring] = carry
 	} else {
 		mc.Annotations[avsysv1.AnnotationRestart] = time.Now().UTC().Format(time.RFC3339Nano)
 	}

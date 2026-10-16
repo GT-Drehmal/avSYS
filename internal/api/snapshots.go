@@ -772,6 +772,19 @@ func (s *Server) finishOperation(ctx context.Context, namespace, server, kind st
 	s.finish(ctx, namespace, server, kind, subject, newest, opErr, false)
 }
 
+// finishUnsaved ends an operation that took no snapshot and restored none,
+// leaving what the server says of its snapshots as it is.
+func (s *Server) finishUnsaved(ctx context.Context, namespace, server, kind string, opErr error) {
+	org, _ := s.orgOfNamespace(namespace)
+	done := operationDone{Kind: kind, Org: org, Server: server}
+	if opErr != nil {
+		done.Error = opErr.Error()
+		s.Log.Error(kind+" failed", "namespace", namespace, "server", server, "error", opErr)
+	}
+	s.ops.end(namespace, server)
+	s.Events.Publish(Event{Type: "operation.done", Namespace: namespace, Data: done})
+}
+
 // finish is finishOperation, with scheduled set for a run of the daily
 // snapshot. One that completed is noted on the server as such even when it
 // found nothing to save.
