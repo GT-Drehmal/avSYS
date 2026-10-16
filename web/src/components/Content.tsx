@@ -114,7 +114,11 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
   const [url, setUrl] = useState("");
   const picked = new Set(mods.filter((m) => m.source === "modrinth").map((m) => m.project));
   // "Latest" is what the server's own software will get, which can be behind the newest there is.
-  const latest = useGameVersions(software.modpack ? null : software.loader).data?.latest;
+  const versions = useGameVersions(software.modpack ? null : software.loader);
+  // Another kind's list, shown while this one's loads, is not this one's latest.
+  const latest = versions.isPlaceholderData ? undefined : versions.data?.latest;
+  // A pack is picked for one game version: for "latest", once it is known which.
+  const unknownLatest = !software.modpack && software.version === "LATEST" && !latest;
 
   const filters = filtersFor(software, kind, latest);
 
@@ -147,7 +151,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
           </div>
         </div>
         {kind === "resourcepack" && pack ? (
-          <PackPane pack={pack} tab={sourceTab} filters={filters} fits={fitsOf(filters)} onClose={onClose} />
+          <PackPane pack={pack} tab={sourceTab} filters={filters} fits={fitsOf(filters)} waiting={unknownLatest} onClose={onClose} />
         ) : tab === "modrinth" ? (
           <div className="h-[min(60vh,560px)]">
             <ModrinthSearch
@@ -253,7 +257,14 @@ export function fileOf(url: string) {
 export const packTitle = (p: ResourcePack) => p.project?.title || p.project?.id || p.uploaded?.name || fileOf(p.url);
 
 /** The resource pack's three ways in, in the picker. One replaces the one there was. */
-function PackPane({ pack, tab, filters, fits, onClose }: { pack: PackPicker; tab: "modrinth" | "url" | "upload"; filters: { loader?: string; gameVersion?: string }; fits?: string; onClose: () => void }) {
+function PackPane({
+  pack,
+  tab,
+  filters,
+  fits,
+  waiting,
+  onClose,
+}: { pack: PackPicker; tab: "modrinth" | "url" | "upload"; filters: { loader?: string; gameVersion?: string }; fits?: string; waiting?: boolean; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState("");
   const [sha1, setSha1] = useState("");
@@ -294,7 +305,7 @@ function PackPane({ pack, tab, filters, fits, onClose }: { pack: PackPicker; tab
             {...filters}
             fits={fits}
             picked={new Set(current?.project ? [current.project.id] : [])}
-            busy={pending}
+            busy={pending || waiting}
             pickLabels={["Use this pack", "In use"]}
             placeholder="Search resource packs on Modrinth"
             onPick={(hit) => pick(() => newestPack(projectOf(hit), filters.gameVersion))}

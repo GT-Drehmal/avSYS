@@ -364,10 +364,12 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
 		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made, or takes the one of the server it is copied from.")
 	}
-	// One given here is checked; one a copy takes from its original is
-	// as the original has it.
-	if err := checkPackSHA1(in.Spec.ResourcePack, nil); err != nil {
-		return err
+	// One given here is checked. A copy's is checked once it is known what
+	// its original has: the original's own is taken as it is.
+	if raw.FromSnapshot == "" && raw.FromServer == "" {
+		if err := checkPackSHA1(in.Spec.ResourcePack, nil); err != nil {
+			return err
+		}
 	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
