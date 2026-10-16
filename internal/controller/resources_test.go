@@ -560,3 +560,21 @@ func TestUploadedPackURL(t *testing.T) {
 		t.Errorf("hosted elsewhere: %s", got)
 	}
 }
+
+// The game reads a pack's prompt as a JSON text component: plain text
+// would be thrown away.
+func TestPackPrompt(t *testing.T) {
+	for in, want := range map[string]string{
+		"drehmal":                      `"drehmal"`,
+		`Say "yes"`:                    `"Say \"yes\""`,
+		"":                             `""`,
+		`{"text":"Hi","color":"gold"}`: `{"text":"Hi","color":"gold"}`,
+		`[{"text":"a"},{"text":"b"}]`:  `[{"text":"a"},{"text":"b"}]`,
+		`"already"`:                    `"already"`,
+		`{not json`:                    `"{not json"`,
+	} {
+		if got := packPrompt(in); got != want {
+			t.Errorf("%q: %s, want %s", in, got, want)
+		}
+	}
+}
