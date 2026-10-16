@@ -232,7 +232,7 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 		return err
 	}
 	// The settings say the new pack: any other is gone from them.
-	removeOtherPacks(sc, sha)
+	s.dropPacks(r.Context(), sc, nil, client.ObjectKeyFromObject(mc), sha, was)
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, sha)
 	go s.prunePacksNow(context.WithoutCancel(r.Context()))
 	writeJSON(w, http.StatusOK, s.view(now))
@@ -265,9 +265,8 @@ func (s *Server) deleteResourcePack(w http.ResponseWriter, r *http.Request, u *s
 		return err
 	}
 	if uploaded {
-		if sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name); err == nil {
-			removeOtherPacks(sc, "")
-		}
+		sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
+		s.dropPacks(r.Context(), sc, err, client.ObjectKeyFromObject(mc), "", orig.Spec.ResourcePack)
 	}
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, "removed")
 	go s.prunePacksNow(context.WithoutCancel(r.Context()))
@@ -362,17 +361,44 @@ func (s *Server) prunePacksNow(ctx context.Context) {
 }
 
 // removeOtherPacks removes the uploaded packs in a server's files but the one
-// of this hash, as with "" all of them.
-func removeOtherPacks(sc *sftp.Client, keep string) {
+// of this hash, as with "" all of them, and says if any could not be.
+func removeOtherPacks(sc *sftp.Client, keep string) error {
 	entries, err := sc.ReadDir(packDir)
-	if err != nil {
-		return
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
 	}
+	if err != nil {
+		return err
+	}
+	var failed error
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, "resource-pack-") && name != path.Base(packFile(keep)) {
-			_ = sc.Remove(packDir + "/" + name)
+			if err := sc.Remove(packDir + "/" + name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				failed = err
+			}
 		}
+	}
+	return failed
+}
+
+// dropPacks removes the uploaded packs in a server's files but the one of
+// this hash, through sc, or notes the one its settings said before (was) as
+// left to remove when that cannot be done now. The look once a minute that
+// finishes content taken off a server then removes it: otherwise it would
+// stay in its files, and its snapshots, until another pack was uploaded.
+func (s *Server) dropPacks(ctx context.Context, sc *sftp.Client, reached error, key client.ObjectKey, keep string, was *avsysv1.ResourcePackSpec) {
+	err := reached
+	if err == nil {
+		err = removeOtherPacks(sc, keep)
+	}
+	if err == nil || was == nil || was.Uploaded == nil || was.SHA1 == keep {
+		return
+	}
+	s.Log.Warn("could not remove a resource pack taken off a server; trying again later", "server", key.Name, "error", err)
+	ctx = context.WithoutCancel(ctx)
+	if err := s.setContentLeft(ctx, key, func(left []string) []string { return union(left, []string{packFile(was.SHA1)}) }); err != nil {
+		s.Log.Warn("could not note a resource pack left to remove", "server", key.Name, "error", err)
 	}
 }
 
@@ -383,9 +409,8 @@ func (s *Server) removeDroppedPack(ctx context.Context, namespace, name string, 
 	if was == nil || was.Uploaded == nil || (now != nil && now.Uploaded != nil && now.SHA1 == was.SHA1) {
 		return
 	}
-	if sc, err := s.workspaces.get(ctx, namespace, name); err == nil {
-		removeOtherPacks(sc, "")
-	}
+	sc, err := s.workspaces.get(ctx, namespace, name)
+	s.dropPacks(ctx, sc, err, client.ObjectKey{Namespace: namespace, Name: name}, "", was)
 }
 
 func (s *Server) cachedPack(sha string) string {
@@ -393,6 +418,9 @@ func (s *Server) cachedPack(sha string) string {
 }
 
 var packName = regexp.MustCompile(`^([0-9a-f]{40})\.zip$`)
+
+// packFileName is an uploaded pack's file in a server's files.
+var packFileName = regexp.MustCompile(`^resource-pack-[0-9a-f]{40}\.zip$`)
 
 // PackHandler serves uploaded resource packs to players' games, which fetch
 // them with no session: /packs/<sha1>.zip and nothing else. A pack's address

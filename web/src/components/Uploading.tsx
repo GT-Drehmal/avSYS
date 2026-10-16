@@ -10,8 +10,9 @@ export interface Sending {
 }
 
 /**
- * Uploads that say how far they are and can be stopped. send resolves to the
- * answer, or rejects; one that was stopped rejects with code "aborted".
+ * Uploads that say how far they are and can be stopped, one at a time. send
+ * resolves to the answer, or rejects; one that was stopped rejects with code
+ * "aborted", and one asked for while another is under way with "busy".
  */
 export function useUpload() {
   const [sending, setSending] = useState<Sending | null>(null);
@@ -19,6 +20,8 @@ export function useUpload() {
   // Leaving the page stops what it was sending.
   useEffect(() => () => stop.current?.abort(), []);
   const send = async <T,>(label: string, path: string, file: Blob): Promise<T> => {
+    // One at a time: the progress shown and Cancel are of one upload.
+    if (stop.current) throw new ApiError(0, "busy", "Wait for the upload under way to finish, or cancel it.");
     const ctl = new AbortController();
     stop.current = ctl;
     setSending({ label, progress: { sent: 0, total: file.size } });

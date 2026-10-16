@@ -243,3 +243,17 @@ func TestPrunePacks(t *testing.T) {
 		}
 	}
 }
+
+// The uploaded pack a server has is a file it uses: a note that it was
+// taken off, from before it was put back, does not remove it.
+func TestInstalledFilesHaveThePack(t *testing.T) {
+	sha := strings.Repeat("ab", 20)
+	spec := &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://p/packs/" + sha + ".zip", SHA1: sha, Uploaded: &avsysv1.UploadedPack{Size: 9}}}
+	if !installedFiles(spec)[packFile(sha)] {
+		t.Error("its uploaded pack is not among its files")
+	}
+	spec.ResourcePack.Uploaded = nil
+	if installedFiles(spec)[packFile(sha)] {
+		t.Error("a pack hosted elsewhere is among its files")
+	}
+}

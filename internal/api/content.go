@@ -766,6 +766,11 @@ func contentLeftOf(mc *avsysv1.MinecraftServer) []string {
 			out = append(out, file)
 			continue
 		}
+		// An uploaded resource pack taken off it.
+		if dir == packDir && packFileName.MatchString(name) {
+			out = append(out, file)
+			continue
+		}
 		if world, ok := strings.CutSuffix(dir, "/datapacks"); ok && path.Dir(world) == dataRoot && plainName(path.Base(world)) {
 			out = append(out, file)
 		}
@@ -843,6 +848,10 @@ func (s *Server) lockContent(key client.ObjectKey) (unlock func()) {
 // the panel would remove: stored uploads and installed datapacks.
 func installedFiles(spec *avsysv1.MinecraftServerSpec) map[string]bool {
 	out := map[string]bool{}
+	// Its uploaded resource pack, which may be one taken off and put back.
+	if rp := spec.ResourcePack; rp != nil && rp.Uploaded != nil {
+		out[packFile(rp.SHA1)] = true
+	}
 	level := levelOf(spec)
 	for _, m := range spec.Mods {
 		if m.Source == avsysv1.SourceUpload {
