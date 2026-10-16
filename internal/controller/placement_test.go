@@ -451,3 +451,36 @@ func TestMovingReservesTargetWhileLeaving(t *testing.T) {
 		t.Errorf("reserved on a = %d, want only the pod still there", reserved["a"])
 	}
 }
+
+// A server placed on another node than its pod is still on, as one moved
+// with its files on shared storage, is held on the new one at once: its
+// old pod counts where it is.
+func TestPlacedElsewhereReservesTheNewNode(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	a, b := node("a", "16Gi", ""), node("b", "16Gi", "")
+	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "shared", UID: "u", Annotations: map[string]string{avsysv1.AnnotationNode: "b"}}}
+	mc.Spec.State = avsysv1.StateRunning
+	mc.Spec.Resources.Memory = resource.MustParse("4Gi")
+	yes := true
+	old := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "shared", OwnerReferences: []metav1.OwnerReference{{APIVersion: "avsys.dev/v1alpha1", Kind: "MinecraftServer", Name: "shared", UID: "u", Controller: &yes}}},
+		Spec:       corev1.PodSpec{NodeName: "a", Containers: []corev1.Container{{Name: "w", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")}}}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&a, &b, mc, old).Build()
+	_, reserved, err := NodeUsage(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reserved["b"] != ServerNeeds(mc.Spec.Resources.Memory) {
+		t.Errorf("reserved on b = %d, want all it needs, %d", reserved["b"], ServerNeeds(mc.Spec.Resources.Memory))
+	}
+	if reserved["a"] != gi {
+		t.Errorf("reserved on a = %d, want only the pod still there", reserved["a"])
+	}
+}

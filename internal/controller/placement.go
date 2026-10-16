@@ -258,8 +258,16 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 			reserved[target] += need
 			continue
 		}
+		placed := mc.Annotations[avsysv1.AnnotationNode]
 		if p := bound[client.ObjectKeyFromObject(mc)]; p != nil && !leftOf(p, mc) {
-			reserved[p.Spec.NodeName] += max(0, need-podMemory(p))
+			if placed != "" && placed != p.Spec.NodeName && len(mc.Spec.NodeSelector) == 0 {
+				// Placed on another node than its pod is still on, as when
+				// moved with its files on shared storage: held there from
+				// the moment it is placed, as the pod counts where it is.
+				reserved[placed] += need
+			} else {
+				reserved[p.Spec.NodeName] += max(0, need-podMemory(p))
+			}
 		} else if node := mc.Annotations[avsysv1.AnnotationNode]; node != "" && len(mc.Spec.NodeSelector) == 0 {
 			reserved[node] += need
 		}

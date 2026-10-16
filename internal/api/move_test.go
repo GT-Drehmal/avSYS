@@ -137,3 +137,18 @@ func TestMoveCutShortIsPutBack(t *testing.T) {
 		}
 	}
 }
+
+// While a move is unfinished, only its own snapshot may be restored, which
+// finishes it.
+func TestHeldForMove(t *testing.T) {
+	halfway := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{avsysv1.AnnotationRestoring: "abcd1234", avsysv1.AnnotationMoving: "b"}}}
+	if err := heldForMove(halfway, "abcd1234"); err != nil {
+		t.Errorf("its own snapshot: %v", err)
+	}
+	if err := heldForMove(halfway, "ffff0000"); err == nil || !strings.Contains(err.Error(), "Restore snapshot abcd1234 first") {
+		t.Errorf("another: %v", err)
+	}
+	if err := heldForMove(&avsysv1.MinecraftServer{}, "ffff0000"); err != nil {
+		t.Errorf("no move: %v", err)
+	}
+}

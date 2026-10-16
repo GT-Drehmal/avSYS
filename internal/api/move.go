@@ -141,6 +141,11 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	if mc, err = s.fresh(ctx, mc); err != nil {
 		return nil, err
 	}
+	// As it is now that the claim is held: a restore that failed since the
+	// request first looked leaves its files half put back.
+	if err := unfinished(mc); err != nil {
+		return nil, err
+	}
 	wasRunning := mc.Spec.State != avsysv1.StateStopped
 
 	if from == "" {
@@ -341,6 +346,15 @@ func halfMoved(mc *avsysv1.MinecraftServer) error {
 		return nil
 	}
 	return &Error{Status: http.StatusConflict, Code: "move_unfinished", Message: fmt.Sprintf("Its move to %s did not finish, so its files there are not complete. Restore snapshot %s from its Backups page to finish it; until then its files are not changed.", node, shortID(mc.Annotations[avsysv1.AnnotationRestoring]))}
+}
+
+// heldForMove refuses restoring a server whose move did not finish to any
+// snapshot but the move's own.
+func heldForMove(mc *avsysv1.MinecraftServer, snapshot string) error {
+	if mc.Annotations[avsysv1.AnnotationMoving] == "" || mc.Annotations[avsysv1.AnnotationRestoring] == snapshot {
+		return nil
+	}
+	return &Error{Status: http.StatusConflict, Code: "move_unfinished", Message: fmt.Sprintf("Its move did not finish. Restore snapshot %s first, which finishes it; then any other can be restored.", shortID(mc.Annotations[avsysv1.AnnotationRestoring]))}
 }
 
 // stopAnew stops a server and has its pod made again, stamped, whether or

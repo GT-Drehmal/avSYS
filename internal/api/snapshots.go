@@ -851,6 +851,11 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request, u *stor
 	if snap.Server != mc.Name {
 		return errBadRequest("That snapshot is of %s. A server can only be restored to its own snapshots.", snap.Server)
 	}
+	// A move that did not finish is finished by its own snapshot, which has
+	// the workspace home too: any other would leave that out.
+	if err := heldForMove(mc, snap.ID); err != nil {
+		return err
+	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindRestore, snap.ID)
 	if !ok {
 		return errBusy
@@ -895,8 +900,13 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	if mc, err = s.fresh(ctx, mc); err != nil {
 		return nil, err
 	}
-	wasRunning := mc.Spec.State != avsysv1.StateStopped
+	// Checked again now that the claim is held: it may have changed.
+	if err := heldForMove(mc, snap.ID); err != nil {
+		return nil, err
+	}
 	whole := finishesMove(mc, snap)
+	// Finishing a move puts it back as it was before the move stopped it.
+	wasRunning := mc.Spec.State != avsysv1.StateStopped || (whole && mc.Annotations[avsysv1.AnnotationMoveWas] == string(avsysv1.StateRunning))
 
 	// What a snapshot holds of the server's settings is read before anything
 	// is touched, so that an unreadable snapshot stops here.
