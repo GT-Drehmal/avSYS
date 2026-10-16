@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -496,6 +497,7 @@ func TestCreateFromServerRequests(t *testing.T) {
 		"a game setting on two lines":   {`{"name":"copy","fromServer":"world","spec":{"properties":{"motd":"a\nb"}}}`, 400, "invalid"},
 		"a state that is not one":       {`{"name":"copy","fromServer":"world","spec":{"state":"Bogus"}}`, 400, "invalid"},
 		"another organization's server": {`{"name":"copy","fromServer":"theirs"}`, 404, "not_found"},
+		"a pack given with a bad hash":  {`{"name":"copy","fromServer":"world","spec":{"resourcePack":{"url":"https://example.org/p.zip","sha1":"nope"}}}`, 400, "invalid"},
 	} {
 		if got, code := post("owner", c.body); got != c.want || code != c.code {
 			t.Errorf("%s: got %d %q, want %d %s", name, got, code, c.want, c.code)
@@ -509,8 +511,26 @@ func TestCreateFromServerRequests(t *testing.T) {
 		t.Errorf("a server was left behind by a refused request: %d", got)
 	}
 
-	// One that is in the middle of a restore is not copied as it is.
 	world := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: "mc-alpha", Name: "world"}, world); err != nil {
+		t.Fatal(err)
+	}
+	// Its pack, given a hash before hashes were checked, is the original's
+	// own: made required on the copy, it is taken as it is.
+	world.Spec.ResourcePack = &avsysv1.ResourcePackSpec{URL: "https://example.org/old.zip", SHA1: "typed-by-hand"}
+	if err := p.srv.Client.Update(context.Background(), world); err != nil {
+		t.Fatal(err)
+	}
+	// Stopped at a setting checked after it, so that what refuses it says.
+	req := httptest.NewRequest("POST", "/api/v1/orgs/alpha/servers", strings.NewReader(`{"name":"copy","fromServer":"world","spec":{"state":"Bogus","resourcePack":{"url":"https://example.org/old.zip","sha1":"typed-by-hand","enforce":true}}}`))
+	req.Header.Set("Authorization", "Bearer "+p.tokens["owner"])
+	rec := httptest.NewRecorder()
+	p.h.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "SHA-1") {
+		t.Errorf("the original's own pack, made required, was refused: %s", rec.Body)
+	}
+
+	// One that is in the middle of a restore is not copied as it is.
 	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: "mc-alpha", Name: "world"}, world); err != nil {
 		t.Fatal(err)
 	}

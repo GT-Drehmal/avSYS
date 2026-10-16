@@ -163,6 +163,56 @@ test("while a change to it is being saved, it is not replaced or removed", async
   answer?.();
   await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeEnabled();
   expect(state.sent).toEqual([{ resourcePack: { prompt: "For the map" } }]);
+
+  // Nor is its prompt changed while whether it is required is saved: the two
+  // would be saved at once, and one lost.
+  answer = undefined;
+  await page.getByRole("switch", { name: "Required" }).click();
+  await expect(page.getByLabel("Prompt")).toBeDisabled();
+  await expect.poll(() => answer).toBeDefined();
+  answer?.();
+  await expect(page.getByLabel("Prompt")).toBeEnabled();
+  expect(state.sent[1]).toEqual({ resourcePack: { enforce: true } });
+});
+
+test("while its newest version is looked up, it is not replaced or removed", async ({ page }) => {
+  const state = await survival(page, picked);
+  let answer: (() => void) | undefined;
+  let asked = 0;
+  await page.route("**/api/v1/catalog/modrinth/projects/faithful-32x/versions*", async (route) => {
+    // The dialog's own list first; the look for the newest after it is held.
+    if (++asked > 1) await new Promise<void>((resolve) => (answer = resolve));
+    return route.fallback();
+  });
+  await page.goto("/o/friends/s/survival/mods");
+  await page.getByRole("button", { name: "1.21.4-a" }).click();
+  await expect(page.getByRole("dialog").getByRole("button", { name: /^1\.21\.4-b/ })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: /^Update to the best fit/ }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Replace" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeDisabled();
+  await expect(page.getByLabel("Prompt")).toBeDisabled();
+  await expect.poll(() => answer).toBeDefined();
+  answer?.();
+  await expect.poll(() => state.sent.length).toBe(1);
+  await expect(page.getByRole("button", { name: "Replace" })).toBeEnabled();
+});
+
+test("for a new server on the latest version, a pack is picked once it is known which version that is", async ({ page, org }) => {
+  const slug = await org([]);
+  let answer: (() => void) | undefined;
+  await page.route("**/api/v1/catalog/minecraft/versions?loader=fabric", async (route) => {
+    await new Promise<void>((resolve) => (answer = resolve));
+    return route.fallback();
+  });
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ }).click();
+  await page.getByRole("button", { name: "Choose a resource pack" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("button", { name: /^Faithful 32x/ })).toBeDisabled();
+  await expect.poll(() => answer).toBeDefined();
+  answer?.();
+  await expect(dialog.getByRole("button", { name: /^Faithful 32x/ })).toBeEnabled();
 });
 
 test("one uploaded in the picker is kept and served by the panel, and removing it takes its file", async ({ page }) => {

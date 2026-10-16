@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, kindsFor, kindsPhrase, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { ProjectIcon } from "../../components/ModrinthSearch";
 import { Button, Chip, Empty, Field, Input, Modal, Notice, Spinner, Toggle } from "../../components/ui";
-import { api, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
+import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { applyServer, keys, useAction, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
@@ -70,6 +70,8 @@ export function Mods() {
   const qc = useQueryClient();
   const [adding, setAdding] = useState<PickKind | null>(null);
   const [versioning, setVersioning] = useState<number | "modpack" | "pack" | null>(null);
+  // A pack's version being looked up, before it is saved.
+  const [looking, setLooking] = useState(false);
   const canEdit = atLeast(role, "admin");
   const latest = useGameVersions(server.spec.modpack ? null : server.spec.loader).data?.latest;
   const mods = server.spec.mods ?? [];
@@ -146,7 +148,7 @@ export function Mods() {
         />
       )}
 
-      <PackSection server={server} gameVersion={server.spec.modpack ? undefined : server.spec.version === "LATEST" ? latest : server.spec.version} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
+      <PackSection server={server} gameVersion={server.spec.modpack ? undefined : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
 
       {adding && (
         <AddContentDialog
@@ -177,11 +179,16 @@ export function Mods() {
             const project = rp?.project;
             if (!rp || !project) return;
             setVersioning(null);
+            // Nothing else is done to the pack while its newest is looked up,
+            // which would otherwise land after, and over, what was done.
+            setLooking(true);
             try {
               const next = v ? await packOfVersion(v, project) : await newestPack(project, filtersFor(server.spec, "resourcepack", latest).gameVersion);
-              update.mutate({ resourcePack: { ...next, enforce: !!rp.enforce, prompt: rp.prompt ?? "" } });
+              await update.mutateAsync({ resourcePack: { ...next, enforce: !!rp.enforce, prompt: rp.prompt ?? "" } });
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Something went wrong.");
+              if (!(err instanceof ApiError)) toast.error(err instanceof Error ? err.message : "Something went wrong.");
+            } finally {
+              setLooking(false);
             }
           }}
         />
@@ -221,7 +228,15 @@ export function Mods() {
  * installed: one at most, chosen in the same picker, with whether it is
  * required and what the game asks.
  */
-function PackSection({ server, gameVersion, canEdit, update, onChoose, onVersion }: { server: Server; gameVersion?: string; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onVersion: () => void }) {
+function PackSection({
+  server,
+  gameVersion,
+  looking,
+  canEdit,
+  update,
+  onChoose,
+  onVersion,
+}: { server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onVersion: () => void }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
   // An uploaded one takes its file with it, which only this does.
@@ -231,7 +246,7 @@ function PackSection({ server, gameVersion, canEdit, update, onChoose, onVersion
   const change = (patch: Partial<ResourcePack>) => update.mutate({ resourcePack: patch as ResourcePack });
   // One change to it at a time: a prompt saved as its field is left is
   // done before the pack is replaced or removed, so neither undoes the other.
-  const busy = update.isPending || remove.isPending;
+  const busy = update.isPending || remove.isPending || looking;
   return (
     <section className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-3">
@@ -261,7 +276,7 @@ function PackSection({ server, gameVersion, canEdit, update, onChoose, onVersion
                   size="sm"
                   variant="danger"
                   aria-label="Remove the resource pack"
-                  disabled={update.isPending}
+                  disabled={update.isPending || looking}
                   loading={remove.isPending}
                   onClick={() =>
                     remove.mutate(undefined, {
@@ -285,7 +300,7 @@ function PackSection({ server, gameVersion, canEdit, update, onChoose, onVersion
                 <Input
                   id={id}
                   value={prompt}
-                  disabled={!canEdit}
+                  disabled={!canEdit || busy}
                   onChange={(e) => setPrompt(e.target.value)}
                   onBlur={() => prompt !== (pack.prompt ?? "") && change({ prompt })}
                   onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
