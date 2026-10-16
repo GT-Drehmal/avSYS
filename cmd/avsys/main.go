@@ -64,6 +64,7 @@ type options struct {
 	routerAddr          string
 	packAddr            string
 	packURL             string
+	packCache           int
 	publicURL           string
 	sshPublicHost       string
 	sshPublicPort       int
@@ -108,6 +109,7 @@ func parseFlags() options {
 	str(&o.routerAddr, "router-addr", ":25565", "address the Minecraft router listens on (empty disables it)")
 	str(&o.publicURL, "public-url", "http://localhost:8080", "URL people open the panel at")
 	str(&o.packAddr, "pack-addr", "", "address of a listener that serves nothing but uploaded resource packs, to open to players where the panel is not (empty: the panel serves them at its own address)")
+	flag.IntVar(&o.packCache, "pack-cache", envInt("pack-cache", 512), "most MiB the uploaded resource packs kept in the data directory may take (0: no limit); over it the least recently served are let go of and read from their servers' files again when asked for")
 	str(&o.packURL, "pack-url", "", "URL players' games fetch uploaded resource packs from, at /packs/<sha1>.zip under it (default: public-url)")
 	str(&o.sshPublicHost, "ssh-public-host", "", "hostname shown in SSH instructions (default: the host of public-url)")
 	flag.IntVar(&o.sshPublicPort, "ssh-public-port", envInt("ssh-public-port", 0), "port shown in SSH instructions (default: the port of ssh-addr)")
@@ -303,6 +305,7 @@ func run(opts options, log *slog.Logger) error {
 			Version:         version,
 			PackDir:         filepath.Join(opts.dataDir, "packs"),
 			PackURL:         opts.packURL,
+			PackCache:       int64(opts.packCache) << 20,
 		},
 		Store:   st,
 		Client:  mgr.GetClient(),

@@ -47,6 +47,10 @@ type Config struct {
 	// PackURL is the address players' games fetch uploaded packs from, at
 	// /packs/<sha1>.zip under it. Empty, it is PublicURL.
 	PackURL string
+	// PackCache is the most, in bytes, the packs kept in PackDir may take;
+	// zero is no limit. Over it, the least recently served of those that
+	// servers have are let go of, to be read out of their files again.
+	PackCache int64
 }
 
 type Server struct {
@@ -54,6 +58,9 @@ type Server struct {
 	// packFetches holds a lock per pack hash, so that a pack the panel has
 	// not kept is copied in once however many ask for it at a time.
 	packFetches sync.Map
+	// packServed is when each pack the panel keeps was last served, by
+	// hash, for letting go of the least recently served first.
+	packServed sync.Map
 	// packsPruned is when the packs the panel keeps were last cleared of
 	// those no server has; see prunePacks. Only opsTick reads and sets it.
 	packsPruned time.Time
