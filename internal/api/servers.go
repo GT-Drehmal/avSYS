@@ -531,6 +531,15 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := keepUploadedPack(&spec, previous); err != nil {
 		return err
 	}
+	// A pack uploaded before, given another address now, has its file
+	// removed, which a snapshot under way may be copying: not while one is.
+	if was := previous.ResourcePack; was != nil && was.Uploaded != nil && (spec.ResourcePack == nil || spec.ResourcePack.Uploaded == nil) {
+		release, err := s.changing(mc, true)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	if err := s.resolveContent(r.Context(), &spec, previous); err != nil {
 		return err
 	}

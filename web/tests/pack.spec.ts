@@ -234,8 +234,14 @@ test("files put in the file explorer are uploaded one by one, saying which and h
     { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hi") },
   ]);
   await expect(page.getByRole("status").filter({ hasText: "world.zip (1 of 2)" })).toBeVisible();
+  // One upload at a time: another is not started while this one is under way.
+  await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
+  await page.locator('input[type="file"]').setInputFiles({ name: "other.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
+  await expect(page.getByText("Wait for the upload under way to finish, or cancel it.")).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "world.zip (1 of 2)" })).toBeVisible();
   await expect.poll(() => answer).toBeDefined();
   answer?.();
   await expect.poll(() => put).toEqual(["PUT /world.zip", "PUT /notes.txt"]);
   await expect(page.getByRole("status").filter({ hasText: /of 2/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeEnabled();
 });

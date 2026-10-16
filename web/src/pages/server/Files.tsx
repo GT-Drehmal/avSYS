@@ -158,7 +158,7 @@ export default function Files() {
           <Button size="sm" icon={<FolderPlus className="size-3.5" />} onClick={() => setDialog({ kind: "folder" })}>
             New folder
           </Button>
-          <Button size="sm" icon={<Upload className="size-3.5" />} onClick={() => picker.current?.click()}>
+          <Button size="sm" icon={<Upload className="size-3.5" />} disabled={!!sending} onClick={() => picker.current?.click()}>
             Upload
           </Button>
           <input ref={picker} type="file" multiple hidden onChange={(e) => e.target.files?.length && upload(e.target.files).then(() => (e.target.value = ""))} />
