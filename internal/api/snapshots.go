@@ -283,6 +283,21 @@ var (
 //
 // The caller must call release once its change has been made.
 func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
+	release, err = s.admit(mc, alsoDuringSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	// A move cut short holds it as one under way does, until it is finished.
+	if err := halfMoved(mc); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+// admit is changing without holding off a server whose move did not
+// finish, for what such a server may still have done to it: deleting it.
+func (s *Server) admit(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
 	kinds := []string{kindRestore, kindCreate, kindDeleteServer, kindMove}
 	if alsoDuringSnapshot {
 		kinds = append(kinds, kindSnapshot)
@@ -637,6 +652,7 @@ func (s *Server) markRestoring(ctx context.Context, key client.ObjectKey, snapsh
 		delete(mc.Annotations, avsysv1.AnnotationRestoring)
 		// A move left to be finished by a restore is finished by it.
 		delete(mc.Annotations, avsysv1.AnnotationMoving)
+		delete(mc.Annotations, avsysv1.AnnotationMoveWas)
 	} else {
 		if mc.Annotations == nil {
 			mc.Annotations = map[string]string{}
@@ -710,6 +726,15 @@ func (s *Server) resumeSaving(ctx context.Context) {
 				s.Log.Error("could not report an interrupted restore", "server", mc.Name, "namespace", mc.Namespace, "error", err)
 			} else {
 				s.Log.Warn("found a restore that was interrupted", "server", mc.Name, "namespace", mc.Namespace)
+			}
+		}
+		// A move cut short before it let go of the server's files has not
+		// touched them: the server is put back as it was.
+		if was, ok := mc.Annotations[avsysv1.AnnotationMoveWas]; ok && mc.Annotations[avsysv1.AnnotationMoving] == "" && !restoreUnfinished(mc) {
+			if err := s.putBack(ctx, client.ObjectKeyFromObject(mc), was == string(avsysv1.StateRunning)); err != nil {
+				s.Log.Error("could not put back a server whose move was cut short; trying again in a minute", "server", mc.Name, "namespace", mc.Namespace, "error", err)
+			} else {
+				s.Log.Warn("put back a server whose move was cut short before its files were let go of", "server", mc.Name, "namespace", mc.Namespace, "state", was)
 			}
 		}
 		if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; !paused {

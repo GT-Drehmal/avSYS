@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,5 +82,58 @@ func TestFinishesMove(t *testing.T) {
 	}
 	if finishesMove(halfway, &backup.Snapshot{ID: "abcd1234", Trigger: backup.TriggerManual}) {
 		t.Error("a snapshot not of a move puts the home back")
+	}
+}
+
+// A move cut short with its files let go of holds the server until its
+// snapshot is restored: nothing changes its files meanwhile, and it can
+// still be deleted.
+func TestHalfMovedIsHeld(t *testing.T) {
+	p := newPanel(t)
+	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-alpha", Name: "halfway", Annotations: map[string]string{avsysv1.AnnotationRestoring: "abcd1234ef", avsysv1.AnnotationMoving: "b"}}}
+	if _, err := p.srv.changing(mc, false); err == nil || !strings.Contains(err.Error(), "Restore snapshot abcd1234") {
+		t.Errorf("changing it: %v", err)
+	}
+	release, err := p.srv.admit(mc, false)
+	if err != nil {
+		t.Fatalf("deleting it: %v", err)
+	}
+	release()
+	delete(mc.Annotations, avsysv1.AnnotationMoving)
+	release, err = p.srv.changing(mc, false)
+	if err != nil {
+		t.Errorf("once moved: %v", err)
+	} else {
+		release()
+	}
+}
+
+// A move cut short before it let go of the server's files is undone: the
+// server is put back in the state it was in, and only then.
+func TestMoveCutShortIsPutBack(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	for _, mc := range []*avsysv1.MinecraftServer{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-alpha", Name: "was-running", Annotations: map[string]string{avsysv1.AnnotationMoveWas: "Running"}}, Spec: avsysv1.MinecraftServerSpec{State: avsysv1.StateStopped}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-alpha", Name: "was-stopped", Annotations: map[string]string{avsysv1.AnnotationMoveWas: "Stopped"}}, Spec: avsysv1.MinecraftServerSpec{State: avsysv1.StateStopped}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-alpha", Name: "let-go", Annotations: map[string]string{avsysv1.AnnotationMoveWas: "Running", avsysv1.AnnotationMoving: "b", avsysv1.AnnotationRestoring: "abcd1234"}}, Spec: avsysv1.MinecraftServerSpec{State: avsysv1.StateStopped}},
+	} {
+		if err := p.srv.Client.Create(ctx, mc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.srv.resumeSaving(ctx)
+	for name, want := range map[string]avsysv1.DesiredState{"was-running": avsysv1.StateRunning, "was-stopped": avsysv1.StateStopped, "let-go": avsysv1.StateStopped} {
+		mc := &avsysv1.MinecraftServer{}
+		if err := p.srv.Client.Get(ctx, client.ObjectKey{Namespace: "mc-alpha", Name: name}, mc); err != nil {
+			t.Fatal(err)
+		}
+		if mc.Spec.State != want {
+			t.Errorf("%s: %s, want %s", name, mc.Spec.State, want)
+		}
+		_, noted := mc.Annotations[avsysv1.AnnotationMoveWas]
+		if noted != (name == "let-go") {
+			t.Errorf("%s: still noted as moving: %v", name, noted)
+		}
 	}
 }

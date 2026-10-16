@@ -164,9 +164,7 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	}
 	// Whatever goes wrong before its volume is let go of, it is as it was.
 	restart := func() {
-		if wasRunning {
-			_ = s.patchSpec(context.WithoutCancel(ctx), key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateRunning })
-		}
+		_ = s.putBack(context.WithoutCancel(ctx), key, wasRunning)
 	}
 	if err := s.waitRestarted(ctx, key, stamp, 5*time.Minute); err != nil {
 		restart()
@@ -252,6 +250,7 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	orig := now.DeepCopy()
 	delete(now.Annotations, avsysv1.AnnotationRestoring)
 	delete(now.Annotations, avsysv1.AnnotationMoving)
+	delete(now.Annotations, avsysv1.AnnotationMoveWas)
 	if wasRunning {
 		now.Spec.State = avsysv1.StateRunning
 	}
@@ -318,6 +317,32 @@ func (s *Server) remark(ctx context.Context, key client.ObjectKey, node, snapsho
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }
 
+// putBack ends a move that did not let go of the server's files: the note
+// that it was moving comes off, and it is started again if it was running.
+func (s *Server) putBack(ctx context.Context, key client.ObjectKey, wasRunning bool) error {
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, mc); err != nil {
+		return err
+	}
+	orig := mc.DeepCopy()
+	delete(mc.Annotations, avsysv1.AnnotationMoveWas)
+	if wasRunning {
+		mc.Spec.State = avsysv1.StateRunning
+	}
+	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// halfMoved refuses a change to a server whose move did not finish: its
+// files on the new node are not all there until the move's snapshot is
+// restored, which a change made now would be lost to.
+func halfMoved(mc *avsysv1.MinecraftServer) error {
+	node := mc.Annotations[avsysv1.AnnotationMoving]
+	if node == "" {
+		return nil
+	}
+	return &Error{Status: http.StatusConflict, Code: "move_unfinished", Message: fmt.Sprintf("Its move to %s did not finish, so its files there are not complete. Restore snapshot %s from its Backups page to finish it; until then its files are not changed.", node, shortID(mc.Annotations[avsysv1.AnnotationRestoring]))}
+}
+
 // stopAnew stops a server and has its pod made again, stamped, whether or
 // not it was running.
 func (s *Server) stopAnew(ctx context.Context, key client.ObjectKey, stamp string) error {
@@ -326,10 +351,16 @@ func (s *Server) stopAnew(ctx context.Context, key client.ObjectKey, stamp strin
 		return err
 	}
 	orig := mc.DeepCopy()
-	mc.Spec.State = avsysv1.StateStopped
 	if mc.Annotations == nil {
 		mc.Annotations = map[string]string{}
 	}
+	// In the same change as the stop, so that a panel restarting before the
+	// move gets further finds it and puts the server back as it was.
+	mc.Annotations[avsysv1.AnnotationMoveWas] = string(mc.Spec.State)
+	if mc.Spec.State == "" {
+		mc.Annotations[avsysv1.AnnotationMoveWas] = string(avsysv1.StateRunning)
+	}
+	mc.Spec.State = avsysv1.StateStopped
 	mc.Annotations[avsysv1.AnnotationRestart] = stamp
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }

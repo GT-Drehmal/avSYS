@@ -43,6 +43,11 @@ const (
 	// held stopped by AnnotationRestoring meanwhile. The panel removes it
 	// once they are; a volume already on that node is left alone.
 	AnnotationMoving = "avsys.dev/moving"
+	// AnnotationMoveWas is set, to the state it was in, from when a move
+	// stops a server until the move is over. A move cut short, by the panel
+	// restarting, before AnnotationMoving was set, has not touched its
+	// files: the panel then puts it back in that state.
+	AnnotationMoveWas = "avsys.dev/move-was"
 	// AnnotationAutoOps lists the players the panel has made operators on a
 	// server for their role in its organization, separated by commas. Only
 	// these are ever taken off again by it: operators made any other way

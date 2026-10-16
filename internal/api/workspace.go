@@ -38,7 +38,8 @@ func (s *Server) AuthorizeWorkspace(ctx context.Context, u *store.User, orgSlug,
 		return "", denied
 	}
 	namespace := s.Namespace(org.Slug)
-	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: server}, &avsysv1.MinecraftServer{}); err != nil {
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: server}, mc); err != nil {
 		return "", denied
 	}
 	// No new shells or file transfers while a restore rewrites the files.
@@ -51,6 +52,11 @@ func (s *Server) AuthorizeWorkspace(ctx context.Context, u *store.User, orgSlug,
 			doing = "deleted"
 		}
 		return "", errors.New(server + "." + orgSlug + " is being " + doing + ". Try again when that has finished.")
+	}
+	// Nor while a move that did not finish waits for its files: what was
+	// written now would be lost to the restore that finishes it.
+	if err := halfMoved(mc); err != nil {
+		return "", errors.New(server + "." + orgSlug + " is waiting for its move to finish. Restore its snapshot from its Backups page first.")
 	}
 	return namespace, nil
 }
@@ -65,6 +71,9 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request, u *store.User)
 	}
 	if op := s.ops.current(a.Namespace, mc.Name); op != nil && rewrites(op.Kind) {
 		return heldBy(op.Kind)
+	}
+	if err := halfMoved(mc); err != nil {
+		return err
 	}
 	// Accept checks that the Origin header matches the Host, which is what
 	// stops other sites from opening this socket with the user's cookie.
