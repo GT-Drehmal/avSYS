@@ -257,14 +257,14 @@ done
 sleep 4
 asked=$(date +%s)
 expect "a stop is taken while it starts" "$(call -X POST "$SRV/stop" | field "d['spec']['state']")" Stopped
-# A wait of more than a look or two says what it is waiting for.
-silent=0
+# While it waits for the game to load it says so; once loaded, the game
+# saves and stops as it always does.
+said=""
 for _ in $(seq 1 60); do
   now=$(call "$SRV" | field "(d['status'].get('phase'), d['status'].get('message') or '')")
   case "$now" in
     *Stopped*) break ;;
-    *"still loading"*) silent=0 ;;
-    *) silent=$((silent + 1)); [ "$silent" -lt 3 ] || fail "a stop that waits says why: $now" ;;
+    *"still loading"*) said=1 ;;
   esac
   sleep 1
 done
@@ -272,6 +272,9 @@ wait_phase Stopped
 took=$(($(date +%s) - asked))
 [ "$took" -lt 50 ] || fail "a stop while the game loads took ${took}s, as long as a game that is killed"
 echo "ok: and it is stopped once loaded, in ${took}s"
+# Caught loading, as it is a few seconds into a start, it said so.
+[ "$took" -lt 8 ] || [ -n "$said" ] || fail "a stop that waited ${took}s never said why"
+echo "ok: and says what it waits for"
 sleep 15
 expect "and it stays stopped" "$(call "$SRV" | field "(d['spec']['state'], d['status'].get('phase'))")" "('Stopped', 'Stopped')"
 call -X POST "$SRV/start" >/dev/null
