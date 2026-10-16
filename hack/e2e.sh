@@ -257,23 +257,25 @@ done
 sleep 4
 asked=$(date +%s)
 expect "a stop is taken while it starts" "$(call -X POST "$SRV/stop" | field "d['spec']['state']")" Stopped
-# While it waits for the game to load it says so; once loaded, the game
-# saves and stops as it always does.
+# While it waits for the game to load it says so. Once loaded, the game
+# saves and stops as it always does, in a few seconds: one told to stop
+# while it loaded would fail to, and be killed a minute later.
 said=""
-for _ in $(seq 1 60); do
+loaded=$asked
+for _ in $(seq 1 300); do
   now=$(call "$SRV" | field "(d['status'].get('phase'), d['status'].get('message') or '')")
   case "$now" in
     *Stopped*) break ;;
-    *"still loading"*) said=1 ;;
+    *"still loading"*) said=1; loaded=$(date +%s) ;;
   esac
   sleep 1
 done
 wait_phase Stopped
-took=$(($(date +%s) - asked))
-[ "$took" -lt 50 ] || fail "a stop while the game loads took ${took}s, as long as a game that is killed"
-echo "ok: and it is stopped once loaded, in ${took}s"
+took=$(($(date +%s) - loaded))
+[ "$took" -lt 40 ] || fail "once loaded, the game took ${took}s to stop, as long as one that is killed"
+echo "ok: and it is stopped once loaded, ${took}s after"
 # Caught loading, as it is a few seconds into a start, it said so.
-[ "$took" -lt 8 ] || [ -n "$said" ] || fail "a stop that waited ${took}s never said why"
+[ -n "$said" ] || [ $(($(date +%s) - asked)) -lt 8 ] || fail "a stop that waited never said why"
 echo "ok: and says what it waits for"
 sleep 15
 expect "and it stays stopped" "$(call "$SRV" | field "(d['spec']['state'], d['status'].get('phase'))")" "('Stopped', 'Stopped')"
