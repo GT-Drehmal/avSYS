@@ -273,6 +273,33 @@ func TestPhaseOf(t *testing.T) {
 			t.Errorf("%s: phase = %s, want %s", c.name, got, c.want)
 		}
 	}
+
+	// A stop or restart asked for while the game is loading waits for it to
+	// finish, which can be long: it says so, rather than looking stuck.
+	loadingGame := corev1.ContainerStatus{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}
+	if phase, message := phaseOf(stopped, gamePod(loadingGame)); phase != avsysv1.PhaseStopping || !strings.Contains(message, "still loading") {
+		t.Errorf("stopped while loading: %s %q", phase, message)
+	}
+	if _, message := phaseOf(stopped, gamePod(corev1.ContainerStatus{Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})); message != "" {
+		t.Errorf("stopped while running has a message: %q", message)
+	}
+	replaced := func(status corev1.ContainerStatus) *corev1.Pod {
+		pod := gamePod(status)
+		now := metav1.Now()
+		pod.DeletionTimestamp = &now
+		return pod
+	}
+	if phase, message := phaseOf(server(nil), replaced(loadingGame)); phase != avsysv1.PhaseStarting || !strings.Contains(message, "still loading") {
+		t.Errorf("restarted while loading: %s %q", phase, message)
+	}
+	if phase, message := phaseOf(server(nil), replaced(corev1.ContainerStatus{Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})); phase != avsysv1.PhaseStarting || !strings.Contains(message, "saving the world and stopping") {
+		t.Errorf("restarted while running: %s %q", phase, message)
+	}
+	// A game that crashed is not loading.
+	crashed := corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	if _, message := phaseOf(stopped, gamePod(crashed)); message != "" {
+		t.Errorf("stopped after a crash: %q", message)
+	}
 }
 
 // A game that could not look up where it downloads from is starting again,

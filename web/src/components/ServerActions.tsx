@@ -1,28 +1,61 @@
 import { Play, RotateCw, Square } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { Server } from "../lib/api";
 import { useServerAction } from "../lib/queries";
 import { Button } from "./ui";
 
-/** Start/stop/restart for one server, showing whichever apply to its state. */
+/** How long after a restart is asked for it is taken as under way, while the server still says Running. */
+const restartSettles = 15_000;
+
+/**
+ * Start/stop/restart for one server, showing whichever apply to its state.
+ *
+ * Each waits for the one before to take: a game that is loading stops only
+ * once it has, which can take a minute, and a button clicked again in the
+ * meantime would undo it. Start appears in the place of Stop, so it is only
+ * offered once the game has stopped; until then that place says Stopping.
+ * Restart is not offered again while one is under way.
+ */
 export function ServerActions({ server, compact }: { server: Server; compact?: boolean }) {
   const action = useServerAction(server.org, server.name);
   const size = compact ? "sm" : "md";
   const pending = action.isPending ? action.variables : null;
+  const phase = server.status.phase;
+  // Asked for a moment ago: the game is told to stop, and says Running until it has.
+  const [restarted, setRestarted] = useState(false);
+  useEffect(() => {
+    if (!restarted) return;
+    const t = setTimeout(() => setRestarted(false), restartSettles);
+    return () => clearTimeout(t);
+  }, [restarted]);
+  useEffect(() => {
+    if (phase !== "Running") setRestarted(false);
+  }, [phase]);
   const run = (name: "start" | "stop" | "restart") => (e: React.MouseEvent) => {
     // Rows that contain these buttons are links.
     e.preventDefault();
     e.stopPropagation();
-    action.mutate(name);
+    action.mutate(name, { onSuccess: () => name === "restart" && setRestarted(true) });
   };
 
   if (server.spec.state === "Stopped") {
+    if (phase !== "Stopped") {
+      return (
+        <Button size={size} variant={compact ? "default" : "primary"} icon={<Square className="size-3" />} loading disabled title="The server can be started again once it has stopped">
+          Stopping
+        </Button>
+      );
+    }
     return (
       <Button size={size} variant={compact ? "default" : "primary"} icon={<Play className="size-3.5" />} loading={pending === "start"} onClick={run("start")}>
         Start
       </Button>
     );
   }
-  const asleep = server.status.phase === "Sleeping";
+  const asleep = phase === "Sleeping";
+  // Starting, stopping to start again, or just asked to: a restart now would begin it over.
+  const restarting = phase === "Starting" || phase === "Stopping" || restarted;
+  const restartTitle = restarting ? "Under way: it can be restarted again once it is running" : "Restart";
   return (
     <div className="flex items-center gap-2">
       {asleep && (
@@ -33,9 +66,9 @@ export function ServerActions({ server, compact }: { server: Server; compact?: b
       {!asleep &&
         (compact ? (
           // In a list there is room for the icon alone.
-          <Button size={size} icon={<RotateCw className="size-3.5" />} loading={pending === "restart"} onClick={run("restart")} aria-label={`Restart ${server.name}`} title="Restart" />
+          <Button size={size} icon={<RotateCw className="size-3.5" />} loading={pending === "restart"} disabled={restarting} onClick={run("restart")} aria-label={`Restart ${server.name}`} title={restartTitle} />
         ) : (
-          <Button size={size} icon={<RotateCw className="size-3.5" />} loading={pending === "restart"} onClick={run("restart")}>
+          <Button size={size} icon={<RotateCw className="size-3.5" />} loading={pending === "restart"} disabled={restarting} onClick={run("restart")} title={restarting ? restartTitle : undefined}>
             Restart
           </Button>
         ))}

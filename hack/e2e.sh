@@ -243,6 +243,30 @@ expect "taken off, its file is removed" "$(call -o /dev/null -w '%{http_code}' "
 restarted
 expect "and the game no longer has it" "$(call -d '{"command":"datapack list"}' "$SRV/console" | field "'Veinminer' not in d['output']")" True
 
+step "a stop while the game loads"
+# Restarted, and stopped before it is up again: the stop is what it ends at,
+# however long the game takes to let go, and nothing starts it after.
+call -X POST "$SRV/restart" >/dev/null
+for _ in $(seq 1 60); do
+  [ "$(call "$SRV" | field "d['status'].get('phase')")" = Starting ] && break
+  sleep 1
+done
+expect "a stop is taken while it starts" "$(call -X POST "$SRV/stop" | field "d['spec']['state']")" Stopped
+# While the game that is loading lets go, which can take a while, it says so.
+seen=""
+for _ in $(seq 1 30); do
+  now=$(call "$SRV" | field "(d['status'].get('phase'), d['status'].get('message') or '')")
+  case "$now" in *Stopping*) seen=$now; break ;; *Stopped*) break ;; esac
+  sleep 1
+done
+if [ -n "$seen" ]; then expect "and says what it is waiting for" "$seen" "still loading"; fi
+wait_phase Stopped
+sleep 15
+expect "and it stays stopped" "$(call "$SRV" | field "(d['spec']['state'], d['status'].get('phase'))")" "('Stopped', 'Stopped')"
+call -X POST "$SRV/start" >/dev/null
+wait_phase Running
+echo "ok: and starts again when asked"
+
 step "snapshots"
 snap=$(call -X POST "$SRV/snapshots?wait=true")
 SNAP=$(echo "$snap" | field "d['id']") || fail "no snapshot was taken: $snap"

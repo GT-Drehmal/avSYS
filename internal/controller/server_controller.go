@@ -262,6 +262,13 @@ func containerStatus(pod *corev1.Pod, name string) *corev1.ContainerStatus {
 	return nil
 }
 
+// loading says whether a pod's game is running but not yet ready: loading
+// its world, which it finishes before it can be stopped.
+func loading(pod *corev1.Pod) bool {
+	cs := containerStatus(pod, MinecraftContainer)
+	return cs != nil && cs.State.Running != nil && !cs.Ready
+}
+
 func containerReady(pod *corev1.Pod, name string) bool {
 	cs := containerStatus(pod, name)
 	return cs != nil && cs.Ready
@@ -273,6 +280,9 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 	if !wantsMinecraft(mc) {
 		switch {
 		case gameInPod:
+			if loading(pod) {
+				return avsysv1.PhaseStopping, "The game is still loading. It stops once it has, saving the world first, which can take up to a minute and a half."
+			}
 			return avsysv1.PhaseStopping, ""
 		case mc.Annotations[avsysv1.AnnotationCreating] != "":
 			return avsysv1.PhaseStopped, "Made from a snapshot, and held stopped until all of its files are in place."
@@ -284,7 +294,14 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 			return avsysv1.PhaseSleeping, ""
 		}
 	}
-	if !gameInPod || !pod.DeletionTimestamp.IsZero() {
+	if gameInPod && !pod.DeletionTimestamp.IsZero() {
+		// Restarted: the game it had stops before the next one starts.
+		if loading(pod) {
+			return avsysv1.PhaseStarting, "Restarting. The game is still loading, and stops once it has, saving the world first; then it starts again."
+		}
+		return avsysv1.PhaseStarting, "Restarting. The game is saving the world and stopping; then it starts again."
+	}
+	if !gameInPod {
 		return avsysv1.PhaseStarting, ""
 	}
 	for _, c := range pod.Status.Conditions {
