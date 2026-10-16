@@ -3,6 +3,7 @@ import { ChevronRight, Download, File, FilePlus, Folder, FolderPlus, MoreHorizon
 import { useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button, Confirm, cx, Empty, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Spinner } from "../../components/ui";
+import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
 import { api, qs, serverPath, type FileEntry } from "../../lib/api";
 import { ago, bytes } from "../../lib/format";
 import { useAction } from "../../lib/queries";
@@ -110,7 +111,7 @@ export default function Files() {
   const refresh = () => qc.invalidateQueries({ queryKey: listKey });
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const [uploading, setUploading] = useState<string | null>(null);
+  const { sending, send, cancel } = useUpload();
   const [dragging, setDragging] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const remove = useAction((entry: FileEntry) => api.del(`${base}?${qs({ path: join(dir, entry.name) })}`), [listKey]);
@@ -119,13 +120,11 @@ export default function Files() {
     const all = Array.from(files);
     try {
       for (const [i, file] of all.entries()) {
-        setUploading(`Uploading ${file.name} (${i + 1} of ${all.length})`);
-        await api.putRaw(`${base}/content?${qs({ path: join(dir, file.name) })}`, file);
+        await send(all.length > 1 ? `${file.name} (${i + 1} of ${all.length})` : file.name, `${base}/content?${qs({ path: join(dir, file.name) })}`, file);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Upload failed.");
+      if (!cancelled(err)) toast.error(err instanceof Error ? err.message : "Upload failed.");
     } finally {
-      setUploading(null);
       refresh();
     }
   };
@@ -152,12 +151,7 @@ export default function Files() {
           ))}
         </nav>
         <div className="flex items-center gap-2">
-          {uploading && (
-            <span className="flex items-center gap-2 text-xs text-muted">
-              <Spinner className="size-3.5" />
-              {uploading}
-            </span>
-          )}
+          {sending && <UploadProgress sending={sending} onCancel={cancel} />}
           <Button size="sm" icon={<FilePlus className="size-3.5" />} onClick={() => setDialog({ kind: "file" })}>
             New file
           </Button>

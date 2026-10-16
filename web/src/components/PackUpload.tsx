@@ -6,6 +6,7 @@ import { ago, bytes } from "../lib/format";
 import { applyServer, useAction } from "../lib/queries";
 import { toast } from "../lib/toast";
 import { Button } from "./ui";
+import { cancelled, UploadProgress, useUpload } from "./Uploading";
 
 /**
  * A resource pack uploaded to the panel, which keeps it with the server's
@@ -22,8 +23,17 @@ export function PackUpload({ server, onChanged }: { server: Server; onChanged?: 
     applyServer(qc, next);
     onChanged?.(next);
   };
-  const upload = useAction((file: File) => api.putRaw<Server>(`${path}?name=${encodeURIComponent(file.name)}`, file));
+  const { sending, send, cancel } = useUpload();
   const remove = useAction(() => api.del<Server>(path));
+  const upload = async (file: File) => {
+    try {
+      done(await send<Server>(file.name, `${path}?name=${encodeURIComponent(file.name)}`, file));
+      toast.info(`${file.name} is ${server.name}'s resource pack`);
+    } catch (err) {
+      if (!cancelled(err)) toast.error(err instanceof Error ? err.message : "Upload failed.");
+    }
+  };
+  const progress = sending && <UploadProgress sending={sending} onCancel={cancel} />;
 
   const choose = (
     <input
@@ -35,13 +45,7 @@ export function PackUpload({ server, onChanged }: { server: Server; onChanged?: 
       onChange={(e) => {
         const file = e.target.files?.[0];
         e.target.value = "";
-        if (file)
-          upload.mutate(file, {
-            onSuccess: (next) => {
-              done(next);
-              toast.info(`${file.name} is ${server.name}'s resource pack`);
-            },
-          });
+        if (file) void upload(file);
       }}
     />
   );
@@ -49,10 +53,10 @@ export function PackUpload({ server, onChanged }: { server: Server; onChanged?: 
     return (
       <div className="flex flex-wrap items-center gap-3">
         {choose}
-        <Button icon={<Upload className="size-3.5" />} loading={upload.isPending} onClick={() => input.current?.click()}>
+        <Button icon={<Upload className="size-3.5" />} loading={!!sending} onClick={() => input.current?.click()}>
           Upload a pack
         </Button>
-        <span className="text-xs text-muted">A .zip with pack.mcmeta at its top. The panel serves it to players.</span>
+        {progress || <span className="text-xs text-muted">A .zip with pack.mcmeta at its top. The panel serves it to players.</span>}
       </div>
     );
   }
@@ -62,18 +66,21 @@ export function PackUpload({ server, onChanged }: { server: Server; onChanged?: 
       <FileArchive className="size-4 shrink-0 text-muted" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-medium">{uploaded.name || "Uploaded pack"}</div>
-        <div className="text-xs text-muted">
-          {bytes(uploaded.size)} · uploaded {ago(uploaded.time)} · served by the panel
-        </div>
+        {progress || (
+          <div className="text-xs text-muted">
+            {bytes(uploaded.size)} · uploaded {ago(uploaded.time)} · served by the panel
+          </div>
+        )}
       </div>
       <div className="flex gap-2">
-        <Button size="sm" loading={upload.isPending} onClick={() => input.current?.click()}>
+        <Button size="sm" loading={!!sending} onClick={() => input.current?.click()}>
           Replace
         </Button>
         <Button
           size="sm"
           variant="danger"
           loading={remove.isPending}
+          disabled={!!sending}
           onClick={() =>
             remove.mutate(undefined, {
               onSuccess: (next) => {

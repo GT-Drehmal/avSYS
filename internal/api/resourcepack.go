@@ -284,7 +284,9 @@ func writePack(sc *sftp.Client, src io.Reader, sha string) error {
 	if err != nil {
 		return fileError(err)
 	}
-	_, err = f.ReadFrom(src)
+	// Many writes in flight at once, not one round trip at a time: a hole
+	// that a failure leaves is only ever in a file that is then removed.
+	_, err = f.ReadFromWithConcurrency(src, 0)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

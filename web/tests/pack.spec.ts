@@ -92,3 +92,53 @@ test("a pack uploaded with other changes unsaved is kept when they are saved", a
   expect(sent[0].spec.displayName).toBe("Survival, renamed");
   expect(sent[0].spec.resourcePack).toEqual({ url: pack.url, sha1: sha, enforce: false, prompt: "" });
 });
+
+test("an upload says how far it is and can be stopped, and says why the panel refused one", async ({ page }) => {
+  let refuse = false;
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/resource-pack*", async (route) => {
+    asked.push(route.request().method());
+    if (refuse) return route.fulfill({ status: 400, json: { code: "bad_request", message: "There is no pack.mcmeta at the top of that zip, so it is not a resource pack." } });
+    // Never answered: it is still on its way when it is stopped.
+    await new Promise(() => {});
+  });
+  await page.goto("/o/friends/s/survival/settings");
+  const pack = { name: "big.zip", mimeType: "application/zip", buffer: Buffer.alloc(2 * 1024 * 1024) };
+  await page.getByLabel("Resource pack file").setInputFiles(pack);
+  const status = page.getByRole("status").filter({ hasText: /^\d+% · .* of 2\.0 MB\s*big\.zip/ });
+  await expect(status).toBeVisible();
+  await expect(status.getByRole("progressbar", { name: "Upload progress" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Upload a pack" })).toBeDisabled();
+  await status.getByRole("button", { name: "Cancel" }).click();
+  await expect(status).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Upload a pack" })).toBeEnabled();
+  // Stopping it is not a failure to tell of.
+  await expect(page.getByText("Upload cancelled.")).toHaveCount(0);
+
+  refuse = true;
+  await page.getByLabel("Resource pack file").setInputFiles(pack);
+  await expect(page.getByText("There is no pack.mcmeta at the top of that zip, so it is not a resource pack.")).toBeVisible();
+  await expect(status).toHaveCount(0);
+  expect(asked).toEqual(["PUT", "PUT"]);
+});
+
+test("files put in the file explorer are uploaded one by one, saying which and how far", async ({ page }) => {
+  const put: string[] = [];
+  let answer: (() => void) | undefined;
+  await page.route("**/api/v1/orgs/friends/servers/survival/files?*", (route) => route.fulfill({ json: { entries: [] } }));
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*", async (route) => {
+    put.push(`${route.request().method()} ${new URL(route.request().url()).searchParams.get("path")}`);
+    if (put.length === 1) await new Promise<void>((resolve) => (answer = resolve));
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await page.locator('input[type="file"]').setInputFiles([
+    { name: "world.zip", mimeType: "application/zip", buffer: Buffer.alloc(1024 * 1024) },
+    { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hi") },
+  ]);
+  await expect(page.getByRole("status").filter({ hasText: "world.zip (1 of 2)" })).toBeVisible();
+  await expect.poll(() => answer).toBeDefined();
+  answer?.();
+  await expect.poll(() => put).toEqual(["PUT /world.zip", "PUT /notes.txt"]);
+  await expect(page.getByRole("status").filter({ hasText: /of 2/ })).toHaveCount(0);
+});

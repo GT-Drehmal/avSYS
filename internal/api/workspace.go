@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -157,9 +158,15 @@ type workspacePool struct {
 }
 
 type pooledSFTP struct {
-	ssh      *ssh.Client
-	sftp     *sftp.Client
-	lastUsed time.Time
+	ssh  *ssh.Client
+	sftp *sftp.Client
+	// lastUsed is when anything last went over it, in Unix nanoseconds: a
+	// long upload or download keeps it in use however long it takes.
+	lastUsed *atomic.Int64
+}
+
+func (c *pooledSFTP) idle() time.Duration {
+	return time.Since(time.Unix(0, c.lastUsed.Load()))
 }
 
 const sftpIdle = 2 * time.Minute
@@ -170,7 +177,7 @@ func newWorkspacePool(g *sshgw.Gateway) *workspacePool {
 		for range time.Tick(30 * time.Second) {
 			p.mu.Lock()
 			for key, c := range p.conns {
-				if time.Since(c.lastUsed) > sftpIdle {
+				if c.idle() > sftpIdle {
 					c.close()
 					delete(p.conns, key)
 				}
@@ -194,7 +201,7 @@ func (p *workspacePool) get(ctx context.Context, namespace, server string) (*sft
 	if c := p.conns[key]; c != nil {
 		// A cheap round trip tells a live connection from one whose pod is gone.
 		if _, err := c.sftp.Getwd(); err == nil {
-			c.lastUsed = time.Now()
+			c.lastUsed.Store(time.Now().UnixNano())
 			p.mu.Unlock()
 			return c.sftp, nil
 		}
@@ -211,7 +218,7 @@ func (p *workspacePool) get(ctx context.Context, namespace, server string) (*sft
 	if err != nil {
 		return nil, err
 	}
-	sc, err := sftp.NewClient(conn)
+	sc, used, err := newSFTP(conn)
 	if err != nil {
 		conn.Close()
 		return nil, err
@@ -222,11 +229,63 @@ func (p *workspacePool) get(ctx context.Context, namespace, server string) (*sft
 		// Another request connected first; use theirs.
 		sc.Close()
 		conn.Close()
-		existing.lastUsed = time.Now()
+		existing.lastUsed.Store(time.Now().UnixNano())
 		return existing.sftp, nil
 	}
-	p.conns[key] = &pooledSFTP{ssh: conn, sftp: sc, lastUsed: time.Now()}
+	p.conns[key] = &pooledSFTP{ssh: conn, sftp: sc, lastUsed: used}
 	return sc, nil
+}
+
+// newSFTP is sftp.NewClient, with the time anything last went over the
+// connection kept.
+func newSFTP(conn *ssh.Client) (*sftp.Client, *atomic.Int64, error) {
+	session, err := conn.NewSession()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := session.RequestSubsystem("sftp"); err != nil {
+		session.Close()
+		return nil, nil, err
+	}
+	w, err := session.StdinPipe()
+	if err != nil {
+		session.Close()
+		return nil, nil, err
+	}
+	r, err := session.StdoutPipe()
+	if err != nil {
+		session.Close()
+		return nil, nil, err
+	}
+	used := &atomic.Int64{}
+	used.Store(time.Now().UnixNano())
+	sc, err := sftp.NewClientPipe(usedReader{r, used}, usedWriter{w, used})
+	if err != nil {
+		session.Close()
+		return nil, nil, err
+	}
+	return sc, used, nil
+}
+
+type usedReader struct {
+	io.Reader
+	used *atomic.Int64
+}
+
+func (u usedReader) Read(p []byte) (int, error) {
+	n, err := u.Reader.Read(p)
+	u.used.Store(time.Now().UnixNano())
+	return n, err
+}
+
+type usedWriter struct {
+	io.WriteCloser
+	used *atomic.Int64
+}
+
+func (u usedWriter) Write(p []byte) (int, error) {
+	u.used.Store(time.Now().UnixNano())
+	return u.WriteCloser.Write(p)
 }
 
 // dataRoot is the server directory. The file API does not reach outside it.
@@ -395,7 +454,8 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 	if err != nil {
 		return fileError(err)
 	}
-	_, err = io.Copy(f, http.MaxBytesReader(w, r.Body, maxUpload))
+	// Many writes in flight at once, as the temp file is removed on failure.
+	_, err = f.ReadFromWithConcurrency(http.MaxBytesReader(w, r.Body, maxUpload), 0)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
