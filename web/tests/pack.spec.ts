@@ -90,6 +90,59 @@ test("one at a URL replaces the one there was, with its hash and the same settin
   await expect(page.getByText("https://packs.example.org/world.zip")).toBeVisible();
 });
 
+test("one at a URL is given its SHA-1, or taken without one when the panel cannot fetch it, saying so", async ({ page }) => {
+  const state = await survival(page, null);
+  let hashed = 0;
+  await page.route("**/api/v1/catalog/sha1", (route) => {
+    hashed++;
+    return route.fulfill({ status: 502, json: { code: "fetch", message: "The panel could not reach that address." } });
+  });
+  await page.goto("/o/friends/s/survival/mods");
+  await page.getByRole("button", { name: "Choose one" }).click();
+  let dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "From URL" }).click();
+  await dialog.getByLabel("Download URL").fill("https://players-only.example.org/pack.zip");
+  await dialog.getByLabel("SHA-1").fill("CD".repeat(20));
+  await dialog.getByRole("button", { name: "Use this pack" }).click();
+  await expect(dialog).toHaveCount(0);
+  // Given, it is used as it is, not worked out.
+  expect(hashed).toBe(0);
+  expect(state.sent[0].resourcePack).toMatchObject({ url: "https://players-only.example.org/pack.zip", sha1: "CD".repeat(20) });
+
+  await page.getByRole("button", { name: "Replace" }).click();
+  dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "From URL" }).click();
+  await dialog.getByLabel("Download URL").fill("https://players-only.example.org/other.zip");
+  await dialog.getByRole("button", { name: "Use this pack" }).click();
+  await expect(page.getByText(/Its SHA-1 could not be worked out \(The panel could not reach that address\.\)/)).toBeVisible();
+  expect(hashed).toBe(1);
+  expect(state.sent[1].resourcePack).toMatchObject({ url: "https://players-only.example.org/other.zip", sha1: "" });
+});
+
+test("a pack's address that does not decode is shown as it is", async ({ page }) => {
+  await survival(page, { url: "https://packs.example.org/bad%E0%A4%A.zip" });
+  await page.goto("/o/friends/s/survival/mods");
+  await expect(page.getByText("bad%E0%A4%A.zip", { exact: true })).toBeVisible();
+});
+
+test("while a change to it is being saved, it is not replaced or removed", async ({ page }) => {
+  const state = await survival(page, { url: "https://packs.example.org/world.zip", sha1: "" });
+  let answer: (() => void) | undefined;
+  await page.route("**/api/v1/orgs/friends/servers/survival", async (route) => {
+    if (route.request().method() === "PATCH") await new Promise<void>((resolve) => (answer = resolve));
+    return route.fallback();
+  });
+  await page.goto("/o/friends/s/survival/mods");
+  await page.getByLabel("Prompt").fill("For the map");
+  await page.getByLabel("Prompt").press("Enter");
+  await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Replace" })).toBeDisabled();
+  await expect.poll(() => answer).toBeDefined();
+  answer?.();
+  await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeEnabled();
+  expect(state.sent).toEqual([{ resourcePack: { prompt: "For the map" } }]);
+});
+
 test("one uploaded in the picker is kept and served by the panel, and removing it takes its file", async ({ page }) => {
   const state = await survival(page, null);
   await page.goto("/o/friends/s/survival/mods");

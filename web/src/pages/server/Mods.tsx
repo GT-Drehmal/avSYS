@@ -146,7 +146,7 @@ export function Mods() {
         />
       )}
 
-      <PackSection server={server} canEdit={canEdit} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
+      <PackSection server={server} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
 
       {adding && (
         <AddContentDialog
@@ -221,8 +221,7 @@ export function Mods() {
  * installed: one at most, chosen in the same picker, with whether it is
  * required and what the game asks.
  */
-function PackSection({ server, canEdit, onChoose, onVersion }: { server: Server; canEdit: boolean; onChoose: () => void; onVersion: () => void }) {
-  const update = useUpdateServer(server.org, server.name);
+function PackSection({ server, canEdit, update, onChoose, onVersion }: { server: Server; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onVersion: () => void }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
   // An uploaded one takes its file with it, which only this does.
@@ -230,6 +229,9 @@ function PackSection({ server, canEdit, onChoose, onVersion }: { server: Server;
   const [prompt, setPrompt] = useState(pack?.prompt ?? "");
   useEffect(() => setPrompt(pack?.prompt ?? ""), [pack?.prompt]);
   const change = (patch: Partial<ResourcePack>) => update.mutate({ resourcePack: patch as ResourcePack });
+  // One change to it at a time: a prompt saved as its field is left is
+  // done before the pack is replaced or removed, so neither undoes the other.
+  const busy = update.isPending || remove.isPending;
   return (
     <section className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-3">
@@ -246,19 +248,20 @@ function PackSection({ server, canEdit, onChoose, onVersion }: { server: Server;
         <>
           <PackCard pack={pack}>
             {pack.project && (
-              <Button size="sm" disabled={!canEdit} onClick={onVersion} className="max-w-40">
+              <Button size="sm" disabled={!canEdit || busy} onClick={onVersion} className="max-w-40">
                 <span className="truncate">{pack.project.versionName || "Version"}</span>
               </Button>
             )}
             {canEdit && (
               <>
-                <Button size="sm" onClick={onChoose}>
+                <Button size="sm" disabled={busy} onClick={onChoose}>
                   Replace
                 </Button>
                 <Button
                   size="sm"
                   variant="danger"
                   aria-label="Remove the resource pack"
+                  disabled={update.isPending}
                   loading={remove.isPending}
                   onClick={() =>
                     remove.mutate(undefined, {
@@ -275,7 +278,7 @@ function PackSection({ server, canEdit, onChoose, onVersion }: { server: Server;
             )}
           </PackCard>
           <div className="flex flex-col gap-3 px-1">
-            <Toggle checked={!!pack.enforce} disabled={!canEdit || update.isPending} onChange={(enforce) => change({ enforce })} label="Required" hint="Players who decline the pack are disconnected." />
+            <Toggle checked={!!pack.enforce} disabled={!canEdit || busy} onChange={(enforce) => change({ enforce })} label="Required" hint="Players who decline the pack are disconnected." />
             <Field label="Prompt" hint="Shown when the game asks to download the pack.">
               {(id) => (
                 <Input

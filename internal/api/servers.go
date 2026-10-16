@@ -227,6 +227,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if rp := spec.ResourcePack; rp != nil && rp.URL != "" && !strings.HasPrefix(rp.URL, "http://") && !strings.HasPrefix(rp.URL, "https://") {
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
+	if err := checkPackSHA1(spec.ResourcePack); err != nil {
+		return err
+	}
 	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
 		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
 			return errBadRequest("A resource pack picked from a project names it: source modrinth, and its id.")
@@ -766,6 +769,21 @@ func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv
 		return nil, err
 	}
 	return now, nil
+}
+
+var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// checkPackSHA1 checks a resource pack's SHA-1, which the game checks the
+// pack it downloads against: a wrong one would have every player refuse it.
+func checkPackSHA1(rp *avsysv1.ResourcePackSpec) error {
+	if rp == nil || rp.SHA1 == "" {
+		return nil
+	}
+	rp.SHA1 = strings.ToLower(strings.TrimSpace(rp.SHA1))
+	if !sha1Pattern.MatchString(rp.SHA1) {
+		return errBadRequest("A resource pack's SHA-1 is 40 hexadecimal digits.")
+	}
+	return nil
 }
 
 // keepUploadedPack holds a change of settings to the pack uploaded to the

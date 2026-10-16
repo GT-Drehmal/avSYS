@@ -202,7 +202,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
               // Dialogs render in a portal, but React still bubbles the event
               // to a form the dialog was opened from.
               e.stopPropagation();
-              const name = decodeURIComponent(url.split("/").pop()?.split("?")[0] ?? url);
+              const name = fileOf(url);
               onAdd({ source: "url", kind: content, project: url.trim(), title: name });
               setUrl("");
             }}
@@ -240,12 +240,23 @@ export async function newestPack(project: Omit<PackProject, "version" | "version
 const projectOf = (hit: ModrinthHit): Omit<PackProject, "version" | "versionName"> => ({ source: "modrinth", id: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined });
 
 /** What a resource pack is called: its project, its file, or the end of its address. */
-export const packTitle = (p: ResourcePack) => p.project?.title || p.project?.id || p.uploaded?.name || decodeURIComponent(p.url.split("/").pop()?.split("?")[0] || p.url);
+/** The file at the end of an address, as it reads: a malformed escape is left as it is. */
+export function fileOf(url: string) {
+  const last = url.split("/").pop()?.split("?")[0] || url;
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
+export const packTitle = (p: ResourcePack) => p.project?.title || p.project?.id || p.uploaded?.name || fileOf(p.url);
 
 /** The resource pack's three ways in, in the picker. One replaces the one there was. */
 function PackPane({ pack, tab, filters, fits, onClose }: { pack: PackPicker; tab: "modrinth" | "url" | "upload"; filters: { loader?: string; gameVersion?: string }; fits?: string; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState("");
+  const [sha1, setSha1] = useState("");
   const { sending, send, cancel } = useUpload();
   const current = pack.current?.url ? pack.current : null;
   const pick = async (make: () => Promise<ResourcePack>) => {
@@ -318,18 +329,28 @@ function PackPane({ pack, tab, filters, fits, onClose }: { pack: PackPicker; tab
             const address = url.trim();
             pick(async () => {
               // Its hash lets the game keep it between joins; without one it
-              // is fetched every time, so a pack the panel cannot reach is
-              // still taken.
-              const sha1 = await api
-                .post<{ sha1: string }>("/catalog/sha1", { url: address })
-                .then((r) => r.sha1)
-                .catch(() => "");
-              return { url: address, sha1, uploaded: null, project: null };
+              // is fetched on every join. One given is used; otherwise the
+              // panel works it out if it can reach the pack, which players
+              // may when it cannot.
+              let hash = sha1.trim();
+              if (!hash) {
+                hash = await api
+                  .post<{ sha1: string }>("/catalog/sha1", { url: address })
+                  .then((r) => r.sha1)
+                  .catch((err) => {
+                    toast.info(`Its SHA-1 could not be worked out (${err instanceof Error ? err.message : "the panel could not fetch it"}), so players' games fetch it on every join. Give it here to change that.`);
+                    return "";
+                  });
+              }
+              return { url: address, sha1: hash, uploaded: null, project: null };
             });
           }}
         >
           <Field label="Download URL" hint="A direct link to the .zip, which every player must be able to reach.">
             {(id) => <Input id={id} type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/pack.zip" className="font-mono" />}
+          </Field>
+          <Field label="SHA-1" hint="Optional. Worked out by the panel when left empty, if it can fetch the pack.">
+            {(id) => <Input id={id} value={sha1} onChange={(e) => setSha1(e.target.value)} pattern="\s*[0-9a-fA-F]{40}\s*" title="40 hexadecimal digits" className="font-mono" spellCheck={false} />}
           </Field>
           <div className="flex justify-end">
             <Button type="submit" variant="primary" loading={busy}>
