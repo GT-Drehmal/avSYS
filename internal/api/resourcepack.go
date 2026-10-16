@@ -373,7 +373,9 @@ func removeOtherPacks(sc *sftp.Client, keep string) error {
 	var failed error
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, "resource-pack-") && name != path.Base(packFile(keep)) {
+		// Only the panel's own, named by their hash: anything else there is
+		// someone's.
+		if packFileName.MatchString(name) && name != path.Base(packFile(keep)) {
 			if err := sc.Remove(packDir + "/" + name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				failed = err
 			}

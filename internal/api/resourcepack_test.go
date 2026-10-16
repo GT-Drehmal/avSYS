@@ -5,14 +5,18 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -255,5 +259,57 @@ func TestInstalledFilesHaveThePack(t *testing.T) {
 	spec.ResourcePack.Uploaded = nil
 	if installedFiles(spec)[packFile(sha)] {
 		t.Error("a pack hosted elsewhere is among its files")
+	}
+}
+
+// memFiles is an SFTP client over files kept in memory.
+func memFiles(t *testing.T) *sftp.Client {
+	t.Helper()
+	c, s := net.Pipe()
+	server := sftp.NewRequestServer(s, sftp.InMemHandler())
+	go func() { _ = server.Serve() }()
+	client, err := sftp.NewClientPipe(c, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.Close(); server.Close() })
+	return client
+}
+
+// Only the panel's own packs, named by their hash, are removed: a file
+// someone put beside them is theirs.
+func TestRemoveOtherPacks(t *testing.T) {
+	sc := memFiles(t)
+	keep, old := strings.Repeat("ab", 20), strings.Repeat("cd", 20)
+	if err := sc.MkdirAll(packDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{path.Base(packFile(keep)), path.Base(packFile(old)), "resource-pack-backup.zip", "notes.txt"} {
+		f, err := sc.Create(packDir + "/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	if err := removeOtherPacks(sc, keep); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := sc.ReadDir(packDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, e := range entries {
+		left = append(left, e.Name())
+	}
+	slices.Sort(left)
+	want := []string{"notes.txt", "resource-pack-backup.zip", path.Base(packFile(keep))}
+	slices.Sort(want)
+	if !slices.Equal(left, want) {
+		t.Errorf("left %v, want %v", left, want)
+	}
+	// None there at all is nothing to do.
+	if err := removeOtherPacks(memFiles(t), ""); err != nil {
+		t.Errorf("no folder: %v", err)
 	}
 }
