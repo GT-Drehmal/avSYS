@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -371,5 +372,63 @@ func TestRemoveOtherPacks(t *testing.T) {
 	// None there at all is nothing to do.
 	if err := removeOtherPacks(memFiles(t), ""); err != nil {
 		t.Errorf("no folder: %v", err)
+	}
+}
+
+func TestDroppedPackFile(t *testing.T) {
+	sha := strings.Repeat("ab", 20)
+	uploaded := &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://p/packs/" + sha + ".zip", SHA1: sha, Uploaded: &avsysv1.UploadedPack{Size: 9}}}
+	for name, c := range map[string]struct {
+		now  *avsysv1.MinecraftServerSpec
+		want string
+	}{
+		"kept":      {uploaded, ""},
+		"none":      {&avsysv1.MinecraftServerSpec{}, packFile(sha)},
+		"elsewhere": {&avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip"}}, packFile(sha)},
+	} {
+		if got := droppedPackFile(c.now, uploaded); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+	if got := droppedPackFile(uploaded, &avsysv1.MinecraftServerSpec{}); got != "" {
+		t.Errorf("none before: %q", got)
+	}
+}
+
+// Over its size, the panel lets go of the packs it keeps that servers have,
+// least recently served first; not one only a running game offers, nor one
+// just uploaded.
+func TestTrimPacks(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{Config: Config{PackDir: dir, PackCache: 30}}
+	s.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	old := time.Now().Add(-time.Hour)
+	write := func(sha string, at time.Time) {
+		p := filepath.Join(dir, sha+".zip")
+		if err := os.WriteFile(p, make([]byte, 10), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, b, c, d := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40), strings.Repeat("d", 40)
+	write(a, old)        // a server's, served long ago
+	write(b, old)        // a server's, served just now
+	write(c, old)        // only a running game's
+	write(d, time.Now()) // a server's, just uploaded
+	s.packServed.Store(b, time.Now())
+	s.trimPacks(map[string]bool{a: true, b: true, d: true})
+	for sha, want := range map[string]bool{a: false, b: true, c: true, d: true} {
+		_, err := os.Stat(filepath.Join(dir, sha+".zip"))
+		if (err == nil) != want {
+			t.Errorf("%s kept %v, want %v", sha[:1], err == nil, want)
+		}
+	}
+	// Within its size: nothing more goes.
+	s.Config.PackCache = 1 << 20
+	s.trimPacks(map[string]bool{b: true, d: true})
+	if _, err := os.Stat(filepath.Join(dir, b+".zip")); err != nil {
+		t.Error("a pack was let go of within the cache's size")
 	}
 }

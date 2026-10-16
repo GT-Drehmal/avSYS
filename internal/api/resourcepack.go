@@ -16,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -312,12 +313,13 @@ func (s *Server) prunePacks(ctx context.Context, servers []avsysv1.MinecraftServ
 	if s.Config.PackDir == "" {
 		return
 	}
-	used := map[string]bool{}
+	used, inSpec := map[string]bool{}, map[string]bool{}
 	for i := range servers {
 		if rp := servers[i].Spec.ResourcePack; rp != nil && rp.Uploaded != nil {
-			used[rp.SHA1] = true
+			used[rp.SHA1], inSpec[rp.SHA1] = true, true
 		}
 	}
+	defer s.trimPacks(inSpec)
 	var pods corev1.PodList
 	if err := s.nodeReader().List(ctx, &pods, client.HasLabels{avsysv1.LabelServer}); err != nil {
 		// Not knowing what games offer, nothing is pruned.
@@ -348,6 +350,55 @@ func (s *Server) prunePacks(ctx context.Context, servers []avsysv1.MinecraftServ
 		}
 		if err := os.Remove(filepath.Join(s.Config.PackDir, e.Name())); err == nil {
 			s.Log.Info("removed a resource pack no server has", "file", e.Name())
+		}
+	}
+}
+
+// trimPacks keeps the packs the panel keeps within PackCache: over it, the
+// least recently served of those a server's settings have (inSpec) are let
+// go of, each to be read out of that server's files again when it is next
+// asked for. One only a running game still offers is kept, as nothing would
+// have it to read back; so is one just uploaded.
+func (s *Server) trimPacks(inSpec map[string]bool) {
+	if s.Config.PackCache <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(s.Config.PackDir)
+	if err != nil {
+		return
+	}
+	type kept struct {
+		name string
+		size int64
+		last time.Time
+	}
+	var total int64
+	var lettable []kept
+	for _, e := range entries {
+		m := packName.FindStringSubmatch(e.Name())
+		info, err := e.Info()
+		if m == nil || err != nil {
+			continue
+		}
+		total += info.Size()
+		if !inSpec[m[1]] || time.Since(info.ModTime()) < packGrace {
+			continue
+		}
+		last := info.ModTime()
+		if t, ok := s.packServed.Load(m[1]); ok {
+			last = t.(time.Time)
+		}
+		lettable = append(lettable, kept{e.Name(), info.Size(), last})
+	}
+	sort.Slice(lettable, func(i, j int) bool { return lettable[i].last.Before(lettable[j].last) })
+	for _, k := range lettable {
+		if total <= s.Config.PackCache {
+			return
+		}
+		if err := os.Remove(filepath.Join(s.Config.PackDir, k.name)); err == nil {
+			total -= k.size
+			s.packServed.Delete(strings.TrimSuffix(k.name, ".zip"))
+			s.Log.Info("let go of a resource pack to keep within the cache's size; it is read from its server's files when next asked for", "file", k.name)
 		}
 	}
 }
@@ -404,15 +455,24 @@ func (s *Server) dropPacks(ctx context.Context, sc *sftp.Client, reached error, 
 	}
 }
 
+// droppedPackFile is the file of the uploaded pack a server had before
+// (previous) and does not have now (spec), or "".
+func droppedPackFile(spec, previous *avsysv1.MinecraftServerSpec) string {
+	was, now := previous.ResourcePack, spec.ResourcePack
+	if was == nil || was.Uploaded == nil || (now != nil && now.Uploaded != nil && now.SHA1 == was.SHA1) {
+		return ""
+	}
+	return packFile(was.SHA1)
+}
+
 // removeDroppedPack removes the file of an uploaded pack a server's settings
 // no longer have, after they were changed to one hosted elsewhere.
 func (s *Server) removeDroppedPack(ctx context.Context, namespace, name string, spec, previous *avsysv1.MinecraftServerSpec) {
-	was, now := previous.ResourcePack, spec.ResourcePack
-	if was == nil || was.Uploaded == nil || (now != nil && now.Uploaded != nil && now.SHA1 == was.SHA1) {
+	if droppedPackFile(spec, previous) == "" {
 		return
 	}
 	sc, err := s.workspaces.get(ctx, namespace, name)
-	s.dropPacks(ctx, sc, err, client.ObjectKey{Namespace: namespace, Name: name}, "", was)
+	s.dropPacks(ctx, sc, err, client.ObjectKey{Namespace: namespace, Name: name}, "", previous.ResourcePack)
 }
 
 func (s *Server) cachedPack(sha string) string {
@@ -472,6 +532,7 @@ func (s *Server) PackHandler() http.Handler {
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		s.packServed.Store(sha, time.Now())
 		http.ServeContent(w, r, sha+".zip", info.ModTime(), f)
 	})
 }
