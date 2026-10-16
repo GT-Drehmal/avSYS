@@ -431,6 +431,14 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 // name: not when another server's Service has it, as the one its extra
 // ports are opened on, which is named after that server.
 func (s *Server) serviceNameIsFree(ctx context.Context, namespace, name string) error {
+	// The name is that server's from when it is made, before its Service is.
+	if base, ok := strings.CutSuffix(name, "-ports"); ok {
+		if err := s.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: base}, &avsysv1.MinecraftServer{}); err == nil {
+			return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is the name %s's extra ports are opened under. Choose another.", name, base)}
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
 	svc := &corev1.Service{}
 	err := s.nodeReader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, svc)
 	if apierrors.IsNotFound(err) {

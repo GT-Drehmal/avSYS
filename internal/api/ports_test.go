@@ -64,7 +64,12 @@ func TestServiceNameIsFree(t *testing.T) {
 	if err := controllerutil.SetControllerReference(bar, own, scheme); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(foo, ports, own).Build()}
+	// Made a moment ago, before its Service of extra ports is.
+	fresh := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "fresh", UID: "uid-fresh"}}
+	s := &Server{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(foo, ports, own, fresh).Build()}
+	if err := s.serviceNameIsFree(context.Background(), "mc-x", "fresh-ports"); err == nil || !strings.Contains(err.Error(), "fresh's extra ports") {
+		t.Errorf("fresh-ports: %v", err)
+	}
 	if err := s.serviceNameIsFree(context.Background(), "mc-x", "foo-ports"); err == nil || !strings.Contains(err.Error(), "foo's extra ports") {
 		t.Errorf("foo-ports: %v", err)
 	}

@@ -192,6 +192,33 @@ func TestPortsOwnAddress(t *testing.T) {
 	}
 }
 
+// A panel that does not know the router's Service, as one run outside the
+// cluster, shows the address the load balancer gave the ports.
+func TestPortsOwnAddressWithoutRouter(t *testing.T) {
+	scheme := portsScheme(t)
+	mc := withPorts("probe", avsysv1.ExposeRouter, voice)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc).WithStatusSubresource(&corev1.Service{}).Build()
+	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25699}}}
+	if _, _, err := r.ensurePorts(context.Background(), mc, nil); err != nil {
+		t.Fatal(err)
+	}
+	own := &corev1.Service{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "mc-x", Name: PortsServiceName("probe")}, own); err != nil {
+		t.Fatal(err)
+	}
+	ports, _, err := r.ensurePorts(context.Background(), mc, nil)
+	if err != nil || ports[0].Address != "probe.example.org:25600" {
+		t.Errorf("with no address given yet: %v %+v, want the hostname", err, ports)
+	}
+	own.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "203.0.113.9"}}
+	if err := c.Status().Update(context.Background(), own); err != nil {
+		t.Fatal(err)
+	}
+	if ports, _, err = r.ensurePorts(context.Background(), mc, nil); err != nil || ports[0].Address != "203.0.113.9:25600" {
+		t.Errorf("given one: %v %+v, want 203.0.113.9:25600", err, ports)
+	}
+}
+
 // With every public port given out, a server still runs: the ports left
 // over are not opened, say why, and are looked at again.
 func TestPortRangeFull(t *testing.T) {

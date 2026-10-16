@@ -255,11 +255,17 @@ func (r *Reconciler) noneFree() string {
 }
 
 // ownAddress is the address a server's Service of extra ports was given by
-// the load balancer, if that is not the router's, or "".
+// the load balancer, if that is not the router's or the router's is not
+// known, or "".
 func (r *Reconciler) ownAddress(ctx context.Context, own *corev1.Service) string {
 	mine := ingressOf(own)
-	if len(mine) == 0 || r.Config.RouterService.Name == "" {
+	if len(mine) == 0 {
 		return ""
+	}
+	// The router's Service unknown, as for a panel run outside the cluster,
+	// the address the load balancer gave is the one known to reach them.
+	if r.Config.RouterService.Name == "" {
+		return mine[0]
 	}
 	router := &corev1.Service{}
 	if err := r.Reader.Get(ctx, r.Config.RouterService, router); err != nil {

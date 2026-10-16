@@ -236,6 +236,10 @@ func run(opts options, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("extra-ports: %w", err)
 	}
+	// The router's own port on the address they share is the game's.
+	if portRange.First != 0 && int(portRange.First) <= opts.routerPort && opts.routerPort <= int(portRange.Last) {
+		return fmt.Errorf("extra-ports: %s includes %d, the router's own port (--router-public-port); give a range beside it, as 25600-25699", opts.extraPorts, opts.routerPort)
+	}
 	if err := (&controller.Reconciler{
 		Client: mgr.GetClient(),
 		Reader: mgr.GetAPIReader(),

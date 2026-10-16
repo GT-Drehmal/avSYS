@@ -338,6 +338,7 @@ type MinecraftServerSpec struct {
 	// chat, Geyser, a web map. Each is opened to players next to the
 	// game's own.
 	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:XValidation:rule="self.all(x, self.exists_one(y, y.port == x.port && (has(y.protocol) ? y.protocol : 'TCP') == (has(x.protocol) ? x.protocol : 'TCP')))",message="each port and protocol is listed once"
 	// +listType=map
 	// +listMapKey=name
 	Ports []ExtraPort `json:"ports,omitempty"`

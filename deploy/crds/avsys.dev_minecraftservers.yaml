@@ -548,6 +548,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+                x-kubernetes-validations:
+                - message: each port and protocol is listed once
+                  rule: 'self.all(x, self.exists_one(y, y.port == x.port && (has(y.protocol)
+                    ? y.protocol : ''TCP'') == (has(x.protocol) ? x.protocol : ''TCP'')))'
               properties:
                 additionalProperties:
                   type: string
