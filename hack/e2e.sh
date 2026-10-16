@@ -258,6 +258,7 @@ packed=$(call -X PUT --data-binary @"$WORK/pack.zip" "$SRV/resource-pack?name=e2
 PACK_URL=$(echo "$packed" | field "d['spec']['resourcePack']['url']") || fail "no pack was taken: $packed"
 PACK_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack.zip")
 expect "an uploaded pack is the server's, at its hash" "$(echo "$packed" | field "(d['spec']['resourcePack']['sha1'], d['spec']['resourcePack']['uploaded']['name'])")" "('$PACK_SHA', 'e2e-pack.zip')"
+expect "and is made for the formats its pack.mcmeta says" "$(echo "$packed" | field "d['spec']['resourcePack'].get('formats')")" "{'min': 46, 'max': 46}"
 expect "and served to anyone, as a game fetches it" "$(curl -sS "$PACK_URL" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
 expect "it is kept in the server's files" "$(call "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
 expect "a pack a folder down is refused, saying so" "$(call -X PUT --data-binary @"$WORK/nested.zip" "$SRV/resource-pack?name=nested.zip" | field "d['message']")" "in a folder, E2E Pack"

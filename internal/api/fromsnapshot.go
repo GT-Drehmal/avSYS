@@ -188,7 +188,7 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	} else if rp, was := spec.ResourcePack, recorded.ResourcePack; rp != nil && was != nil && was.Uploaded != nil && rp.URL == was.URL {
 		// The original's uploaded pack, made required or given a prompt:
 		// still the one that comes in its files.
-		rp.SHA1, rp.Uploaded, rp.Project = was.SHA1, was.Uploaded, nil
+		rp.SHA1, rp.Uploaded, rp.Project, rp.Formats = was.SHA1, was.Uploaded, nil, was.Formats
 	}
 	spec.Properties = mergeProperties(recorded.Properties, given["properties"])
 	if !said("ops") {

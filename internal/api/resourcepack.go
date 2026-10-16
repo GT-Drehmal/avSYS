@@ -63,11 +63,12 @@ func packLimit(version string) int64 {
 
 // checkPack says whether a file is a resource pack the game can use: a zip
 // with pack.mcmeta at its top. One whose pack is a folder down is the usual
-// mistake, and is told so.
-func checkPack(f *os.File, size int64) error {
+// mistake, and is told so. It says which formats the pack is made for, where
+// it can tell.
+func checkPack(f io.ReaderAt, size int64) (*avsysv1.PackFormats, error) {
 	z, err := zip.NewReader(f, size)
 	if err != nil {
-		return errBadRequest("That is not a zip file. A resource pack is a .zip with pack.mcmeta at its top.")
+		return nil, errBadRequest("That is not a zip file. A resource pack is a .zip with pack.mcmeta at its top.")
 	}
 	folders := map[string]bool{}
 	var nested string
@@ -84,9 +85,9 @@ func checkPack(f *os.File, size int64) error {
 		}
 	}
 	if nested != "" && len(folders) == 1 {
-		return errBadRequest("The pack is in a folder, %s, inside the zip. Zip what is inside that folder instead, so that pack.mcmeta is at the top.", nested)
+		return nil, errBadRequest("The pack is in a folder, %s, inside the zip. Zip what is inside that folder instead, so that pack.mcmeta is at the top.", nested)
 	}
-	return errBadRequest("There is no pack.mcmeta at the top of that zip, so it is not a resource pack.")
+	return nil, errBadRequest("There is no pack.mcmeta at the top of that zip, so it is not a resource pack.")
 }
 
 // packFits says whether a server's uploaded pack is one the game of its
@@ -99,20 +100,20 @@ func packFits(spec *avsysv1.MinecraftServerSpec) error {
 }
 
 // checkMeta says whether pack.mcmeta is what the game reads it as: a file of
-// JSON with a pack in it.
-func checkMeta(e *zip.File) error {
+// JSON with a pack in it, and which formats it says the pack is made for.
+func checkMeta(e *zip.File) (*avsysv1.PackFormats, error) {
 	bad := errBadRequest("pack.mcmeta in that zip is not a pack's metadata: the game could not read it.")
 	if e.FileInfo().IsDir() {
-		return bad
+		return nil, bad
 	}
 	f, err := e.Open()
 	if err != nil {
-		return bad
+		return nil, bad
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, 1<<20))
 	if err != nil {
-		return bad
+		return nil, bad
 	}
 	// A pack has a description, and the formats it is for: pack_format,
 	// or min_format from the game's 1.21.9 on.
@@ -126,9 +127,9 @@ func checkMeta(e *zip.File) error {
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 	if d.Decode(&meta) != nil || meta.Pack == nil || len(meta.Pack.Description) == 0 || (meta.Pack.Format == "" && len(meta.Pack.MinFormat) == 0) {
-		return bad
+		return nil, bad
 	}
-	return nil
+	return formatsOfMeta(data), nil
 }
 
 // packURL is where the panel serves a pack of this SHA-1.
@@ -181,7 +182,8 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	if size == 0 {
 		return errBadRequest("The upload was empty.")
 	}
-	if err := checkPack(tmp, size); err != nil {
+	formats, err := checkPack(tmp, size)
+	if err != nil {
 		return err
 	}
 	sha := hex.EncodeToString(h.Sum(nil))
@@ -219,7 +221,7 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 		name = ""
 	}
 	orig := now.DeepCopy()
-	pack := &avsysv1.ResourcePackSpec{URL: s.packURL(sha), SHA1: sha, Uploaded: &avsysv1.UploadedPack{Name: name, Size: size, Time: metav1.Now()}}
+	pack := &avsysv1.ResourcePackSpec{URL: s.packURL(sha), SHA1: sha, Uploaded: &avsysv1.UploadedPack{Name: name, Size: size, Time: metav1.Now()}, Formats: formats}
 	if old := now.Spec.ResourcePack; old != nil {
 		pack.Enforce, pack.Prompt = old.Enforce, old.Prompt
 	}

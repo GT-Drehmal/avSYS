@@ -369,6 +369,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := checkPackSHA1(in.Spec.ResourcePack, nil); err != nil {
 		return err
 	}
+	if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
+		return err
+	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
 	}
@@ -543,6 +546,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
+		return err
+	}
+	if err := checkPackFormats(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return err
 	}
 	// A pack uploaded before, given another address now, has its file
@@ -831,6 +837,8 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
 	}
 	rp.Uploaded = was.Uploaded.DeepCopy()
+	// Its formats are what its file says.
+	rp.Formats = was.Formats.DeepCopy()
 	// The panel's own file is no project's.
 	rp.Project = nil
 	return nil

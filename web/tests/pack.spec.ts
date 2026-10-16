@@ -60,7 +60,7 @@ test("one picked from Modrinth is its newest release that fits, and another vers
   await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
   await expect(dialog).toHaveCount(0);
   // The newest release, not the beta above it, with its own file and hash.
-  expect(state.sent).toEqual([{ resourcePack: { ...picked, uploaded: null, enforce: false, prompt: "" } }]);
+  expect(state.sent).toEqual([{ resourcePack: { ...picked, uploaded: null, enforce: false, prompt: "", formats: null } }]);
   await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
   await expect(page.getByText("modrinth:faithful-32x")).toBeVisible();
   await expect(page.locator("section").filter({ hasText: "Resource pack" }).getByRole("link", { name: "Open on Modrinth" })).toHaveAttribute("href", "https://modrinth.com/resourcepack/faithful-32x");
@@ -85,7 +85,7 @@ test("one at a URL replaces the one there was, with its hash and the same settin
   await dialog.getByLabel("Download URL").fill("https://packs.example.org/world.zip");
   await dialog.getByRole("button", { name: "Use this pack" }).click();
   await expect(dialog).toHaveCount(0);
-  expect(state.sent).toEqual([{ resourcePack: { url: "https://packs.example.org/world.zip", sha1: "ef".repeat(20), uploaded: null, project: null, enforce: true, prompt: "For the map" } }]);
+  expect(state.sent).toEqual([{ resourcePack: { url: "https://packs.example.org/world.zip", sha1: "ef".repeat(20), uploaded: null, project: null, enforce: true, prompt: "For the map", formats: null } }]);
   await expect(page.getByText("world.zip", { exact: true })).toBeVisible();
   await expect(page.getByText("https://packs.example.org/world.zip")).toBeVisible();
 });
@@ -319,4 +319,100 @@ test("files put in the file explorer are uploaded one by one, saying which and h
   await expect.poll(() => put).toEqual(["PUT /world.zip", "PUT /notes.txt"]);
   await expect(page.getByRole("status").filter({ hasText: /of 2/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeEnabled();
+});
+
+/**
+ * The pack formats of game versions, as the panel answers them: of several,
+ * from the oldest to the newest; of none it knows, 404.
+ */
+async function packFormats(page: Page, of: Record<string, number>) {
+  const asked: string[] = [];
+  await page.route("**/api/v1/catalog/minecraft/pack-formats?*", (route) => {
+    const versions = new URL(route.request().url()).searchParams.get("versions") ?? "";
+    asked.push(versions);
+    const known = versions.split(",").flatMap((v) => (v in of ? [of[v]] : []));
+    if (known.length === 0) return route.fulfill({ status: 404, json: { code: "not_found", message: "Not found." } });
+    return route.fulfill({ json: { min: Math.min(...known), max: Math.max(...known) } });
+  });
+  return asked;
+}
+
+const formats = { "1.20.1": 15, "1.21.4": 46, "26.2": 88, "26.3": 97 };
+
+test("a pack made for an older or newer version of the game than the server's says so, and one that fits does not", async ({ page }) => {
+  await packFormats(page, formats);
+  await survival(page, { ...picked, formats: { min: 15, max: 15 } });
+  await page.goto("/o/friends/s/survival/mods");
+  const section = page.locator("section").filter({ hasText: "Resource pack" });
+  await expect(section.getByText("This pack is made for an older version of the game (pack format 15; 1.21.4 reads 46). Players' games still load it, but what has changed since, such as custom shaders, models and sounds, may not work.")).toBeVisible();
+});
+
+test("a pack made for the server's version, or a range with it, says nothing", async ({ page }) => {
+  const asked = await packFormats(page, formats);
+  await survival(page, { ...picked, formats: { min: 34, max: 64 } });
+  await page.goto("/o/friends/s/survival/mods");
+  await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
+  await expect.poll(() => asked).toContain("1.21.4");
+  await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
+});
+
+test("a pack whose formats are not known, or a version whose format is not, says nothing", async ({ page }) => {
+  const asked = await packFormats(page, {});
+  await survival(page, uploaded);
+  await page.goto("/o/friends/s/survival/mods");
+  await expect(page.getByText("faithful.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
+  // Nothing to compare it with: not even asked.
+  expect(asked).toEqual([]);
+});
+
+test("one picked from Modrinth is made for the formats of the game versions it is listed for, and one at a URL for what its file says", async ({ page }) => {
+  const asked = await packFormats(page, formats);
+  const state = await survival(page, null);
+  await page.goto("/o/friends/s/survival/mods");
+  await page.getByRole("button", { name: "Choose one" }).click();
+  let dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(asked).toContain("1.21.4");
+  expect(state.sent[0].resourcePack.formats).toEqual({ min: 46, max: 46 });
+  await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
+
+  await page.route("**/api/v1/catalog/sha1", (route) => route.fulfill({ json: { sha1: "ef".repeat(20), formats: { min: 88, max: 97 } } }));
+  await page.getByRole("button", { name: "Replace" }).click();
+  dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "From URL" }).click();
+  await dialog.getByLabel("Download URL").fill("https://packs.example.org/new.zip");
+  await dialog.getByRole("button", { name: "Use this pack" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.sent[1].resourcePack).toMatchObject({ url: "https://packs.example.org/new.zip", formats: { min: 88, max: 97 }, project: null });
+  await expect(page.getByText("This pack is made for a newer version of the game (pack formats 88 to 97; 1.21.4 reads 46). Players' games still load it, but what it uses from newer versions will not work.")).toBeVisible();
+});
+
+test("changing the game version in settings says when the pack is not made for the new one", async ({ page }) => {
+  await packFormats(page, formats);
+  await survival(page, { ...picked, formats: { min: 46, max: 46 } });
+  await page.goto("/o/friends/s/survival/settings");
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
+  await page.getByLabel("Game version").selectOption("26.3");
+  await expect(page.getByText(/This pack is made for an older version of the game \(pack format 46; 26\.3 reads 97\)/)).toBeVisible();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
+});
+
+test("a new server's pack says when it is not made for the version chosen", async ({ page, org }) => {
+  await packFormats(page, formats);
+  const slug = await org([]);
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("button", { name: "Choose a resource pack" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
+  await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
+  await page.getByLabel("Game version").selectOption("26.3");
+  await expect(page.getByText(/This pack is made for an older version of the game \(pack format 46; 26\.3 reads 97\)/)).toBeVisible();
 });

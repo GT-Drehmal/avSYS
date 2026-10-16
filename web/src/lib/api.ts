@@ -185,6 +185,14 @@ export interface ResourcePack {
   uploaded?: { name?: string; size: number; time: string } | null;
   /** Set for a pack picked from Modrinth: url and sha1 are of the version's file. */
   project?: PackProject | null;
+  /** The pack formats it is made for, where known. */
+  formats?: PackFormats | null;
+}
+
+/** A range of resource pack formats, by their major number. */
+export interface PackFormats {
+  min: number;
+  max: number;
 }
 
 export interface PackProject {
