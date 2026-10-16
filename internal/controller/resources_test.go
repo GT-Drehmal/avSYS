@@ -580,6 +580,8 @@ func TestLoadingGameIsLetFinish(t *testing.T) {
 		return corev1.ContainerStatus{Name: MinecraftContainer, Ready: ready, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(started)}}}
 	}
 	crashed := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	creating := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}
+	notPulled := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}
 	stop := func(mc *avsysv1.MinecraftServer) { mc.Spec.State = avsysv1.StateStopped }
 	restart := func(mc *avsysv1.MinecraftServer) {
 		mc.Annotations = map[string]string{avsysv1.AnnotationRestart: "now"}
@@ -599,9 +601,14 @@ func TestLoadingGameIsLetFinish(t *testing.T) {
 		{"restarted once loaded", restart, running(now.Add(-time.Minute), true), true},
 		{"stopped after loading too long", stop, running(now.Add(-loadGrace-time.Second), false), true},
 		{"stopped while crashed", stop, crashed, true},
+		// A moment after it was started: its container is still being made,
+		// and would start in the pod being deleted, as on the home lab.
+		{"stopped while its container is made", stop, creating, false},
+		{"stopped with its image not pulled", stop, notPulled, true},
 	} {
 		// The pod as made for the server before the change.
 		pod := buildPod(server(nil), Config{})
+		pod.CreationTimestamp = metav1.NewTime(now.Add(-5 * time.Second))
 		pod.Status.ContainerStatuses = []corev1.ContainerStatus{c.game}
 		mc := server(c.change)
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, pod).Build()

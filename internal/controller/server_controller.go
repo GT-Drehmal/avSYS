@@ -273,11 +273,19 @@ func containerStatus(pod *corev1.Pod, name string) *corev1.ContainerStatus {
 	return nil
 }
 
-// loading says whether a pod's game is running but not yet ready: loading
-// its world, which it finishes before it can be stopped.
+// loading says whether a pod's game is on its way up and not yet ready:
+// its container being made, the image setting it up, or the game loading
+// its world. Told to stop then, it does not until it is up, and then
+// fails to, so it is let finish first.
 func loading(pod *corev1.Pod) bool {
 	cs := containerStatus(pod, MinecraftContainer)
-	return cs != nil && cs.State.Running != nil && !cs.Ready
+	if cs == nil || cs.Ready {
+		return false
+	}
+	if w := cs.State.Waiting; w != nil {
+		return w.Reason == "ContainerCreating" || w.Reason == "PodInitializing"
+	}
+	return cs.State.Running != nil
 }
 
 // loadGrace is how long a game is let load before it is stopped anyway: one
@@ -291,7 +299,11 @@ func letLoad(pod *corev1.Pod, now time.Time) time.Duration {
 	if !loading(pod) {
 		return 0
 	}
-	return max(containerStatus(pod, MinecraftContainer).State.Running.StartedAt.Add(loadGrace).Sub(now), 0)
+	since := pod.CreationTimestamp.Time
+	if r := containerStatus(pod, MinecraftContainer).State.Running; r != nil {
+		since = r.StartedAt.Time
+	}
+	return max(since.Add(loadGrace).Sub(now), 0)
 }
 
 func containerReady(pod *corev1.Pod, name string) bool {
