@@ -89,11 +89,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.ensurePlacement(ctx, mc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("placement: %w", err)
 	}
-	pod, pending, err := r.ensurePod(ctx, mc)
+	pod, pending, wait, err := r.ensurePod(ctx, mc)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("pod: %w", err)
 	}
-	return ctrl.Result{}, r.updateStatus(ctx, mc, pod, svc, pending)
+	return ctrl.Result{RequeueAfter: wait}, r.updateStatus(ctx, mc, pod, svc, pending)
 }
 
 // leftOf reports whether an object belongs to another server than this one,
@@ -215,25 +215,31 @@ func (r *Reconciler) ensureService(ctx context.Context, mc *avsysv1.MinecraftSer
 // ensurePod creates the server's pod, or replaces it when it no longer matches
 // what is wanted. A healthy running game is never restarted just because the
 // spec changed: that is reported as pending and applied on the next restart.
-func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer) (pod *corev1.Pod, pending bool, err error) {
+//
+// A game that is loading is let finish before it is replaced: told to stop
+// then, it stops only once loaded, and the image's way of telling it fails
+// at that, so it is killed a minute later, unsaved. wait is how long until
+// it is looked at again, if nothing changes before; its pod becoming ready
+// is a change.
+func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer) (pod *corev1.Pod, pending bool, wait time.Duration, err error) {
 	desired := buildPod(mc, r.Config)
 	existing := &corev1.Pod{}
 	err = r.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: mc.Name}, existing)
 	if apierrors.IsNotFound(err) {
 		if err := controllerutil.SetControllerReference(mc, desired, r.Scheme); err != nil {
-			return nil, false, err
+			return nil, false, 0, err
 		}
 		if err := r.Create(ctx, desired); err != nil {
-			return nil, false, err
+			return nil, false, 0, err
 		}
-		return desired, false, nil
+		return desired, false, 0, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	if !existing.DeletionTimestamp.IsZero() {
 		// Its removal triggers another reconcile, which creates the replacement.
-		return existing, false, nil
+		return existing, false, 0, nil
 	}
 
 	finished := existing.Status.Phase == corev1.PodFailed || existing.Status.Phase == corev1.PodSucceeded
@@ -243,14 +249,19 @@ func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer)
 	serving := hasContainer(existing, MinecraftContainer) && containerReady(existing, MinecraftContainer)
 
 	if finished || stateChanged || restartAsked || (specChanged && !serving) {
+		if !finished {
+			if wait := letLoad(existing, time.Now()); wait > 0 {
+				return existing, specChanged, wait, nil
+			}
+		}
 		if err := r.Delete(ctx, existing); client.IgnoreNotFound(err) != nil {
-			return nil, false, err
+			return nil, false, 0, err
 		}
 		now := metav1.Now()
 		existing.DeletionTimestamp = &now
-		return existing, false, nil
+		return existing, false, 0, nil
 	}
-	return existing, specChanged, nil
+	return existing, specChanged, 0, nil
 }
 
 func containerStatus(pod *corev1.Pod, name string) *corev1.ContainerStatus {
@@ -269,6 +280,20 @@ func loading(pod *corev1.Pod) bool {
 	return cs != nil && cs.State.Running != nil && !cs.Ready
 }
 
+// loadGrace is how long a game is let load before it is stopped anyway: one
+// that takes longer is taken as stuck.
+const loadGrace = 5 * time.Minute
+
+// letLoad is how much longer a pod's game that is loading is let finish
+// before it is stopped, or zero for one that is not loading or has had
+// loadGrace.
+func letLoad(pod *corev1.Pod, now time.Time) time.Duration {
+	if !loading(pod) {
+		return 0
+	}
+	return max(containerStatus(pod, MinecraftContainer).State.Running.StartedAt.Add(loadGrace).Sub(now), 0)
+}
+
 func containerReady(pod *corev1.Pod, name string) bool {
 	cs := containerStatus(pod, name)
 	return cs != nil && cs.Ready
@@ -281,7 +306,7 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 		switch {
 		case gameInPod:
 			if loading(pod) {
-				return avsysv1.PhaseStopping, "The game is still loading. It stops once it has, saving the world first, which can take up to a minute and a half."
+				return avsysv1.PhaseStopping, "The game is still loading. It is stopped once it has, saving the world first."
 			}
 			return avsysv1.PhaseStopping, ""
 		case mc.Annotations[avsysv1.AnnotationCreating] != "":
@@ -293,6 +318,10 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 		default:
 			return avsysv1.PhaseSleeping, ""
 		}
+	}
+	// Asked to restart while it loads: it is let finish first.
+	if gameInPod && pod.DeletionTimestamp.IsZero() && loading(pod) && pod.Annotations[avsysv1.AnnotationRestart] != mc.Annotations[avsysv1.AnnotationRestart] {
+		return avsysv1.PhaseStarting, "Restarting. The game is still loading, and stops once it has, saving the world first; then it starts again."
 	}
 	if gameInPod && !pod.DeletionTimestamp.IsZero() {
 		// Restarted: the game it had stops before the next one starts.

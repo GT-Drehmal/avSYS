@@ -244,23 +244,34 @@ restarted
 expect "and the game no longer has it" "$(call -d '{"command":"datapack list"}' "$SRV/console" | field "'Veinminer' not in d['output']")" True
 
 step "a stop while the game loads"
-# Restarted, and stopped before it is up again: the stop is what it ends at,
-# however long the game takes to let go, and nothing starts it after.
+# Restarted, and stopped while it is coming up again. Told to stop while it
+# loads, the game would fail to, and be killed a minute later: it is let
+# finish loading and then stopped, saying so meanwhile, and nothing starts
+# it after.
 call -X POST "$SRV/restart" >/dev/null
 for _ in $(seq 1 60); do
   [ "$(call "$SRV" | field "d['status'].get('phase')")" = Starting ] && break
   sleep 1
 done
+# Into its loading: the container started again, which takes a moment.
+sleep 4
+asked=$(date +%s)
 expect "a stop is taken while it starts" "$(call -X POST "$SRV/stop" | field "d['spec']['state']")" Stopped
-# While the game that is loading lets go, which can take a while, it says so.
-seen=""
-for _ in $(seq 1 30); do
+# A wait of more than a look or two says what it is waiting for.
+silent=0
+for _ in $(seq 1 60); do
   now=$(call "$SRV" | field "(d['status'].get('phase'), d['status'].get('message') or '')")
-  case "$now" in *Stopping*) seen=$now; break ;; *Stopped*) break ;; esac
+  case "$now" in
+    *Stopped*) break ;;
+    *"still loading"*) silent=0 ;;
+    *) silent=$((silent + 1)); [ "$silent" -lt 3 ] || fail "a stop that waits says why: $now" ;;
+  esac
   sleep 1
 done
-if [ -n "$seen" ]; then expect "and says what it is waiting for" "$seen" "still loading"; fi
 wait_phase Stopped
+took=$(($(date +%s) - asked))
+[ "$took" -lt 50 ] || fail "a stop while the game loads took ${took}s, as long as a game that is killed"
+echo "ok: and it is stopped once loaded, in ${took}s"
 sleep 15
 expect "and it stays stopped" "$(call "$SRV" | field "(d['spec']['state'], d['status'].get('phase'))")" "('Stopped', 'Stopped')"
 call -X POST "$SRV/start" >/dev/null

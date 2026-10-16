@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +12,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -557,5 +561,68 @@ func TestLaunchFlags(t *testing.T) {
 	before := buildPod(server(nil), Config{}).Annotations[annotationSpecHash]
 	if after := buildPod(server(func(mc *avsysv1.MinecraftServer) { mc.Spec.JVM = avsysv1.JVMSpec{AikarFlags: &off} }), Config{}).Annotations[annotationSpecHash]; after != before {
 		t.Error("switching off flags that were never on changed the pod")
+	}
+}
+
+// A game that is loading is let finish before its pod is replaced, for a
+// stop, a restart or new settings: told to stop while it loads, the game
+// fails to and is killed a minute later. One that has loaded for too long,
+// or is not running at all, is replaced at once.
+func TestLoadingGameIsLetFinish(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	running := func(started time.Time, ready bool) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: MinecraftContainer, Ready: ready, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(started)}}}
+	}
+	crashed := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	stop := func(mc *avsysv1.MinecraftServer) { mc.Spec.State = avsysv1.StateStopped }
+	restart := func(mc *avsysv1.MinecraftServer) {
+		mc.Annotations = map[string]string{avsysv1.AnnotationRestart: "now"}
+	}
+	newSettings := func(mc *avsysv1.MinecraftServer) { mc.Spec.Properties = map[string]string{"motd": "changed"} }
+	now := time.Now()
+	for _, c := range []struct {
+		name     string
+		change   func(*avsysv1.MinecraftServer)
+		game     corev1.ContainerStatus
+		replaced bool
+	}{
+		{"stopped while loading", stop, running(now.Add(-10*time.Second), false), false},
+		{"restarted while loading", restart, running(now.Add(-10*time.Second), false), false},
+		{"new settings while loading", newSettings, running(now.Add(-10*time.Second), false), false},
+		{"stopped once loaded", stop, running(now.Add(-time.Minute), true), true},
+		{"restarted once loaded", restart, running(now.Add(-time.Minute), true), true},
+		{"stopped after loading too long", stop, running(now.Add(-loadGrace-time.Second), false), true},
+		{"stopped while crashed", stop, crashed, true},
+	} {
+		// The pod as made for the server before the change.
+		pod := buildPod(server(nil), Config{})
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{c.game}
+		mc := server(c.change)
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, pod).Build()
+		r := &Reconciler{Client: cl, Reader: cl, Scheme: scheme}
+		got, _, wait, err := r.ensurePod(context.Background(), mc)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		replaced := !got.DeletionTimestamp.IsZero()
+		if replaced != c.replaced {
+			t.Errorf("%s: replaced = %v, want %v", c.name, replaced, c.replaced)
+		}
+		// Looked at again by the time it has had its grace, at the latest.
+		if !replaced && (wait <= 0 || wait > loadGrace) {
+			t.Errorf("%s: looked at again in %s", c.name, wait)
+		}
+		if !replaced && c.change != nil {
+			phase, message := phaseOf(mc, got)
+			if !strings.Contains(message, "still loading") && phase != avsysv1.PhaseStarting {
+				t.Errorf("%s: %s %q, want it to say it is let load", c.name, phase, message)
+			}
+		}
 	}
 }
