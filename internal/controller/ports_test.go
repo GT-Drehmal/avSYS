@@ -143,6 +143,17 @@ func TestOwnAddressPorts(t *testing.T) {
 	if len(svc.Spec.Ports) != 3 || svc.Spec.Ports[0].Name != "minecraft" || svc.Spec.Ports[1].Port != 24454 || svc.Spec.Ports[1].Protocol != corev1.ProtocolUDP || svc.Spec.Ports[2].Protocol != corev1.ProtocolTCP {
 		t.Fatalf("ports: %+v", svc.Spec.Ports)
 	}
+	// The node ports the cluster gives a load balancer's ports are kept, or
+	// each look would give them up for new ones.
+	for i := range svc.Spec.Ports {
+		svc.Spec.Ports[i].NodePort = int32(30000 + i)
+	}
+	applyService(svc, mc)
+	for i, p := range svc.Spec.Ports {
+		if p.NodePort != int32(30000+i) {
+			t.Errorf("%s: node port %d, want %d kept", p.Name, p.NodePort, 30000+i)
+		}
+	}
 	svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "203.0.113.7"}}
 	st := portStatus(mc, svc, nil, Config{})
 	if st[0].PublicPort != 24454 || st[0].Address != "203.0.113.7:24454" || st[1].Address != "203.0.113.7:8100" {
@@ -262,6 +273,8 @@ func TestPortRangeFull(t *testing.T) {
 func TestPortsServiceOfAnotherServer(t *testing.T) {
 	scheme := portsScheme(t)
 	mc := withPorts("foo", avsysv1.ExposeRouter, voice)
+	// Given before the name was taken.
+	mc.Annotations = map[string]string{avsysv1.AnnotationPublicPorts: "voice-chat=25600"}
 	named := withPorts("foo-ports", avsysv1.ExposeRouter)
 	theirs := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: "foo-ports"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Ports: []corev1.ServicePort{{Name: "minecraft", Port: 25565}}}}
 	if err := controllerutil.SetControllerReference(named, theirs, scheme); err != nil {
@@ -276,6 +289,10 @@ func TestPortsServiceOfAnotherServer(t *testing.T) {
 	if len(ports) != 1 || !strings.Contains(ports[0].Message, "another server's") {
 		t.Errorf("ports: %+v", ports)
 	}
+	// No public port is held for them meanwhile.
+	if got := mc.Annotations[avsysv1.AnnotationPublicPorts]; got != "" {
+		t.Errorf("public ports held: %q", got)
+	}
 	// Taking the ports away does not remove it either.
 	mc.Spec.Ports = nil
 	if _, _, err := r.ensurePorts(context.Background(), mc, nil); err != nil {
@@ -287,5 +304,19 @@ func TestPortsServiceOfAnotherServer(t *testing.T) {
 	}
 	if got.Spec.Type != corev1.ServiceTypeClusterIP || len(got.Spec.Ports) != 1 || got.Spec.Ports[0].Name != "minecraft" {
 		t.Errorf("the other server's Service was changed: %s %+v", got.Spec.Type, got.Spec.Ports)
+	}
+}
+
+// The router's own ports on the address shared are never given out: the
+// game's, and any other it has.
+func TestRouterPortsAreNotGivenOut(t *testing.T) {
+	scheme := portsScheme(t)
+	router := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "avsys", Name: "avsys"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "minecraft", Port: 25565}, {Name: "http", Port: 25600}, {Name: "ssh", Port: 25601}}}}
+	mc := withPorts("probe", avsysv1.ExposeRouter, voice)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(router, mc).Build()
+	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25699}, RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"}}}
+	ports, _, err := r.ensurePorts(context.Background(), mc, nil)
+	if err != nil || len(ports) != 1 || ports[0].PublicPort != 25602 {
+		t.Errorf("%v %+v, want public port 25602", err, ports)
 	}
 }

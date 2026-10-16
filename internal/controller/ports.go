@@ -91,10 +91,12 @@ var allocating sync.Mutex
 // has, and records them on the server. Ports it no longer has give theirs
 // back. Without a range nothing is given out. With every one given out, the
 // ports left over get none, and full says so: the server runs without them.
-func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftServer) (given map[string]int32, full bool, err error) {
+//
+// With none, it gives none, and any it had go back.
+func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftServer, none bool) (given map[string]int32, full bool, err error) {
 	have := publicPorts(mc)
 	want := map[string]int32{}
-	if sharesAddress(mc) && r.Config.PortRange.First != 0 {
+	if sharesAddress(mc) && r.Config.PortRange.First != 0 && !none {
 		for _, p := range mc.Spec.Ports {
 			if n, ok := have[p.Name]; ok && n >= r.Config.PortRange.First && n <= r.Config.PortRange.Last {
 				want[p.Name] = n
@@ -108,6 +110,17 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 				return nil, false, err
 			}
 			taken := map[int32]bool{}
+			// The router's own ports on the address they share are its: the
+			// game's, and any other it has, as for the panel or SSH.
+			if r.Config.RouterService.Name != "" {
+				router := &corev1.Service{}
+				if err := r.Reader.Get(ctx, r.Config.RouterService, router); client.IgnoreNotFound(err) != nil {
+					return nil, false, err
+				}
+				for _, p := range router.Spec.Ports {
+					taken[p.Port] = true
+				}
+			}
 			for i := range all.Items {
 				other := &all.Items[i]
 				if other.Namespace == mc.Namespace && other.Name == mc.Name {
@@ -162,19 +175,20 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 // A port that cannot be opened says why, and the server runs without it:
 // retry is set while some wait for a public port to come free.
 func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServer, svc *corev1.Service) (st []avsysv1.PortStatus, retry bool, err error) {
-	public, full, err := r.allocatePorts(ctx, mc)
-	if err != nil {
-		return nil, false, err
-	}
 	own := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: mc.Namespace, Name: PortsServiceName(mc.Name)}}
 	// Its name can be another server's own Service, of a server named so:
-	// that one is never changed or removed from here.
+	// that one is never changed or removed from here, and no public port is
+	// held for ports that cannot be opened on it.
 	existing := &corev1.Service{}
 	err = r.Reader.Get(ctx, client.ObjectKeyFromObject(own), existing)
 	if client.IgnoreNotFound(err) != nil {
 		return nil, false, err
 	}
 	theirs := err == nil && !metav1.IsControlledBy(existing, mc)
+	public, full, err := r.allocatePorts(ctx, mc, theirs)
+	if err != nil {
+		return nil, false, err
+	}
 	// Without a public port they are left off the Service, which cannot be
 	// made with no ports at all.
 	open := make([]avsysv1.ExtraPort, 0, len(mc.Spec.Ports))
@@ -349,7 +363,9 @@ func extraServicePorts(mc *avsysv1.MinecraftServer, existing []corev1.ServicePor
 	out := make([]corev1.ServicePort, 0, len(mc.Spec.Ports))
 	for _, p := range mc.Spec.Ports {
 		sp := corev1.ServicePort{Name: portServiceName(p), Port: p.Port, TargetPort: intstr.FromInt32(p.Port), Protocol: protocolOf(p)}
-		if mc.Spec.Expose.Type == avsysv1.ExposeNodePort {
+		// A load balancer's ports have node ports too, which the cluster
+		// gave and which are kept, as the game port's are.
+		if mc.Spec.Expose.Type == avsysv1.ExposeNodePort || mc.Spec.Expose.Type == avsysv1.ExposeLoadBalancer {
 			sp.NodePort = kept[sp.Name]
 		}
 		out = append(out, sp)
