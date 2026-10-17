@@ -557,6 +557,17 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 				s.Log.Warn("could not clear the saving-paused note", "server", mc.Name, "error", err)
 			}
 		}()
+		// Said in the workspace too, where the mc helper turns away the
+		// game's commands for saving while it lasts. Taken away again before
+		// saving is switched back on (deferred calls run last first).
+		if err := runIn(ws, "mkdir -p /tmp/avsys && touch "+savingPausedMark); err != nil {
+			s.Log.Warn("could not say in the workspace that saving is held", "server", mc.Name, "error", err)
+		}
+		defer func() {
+			if err := runIn(ws, "rm -f "+savingPausedMark); err != nil {
+				s.Log.Warn("could not take away the note in the workspace that saving is held", "server", mc.Name, "error", err)
+			}
+		}()
 		// Without both of these the copy could miss what the game still holds
 		// in memory, or catch a file half written. That is not a snapshot
 		// anyone should restore from, so there is none.
@@ -660,6 +671,21 @@ func (s *Server) markRestoring(ctx context.Context, key client.ObjectKey, snapsh
 		mc.Annotations[avsysv1.AnnotationRestoring] = snapshot
 	}
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// savingPausedMark is the file in a server's workspace that is there while a
+// snapshot holds the game's saves. The mc helper there will not send the
+// game's commands for saving while it is.
+const savingPausedMark = "/tmp/avsys/saving-paused"
+
+// runIn runs a fixed command in a workspace and waits for it.
+func runIn(ws *ssh.Client, command string) error {
+	session, err := ws.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	return session.Run(command)
 }
 
 // markSavingPaused sets or clears the note that a game has been told to hold
