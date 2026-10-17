@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -307,6 +308,9 @@ func (s *Server) modrinthVersions(w http.ResponseWriter, r *http.Request, _ *sto
 		params.Set("loaders", string(encoded))
 	} else if q.Get("loader") == "datapack" {
 		params.Set("loaders", `["datapack"]`)
+	} else if q.Get("loader") == "resourcepack" {
+		// Modrinth files resource packs under the game itself.
+		params.Set("loaders", `["minecraft"]`)
 	}
 	if v := q.Get("gameVersion"); v != "" && v != "LATEST" {
 		encoded, _ := json.Marshal([]string{v})
@@ -368,14 +372,36 @@ func (s *Server) hashURL(w http.ResponseWriter, r *http.Request, _ *store.User) 
 	if resp.StatusCode != http.StatusOK {
 		return errBadRequest("That URL answered %s.", resp.Status)
 	}
+	// Kept a moment where the panel keeps packs, to read which formats it
+	// is made for: a zip is read from its end.
+	var keep *os.File
+	if s.Config.PackDir != "" {
+		if err := os.MkdirAll(s.Config.PackDir, 0o750); err == nil {
+			keep, _ = os.CreateTemp(s.Config.PackDir, "fetch-*")
+		}
+	}
 	h := sha1.New()
-	n, err := io.Copy(h, io.LimitReader(resp.Body, maxResourcePack+1))
+	to := io.Writer(h)
+	if keep != nil {
+		defer os.Remove(keep.Name())
+		defer keep.Close()
+		to = io.MultiWriter(h, keep)
+	}
+	n, err := io.Copy(to, io.LimitReader(resp.Body, maxResourcePack+1))
 	if err != nil {
 		return errBadRequest("The download was interrupted.")
 	}
 	if n > maxResourcePack {
 		return errBadRequest("That file is larger than 512 MB.")
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sha1": hex.EncodeToString(h.Sum(nil)), "size": n})
+	out := map[string]any{"sha1": hex.EncodeToString(h.Sum(nil)), "size": n}
+	// Not being a pack is not refused here: the address may be one the
+	// game is given anyway.
+	if keep != nil {
+		if formats, err := checkPack(keep, n); err == nil && formats != nil {
+			out["formats"] = formats
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }

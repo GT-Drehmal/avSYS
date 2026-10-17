@@ -20,7 +20,7 @@ export function ProjectIcon({ url, size = 36 }: { url?: string | null; size?: nu
   return <img src={url} alt="" loading="lazy" className="shrink-0 rounded-md bg-raised object-cover" style={style} />;
 }
 
-type Kind = "mod" | "plugin" | "datapack" | "modpack";
+type Kind = "mod" | "plugin" | "datapack" | "modpack" | "resourcepack";
 type Order = "relevance" | "downloads" | "follows" | "newest" | "updated";
 
 const orders: [Order, string][] = [
@@ -49,6 +49,8 @@ interface Props {
   /** Disables picking, while a previous pick is being saved. */
   busy?: boolean;
   placeholder?: string;
+  /** What picking one is called, and having picked it: Add and Added. */
+  pickLabels?: [string, string];
 }
 
 /**
@@ -57,7 +59,7 @@ interface Props {
  * It fills its parent and scrolls its results inside it, so the parent must
  * have a height.
  */
-export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick, busy, placeholder }: Props) {
+export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick, busy, placeholder, pickLabels }: Props) {
   const [query, setQuery] = useState("");
   const q = useDebounced(query, 200);
   // With nothing typed there is nothing to be relevant to, so the most
@@ -123,6 +125,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
         picked={isPicked(looking)}
         has={(project) => !!(picked?.has(project.id) || picked?.has(project.slug))}
         busy={busy}
+        pickLabels={pickLabels}
         onBack={() => setLooking(null)}
         onPick={() => onPick(looking)}
       />
@@ -264,10 +267,11 @@ interface DetailProps {
   busy?: boolean;
   onBack: () => void;
   onPick: () => void;
+  pickLabels?: [string, string];
 }
 
 /** One result looked at closely: what it is, which versions fit, and what it needs. */
-function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy, onBack, onPick }: DetailProps) {
+function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy, onBack, onPick, pickLabels = ["Add", "Added"] }: DetailProps) {
   const versions = useQuery({
     queryKey: ["modrinth-versions", hit.project_id, { loader, gameVersion }],
     queryFn: () => api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(hit.project_id)}/versions?${qs({ loader, gameVersion })}`),
@@ -380,11 +384,11 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
         {picked ? (
           <span className="flex items-center gap-1.5 text-[13px] text-muted">
             <Check className="size-4 text-accent" />
-            Added
+            {pickLabels[1]}
           </span>
         ) : (
           <Button variant="primary" loading={busy} disabled={versions.data?.length === 0} onClick={onPick}>
-            Add
+            {pickLabels[0]}
           </Button>
         )}
       </div>

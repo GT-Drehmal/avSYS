@@ -239,10 +239,13 @@ func TestContentLeftOf(t *testing.T) {
 		"/data/world/datapacks/../../server.properties",
 		"/etc/passwd",
 		"/data/a/b/datapacks/x.zip",
+		"/data/.avsys/resource-pack-" + strings.Repeat("ab", 20) + ".zip",
+		"/data/.avsys/resource-pack-mine.zip",
+		"/data/.avsys/store.db",
 		"",
 	}, "\n")
 	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{avsysv1.AnnotationContentLeft: note}}}
-	want := "/data/.avsys/content/ours.zip /data/world/datapacks/Veinminer-1.2.4.zip /data/drehmal/datapacks/pack.zip"
+	want := "/data/.avsys/content/ours.zip /data/world/datapacks/Veinminer-1.2.4.zip /data/drehmal/datapacks/pack.zip /data/.avsys/resource-pack-" + strings.Repeat("ab", 20) + ".zip"
 	if got := strings.Join(contentLeftOf(mc), " "); got != want {
 		t.Errorf("got %s\nwant %s", got, want)
 	}

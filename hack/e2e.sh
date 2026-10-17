@@ -250,6 +250,76 @@ expect "taken off, its file is removed" "$(call -o /dev/null -w '%{http_code}' "
 restarted
 expect "and the game no longer has it" "$(call -d '{"command":"datapack list"}' "$SRV/console" | field "'Veinminer' not in d['output']")" True
 
+step "resource pack"
+# A pack uploaded to the panel is kept in the server's files and served to
+# players' games, which fetch it with no session, at its hash.
+python3 - "$WORK/pack.zip" "$WORK/nested.zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e"}}')
+    z.writestr("assets/minecraft/lang/en_us.json", '{"menu.singleplayer":"e2e"}')
+with zipfile.ZipFile(sys.argv[2], "w") as z:
+    z.writestr("E2E Pack/pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e"}}')
+PY
+packed=$(call -X PUT --data-binary @"$WORK/pack.zip" "$SRV/resource-pack?name=e2e-pack.zip")
+PACK_URL=$(echo "$packed" | field "d['spec']['resourcePack']['url']") || fail "no pack was taken: $packed"
+PACK_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack.zip")
+expect "an uploaded pack is the server's, at its hash" "$(echo "$packed" | field "(d['spec']['resourcePack']['sha1'], d['spec']['resourcePack']['uploaded']['name'])")" "('$PACK_SHA', 'e2e-pack.zip')"
+expect "and is made for the formats its pack.mcmeta says" "$(echo "$packed" | field "d['spec']['resourcePack'].get('formats')")" "{'min': 46, 'max': 46}"
+expect "and served to anyone, as a game fetches it" "$(curl -sS "$PACK_URL" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
+expect "it is kept in the server's files" "$(call "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
+expect "a pack a folder down is refused, saying so" "$(call -X PUT --data-binary @"$WORK/nested.zip" "$SRV/resource-pack?name=nested.zip" | field "d['message']")" "in a folder, E2E Pack"
+restarted
+expect "the game offers it to players" "$(call "$SRV/files/content?path=/server.properties" | python3 -c 'import sys; p = dict(l.split("=", 1) for l in sys.stdin.read().replace("\\:", ":").splitlines() if "=" in l and not l.startswith("#")); print(p.get("resource-pack"), p.get("resource-pack-sha1"))')" "$PACK_URL $PACK_SHA"
+expect "and it is taken away again" "$(call -X DELETE "$SRV/resource-pack" | field "d['spec'].get('resourcePack')")" None
+expect "with its file" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip")" 404
+# One picked from Modrinth says which project and version it is, and stops
+# saying so once it is given another address.
+picked=$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://cdn.modrinth.com/data/e2e/pack.zip","sha1":"'"$PACK_SHA"'","project":{"source":"modrinth","id":"e2e-pack","version":"v1","versionName":"1.0","title":"E2E Pack"}}}}' "$SRV")
+expect "a pack picked from Modrinth says which" "$(echo "$picked" | field "(d['spec']['resourcePack']['project']['id'], d['spec']['resourcePack']['project']['versionName'])")" "('e2e-pack', '1.0')"
+expect "given another address, it is no longer the project's" "$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://example.org/pack.zip"}}}' "$SRV" | field "d['spec']['resourcePack'].get('project')")" None
+call -X DELETE "$SRV/resource-pack" >/dev/null
+
+step "a stop while the game loads"
+# Restarted, and stopped while it is coming up again. Told to stop while it
+# loads, the game would fail to, and be killed a minute later: it is let
+# finish loading and then stopped, saying so meanwhile, and nothing starts
+# it after.
+call -X POST "$SRV/restart" >/dev/null
+for _ in $(seq 1 60); do
+  [ "$(call "$SRV" | field "d['status'].get('phase')")" = Starting ] && break
+  sleep 1
+done
+# Into its loading: the container started again, which takes a moment.
+sleep 4
+asked=$(date +%s)
+expect "a stop is taken while it starts" "$(call -X POST "$SRV/stop" | field "d['spec']['state']")" Stopped
+# While it waits for the game to load it says so. Once loaded, the game
+# saves and stops as it always does, in a few seconds: one told to stop
+# while it loaded would fail to, and be killed a minute later.
+said=""
+loaded=$asked
+for _ in $(seq 1 300); do
+  now=$(call "$SRV" | field "(d['status'].get('phase'), d['status'].get('message') or '')")
+  case "$now" in
+    *Stopped*) break ;;
+    *"still loading"*) said=1; loaded=$(date +%s) ;;
+  esac
+  sleep 1
+done
+wait_phase Stopped
+took=$(($(date +%s) - loaded))
+[ "$took" -lt 40 ] || fail "once loaded, the game took ${took}s to stop, as long as one that is killed"
+echo "ok: and it is stopped once loaded, ${took}s after"
+# Caught loading, as it is a few seconds into a start, it said so.
+[ -n "$said" ] || [ $(($(date +%s) - asked)) -lt 8 ] || fail "a stop that waited never said why"
+echo "ok: and says what it waits for"
+sleep 15
+expect "and it stays stopped" "$(call "$SRV" | field "(d['spec']['state'], d['status'].get('phase'))")" "('Stopped', 'Stopped')"
+call -X POST "$SRV/start" >/dev/null
+wait_phase Running
+echo "ok: and starts again when asked"
+
 step "snapshots"
 snap=$(call -X POST "$SRV/snapshots?wait=true")
 SNAP=$(echo "$snap" | field "d['id']") || fail "no snapshot was taken: $snap"
@@ -296,6 +366,44 @@ expect "the panel's own commands do not look in anyone's home" "$own" "restic is
 expect "python is there" "$own" "42"
 expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
 
+step "extra ports"
+# A port a mod listens on beside the game is opened to players: here a web
+# server in the workspace, which shares the game's pod, stands in for one.
+ported=$(call -X PATCH -d '{"spec":{"ports":[{"name":"web","port":8100,"protocol":"TCP"}]}}' "$SRV")
+expect "a server is given an extra port" "$(echo "$ported" | field "d['spec']['ports']")" "'name': 'web'"
+for _ in $(seq 1 60); do
+  PUBLIC=$(call "$SRV" | field "next((p.get('publicPort', 0) for p in d['status'].get('ports', [])), 0)")
+  [ "$PUBLIC" != 0 ] && break
+  sleep 2
+done
+[ "$PUBLIC" != 0 ] || fail "the extra port was not opened: $(call "$SRV" | field "d['status'].get('ports')")"
+echo "ok: it is opened on public port $PUBLIC"
+if [ -n "${AVSYS_E2E_PORT_RANGE:-}" ]; then
+  first=${AVSYS_E2E_PORT_RANGE%-*}; last=${AVSYS_E2E_PORT_RANGE#*-}
+  expect "from the range the install gives out" "$([ "$PUBLIC" -ge "$first" ] && [ "$PUBLIC" -le "$last" ] && echo yes)" yes
+  expect "and players are told where" "$(call "$SRV" | field "d['status']['ports'][0].get('address', '')")" ":$PUBLIC"
+fi
+expect "the game's own port cannot be one" "$(call -X PATCH -d '{"spec":{"ports":[{"name":"game","port":25565}]}}' "$SRV" | field "d['message']")" "the game's own"
+if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
+  # Served for as long as a session of its own lasts, which is ended once
+  # it has been reached, or after two minutes.
+  ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p "$SSH_PORT" "probe.$ORG@$ssh_host" \
+    'echo reached through its port > /tmp/port.txt; cd /tmp && exec timeout 120 python3 -m http.server 8100' >/dev/null 2>&1 &
+  serving=$!
+  reached=""
+  for _ in $(seq 1 30); do
+    # From where the install's players would be: beside the node, or on it
+    # when nothing else can reach its address.
+    reached=$(${AVSYS_E2E_ON_NODE:-} wget -q -T 3 -O - "http://$AVSYS_E2E_NODE_IP:$PUBLIC/port.txt" 2>/dev/null) && break
+    sleep 2
+  done
+  expect "something listening on it is reached from outside" "$reached" "reached through its port"
+  kill "$serving" 2>/dev/null || true
+else
+  echo "skip: reaching an extra port needs a node's address"
+fi
+expect "and the port is closed again" "$(call -X PATCH -d '{"spec":{"ports":[]}}' "$SRV" | field "d['spec'].get('ports') or []")" "[]"
+
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"
@@ -311,6 +419,33 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 expect "a server put on a node runs there" "$(call "$API/orgs/$ORG/servers/placed" | field "d['status'].get('node')")" "$NODE"
+# With another node, the server is moved there, its files with it.
+OTHER_NODE=$(call "$API/nodes?memory=1Gi" | field "next((n['name'] for n in d['nodes'] if n['ready'] and n['name'] != '$NODE'), '')")
+if [ -n "$OTHER_NODE" ]; then
+  PLACED="$API/orgs/$ORG/servers/placed"
+  for _ in $(seq 1 90); do
+    echo "moved with it" | call -f -X PUT --data-binary @- "$PLACED/files/content?path=/moved.txt" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  # Its workspace home too, where people keep what they install, which an
+  # ordinary snapshot leaves out.
+  echo "home moved with it" | call -X PUT --data-binary @- "$PLACED/files/content?path=/.workspace/moved-home.txt" >/dev/null
+  placement=$(call "$PLACED/placement")
+  expect "its files are on its node's own disk" "$(echo "$placement" | field "(d.get('node'), d.get('local'))" 2>/dev/null) $placement" "('$NODE', True)"
+  moved=$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move?wait=true")
+  case "$moved" in *'"code"'*) fail "moving the server: $moved" ;; esac
+  expect "a server is moved to another node" "$(call "$PLACED" | field "d['status'].get('node')")" "$OTHER_NODE"
+  expect "with its files" "$(call "$PLACED/files/content?path=/moved.txt")" "moved with it"
+  expect "and its workspace home" "$(call "$PLACED/files/content?path=/.workspace/moved-home.txt")" "home moved with it"
+  expect "and is as it was, stopped" "$(call "$PLACED" | field "(d['spec']['state'], d['status']['phase'])")" "('Stopped', 'Stopped')"
+  expect "the snapshot that carried them is kept" "$(call "$PLACED/snapshots" | field "[s['trigger'] for s in d['snapshots']]")" "'move'"
+  expect "and it cannot be moved to where it is" "$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move" | field "d['message']")" "on $OTHER_NODE already"
+  # Its snapshot is let go of, so that the organization's are the probe's.
+  ids=$(call "$PLACED/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
+  call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
+else
+  echo "skip: moving a server needs a second node"
+fi
 call -X DELETE "$API/orgs/$ORG/servers/placed?snapshot=false" >/dev/null
 
 step "domains"
@@ -468,6 +603,27 @@ copy=$(call "$SRV/snapshots" | field "[s['id'] for s in d['snapshots'] if s['tri
 # Several snapshots go in one request: all of them, or none if one is not there.
 expect "deleting several stops at one that is unknown" "$(call -o /dev/null -w '%{http_code}' -X DELETE -d "{\"ids\":[\"$copy\",\"0000000000000000\"]}" "$API/orgs/$ORG/snapshots")" 404
 expect "the snapshot it was made from is an ordinary one" "$(call -X DELETE -d "{\"ids\":[\"$copy\"]}" "$API/orgs/$ORG/snapshots" | field "d['deleted']")" 1
+
+step "a new server given files from this computer"
+# As the new-server form does it: made stopped, its files sent straight
+# after, before its volume is there, which is waited for; then started.
+FRESH=$API/orgs/$ORG/servers/fresh
+made=$(call -d '{"name":"fresh","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"2Gi"},"storage":{"size":"2Gi"}}}' "$API/orgs/$ORG/servers")
+case "$made" in *'"spec"'*) ;; *) fail "the server was not made: $made" ;; esac
+curl -sSfL -o "$WORK/veinminer.zip" "$PACK" || fail "could not fetch the datapack to upload"
+sent=$(call -X PUT --data-binary @"$WORK/veinminer.zip" "$FRESH/content?kind=datapack&name=Veinminer-1.2.4.zip&wait=true")
+expect "a file sent before its volume is there waits for it, and is listed" "$(echo "$sent" | field "[m['project'] for m in d['spec']['mods'] if m['source'] == 'upload']")" "['Veinminer-1.2.4.zip']"
+packed=$(call -X PUT --data-binary @"$WORK/pack.zip" "$FRESH/resource-pack?name=e2e-pack.zip&wait=true")
+expect "and so does a resource pack" "$(echo "$packed" | field "d['spec']['resourcePack']['sha1']")" "$PACK_SHA"
+call -X POST "$FRESH/start" >/dev/null
+wait_phase Running "$FRESH"
+expect "started, the game has the datapack" "$(call -d '{"command":"datapack list enabled"}' "$FRESH/console" | field "d['output']")" "Veinminer-1.2.4.zip"
+expect "and offers the pack" "$(call "$FRESH/files/content?path=/server.properties" | python3 -c 'import sys; p = dict(l.split("=", 1) for l in sys.stdin.read().splitlines() if "=" in l and not l.startswith("#")); print(p.get("resource-pack-sha1"))')" "$PACK_SHA"
+call -o /dev/null -X DELETE "$FRESH?snapshot=false"
+for _ in $(seq 1 30); do
+  [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
+  sleep 2
+done
 
 step "snapshots outlive the server"
 # Something that is in no snapshot yet. Deleting the server must not lose it.

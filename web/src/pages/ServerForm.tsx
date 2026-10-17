@@ -2,14 +2,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { AddContentDialog, ContentList, kindsPhrase, type Software } from "../components/Content";
+import { AddContentDialog, ContentList, contentList, kindsFor, kindsPhrase, PackCard, PackFit, type PickKind, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, NodeChoice, type Join } from "../components/ServerFields";
 import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
+import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, serverIcon, serverPath, type BackupOverride, type ContentRef, type ExposeType, type Loader, type Modpack, type Server, type ServerSpec } from "../lib/api";
-import { ago, loaderNames } from "../lib/format";
+import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
+import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
 import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
@@ -63,6 +64,12 @@ interface Values {
   motd: string;
   picture: PictureChange;
   mods: ContentRef[];
+  /** The resource pack offered to players, with whether it is required and its prompt. */
+  pack: ResourcePack | null;
+  /** Files from this computer for a server not made yet, uploaded once it is, before it first starts. */
+  uploads: { file: File; kind: ContentKind }[];
+  /** The resource pack's file, likewise; pack then stands for it, with no address yet. */
+  packFile: File | null;
   gamemode: string;
   difficulty: string;
   levelType: string;
@@ -101,6 +108,9 @@ const fresh: Values = {
   motd: "",
   picture: { kind: "none" },
   mods: [],
+  pack: null,
+  uploads: [],
+  packFile: null,
   gamemode: "",
   difficulty: "",
   levelType: "",
@@ -141,6 +151,9 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     motd: p["motd"] ?? "",
     picture: { kind: "keep" },
     mods: spec.mods ?? [],
+    pack: spec.resourcePack?.url ? spec.resourcePack : null,
+    uploads: [],
+    packFile: null,
     gamemode: p["gamemode"] ?? "",
     difficulty: p["difficulty"] ?? "",
     levelType: p["level-type"] ?? "",
@@ -221,6 +234,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const startingName = source ? (copying ? freeName(`${source.name}-copy`, new Set([...taken, ...history])) : source.name) : "";
   const [start] = useState(() => (source ? valuesOf(source, startingName, copying, leastStorage) : fresh));
   const [v, setValues] = useState(start);
+  const toUpload = v.uploads.length > 0 || !!v.packFile;
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
   const [needsLoader, setNeedsLoader] = useState(false);
@@ -233,7 +247,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     toast.info(`${loaders.find((l) => l.id === v.loader)?.name ?? "This software"} has no build for ${v.version} yet`);
     setValues((was) => ({ ...was, version: "LATEST" }));
   }, [source, v.version, versions.data, versions.isPlaceholderData, v.loader]);
-  const [addingMods, setAddingMods] = useState(false);
+  const [addingMods, setAddingMods] = useState<PickKind | null>(null);
   const [moreWorld, setMoreWorld] = useState(false);
   const [moreNetwork, setMoreNetwork] = useState(false);
   const [moreLaunch, setMoreLaunch] = useState(false);
@@ -243,6 +257,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [keepCustom, setKeepCustom] = useState(custom);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // What a long wait on Create is for, while there is one.
+  const [stage, setStage] = useState<string | null>(null);
+  const { sending, send, cancel } = useUpload();
 
   const name = v.customName ?? slugify(v.displayName);
   const bringingBack = !!source && !copying && name === source.name;
@@ -257,6 +274,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const software: Software | null =
     v.kind === "modpack" ? { loader: "vanilla", version: v.version, modpack: v.modpack ?? { source: "modrinth", project: "" } } : v.loader ? { loader: v.loader, version: v.version } : null;
   const modsChanged = JSON.stringify(v.mods) !== JSON.stringify(start.mods);
+  const packChanged = JSON.stringify(v.pack) !== JSON.stringify(start.pack);
   // "Latest release" is whichever version that is now: picked for a copy of
   // a server already on it, nothing changes.
   const effective = (version: string) => (version === "LATEST" ? (versions.data?.latest ?? version) : version);
@@ -287,6 +305,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       storage: { size: fromGigabytes(v.storage) },
       expose: v.exposeType === "None" ? { type: "None" } : { type: v.exposeType, hostname: v.hostname.trim() },
       mods: v.mods,
+      // One to upload is the server's once it is made and the file is in.
+      ...(v.pack && !v.packFile ? { resourcePack: v.pack } : {}),
       properties,
       // Members from this role up who have linked a Minecraft account are let in.
       ...(v.join !== "anyone" && v.join !== "list" ? { autoWhitelist: v.join } : {}),
@@ -294,9 +314,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ...(v.sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(v.idleMinutes) || 15 } } : {}),
       ...(v.schedule === "off" ? { backups: { enabled: false } } : {}),
       jvm: { aikarFlags: v.aikar, extraFlags: v.extraFlags },
-      // The game looks for its picture when it starts, so a server given one
-      // is made stopped and started by the panel once the picture is there.
-      ...(v.picture.kind === "file" ? { state: "Stopped" as const } : {}),
+      // The game looks for its picture and its files when it starts, so a
+      // server given any is made stopped and started once they are there.
+      ...(v.picture.kind === "file" || toUpload ? { state: "Stopped" as const } : {}),
       ...(v.kind === "modpack" ? { modpack: v.modpack ?? undefined } : { loader: v.loader ?? undefined, version: v.version }),
     };
   };
@@ -325,6 +345,12 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     if (sleeps !== start.sleep || (sleeps && v.idleMinutes !== start.idleMinutes)) changes.sleep = { enabled: sleeps, idleMinutes: Number(v.idleMinutes) || 15 };
     if (v.schedule !== start.schedule) changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : null;
     if (modsChanged) changes.mods = v.mods;
+    // Left out, the original's comes with it, an uploaded one in its files.
+    // That one only made required keeps its file: the panel knows it by
+    // its address, and a request does not say a pack was uploaded.
+    if (packChanged) changes.resourcePack = v.pack && { ...v.pack, uploaded: null };
+    // One to upload is the copy's once its files are in: the original's goes.
+    if (v.packFile) changes.resourcePack = null;
     const jvm: NonNullable<ServerSpec["jvm"]> = {};
     if (v.aikar !== start.aikar) jvm.aikarFlags = v.aikar;
     if (v.extraFlags !== start.extraFlags) jvm.extraFlags = v.extraFlags;
@@ -334,7 +360,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     if (Object.keys(jvm).length > 0) changes.jvm = legacy ? { aikarFlags: v.aikar, extraFlags: v.extraFlags } : jvm;
     return {
       displayName: v.displayName,
-      state: startNow ? "Running" : "Stopped",
+      // Files to upload go in before it first starts: it is started after.
+      state: startNow && !toUpload ? "Running" : "Stopped",
       resources: { memory: fromGigabytes(v.memory) },
       storage: { size: fromGigabytes(v.storage) },
       // Reached the way the original is unless that was changed: a server
@@ -345,6 +372,31 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ...(keepCustom ? { image: spec?.image, env: spec?.env } : {}),
       ...changes,
     };
+  };
+
+  /**
+   * Uploads the files chosen for a server just made, one at a time, and says
+   * what went wrong if one did not go: then the rest are not sent either.
+   */
+  const uploadAll = async (server: string): Promise<string | null> => {
+    const path = serverPath(org, server);
+    const all = v.uploads.length + (v.packFile ? 1 : 0);
+    let n = 0;
+    const label = (name: string) => (all > 1 ? `${name} (${++n} of ${all})` : name);
+    try {
+      for (const { file, kind } of v.uploads) {
+        await send<Server>(label(file.name), `${path}/content?${qs({ kind, name: file.name, wait: "true" })}`, file);
+      }
+      if (v.packFile) {
+        await send<Server>(label(v.packFile.name), `${path}/resource-pack?${qs({ name: v.packFile.name, wait: "true" })}`, v.packFile);
+        // Whether it is required and its prompt, which an upload leaves as they were.
+        if (v.pack?.enforce || v.pack?.prompt) await api.patch<Server>(path, { spec: { resourcePack: { enforce: !!v.pack.enforce, prompt: v.pack.prompt ?? "" } } });
+      }
+      return null;
+    } catch (err) {
+      if (cancelled(err)) return "the upload was stopped.";
+      return err instanceof Error ? `${err.message}` : "an upload failed.";
+    }
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -365,14 +417,42 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         // "auto" lets the panel choose for a copy of a server kept to some
         // nodes, which would otherwise be kept to them too.
         const placed = v.node === "auto" ? { spec: { ...copyRequest(), nodeSelector: {} } } : { ...(v.node ? { node: v.node } : {}), spec: copyRequest() };
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed });
+        // With files to upload, the answer comes once its own are copied in,
+        // which they then join.
+        if (toUpload) setStage("Copying its files. Yours are uploaded once they are in.");
+        const server = await api.post<Server>(`/orgs/${org}/servers${toUpload ? "?wait=true" : ""}`, { name, ...from, ...pictured, ...placed });
+        setStage(null);
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
+        if (toUpload) {
+          const failed = await uploadAll(server.name);
+          await qc.invalidateQueries({ queryKey: keys.servers(org) });
+          if (failed) {
+            toast.error(`${v.displayName || server.name} was made, and left stopped: ${failed} Add the rest here, then start it.`);
+            navigate(`/o/${org}/s/${server.name}/content`);
+            return;
+          }
+          if (startNow) await api.post(`${serverPath(org, server.name)}/start`);
+        }
         // How the copying goes shows on the server's page until its files are in.
         navigate(`/o/${org}/s/${server.name}`);
         return;
       }
       const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...(v.node ? { node: v.node } : {}), spec: newRequest() });
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
+      // Its files go up first, from here: made stopped, it is started once
+      // they are all in. One that did not get them is left stopped, to be
+      // given them on its Content page, and says so.
+      if (toUpload) {
+        const failed = await uploadAll(server.name);
+        await qc.invalidateQueries({ queryKey: keys.servers(org) });
+        if (failed) {
+          if (v.picture.kind === "file") void api.putRaw(`${serverPath(org, server.name)}/icon?wait=true`, v.picture.file).catch(() => undefined);
+          toast.error(`${v.displayName || server.name} was made, and left stopped: ${failed} Add the rest here, then start it.`);
+          navigate(`/o/${org}/s/${server.name}/content`);
+          return;
+        }
+        if (v.picture.kind !== "file") await api.post(`${serverPath(org, server.name)}/start`);
+      }
       // Its picture goes onto its volume, which is not there yet. The panel
       // waits for that, puts the picture in place and then starts the
       // server, whether or not this page is still open. The page moves on
@@ -389,6 +469,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       }
       navigate(`/o/${org}/s/${server.name}`);
     } catch (err) {
+      setStage(null);
       setError(err instanceof ApiError ? err.message : "Could not create the server.");
       setBusy(false);
     }
@@ -536,36 +617,74 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         title="Content"
         description={
           !source
-            ? software
-              ? "Optional. Can also be added later."
-              : "Optional."
+            ? `${contentList(software)}. Optional, and can be added later.`
             : v.modpack
-              ? "Its modpack comes with it. Anything added on top of it can be changed here."
-              : "Comes with it. What is taken away here is removed before it first starts."
+              ? `Its modpack comes with it. ${contentList(software)} added on top of it can be changed here.`
+              : `${contentList(software)}. Its own come with it; what is taken away here is removed before it first starts.`
         }
       >
-        {v.mods.length > 0 ? (
-          <ContentList mods={v.mods} onRemove={(i) => set("mods", v.mods.filter((_, j) => j !== i))} />
+        {v.mods.length + v.uploads.length > 0 ? (
+          <ContentList
+            // Files to upload are listed with the rest, by their names.
+            mods={[...v.mods, ...v.uploads.map((u): ContentRef => ({ source: "upload", kind: u.kind, project: u.file.name, title: u.file.name }))]}
+            note={(_, i) => (i >= v.mods.length ? `${bytes(v.uploads[i - v.mods.length].file.size)} · uploaded once the server is made` : undefined)}
+            onRemove={(i) =>
+              i < v.mods.length ? set("mods", v.mods.filter((_, j) => j !== i)) : set("uploads", v.uploads.filter((_, j) => j !== i - v.mods.length))
+            }
+          />
         ) : (
           source && software && <p className="text-[13px] text-muted">{v.modpack ? "Nothing on top of its modpack." : `No ${kindsPhrase(software)}.`}</p>
         )}
         <div className="flex flex-wrap items-center gap-3">
-          <Button icon={<Plus className="size-4" />} disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => setAddingMods(true)}>
-            Add {software ? kindsPhrase(software) : "content"}
+          {/* One picker for all of it, the resource pack too. */}
+          <Button icon={<Plus className="size-4" />} disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => software && setAddingMods(kindsFor(software)[0])}>
+            Add content
           </Button>
-          {source && modsChanged && (
-            <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => set("mods", start.mods)}>
+          {source && (modsChanged || packChanged || toUpload) && (
+            <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setValues((was) => ({ ...was, mods: start.mods, pack: start.pack, uploads: [], packFile: null }))}>
               Put back as {source.name} has it
             </button>
           )}
         </div>
+        {v.pack && (
+          <div className="flex flex-col gap-3">
+            <PackCard pack={v.pack}>
+              <Button size="sm" disabled={!software} onClick={() => setAddingMods("resourcepack")}>
+                Replace
+              </Button>
+              <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Remove the resource pack" onClick={() => setValues((was) => ({ ...was, pack: null, packFile: null }))} />
+            </PackCard>
+            <PackFit pack={v.pack} version={v.kind === "modpack" ? undefined : effective(v.version)} />
+            <Toggle checked={!!v.pack.enforce} onChange={(enforce) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, enforce } }))} label="Pack required" hint="Players who decline the pack are disconnected." />
+            <Field label="Pack prompt" hint="Shown when the game asks to download the pack.">
+              {(id) => <Input id={id} value={v.pack?.prompt ?? ""} onChange={(e) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, prompt: e.target.value } }))} placeholder="A pack made for this world" />}
+            </Field>
+          </div>
+        )}
         {addingMods && software && (
           <AddContentDialog
             software={software}
             mods={v.mods}
-            description={source ? "Downloaded when the server first starts. Files can be uploaded once it exists." : "Downloaded when the server first starts."}
+            description="Downloaded when the server first starts."
             onAdd={(ref) => setValues((was) => ({ ...was, mods: [...was.mods, ref] }))}
-            onClose={() => setAddingMods(false)}
+            // Kept here until the server is made, then uploaded before it first starts.
+            onUpload={async (file, kind) => {
+              setValues((was) => ({ ...was, uploads: [...was.uploads.filter((u) => u.file.name !== file.name), { file, kind }] }));
+              toast.info(`${file.name} is uploaded once the server is made`);
+            }}
+            uploadNote="They are uploaded once the server is made, before it first starts."
+            start={addingMods}
+            pack={{
+              current: v.pack,
+              onPick: async (pack) => setValues((was) => ({ ...was, packFile: null, pack: { ...pack, enforce: !!was.pack?.enforce, prompt: was.pack?.prompt ?? "" } })),
+              keep: (file) =>
+                    setValues((was) => ({
+                      ...was,
+                      packFile: file,
+                      pack: { url: "", sha1: "", uploaded: { name: file.name, size: file.size, time: new Date().toISOString() }, project: null, enforce: !!was.pack?.enforce, prompt: was.pack?.prompt ?? "" },
+                    })),
+            }}
+            onClose={() => setAddingMods(null)}
           />
         )}
       </Section>
@@ -768,6 +887,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           </>
         )}
         {error && <Notice tone="danger">{error}</Notice>}
+        {stage && <p className="text-xs text-muted" role="status">{stage}</p>}
+        {sending && <UploadProgress sending={sending} onCancel={cancel} />}
         <div className="flex gap-2">
           <Button type="submit" variant="primary" loading={busy}>
             {!source ? "Create server" : duplicating ? "Duplicate" : "Create server"}

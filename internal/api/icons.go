@@ -750,16 +750,7 @@ func (s *Server) getServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	q := r.URL.Query()
 	wait := q.Get("wait") == "true"
-	a, mc, err := s.server(r, u, store.RoleAdmin)
-	if wait && apierrors.IsNotFound(err) {
-		// Asked for straight after it was made, before the panel's own view
-		// of the cluster has caught up with it.
-		if a, err = s.org(r, u, store.RoleAdmin); err != nil {
-			return err
-		}
-		mc = &avsysv1.MinecraftServer{}
-		err = s.Reader.Get(r.Context(), client.ObjectKey{Namespace: a.Namespace, Name: r.PathValue("server")}, mc)
-	}
+	a, mc, err := s.serverMaybeNew(r, u, wait)
 	if err != nil {
 		return err
 	}
@@ -801,6 +792,54 @@ func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.icon", mc.Name, "")
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+// serverMaybeNew is s.server for an admin, for a request that with wait may
+// come straight after the server was made, before the panel's own view of
+// the cluster has caught up with it.
+func (s *Server) serverMaybeNew(r *http.Request, u *store.User, wait bool) (*access, *avsysv1.MinecraftServer, error) {
+	a, mc, err := s.server(r, u, store.RoleAdmin)
+	if !wait || !apierrors.IsNotFound(err) {
+		return a, mc, err
+	}
+	if a, err = s.org(r, u, store.RoleAdmin); err != nil {
+		return nil, nil, err
+	}
+	mc = &avsysv1.MinecraftServer{}
+	if err := s.Reader.Get(r.Context(), client.ObjectKey{Namespace: a.Namespace, Name: r.PathValue("server")}, mc); err != nil {
+		return nil, nil, err
+	}
+	return a, mc, nil
+}
+
+// newServerFiles reaches the files of a server made a moment ago, waiting
+// for its volume to be there, by a connection of its own, as
+// placeNewServerIcon does. done closes it.
+func (s *Server) newServerFiles(ctx context.Context, mc *avsysv1.MinecraftServer) (sc *sftp.Client, done func(), err error) {
+	ctx, cancel := context.WithTimeout(ctx, newServerIconWait)
+	defer cancel()
+	if err := s.ownPod(ctx, mc); err != nil {
+		return nil, nil, err
+	}
+	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, newServerIconWait)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sc, err = sftp.NewClient(ws); err != nil {
+		ws.Close()
+		return nil, nil, err
+	}
+	return sc, func() { sc.Close(); ws.Close() }, nil
+}
+
+// filesOf reaches a server's files: with wait, for a server made a moment
+// ago, once its volume is there.
+func (s *Server) filesOf(ctx context.Context, mc *avsysv1.MinecraftServer, wait bool) (*sftp.Client, func(), error) {
+	if wait {
+		return s.newServerFiles(ctx, mc)
+	}
+	sc, err := s.workspaces.get(ctx, mc.Namespace, mc.Name)
+	return sc, func() {}, err
 }
 
 // writeServerIcon puts a picture where the game looks for it. It is written

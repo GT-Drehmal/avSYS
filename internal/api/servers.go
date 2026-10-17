@@ -12,6 +12,7 @@ import (
 	"time"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -186,6 +187,12 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if err := checkJVM(&spec.JVM); err != nil {
 		return err
 	}
+	if err := packFits(spec); err != nil {
+		return err
+	}
+	if err := checkPorts(spec.Ports); err != nil {
+		return err
+	}
 	spec.Expose.Hostname = router.NormalizeHostname(strings.TrimSpace(spec.Expose.Hostname))
 	if host := spec.Expose.Hostname; host != "" {
 		if !hostnamePattern.MatchString(host) {
@@ -223,6 +230,11 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	}
 	if rp := spec.ResourcePack; rp != nil && rp.URL != "" && !strings.HasPrefix(rp.URL, "http://") && !strings.HasPrefix(rp.URL, "https://") {
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
+	}
+	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
+		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
+			return errBadRequest("A resource pack picked from a project names it: source modrinth, and its id.")
+		}
 	}
 	switch spec.AutoOp {
 	case "", "off", string(store.RoleOperator), string(store.RoleAdmin), string(store.RoleOwner):
@@ -351,6 +363,21 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if !serverNamePattern.MatchString(in.Name) {
 		return errBadRequest("Server names are up to 40 characters: lowercase letters, digits and dashes, starting with a letter.")
 	}
+	// An uploaded pack is the server's own, and comes by uploading it or with
+	// the files of the one it is copied from, which a request leaves to them.
+	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
+		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made, or takes the one of the server it is copied from.")
+	}
+	// One given here is checked. A copy's is checked once it is known what
+	// its original has: the original's own is taken as it is.
+	if raw.FromSnapshot == "" && raw.FromServer == "" {
+		if err := checkPackSHA1(in.Spec.ResourcePack, nil); err != nil {
+			return err
+		}
+	}
+	if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
+		return err
+	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
 	}
@@ -423,6 +450,32 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	return nil
 }
 
+// serviceNameIsFree says whether a new server can have its Service by this
+// name: not when another server's Service has it, as the one its extra
+// ports are opened on, which is named after that server.
+func (s *Server) serviceNameIsFree(ctx context.Context, namespace, name string) error {
+	// The name is that server's from when it is made, before its Service is.
+	if base, ok := strings.CutSuffix(name, "-ports"); ok {
+		if err := s.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: base}, &avsysv1.MinecraftServer{}); err == nil {
+			return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is the name %s's extra ports are opened under. Choose another.", name, base)}
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	svc := &corev1.Service{}
+	err := s.nodeReader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, svc)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if owner := metav1.GetControllerOf(svc); owner != nil && owner.Kind == "MinecraftServer" && owner.Name != name {
+		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is the name %s's extra ports are opened under. Choose another.", name, owner.Name)}
+	}
+	return nil
+}
+
 // nameIsFree says whether a new server, other than one brought back, may
 // take this name. One that a server has now is taken. So is one that a
 // deleted server's snapshots are under: snapshots are kept by server name,
@@ -436,6 +489,9 @@ func (s *Server) nameIsFree(ctx context.Context, a *access, name string) error {
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &avsysv1.MinecraftServer{}); err == nil {
 		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
 	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err := s.serviceNameIsFree(ctx, a.Namespace, name); err != nil {
 		return err
 	}
 	if !s.Backups.Available() {
@@ -478,7 +534,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return errBadRequest("Nothing to change: send {\"spec\": {...}}.")
 	}
 	var previous *avsysv1.MinecraftServerSpec
-	var unlock func()
+	var unlock, dropPack func()
 	defer func() {
 		if unlock != nil {
 			unlock()
@@ -495,6 +551,14 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		}
 		if previous, err = s.mergeSpec(r.Context(), a, mc, in.Spec); err != nil {
 			return err
+		}
+		// A pack uploaded before, given another address now, has its file
+		// removed, which a snapshot under way may be copying: not while one is.
+		if was := previous.ResourcePack; dropPack == nil && was != nil && was.Uploaded != nil && (mc.Spec.ResourcePack == nil || mc.Spec.ResourcePack.Uploaded == nil) {
+			if dropPack, err = s.changing(mc, true); err != nil {
+				return err
+			}
+			defer dropPack()
 		}
 		// The server's content is held still from here until what was taken
 		// off it is removed.
@@ -521,6 +585,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
+	s.removeDroppedPack(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
 	// From which role members are operators in game, acted on now and not
 	// with the next look.
@@ -574,6 +639,15 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 		}
 	}
 	previous := mc.Spec.DeepCopy()
+	if err := keepUploadedPack(&spec, previous); err != nil {
+		return nil, err
+	}
+	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
+		return nil, err
+	}
+	if err := checkPackFormats(spec.ResourcePack, previous.ResourcePack); err != nil {
+		return nil, err
+	}
 	if err := s.resolveContent(ctx, &spec, previous); err != nil {
 		return nil, err
 	}
@@ -600,7 +674,8 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	// Without a last snapshot this is a plain delete.
 	if r.URL.Query().Get("snapshot") == "false" || !s.Backups.Available() {
-		release, err := s.changing(mc, false)
+		// A server whose move did not finish can still be deleted.
+		release, err := s.admit(mc, false)
 		if err != nil {
 			return err
 		}
@@ -771,6 +846,105 @@ func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv
 	}
 	return now, nil
 }
+
+var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// checkPackSHA1 checks a resource pack's SHA-1, which the game checks the
+// pack it downloads against: a wrong one would have every player refuse it.
+// One the server had before (was) is left as it is, as one typed before
+// this was checked: it does not hold up changes to anything else.
+func checkPackSHA1(rp, was *avsysv1.ResourcePackSpec) error {
+	if rp == nil || rp.SHA1 == "" || (was != nil && rp.SHA1 == was.SHA1) {
+		return nil
+	}
+	rp.SHA1 = strings.ToLower(strings.TrimSpace(rp.SHA1))
+	if !sha1Pattern.MatchString(rp.SHA1) {
+		return errBadRequest("A resource pack's SHA-1 is 40 hexadecimal digits.")
+	}
+	return nil
+}
+
+// keepUploadedPack holds a change of settings to the pack uploaded to the
+// server: one can be kept, as it is, but not made up. A pack given another
+// address is one hosted elsewhere now, and no longer the uploaded one.
+func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
+	rp, was := spec.ResourcePack, previous.ResourcePack
+	// A pack picked from a project is that project's file: given another
+	// address, and not another project or version with it, it is no
+	// longer the project's.
+	if rp != nil && rp.Project != nil && was != nil && was.Project != nil && *rp.Project == *was.Project && rp.URL != was.URL {
+		rp.Project = nil
+	}
+	// Saying none is not how an uploaded pack is removed, which takes its
+	// file too: it is what settings from before it was uploaded say.
+	if (rp == nil || rp.URL == "") && was != nil && was.Uploaded != nil {
+		spec.ResourcePack = was.DeepCopy()
+		// Checked as the version it is kept with, which may be another.
+		return packFits(spec)
+	}
+	if rp == nil || rp.Uploaded == nil {
+		return nil
+	}
+	if was == nil || was.Uploaded == nil {
+		return errBadRequest("A resource pack is uploaded with PUT /orgs/{org}/servers/{server}/resource-pack.")
+	}
+	if rp.URL != was.URL {
+		rp.Uploaded = nil
+		return nil
+	}
+	if rp.SHA1 != was.SHA1 {
+		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
+	}
+	rp.Uploaded = was.Uploaded.DeepCopy()
+	// Its formats are what its file says.
+	rp.Formats = was.Formats.DeepCopy()
+	// The panel's own file is no project's.
+	rp.Project = nil
+	return nil
+}
+
+// checkPorts checks a server's extra ports beyond what the CRD says: each
+// name and each number and protocol once, and not the game's own.
+func checkPorts(ports []avsysv1.ExtraPort) error {
+	names, numbers := map[string]bool{}, map[string]bool{}
+	for i := range ports {
+		p := &ports[i]
+		if p.Protocol == "" {
+			p.Protocol = corev1.ProtocolTCP
+		}
+		if len(p.Name) > 15 || !portName.MatchString(p.Name) {
+			return errBadRequest("A port's name is up to 15 lowercase letters, digits and dashes, starting with a letter and ending with a letter or digit, with no two dashes together, as voice-chat.")
+		}
+		if p.Name == "minecraft" {
+			return errBadRequest("minecraft is the game port's name; call it something else.")
+		}
+		if p.Port < 1 || p.Port > 65535 {
+			return errBadRequest("%d is not a port.", p.Port)
+		}
+		if p.Port == 25565 {
+			return errBadRequest("25565 is the game's own port, not an extra one.")
+		}
+		if p.Port == 25575 {
+			return errBadRequest("25575 is the game's console, and is not opened.")
+		}
+		if p.Protocol != corev1.ProtocolTCP && p.Protocol != corev1.ProtocolUDP {
+			return errBadRequest("A port is TCP or UDP.")
+		}
+		key := fmt.Sprintf("%d/%s", p.Port, p.Protocol)
+		if names[p.Name] || numbers[key] {
+			return errBadRequest("Each port is there once: %s (%s) appears twice.", p.Name, key)
+		}
+		names[p.Name], numbers[key] = true, true
+	}
+	if len(ports) > 8 {
+		return errBadRequest("A server has up to 8 extra ports.")
+	}
+	return nil
+}
+
+// portName is a Service port's name, which a port's is: a letter first, a
+// letter or digit last, no two dashes together.
+var portName = regexp.MustCompile(`^[a-z](-?[a-z0-9])*$`)
 
 // rcon runs a console command on a running server.
 func (s *Server) rcon(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error) {

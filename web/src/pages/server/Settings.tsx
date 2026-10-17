@@ -10,7 +10,10 @@ import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
+import { PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
+import { ExtraPorts, type PortDraft } from "../../components/ExtraPorts";
+import { NodeMove } from "../../components/NodeMove";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -26,6 +29,7 @@ interface Draft {
   exposeType: ExposeType;
   hostname: string;
   loadBalancerIP: string;
+  ports: PortDraft[];
   sleepEnabled: boolean;
   idleMinutes: string;
   motd: string;
@@ -42,10 +46,6 @@ interface Draft {
   whitelist: string;
   opMembers: Picks;
   whitelistMembers: Picks;
-  packURL: string;
-  packSHA1: string;
-  packEnforce: boolean;
-  packPrompt: string;
   env: string;
   image: string;
   aikar: boolean;
@@ -71,6 +71,7 @@ function toDraft(spec: ServerSpec): Draft {
     exposeType: spec.expose.type,
     hostname: spec.expose.hostname ?? "",
     loadBalancerIP: spec.expose.loadBalancerIP ?? "",
+    ports: (spec.ports ?? []).map((p) => ({ name: p.name, port: String(p.port), protocol: p.protocol ?? "TCP" })),
     sleepEnabled: !!spec.sleep.enabled,
     idleMinutes: String(spec.sleep.idleMinutes),
     motd: p["motd"] ?? "",
@@ -92,10 +93,6 @@ function toDraft(spec: ServerSpec): Draft {
     whitelist: (spec.whitelist ?? []).join("\n"),
     opMembers: picksOf(spec.opMembers),
     whitelistMembers: picksOf(spec.whitelistMembers),
-    packURL: spec.resourcePack?.url ?? "",
-    packSHA1: spec.resourcePack?.sha1 ?? "",
-    packEnforce: !!spec.resourcePack?.enforce,
-    packPrompt: spec.resourcePack?.prompt ?? "",
     env: (launch.env ?? []).map((e) => `${e.name}=${e.value ?? ""}`).join("\n"),
     image: spec.image ?? "",
     aikar: launch.aikar,
@@ -125,6 +122,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     resources: { ...current.resources, memory: fromGigabytes(d.memory) },
     storage: { ...current.storage, size: fromGigabytes(d.storage) },
     expose: { type: d.exposeType, hostname: d.hostname.trim(), loadBalancerIP: d.loadBalancerIP.trim() },
+    ports: d.ports.filter((p) => p.name.trim() || p.port.trim()).map((p) => ({ name: p.name.trim(), port: Number(p.port), protocol: p.protocol })),
     sleep: { enabled: d.sleepEnabled, idleMinutes: Number(d.idleMinutes) || 15 },
     properties: properties as Record<string, string>,
     ops: lines(d.ops),
@@ -133,7 +131,6 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     whitelist: lines(d.whitelist),
     opMembers: picksFor(d.opMembers),
     whitelistMembers: picksFor(d.whitelistMembers),
-    resourcePack: d.packURL.trim() ? { url: d.packURL.trim(), sha1: d.packSHA1.trim(), enforce: d.packEnforce, prompt: d.packPrompt } : null,
     env: lines(d.env).flatMap((line) => {
       const i = line.indexOf("=");
       return i > 0 ? [{ name: line.slice(0, i).trim(), value: line.slice(i + 1) }] : [];
@@ -169,10 +166,6 @@ export function Settings() {
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const text = (key: keyof Draft) => ({ value: draft[key] as string, onChange: (e: { target: { value: string } }) => set(key, e.target.value as never) });
 
-  const hash = useAction(async () => {
-    const { sha1 } = await api.post<{ sha1: string }>("/catalog/sha1", { url: draft.packURL });
-    set("packSHA1", sha1);
-  });
   const meta = useMeta();
   const members = useQuery({ queryKey: keys.members(server.org), queryFn: () => api.get<Member[]>(`/orgs/${server.org}/members`) });
   // A last snapshot is taken unless this is switched off, so that what is
@@ -209,7 +202,7 @@ export function Settings() {
 
       <Section title="Software" description={server.spec.modpack ? "The modpack decides the game version and mod loader." : "Changing the loader or going back a version can break an existing world. Back it up first."}>
         {server.spec.modpack ? (
-          <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change its version under Mods.</Notice>
+          <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change its version under Content.</Notice>
         ) : (
           <div className="grid grid-cols-2 gap-4">
             <Field label="Type">
@@ -248,6 +241,10 @@ export function Settings() {
               )}
             </Field>
           </div>
+        )}
+        {/* What a change of version does to the pack it offers. */}
+        {!server.spec.modpack && server.spec.resourcePack?.url && draft.version !== server.spec.version && (
+          <PackFit pack={server.spec.resourcePack} version={draft.version === "LATEST" ? versions.data?.latest : draft.version} />
         )}
       </Section>
 
@@ -329,32 +326,16 @@ export function Settings() {
         )}
       </Section>
 
-      <Section title="Resource pack" description="The URL must be reachable by players.">
-        <Field label="Pack URL">{(id) => <Input id={id} type="url" {...text("packURL")} placeholder="https://example.com/pack.zip" className="font-mono" />}</Field>
-        {draft.packURL && (
-          <>
-            <Field label="SHA-1" hint="Optional.">
-              {(id) => (
-                <div className="flex gap-2">
-                  <Input id={id} {...text("packSHA1")} className="font-mono" spellCheck={false} />
-                  <Button loading={hash.isPending} onClick={() => hash.mutate(undefined)}>
-                    Compute
-                  </Button>
-                </div>
-              )}
-            </Field>
-            <Toggle checked={draft.packEnforce} onChange={(v) => set("packEnforce", v)} label="Required" hint="Players who decline the pack are disconnected." />
-            <Field label="Prompt">{(id) => <Input id={id} {...text("packPrompt")} placeholder="Shown when the game asks to download the pack" />}</Field>
-          </>
-        )}
-      </Section>
-
       <Section title="Resources" description="Storage can grow but not shrink.">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} {...text("memory")} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={toGigabytes(server.spec.storage.size) || 1} step={1} {...text("storage")} />}</Field>
         </div>
         <LaunchFlags aikar={draft.aikar} extra={draft.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} />
+      </Section>
+
+      <Section title="Node" description="Where it runs. Moving it stops it until it is up on the other node.">
+        <NodeMove server={server} />
       </Section>
 
       <Section title="Network">
@@ -370,6 +351,9 @@ export function Settings() {
             {(id) => <Input id={id} required={usesRouter} {...text("hostname")} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
           </Field>
         )}
+        <Field label="Extra ports" hint="What mods and plugins listen on beside the game: voice chat, Geyser, a web map.">
+          {() => <ExtraPorts ports={draft.ports} onChange={(ports) => set("ports", ports)} mods={server.spec.mods ?? []} status={server.status.ports ?? []} expose={draft.exposeType} sleeps={draft.sleepEnabled && draft.exposeType === "Router"} />}
+        </Field>
         {draft.exposeType === "LoadBalancer" && (
           <Field label="Requested IP" hint="Optional.">
             {(id) => <Input id={id} {...text("loadBalancerIP")} placeholder="192.168.1.240" className="font-mono" />}

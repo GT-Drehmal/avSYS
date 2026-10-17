@@ -11,7 +11,7 @@ const pages: [path: string, shows: string | RegExp][] = [
   ["/o/friends/settings", /Settings|Organization/],
   ["/account", "Account"],
   ["/o/friends/s/survival", "Survival"],
-  ["/o/friends/s/survival/mods", "LuckPerms"],
+  ["/o/friends/s/survival/content", "LuckPerms"],
   ["/o/friends/s/survival/backups", /snapshot/i],
   ["/o/friends/s/survival/settings", "Survival"],
   // These two are loaded on demand, from files of their own.
@@ -273,4 +273,15 @@ test("members can be put on a server's whitelist and operators one by one, besid
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.whitelistMembers).toEqual({ also: [id("viewer")], except: [] });
   expect(sent[0].spec.opMembers).toEqual({ also: [], except: [id("owner")] });
+});
+
+test("a server's content is its Content tab, and a link to where it was before still finds it", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/s/survival");
+  await page.getByRole("link", { name: "Content", exact: true }).click();
+  await expect(page).toHaveURL(/\/o\/friends\/s\/survival\/content$/);
+  await expect(content(page).getByText("LuckPerms").first()).toBeVisible();
+  await page.goto("/o/friends/s/survival/mods");
+  await expect(page).toHaveURL(/\/o\/friends\/s\/survival\/content$/);
+  await expect(content(page).getByText("LuckPerms").first()).toBeVisible();
 });

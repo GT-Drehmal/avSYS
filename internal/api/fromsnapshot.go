@@ -185,6 +185,15 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	}
 	if !said("resourcePack") {
 		spec.ResourcePack = recorded.ResourcePack
+	} else if rp, was := spec.ResourcePack, recorded.ResourcePack; rp != nil && was != nil && was.Uploaded != nil && rp.URL == was.URL {
+		// The original's uploaded pack, made required or given a prompt:
+		// still the one that comes in its files.
+		rp.SHA1, rp.Uploaded, rp.Project, rp.Formats = was.SHA1, was.Uploaded, nil, was.Formats
+	}
+	// What its mods listen on goes with them. The public ports given out
+	// to the original are its own, and the copy gets ports of its own.
+	if !said("ports") {
+		spec.Ports = recorded.Ports
 	}
 	spec.Properties = mergeProperties(recorded.Properties, given["properties"])
 	if !said("ops") {
@@ -280,6 +289,11 @@ func mergeProperties(recorded map[string]string, asked json.RawMessage) map[stri
 // changed game version needs.
 func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, requested, recorded *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage) (avsysv1.MinecraftServerSpec, error) {
 	spec := fromSnapshot(requested, recorded, given)
+	// A pack given with the copy is checked; the original's, kept or made
+	// required, is as it has it.
+	if err := checkPackSHA1(spec.ResourcePack, recorded.ResourcePack); err != nil {
+		return spec, err
+	}
 	changed := spec.Version != recorded.Version || spec.Loader != recorded.Loader || spec.LoaderVersion != recorded.LoaderVersion
 	if changed && spec.Modpack != nil {
 		return spec, errBadRequest("This server runs a modpack, which decides its game version and loader. Change the modpack's version once the server exists.")
@@ -321,6 +335,9 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &avsysv1.MinecraftServer{}); err == nil {
 		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
 	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err := s.serviceNameIsFree(ctx, a.Namespace, name); err != nil {
 		return err
 	}
 	// The state asked for is only applied once the files are in, which is too
@@ -615,13 +632,26 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 		s.Log.Warn("could not reach a new server's files to tidy them", "server", key.String(), "error", err)
 		// Noted, for the look once a minute to remove when it can. The
 		// picture is given up on: the files brought one, or none.
-		if gone := leftBehind(&created.Spec, withSavedNames(ctx, &created.Spec, original)); len(gone) > 0 {
+		gone := leftBehind(&created.Spec, withSavedNames(ctx, &created.Spec, original))
+		if file := droppedPackFile(&created.Spec, original); file != "" {
+			gone = append(gone, file)
+		}
+		if len(gone) > 0 {
 			if err := s.setContentLeft(ctx, key, func(was []string) []string { return union(was, gone) }); err != nil {
 				s.Log.Warn("could not note content left to remove", "server", key.String(), "error", err)
 			}
 		}
 	} else {
 		s.removeDroppedUploadsWith(ctx, files, key.Namespace, key.Name, &created.Spec, original)
+		// Its original's uploaded pack came with its files: gone, if the
+		// new server was given another or none.
+		if droppedPackFile(&created.Spec, original) != "" {
+			keep := ""
+			if rp := created.Spec.ResourcePack; rp != nil && rp.Uploaded != nil {
+				keep = rp.SHA1
+			}
+			s.dropPacks(ctx, files, nil, key, keep, original.ResourcePack)
+		}
 		// As with a new server's picture, the server is never held back over it.
 		if err := s.placePicture(files, key.Namespace, key.Name, picture); err != nil {
 			s.Log.Warn("a new server's own picture was not put in place", "server", key.String(), "error", err)
