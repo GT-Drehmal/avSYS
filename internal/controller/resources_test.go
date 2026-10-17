@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +12,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -273,6 +277,33 @@ func TestPhaseOf(t *testing.T) {
 			t.Errorf("%s: phase = %s, want %s", c.name, got, c.want)
 		}
 	}
+
+	// A stop or restart asked for while the game is loading waits for it to
+	// finish, which can be long: it says so, rather than looking stuck.
+	loadingGame := corev1.ContainerStatus{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}
+	if phase, message := phaseOf(stopped, gamePod(loadingGame)); phase != avsysv1.PhaseStopping || !strings.Contains(message, "still loading") {
+		t.Errorf("stopped while loading: %s %q", phase, message)
+	}
+	if _, message := phaseOf(stopped, gamePod(corev1.ContainerStatus{Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})); message != "" {
+		t.Errorf("stopped while running has a message: %q", message)
+	}
+	replaced := func(status corev1.ContainerStatus) *corev1.Pod {
+		pod := gamePod(status)
+		now := metav1.Now()
+		pod.DeletionTimestamp = &now
+		return pod
+	}
+	if phase, message := phaseOf(server(nil), replaced(loadingGame)); phase != avsysv1.PhaseStarting || !strings.Contains(message, "still loading") {
+		t.Errorf("restarted while loading: %s %q", phase, message)
+	}
+	if phase, message := phaseOf(server(nil), replaced(corev1.ContainerStatus{Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})); phase != avsysv1.PhaseStarting || !strings.Contains(message, "saving the world and stopping") {
+		t.Errorf("restarted while running: %s %q", phase, message)
+	}
+	// A game that crashed is not loading.
+	crashed := corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	if _, message := phaseOf(stopped, gamePod(crashed)); message != "" {
+		t.Errorf("stopped after a crash: %q", message)
+	}
 }
 
 // A game that could not look up where it downloads from is starting again,
@@ -530,6 +561,81 @@ func TestLaunchFlags(t *testing.T) {
 	before := buildPod(server(nil), Config{}).Annotations[annotationSpecHash]
 	if after := buildPod(server(func(mc *avsysv1.MinecraftServer) { mc.Spec.JVM = avsysv1.JVMSpec{AikarFlags: &off} }), Config{}).Annotations[annotationSpecHash]; after != before {
 		t.Error("switching off flags that were never on changed the pod")
+	}
+}
+
+// A game that is loading is let finish before its pod is replaced, for a
+// stop, a restart or new settings: told to stop while it loads, the game
+// fails to and is killed a minute later. One that has loaded for too long,
+// or is not running at all, is replaced at once.
+func TestLoadingGameIsLetFinish(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	running := func(started time.Time, ready bool) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: MinecraftContainer, Ready: ready, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(started)}}}
+	}
+	crashed := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	creating := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}
+	notPulled := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}
+	stop := func(mc *avsysv1.MinecraftServer) { mc.Spec.State = avsysv1.StateStopped }
+	restart := func(mc *avsysv1.MinecraftServer) {
+		mc.Annotations = map[string]string{avsysv1.AnnotationRestart: "now"}
+	}
+	newSettings := func(mc *avsysv1.MinecraftServer) { mc.Spec.Properties = map[string]string{"motd": "changed"} }
+	now := time.Now()
+	for _, c := range []struct {
+		name     string
+		change   func(*avsysv1.MinecraftServer)
+		game     corev1.ContainerStatus
+		replaced bool
+	}{
+		{"stopped while loading", stop, running(now.Add(-10*time.Second), false), false},
+		{"restarted while loading", restart, running(now.Add(-10*time.Second), false), false},
+		{"new settings while loading", newSettings, running(now.Add(-10*time.Second), false), false},
+		{"stopped once loaded", stop, running(now.Add(-time.Minute), true), true},
+		{"restarted once loaded", restart, running(now.Add(-time.Minute), true), true},
+		{"stopped after loading too long", stop, running(now.Add(-LoadGrace-time.Second), false), true},
+		{"stopped while crashed", stop, crashed, true},
+		// A moment after it was started: its container is still being made,
+		// and would start in the pod being deleted, as on the home lab.
+		{"stopped while its container is made", stop, creating, false},
+		{"stopped with its image not pulled", stop, notPulled, true},
+	} {
+		// The pod as made for the server before the change.
+		pod := buildPod(server(nil), Config{})
+		pod.CreationTimestamp = metav1.NewTime(now.Add(-5 * time.Second))
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{c.game}
+		mc := server(c.change)
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, pod).Build()
+		r := &Reconciler{Client: cl, Reader: cl, Scheme: scheme}
+		got, pending, wait, err := r.ensurePod(context.Background(), mc)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		replaced := !got.DeletionTimestamp.IsZero()
+		if replaced != c.replaced {
+			t.Errorf("%s: replaced = %v, want %v", c.name, replaced, c.replaced)
+		}
+		// Only new settings for a game that goes on running are pending: a
+		// stop or a restart asked for is not something to restart for.
+		if wantPending := !replaced && c.name == "new settings while loading"; pending != wantPending {
+			t.Errorf("%s: pending restart %v, want %v", c.name, pending, wantPending)
+		}
+		// Looked at again by the time it has had its grace, at the latest.
+		if !replaced && (wait <= 0 || wait > LoadGrace) {
+			t.Errorf("%s: looked at again in %s", c.name, wait)
+		}
+		if !replaced && c.change != nil {
+			phase, message := phaseOf(mc, got)
+			if !strings.Contains(message, "still loading") && phase != avsysv1.PhaseStarting {
+				t.Errorf("%s: %s %q, want it to say it is let load", c.name, phase, message)
+			}
+		}
 	}
 }
 

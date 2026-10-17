@@ -273,6 +273,46 @@ expect "a pack picked from Modrinth says which" "$(echo "$picked" | field "(d['s
 expect "given another address, it is no longer the project's" "$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://example.org/pack.zip"}}}' "$SRV" | field "d['spec']['resourcePack'].get('project')")" None
 call -X DELETE "$SRV/resource-pack" >/dev/null
 
+step "a stop while the game loads"
+# Restarted, and stopped while it is coming up again. Told to stop while it
+# loads, the game would fail to, and be killed a minute later: it is let
+# finish loading and then stopped, saying so meanwhile, and nothing starts
+# it after.
+call -X POST "$SRV/restart" >/dev/null
+for _ in $(seq 1 60); do
+  [ "$(call "$SRV" | field "d['status'].get('phase')")" = Starting ] && break
+  sleep 1
+done
+# Into its loading: the container started again, which takes a moment.
+sleep 4
+asked=$(date +%s)
+expect "a stop is taken while it starts" "$(call -X POST "$SRV/stop" | field "d['spec']['state']")" Stopped
+# While it waits for the game to load it says so. Once loaded, the game
+# saves and stops as it always does, in a few seconds: one told to stop
+# while it loaded would fail to, and be killed a minute later.
+said=""
+loaded=$asked
+for _ in $(seq 1 300); do
+  now=$(call "$SRV" | field "(d['status'].get('phase'), d['status'].get('message') or '')")
+  case "$now" in
+    *Stopped*) break ;;
+    *"still loading"*) said=1; loaded=$(date +%s) ;;
+  esac
+  sleep 1
+done
+wait_phase Stopped
+took=$(($(date +%s) - loaded))
+[ "$took" -lt 40 ] || fail "once loaded, the game took ${took}s to stop, as long as one that is killed"
+echo "ok: and it is stopped once loaded, ${took}s after"
+# Caught loading, as it is a few seconds into a start, it said so.
+[ -n "$said" ] || [ $(($(date +%s) - asked)) -lt 8 ] || fail "a stop that waited never said why"
+echo "ok: and says what it waits for"
+sleep 15
+expect "and it stays stopped" "$(call "$SRV" | field "(d['spec']['state'], d['status'].get('phase'))")" "('Stopped', 'Stopped')"
+call -X POST "$SRV/start" >/dev/null
+wait_phase Running
+echo "ok: and starts again when asked"
+
 step "snapshots"
 snap=$(call -X POST "$SRV/snapshots?wait=true")
 SNAP=$(echo "$snap" | field "d['id']") || fail "no snapshot was taken: $snap"
