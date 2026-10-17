@@ -402,7 +402,7 @@ const formats = { "1.20.1": 15, "1.21.4": 46, "26.2": 88, "26.3": 97 };
 test("a pack made for an older or newer version of the game than the server's says so, and one that fits does not", async ({ page }) => {
   await packFormats(page, formats);
   await survival(page, { ...picked, formats: { min: 15, max: 15 } });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   const section = page.locator("section").filter({ hasText: "Resource pack" });
   await expect(section.getByText("This pack is made for an older version of the game (pack format 15; 1.21.4 reads 46). Players' games still load it, but what has changed since, such as custom shaders, models and sounds, may not work.")).toBeVisible();
 });
@@ -410,7 +410,7 @@ test("a pack made for an older or newer version of the game than the server's sa
 test("a pack made for the server's version, or a range with it, says nothing", async ({ page }) => {
   const asked = await packFormats(page, formats);
   await survival(page, { ...picked, formats: { min: 34, max: 64 } });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
   await expect.poll(() => asked).toContain("1.21.4");
   await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
@@ -419,7 +419,7 @@ test("a pack made for the server's version, or a range with it, says nothing", a
 test("a pack whose formats are not known, or a version whose format is not, says nothing", async ({ page }) => {
   const asked = await packFormats(page, {});
   await survival(page, uploaded);
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await expect(page.getByText("faithful.zip", { exact: true })).toBeVisible();
   await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
   // Nothing to compare it with: not even asked.
@@ -429,7 +429,7 @@ test("a pack whose formats are not known, or a version whose format is not, says
 test("one picked from Modrinth is made for the formats of the game versions it is listed for, and one at a URL for what its file says", async ({ page }) => {
   const asked = await packFormats(page, formats);
   const state = await survival(page, null);
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await choosePack(page);
   let dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
