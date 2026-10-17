@@ -365,7 +365,7 @@ export function Settings() {
           disabled={!usesRouter}
           onChange={(v) => set("sleepEnabled", v)}
           label="Sleep when empty"
-          hint={usesRouter ? "The first player to join starts it." : "Needs the shared address."}
+          hint={usesRouter ? "The first player to join wakes it, then joins again." : "Needs the shared address."}
         />
         {draft.sleepEnabled && usesRouter && <Field label="After minutes with no players">{(id) => <Input id={id} type="number" min={1} {...text("idleMinutes")} className="max-w-32" />}</Field>}
       </Section>

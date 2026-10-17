@@ -385,7 +385,7 @@ function PackPane({
           <Field label="Download URL" hint="A direct link to the .zip that players can reach.">
             {(id) => <Input id={id} type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/pack.zip" className="font-mono" />}
           </Field>
-          <Field label="SHA-1" hint="Optional. Filled in for you when left empty.">
+          <Field label="SHA-1" hint="Optional. Filled in for you if the panel can download the pack.">
             {(id) => <Input id={id} value={sha1} onChange={(e) => setSha1(e.target.value)} pattern="\s*[0-9a-fA-F]{40}\s*" title="40 hexadecimal digits" className="font-mono" spellCheck={false} />}
           </Field>
           <div className="flex justify-end">

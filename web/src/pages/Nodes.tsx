@@ -59,7 +59,7 @@ export function Nodes() {
         })}
       </ul>
       <p className="mt-6 text-xs leading-relaxed text-muted">
-        To keep new servers off a node, run <span className="font-mono">kubectl label node NAME avsys.dev/game-servers=false</span>. Measure speed with <span className="font-mono">hack/rank-nodes.sh</span>.
+        To keep new servers off a node unless picked by hand, run <span className="font-mono">kubectl label node NAME avsys.dev/game-servers=false</span>. Measure speed with <span className="font-mono">hack/rank-nodes.sh</span>.
       </p>
     </>
   );

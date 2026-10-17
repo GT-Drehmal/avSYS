@@ -844,7 +844,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               disabled={!routed}
               onChange={(on) => set("sleep", on)}
               label="Sleep when empty"
-              hint={routed ? "Stops when nobody is playing. The first player to join starts it." : "Needs the shared address."}
+              hint={routed ? "Stops when nobody is playing. The first player to join wakes it, then joins again." : "Needs the shared address."}
             />
             {v.sleep && routed && (
               <Field label="After minutes with no players">

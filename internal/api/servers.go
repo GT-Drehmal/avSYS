@@ -922,7 +922,7 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 			p.Protocol = corev1.ProtocolTCP
 		}
 		if len(p.Name) > 15 || !portName.MatchString(p.Name) {
-			return errBadRequest("Port names are up to 15 lowercase letters, digits and dashes, like voice-chat.")
+			return errBadRequest("Port names are up to 15 lowercase letters, digits and dashes, like voice-chat. Start with a letter, end with a letter or digit, and use no double dashes.")
 		}
 		if p.Name == "minecraft" {
 			return errBadRequest("minecraft is the game port's name. Choose another.")
