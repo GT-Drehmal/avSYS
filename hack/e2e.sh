@@ -98,7 +98,9 @@ print("\n".join("  | " + line for line in lines[-40:]))' || true
 # the cluster starts the game again by itself. Only the image's own line
 # about a download counts: a timeout mentioned anywhere else in the log, by
 # the game or a plugin, says nothing about why the game stopped.
-FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload'
+FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload|Failed to download mojang_[^ ]*\.jar'
+# Paper's own launcher says it its own way, as it fetches the game's jar from
+# Mojang.
 # How many times that happened in this run, said at the end so that it shows.
 REFETCHED=0
 
@@ -163,6 +165,83 @@ wait_phase() {
   fail "timed out waiting for $1 (last phase: $phase)"
 }
 
+# game_clean WHAT [SERVER]: the game's own log of its last run says nothing
+# went wrong: no error, no exception, no setting it could not read, no
+# command that failed. What the panel writes for the game, and how it stops
+# it, shows up there and nowhere else. A run that stopped is still in it.
+game_clean() {
+  log=$(call -f "${2:-$SRV}/files/content?path=/logs/latest.log") || fail "$1: the game's log could not be read"
+  [ -n "$log" ] || fail "$1: the game's log is empty"
+  logged_clean "$1" "$log"
+  echo "ok: $1"
+}
+
+# logged_clean WHAT LOG: fails if a log has something gone wrong in it.
+logged_clean() {
+  bad=$(printf '%s\n' "$2" | grep -E '[ /](ERROR|FATAL)\]|Exception|Failed to parse|An unexpected error occurred' | head -10)
+  [ -z "$bad" ] || fail "$1: the game logged:
+$bad"
+}
+
+# earlier_clean WHAT [SERVER]: the run before the current one, which the game
+# packed away as it started again, is clean too.
+earlier_clean() {
+  name=$(call -f "${2:-$SRV}/logs" | field "[l['name'] for l in d['logs'] if l['kind'] == 'log'][0]") || fail "$1: no earlier run is listed"
+  log=$(call -f "${2:-$SRV}/logs/file?name=$name" | field "'\\n'.join(l['text'] for l in d['lines'])") || fail "$1: $name could not be read"
+  logged_clean "$1" "$log"
+  echo "ok: $1"
+}
+
+# stopped_clean WHAT [SERVER]: the game's last run ended as a game that was
+# told to stop does, saying so, rather than being cut off.
+stopped_clean() {
+  game_clean "$1" "${2:-}"
+  case "$(call -f "${2:-$SRV}/files/content?path=/logs/latest.log")" in
+    *"Stopping server"*) ;;
+    *) fail "$1: the game's log does not end with it stopping" ;;
+  esac
+}
+
+# act ACTION [SERVER]: asks a server to start, stop or restart, failing if
+# that is refused.
+act() {
+  out=$(call -X POST "${2:-$SRV}/$1")
+  case "$out" in *'"spec"'*) ;; *) fail "asking it to $1 was refused: $out" ;; esac
+}
+
+# phase_now [SERVER]: what the server is doing, as the panel says.
+phase_now() { call "${1:-$SRV}" | field "d['status'].get('phase')"; }
+
+# settled [SERVER]: waits until the status is of the server's settings as
+# they are now. Straight after a change it may still say what the server was
+# doing before, which is not what the change did.
+settled() {
+  for _ in $(seq 1 60); do
+    [ "$(call "${1:-$SRV}" | field "d['status'].get('observedGeneration', 0) >= d['generation']")" = True ] && return 0
+    sleep 1
+  done
+  fail "the status never caught up with the settings"
+}
+
+# wait_until PHASE [SERVER]: as wait_phase, for a phase the server passes
+# through on the way, which it is caught in or has gone by.
+wait_until() {
+  for _ in $(seq 1 120); do
+    [ "$(phase_now "${2:-$SRV}")" = "$1" ] && return 0
+    sleep 1
+  done
+  fail "it was never $1 (it is $(phase_now "${2:-$SRV}"))"
+}
+
+# stays PHASE SECONDS [SERVER]: nothing changes it from PHASE for a while.
+stays() {
+  for _ in $(seq 1 "$2"); do
+    now=$(phase_now "${3:-$SRV}")
+    [ "$now" = "$1" ] || fail "it did not stay $1: it went $now"
+    sleep 1
+  done
+}
+
 step "organization and server"
 call -d "{\"name\":\"E2E $ORG\",\"slug\":\"$ORG\"}" "$API/orgs" >/dev/null
 POLICY=$API/orgs/$ORG/backup-policy
@@ -183,6 +262,7 @@ expect "content fits the game's Java" "$(echo "$created" | field "d['java']['eff
 expect "a new server has Aikar's flags" "$(echo "$created" | field "d['spec']['jvm']")" "{'aikarFlags': True}"
 wait_phase Running
 echo "ok: server reached Running"
+game_clean "and its log is clean"
 if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
   expect "and the game was started with them" "$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" probe 2>/dev/null)" "Using Aikar's flags"
 else
@@ -271,6 +351,7 @@ expect "it is kept in the server's files" "$(call "$SRV/files/content?path=/.avs
 expect "a pack a folder down is refused, saying so" "$(call -X PUT --data-binary @"$WORK/nested.zip" "$SRV/resource-pack?name=nested.zip" | field "d['message']")" "in a folder, E2E Pack"
 restarted
 expect "the game offers it to players" "$(call "$SRV/files/content?path=/server.properties" | python3 -c 'import sys; p = dict(l.split("=", 1) for l in sys.stdin.read().replace("\\:", ":").splitlines() if "=" in l and not l.startswith("#")); print(p.get("resource-pack"), p.get("resource-pack-sha1"))')" "$PACK_URL $PACK_SHA"
+game_clean "and reads all that was written for the pack, its prompt too"
 expect "and it is taken away again" "$(call -X DELETE "$SRV/resource-pack" | field "d['spec'].get('resourcePack')")" None
 expect "with its file" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip")" 404
 # One picked from Modrinth says which project and version it is, and stops
@@ -285,7 +366,7 @@ step "a stop while the game loads"
 # loads, the game would fail to, and be killed a minute later: it is let
 # finish loading and then stopped, saying so meanwhile, and nothing starts
 # it after.
-call -X POST "$SRV/restart" >/dev/null
+act restart
 for _ in $(seq 1 60); do
   [ "$(call "$SRV" | field "d['status'].get('phase')")" = Starting ] && break
   sleep 1
@@ -316,9 +397,61 @@ echo "ok: and it is stopped once loaded, ${took}s after"
 echo "ok: and says what it waits for"
 sleep 15
 expect "and it stays stopped" "$(call "$SRV" | field "(d['spec']['state'], d['status'].get('phase'))")" "('Stopped', 'Stopped')"
-call -X POST "$SRV/start" >/dev/null
+stopped_clean "and the game it stopped saved and stopped cleanly"
+act start
 wait_phase Running
 echo "ok: and starts again when asked"
+
+step "actions one after another"
+# What people do: a button pressed again before the last one took, the
+# opposite asked for at once, settings changed while it starts. Each ends
+# as the last thing asked, stays so, and the game is never killed or left
+# with something it could not read.
+act restart
+wait_until Starting
+act restart
+wait_phase Running
+stays Running 10
+expect "restarted again while it starts, it ends running, and answers" "$(call -d '{"command":"list"}' "$SRV/console" | field "d['output']")" "players online"
+game_clean "with nothing in its log"
+earlier_clean "nor in the log of the run the second restart cut short"
+
+act stop
+act start
+settled
+wait_phase Running
+stays Running 10
+echo "ok: stopped and started again at once, it ends running"
+
+act stop
+wait_phase Stopped
+act start
+act stop
+settled
+wait_phase Stopped
+stays Stopped 15
+echo "ok: started and stopped again at once, it ends stopped, and stays so"
+stopped_clean "and the game it stopped saved and stopped cleanly"
+
+act start
+wait_until Starting
+set_spec '{"spec":{"properties":{"motd":"changed while starting"}}}'
+settled
+wait_phase Running
+# Changed before its game began, it starts with them; after, they are for
+# its next start, and say so.
+if [ "$(call "$SRV" | field "d['status'].get('pendingRestart', False)")" = True ]; then
+  echo "ok: settings changed once its game had begun are for its next start"
+  act restart
+  for _ in $(seq 1 90); do [ "$(phase_now)" != Running ] && break; sleep 1; done
+  wait_phase Running
+fi
+expect "settings changed while it starts are in place once it runs" "$(call "$SRV/files/content?path=/server.properties")" "motd=changed while starting"
+set_spec '{"spec":{"properties":{"motd":"e2e probe"}}}'
+act restart
+for _ in $(seq 1 90); do [ "$(phase_now)" != Running ] && break; sleep 1; done
+wait_phase Running
+game_clean "and the game read them"
 
 step "snapshots"
 snap=$(call -X POST "$SRV/snapshots?wait=true")
