@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -503,63 +504,144 @@ func TestUnprovenAccountsOfViewers(t *testing.T) {
 	}
 }
 
-// A check is opened for one's own account only; the router is told it is
-// pending, and its outcome is recorded once, for that account only.
+// A check is opened for one's own account only. The router is told it is
+// pending; a player proving they are the account is given a code, and the
+// account is verified for whoever enters that code, once, and for no one
+// else: not for someone who opened a check of the same name.
 func TestProvingAMinecraftAccount(t *testing.T) {
 	p := newPanel(t)
+	p.srv.Config.RouterDomain = "MC.example.org."
 	ctx := context.Background()
 	p.srv.catalog.http.Transport = offline{
 		"https://api.mojang.com/users/profiles/minecraft/steve": `{"id":"8667ba71b85a4004af54457a9734eed7","name":"Steve"}`,
 	}
-	if code, _ := p.do("viewer", "POST", "/me/minecraft-accounts", `{"name":"steve"}`); code != 200 {
-		t.Fatal("linking")
+	const steve = "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify"
+	// The viewer is Steve; the admin links the name too, to take it.
+	for _, who := range []string{"viewer", "admin"} {
+		if code, _ := p.do(who, "POST", "/me/minecraft-accounts", `{"name":"steve"}`); code != 200 {
+			t.Fatal("linking")
+		}
 	}
-	verified := func() bool {
-		all, err := p.srv.Store.MinecraftAccounts(ctx, p.users["viewer"].ID)
+	verified := func(who string) bool {
+		all, err := p.srv.Store.MinecraftAccounts(ctx, p.users[who].ID)
 		if err != nil || len(all) != 1 {
 			t.Fatalf("accounts: %v %v", all, err)
 		}
 		return all[0].Verified
 	}
-	if verified() {
+	if verified("viewer") {
 		t.Fatal("verified on linking")
 	}
 	if p.srv.Pending("Steve") {
 		t.Fatal("pending before a check was asked for")
 	}
 	// Someone else's, or one not linked, is not found.
-	for who, path := range map[string]string{"admin": "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify", "viewer": "/me/minecraft-accounts/nobody/verify"} {
+	for who, path := range map[string]string{"operator": steve, "viewer": "/me/minecraft-accounts/nobody/verify"} {
 		if code, _ := p.do(who, "POST", path, ""); code != 404 {
 			t.Errorf("%s %s: %d", who, path, code)
 		}
 	}
-	code, got := p.get("viewer", "POST", "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify", "")
-	if code != 200 || got["name"] != "Steve" || got["until"] == nil {
+	// A code with no check open is not taken.
+	if code, name := p.do("viewer", "POST", steve, `{"code":"AAAA-AAAA"}`); code != 409 || name != "no_check" {
+		t.Errorf("a code with no check: %d %s", code, name)
+	}
+	code, got := p.get("viewer", "POST", steve, "")
+	if code != 200 || got["name"] != "Steve" || got["until"] == nil || got["address"] != "verify.mc.example.org" {
 		t.Fatalf("opening a check: %d %v", code, got)
 	}
 	if !p.srv.Pending("steve") {
 		t.Fatal("not pending, by name in any case")
 	}
-	// Signed in as another account: not this one, and the check is closed.
-	if msg := p.srv.Proven(ctx, "Steve", "0000ba71b85a4004af54457a9734eed7"); !strings.Contains(msg, "another account") || verified() || p.srv.Pending("Steve") {
-		t.Errorf("another account: %q, verified %v", msg, verified())
+	// Signed in as another account: no code, and the check stays open.
+	if msg := p.srv.Proven(ctx, "Steve", "0000ba71b85a4004af54457a9734eed7"); !strings.Contains(msg, "another account") || strings.Contains(msg, "code") || !p.srv.Pending("Steve") {
+		t.Errorf("another account: %q", msg)
 	}
-	p.get("viewer", "POST", "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify", "")
-	if msg := p.srv.Proven(ctx, "Steve", "8667BA71B85A4004AF54457A9734EED7"); !strings.HasPrefix(msg, "Verified: Steve") || !verified() {
-		t.Errorf("proven: %q, verified %v", msg, verified())
+	// The admin opens one of the same name, after the viewer.
+	if code, _ := p.do("admin", "POST", steve, ""); code != 200 {
+		t.Fatal("the admin's check")
 	}
-	// Once only.
-	if msg := p.srv.Proven(ctx, "Steve", "8667ba71b85a4004af54457a9734eed7"); !strings.Contains(msg, "No check of Steve is open") {
-		t.Errorf("proven again: %q", msg)
+	// Steve joins, and is shown a code.
+	msg := p.srv.Proven(ctx, "Steve", "8667BA71B85A4004AF54457A9734EED7")
+	given := regexp.MustCompile(`code is ([A-Z0-9]{4}-[A-Z0-9]{4})\.`).FindStringSubmatch(msg)
+	if given == nil {
+		t.Fatalf("no code given: %q", msg)
 	}
-	// One that has run out is not pending.
-	p.get("viewer", "POST", "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify", "")
+	if verified("viewer") || verified("admin") {
+		t.Fatal("verified before the code was entered")
+	}
+	// The admin, without it, gets nowhere.
+	if code, name := p.do("admin", "POST", steve, `{"code":"AAAA-AAAA"}`); code != 400 || name != "wrong_code" {
+		t.Errorf("a wrong code: %d %s", code, name)
+	}
+	// Steve enters it, however typed.
+	typed := strings.ToLower(strings.ReplaceAll(given[1], "-", " "))
+	if code, got := p.get("viewer", "POST", steve, `{"code":"`+typed+`"}`); code != 200 || got["verified"] != true {
+		t.Fatalf("the right code: %d %v", code, got)
+	}
+	if !verified("viewer") || verified("admin") {
+		t.Errorf("verified: viewer %v, admin %v", verified("viewer"), verified("admin"))
+	}
+	// Once only, and not for the admin either.
+	if code, _ := p.do("viewer", "POST", steve, `{"code":"`+given[1]+`"}`); code != 409 {
+		t.Errorf("the code again: %d", code)
+	}
+	if code, _ := p.do("admin", "POST", steve, `{"code":"`+given[1]+`"}`); code != 400 {
+		t.Errorf("the code, by the admin: %d", code)
+	}
+	// Wrong codes close a check after a few.
+	for i := 3; i < proofTries; i++ {
+		if code, _ := p.do("admin", "POST", steve, `{"code":"BBBB-BBBB"}`); code != 400 {
+			t.Errorf("wrong code %d: %d", i+1, code)
+		}
+	}
+	if code, name := p.do("admin", "POST", steve, `{"code":"BBBB-BBBB"}`); code != 409 || name != "no_check" {
+		t.Errorf("after %d wrong codes: %d %s", proofTries, code, name)
+	}
+	if p.srv.Pending("Steve") {
+		t.Error("pending with every check closed")
+	}
+	// One that has run out is not pending, nor is its code taken.
+	p.get("viewer", "POST", steve, "")
+	msg = p.srv.Proven(ctx, "Steve", "8667ba71b85a4004af54457a9734eed7")
+	given = regexp.MustCompile(`code is ([A-Z0-9]{4}-[A-Z0-9]{4})\.`).FindStringSubmatch(msg)
 	p.srv.proofs.mu.Lock()
-	pr := p.srv.proofs.byName["steve"]
-	pr.until = time.Now().Add(-time.Second)
-	p.srv.proofs.byName["steve"] = pr
+	for _, pr := range p.srv.proofs.byName["steve"] {
+		pr.until = time.Now().Add(-time.Second)
+	}
 	p.srv.proofs.mu.Unlock()
 	if p.srv.Pending("Steve") {
 		t.Error("a check that ran out is pending")
+	}
+	if given == nil {
+		t.Fatalf("no code given: %q", msg)
+	}
+	if code, _ := p.do("viewer", "POST", steve, `{"code":"`+given[1]+`"}`); code != 409 {
+		t.Errorf("a code after its check ran out: %d", code)
+	}
+	if msg := p.srv.Proven(ctx, "Steve", "8667ba71b85a4004af54457a9734eed7"); !strings.Contains(msg, "No check is open for Steve") {
+		t.Errorf("proven with no check: %q", msg)
+	}
+	// No server takes the address players verify at.
+	if code, name := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"verify","spec":{"eula":true,"version":"1.21.4","expose":{"hostname":"verify.mc.example.org"}}}`); code != 409 || name != "domain_claimed" {
+		t.Errorf("a server at the address to verify at: %d %s", code, name)
+	}
+}
+
+func TestProofCodes(t *testing.T) {
+	seen := map[string]bool{}
+	for range 200 {
+		c := newProofCode()
+		if normalProofCode(c) != c || len(c) != 9 {
+			t.Fatalf("code %q reads back as %q", c, normalProofCode(c))
+		}
+		seen[c] = true
+	}
+	if len(seen) < 199 {
+		t.Errorf("only %d different codes in 200", len(seen))
+	}
+	for typed, want := range map[string]string{"abcd efgh": "ABCD-EFGH", " ABCD-EFGH ": "ABCD-EFGH", "ABCDEFG": "", "ABCD-EFGHJ": "", "": ""} {
+		if got := normalProofCode(typed); got != want {
+			t.Errorf("%q read as %q, want %q", typed, got, want)
+		}
 	}
 }

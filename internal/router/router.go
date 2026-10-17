@@ -51,8 +51,8 @@ type Router struct {
 	// the router answers itself.
 	Icon func(ctx context.Context, namespace, name string) []byte
 	// Verify, if set, is told of players proving an account is theirs: a
-	// login by a name it has a check pending for is not passed on to a
-	// server, but has the game prove who is playing.
+	// login by a name it has a check pending for, at an address no server
+	// has, has the game prove who is playing.
 	Verify Verifier
 	// HasJoined asks Mojang whether a player is who they say; nil is
 	// Mojang's own session server.
@@ -166,21 +166,22 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 	if err != nil {
 		return
 	}
-	// A player proving an account is theirs, at whichever address.
-	if hs.NextState == mcproto.NextLogin && r.Verify != nil {
-		if name, err := mcproto.LoginName(br); err == nil && r.Verify.Pending(name) {
-			r.prove(ctx, conn, br, hs, name)
-			return
-		}
-	}
-	_ = conn.SetReadDeadline(time.Time{})
-
 	host := hs.Hostname()
 	mc, err := r.lookup(ctx, host)
 	if err != nil {
 		r.Log.Error("looking up server", "host", host, "error", err)
 		return
 	}
+	// A player proving an account is theirs joins an address no server
+	// has, so that their joins of a server are never kept from it, by
+	// whoever opened a check of their name.
+	if mc == nil && hs.NextState == mcproto.NextLogin && r.Verify != nil {
+		if name, err := mcproto.LoginName(br); err == nil && r.Verify.Pending(name) {
+			r.prove(ctx, conn, br, hs, name)
+			return
+		}
+	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	// answer replies without involving a backend: a line for the server list,
 	// or a reason shown when a join is refused.
@@ -250,7 +251,7 @@ func (r *Router) prove(ctx context.Context, conn net.Conn, br *bufio.Reader, hs 
 	}
 	if err != nil {
 		r.Log.Info("a Minecraft account could not be proven", "name", name, "error", err)
-		say("Not verified", "Mojang did not vouch for "+name+". Sign in to Minecraft as that account, and join again while the check is open.")
+		say("Not verified", "Mojang could not confirm you are "+name+". Sign in as that account and try again.")
 		return
 	}
 	say("avSYS", r.Verify.Proven(ctx, name, uuid))
