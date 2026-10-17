@@ -12,6 +12,12 @@ test.beforeEach(async ({ as }) => {
   await as("owner");
 });
 
+/** Opens the content picker on its resource pack, as Add and then that kind. */
+async function choosePack(page: Page) {
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Resource pack", exact: true }).click();
+}
+
 /** A JSON merge patch, as the panel applies one. */
 function merge(into: any, patch: any): any {
   if (patch === null || typeof patch !== "object" || Array.isArray(patch)) return patch;
@@ -52,8 +58,8 @@ async function survival(page: Page, pack: object | null) {
 test("one picked from Modrinth is its newest release that fits, and another version can be chosen", async ({ page }) => {
   const state = await survival(page, null);
   await page.goto("/o/friends/s/survival/mods");
-  await expect(page.getByText(/^None\. One from Modrinth/)).toBeVisible();
-  await page.getByRole("button", { name: "Choose one" }).click();
+  await expect(page.getByText(/^None\. One added from Modrinth/)).toBeVisible();
+  await choosePack(page);
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByPlaceholder("Search resource packs on Modrinth")).toBeVisible();
   await expect(dialog.getByText("1 result for Minecraft 1.21.4")).toBeVisible();
@@ -98,7 +104,7 @@ test("one at a URL is given its SHA-1, or taken without one when the panel canno
     return route.fulfill({ status: 502, json: { code: "fetch", message: "The panel could not reach that address." } });
   });
   await page.goto("/o/friends/s/survival/mods");
-  await page.getByRole("button", { name: "Choose one" }).click();
+  await choosePack(page);
   let dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "From URL" }).click();
   await dialog.getByLabel("Download URL").fill("https://players-only.example.org/pack.zip");
@@ -127,7 +133,7 @@ test("while one choice is being made, no other can be made on another tab", asyn
     return route.fulfill({ json: { sha1: "ef".repeat(20) } });
   });
   await page.goto("/o/friends/s/survival/mods");
-  await page.getByRole("button", { name: "Choose one" }).click();
+  await choosePack(page);
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "From URL" }).click();
   await dialog.getByLabel("Download URL").fill("https://packs.example.org/world.zip");
@@ -207,8 +213,10 @@ test("for a new server on the latest version, a pack is picked once it is known 
   });
   await page.goto(`/o/${slug}/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ }).click();
-  await page.getByRole("button", { name: "Choose a resource pack" }).click();
+  // In the one picker for all content.
+  await page.getByRole("button", { name: "Add content" }).click();
   const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Resource pack", exact: true }).click();
   await expect(dialog.getByRole("button", { name: /^Faithful 32x/ })).toBeDisabled();
   await expect.poll(() => answer).toBeDefined();
   answer?.();
@@ -218,7 +226,7 @@ test("for a new server on the latest version, a pack is picked once it is known 
 test("one uploaded in the picker is kept and served by the panel, and removing it takes its file", async ({ page }) => {
   const state = await survival(page, null);
   await page.goto("/o/friends/s/survival/mods");
-  await page.getByRole("button", { name: "Choose one" }).click();
+  await choosePack(page);
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Upload", exact: true }).click();
   await dialog.getByLabel("Resource pack file").setInputFiles({ name: "faithful.zip", mimeType: "application/zip", buffer: Buffer.from("PK") });
@@ -229,7 +237,7 @@ test("one uploaded in the picker is kept and served by the panel, and removing i
 
   await page.getByRole("button", { name: "Remove the resource pack" }).click();
   await expect.poll(() => state.asked).toEqual(["PUT ?name=faithful.zip", "DELETE "]);
-  await expect(page.getByRole("button", { name: "Choose one" })).toBeVisible();
+  await expect(page.getByText(/^None\. One added from Modrinth/)).toBeVisible();
 });
 
 test("an upload says how far it is and can be stopped, and says why the panel refused one", async ({ page }) => {
@@ -242,7 +250,7 @@ test("an upload says how far it is and can be stopped, and says why the panel re
     await new Promise(() => {});
   });
   await page.goto("/o/friends/s/survival/mods");
-  await page.getByRole("button", { name: "Choose one" }).click();
+  await choosePack(page);
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Upload", exact: true }).click();
   const pack = { name: "big.zip", mimeType: "application/zip", buffer: Buffer.alloc(2 * 1024 * 1024) };
@@ -303,8 +311,10 @@ test("a new server can be given a pack from Modrinth when it is made", async ({ 
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Game version").selectOption("1.21.4");
-  await page.getByRole("button", { name: "Choose a resource pack" }).click();
+  // In the one picker for all content.
+  await page.getByRole("button", { name: "Add content" }).click();
   const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Resource pack", exact: true }).click();
   // Nowhere to put a file until the server exists.
   await expect(dialog.getByRole("button", { name: "Upload", exact: true })).toHaveCount(0);
   await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
@@ -338,7 +348,7 @@ test("a copy keeps the original's uploaded pack, made required, and can be given
   expect(sent[1].spec.resourcePack).toEqual({ url: uploaded.url, sha1: sha, uploaded: null, enforce: true });
 
   await page.getByRole("button", { name: "Remove the resource pack" }).click();
-  await expect(page.getByRole("button", { name: "Choose a resource pack" })).toBeVisible();
+  await expect(page.getByText("faithful.zip", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect.poll(() => sent.length).toBe(3);
   expect(sent[2].spec.resourcePack).toBeNull();
