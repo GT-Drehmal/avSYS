@@ -322,8 +322,12 @@ func (s *Store) AcceptInvite(ctx context.Context, token, userID string) (*Org, e
 // withMinecraftAccounts fills in every account each member has linked.
 func (s *Store) withMinecraftAccounts(ctx context.Context, orgID string, members []Member) error {
 	byUser := map[string]*Member{}
+	// The main account is taken from this list too, not from the query
+	// before it: an account renamed or unlinked in between would leave the
+	// two telling different stories.
 	for i := range members {
 		members[i].Minecraft = []MinecraftAccount{}
+		members[i].MinecraftName, members[i].MinecraftUUID = "", ""
 		byUser[members[i].UserID] = &members[i]
 	}
 	rows, err := s.db.QueryContext(ctx,
@@ -343,6 +347,9 @@ func (s *Store) withMinecraftAccounts(ctx context.Context, orgID string, members
 		a.LinkedAt = unix(linked)
 		if m := byUser[user]; m != nil {
 			m.Minecraft = append(m.Minecraft, a)
+			if a.Main {
+				m.MinecraftName, m.MinecraftUUID = a.Name, a.UUID
+			}
 		}
 	}
 	return rows.Err()
