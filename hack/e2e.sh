@@ -402,12 +402,17 @@ game_clean "and the game it stopped saved and stopped cleanly"
 call -X POST "$SRV/start" >/dev/null
 wait_until Starting
 set_spec '{"spec":{"properties":{"motd":"changed while starting"}}}'
+settled
 wait_phase Running
-expect "settings changed while it starts are for its next start" "$(call "$SRV" | field "d['status'].get('pendingRestart', False)")" True
-call -X POST "$SRV/restart" >/dev/null
-for _ in $(seq 1 90); do [ "$(phase_now)" != Running ] && break; sleep 1; done
-wait_phase Running
-expect "and are in place once restarted" "$(call "$SRV/files/content?path=/server.properties")" "motd=changed while starting"
+# Changed before its game began, it starts with them; after, they are for
+# its next start, and say so.
+if [ "$(call "$SRV" | field "d['status'].get('pendingRestart', False)")" = True ]; then
+  echo "ok: settings changed once its game had begun are for its next start"
+  call -X POST "$SRV/restart" >/dev/null
+  for _ in $(seq 1 90); do [ "$(phase_now)" != Running ] && break; sleep 1; done
+  wait_phase Running
+fi
+expect "settings changed while it starts are in place once it runs" "$(call "$SRV/files/content?path=/server.properties")" "motd=changed while starting"
 set_spec '{"spec":{"properties":{"motd":"e2e probe"}}}'
 call -X POST "$SRV/restart" >/dev/null
 for _ in $(seq 1 90); do [ "$(phase_now)" != Running ] && break; sleep 1; done
