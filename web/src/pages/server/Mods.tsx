@@ -148,7 +148,7 @@ export function Mods() {
         />
       )}
 
-      <PackSection server={server} gameVersion={server.spec.modpack ? undefined : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
+      <PackSection server={server} gameVersion={server.spec.modpack ? server.spec.modpack.gameVersion : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
 
       {adding && (
         <AddContentDialog

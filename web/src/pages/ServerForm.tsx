@@ -289,8 +289,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   // Picks were filtered to fit one kind of server, so they do not carry over
   // to another.
   const changeSoftware = (change: Partial<Values>) => {
-    if (v.mods.length > 0) toast.info(`Cleared ${v.mods.length} item${v.mods.length === 1 ? "" : "s"} picked for the previous software`);
-    setValues((was) => ({ ...was, ...change, mods: [] }));
+    // Files to upload were picked for it too: a mod is not a plugin.
+    const cleared = v.mods.length + v.uploads.length;
+    if (cleared > 0) toast.info(`Cleared ${cleared} item${cleared === 1 ? "" : "s"} picked for the previous software`);
+    setValues((was) => ({ ...was, ...change, mods: [], uploads: [] }));
   };
 
   /** A new server's request: everything chosen, and nothing else. */
@@ -399,6 +401,23 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     }
   };
 
+  /**
+   * Starts a server just made, once its files are in. One that could not be
+   * started is there all the same: the page goes on to it, saying so, rather
+   * than staying on a form that would make it again.
+   */
+  const started = async (server: string) => {
+    try {
+      await api.post(`${serverPath(org, server)}/start`);
+      return true;
+    } catch (err) {
+      const why = err instanceof Error ? ` (${err.message.replace(/\.$/, "")})` : "";
+      toast.error(`${v.displayName || server} was made, with its files, but could not be started${why}. Start it here.`);
+      navigate(`/o/${org}/s/${server}`);
+      return false;
+    }
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack, or switch to a game version.");
@@ -431,7 +450,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             navigate(`/o/${org}/s/${server.name}/content`);
             return;
           }
-          if (startNow) await api.post(`${serverPath(org, server.name)}/start`);
+          if (startNow && !(await started(server.name))) return;
         }
         // How the copying goes shows on the server's page until its files are in.
         navigate(`/o/${org}/s/${server.name}`);
@@ -451,7 +470,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           navigate(`/o/${org}/s/${server.name}/content`);
           return;
         }
-        if (v.picture.kind !== "file") await api.post(`${serverPath(org, server.name)}/start`);
+        if (v.picture.kind !== "file" && !(await started(server.name))) return;
       }
       // Its picture goes onto its volume, which is not there yet. The panel
       // waits for that, puts the picture in place and then starts the
@@ -654,7 +673,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               </Button>
               <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Remove the resource pack" onClick={() => setValues((was) => ({ ...was, pack: null, packFile: null }))} />
             </PackCard>
-            <PackFit pack={v.pack} version={v.kind === "modpack" ? undefined : effective(v.version)} />
+            <PackFit pack={v.pack} version={v.kind === "modpack" ? v.modpack?.gameVersion : effective(v.version)} />
             <Toggle checked={!!v.pack.enforce} onChange={(enforce) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, enforce } }))} label="Pack required" hint="Players who decline the pack are disconnected." />
             <Field label="Pack prompt" hint="Shown when the game asks to download the pack.">
               {(id) => <Input id={id} value={v.pack?.prompt ?? ""} onChange={(e) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, prompt: e.target.value } }))} placeholder="A pack made for this world" />}

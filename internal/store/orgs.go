@@ -328,7 +328,7 @@ func (s *Store) withMinecraftAccounts(ctx context.Context, orgID string, members
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT a.user_id, a.uuid, a.name, a.linked_at, a.main, a.verified_at > 0 FROM minecraft_links a
-		 JOIN memberships m ON m.user_id = a.user_id WHERE m.org_id = ? ORDER BY a.main DESC, a.linked_at, a.uuid`, orgID)
+		 JOIN memberships m ON m.user_id = a.user_id WHERE m.org_id = ? ORDER BY a.main DESC, a.linked_at, a.rowid`, orgID)
 	if err != nil {
 		return err
 	}

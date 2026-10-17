@@ -43,15 +43,34 @@ console() {
     line=${line#/}
     [ -z "$line" ] && continue
     history -s -- "$line"
+    if saving "$line"; then
+      holding
+      continue
+    fi
     send "$line" || echo "The server did not take that: it may be restarting." >&2
   done
   # Typed in from a script, give the log a moment to show what happened.
   [ -t 0 ] || sleep 1
 }
 
+# While the panel takes a snapshot it holds the game's saves, and the copy is
+# only whole if nothing switches them back on or writes the world out under
+# it. Those commands wait until it is done.
+held=/tmp/avsys/saving-paused
+saving() {
+  set -- ${1#/}
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    save-on|save-off|save-all|minecraft:save-on|minecraft:save-off|minecraft:save-all) [ -e "$held" ] ;;
+    *) return 1 ;;
+  esac
+}
+holding() {
+  echo "A snapshot is being taken, which holds the game's saves until it is done. Try again once it has finished." >&2
+}
+
 case "${1:-}" in
   console) console ;;
-  run)     shift; exec rcon-cli "$@" ;;
+  run)     shift; if saving "$*"; then holding; exit 1; fi; exec rcon-cli "$@" ;;
   logs)    exec tail -n 200 -F "$log" ;;
   restart) rcon-cli stop && echo "Server stopped; it starts again on its own." ;;
   *)       usage ;;

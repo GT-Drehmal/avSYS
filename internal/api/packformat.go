@@ -364,20 +364,40 @@ func (s *Server) packFormats(w http.ResponseWriter, r *http.Request, _ *store.Us
 			ends = append(ends, v.ID)
 		}
 	}
-	if len(ends) > 2 {
-		ends = []string{ends[0], ends[len(ends)-1]}
-	}
+	// The oldest and the newest that can be found out, each tried from its
+	// end inward: one whose format cannot be read gives way to the next.
 	var out *avsysv1.PackFormats
-	for _, v := range ends {
+	widen := func(f int32) {
+		if out == nil {
+			out = &avsysv1.PackFormats{Min: f, Max: f}
+		}
+		out.Min, out.Max = min(out.Min, f), max(out.Max, f)
+	}
+	// A few from each end at most: with Mojang out of reach, every version
+	// listed would otherwise be tried in turn.
+	const tries = 3
+	newest := -1
+	for i, v := range ends {
+		if i >= tries {
+			break
+		}
 		f, err := s.packFormatOf(r.Context(), v)
 		if err != nil {
 			s.Log.Info("finding out a game version's resource pack format", "version", v, "error", err)
 			continue
 		}
-		if out == nil {
-			out = &avsysv1.PackFormats{Min: f, Max: f}
+		widen(f)
+		newest = i
+		break
+	}
+	for i := len(ends) - 1; newest >= 0 && i > newest && i >= len(ends)-tries; i-- {
+		f, err := s.packFormatOf(r.Context(), ends[i])
+		if err != nil {
+			s.Log.Info("finding out a game version's resource pack format", "version", ends[i], "error", err)
+			continue
 		}
-		out.Min, out.Max = min(out.Min, f), max(out.Max, f)
+		widen(f)
+		break
 	}
 	if out == nil {
 		return errNotFound
