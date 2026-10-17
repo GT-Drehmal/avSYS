@@ -529,6 +529,18 @@ expect "a program put in ~/.local/bin is found by a login shell" "$own" "a tool 
 expect "the panel's own commands do not look in anyone's home" "$own" "restic is /usr/local/bin/restic"
 expect "python is there" "$own" "42"
 expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
+told=$(ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'sudo true' 2>&1) || true
+expect "and point to tools" "$told" "tools install <name>"
+# A program installed into one's home without root, found by a login shell,
+# and taken out again with what was downloaded for it.
+installed=$(ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'tools install ripgrep >/tmp/tools.log 2>&1; bash -lc "rg --version" | head -1; tools remove ripgrep >/dev/null 2>&1; bash -lc "command -v rg || echo gone"; du -s ~/.local/mamba 2>/dev/null | cut -f1; tail -3 /tmp/tools.log' 2>&1) || true
+case "$installed" in
+  *ripgrep*gone*) echo "ok: tools installs a program into one's home, and takes it out again" ;;
+  *[Dd]ownload*|*resolve*|*[Cc]onnection*) echo "note: conda-forge could not be reached, so tools was not tried: $installed" ;;
+  *) fail "tools did not install and remove a program: $installed" ;;
+esac
 # What a command says on stderr reaches whoever ran it, though nothing came
 # on stdout before: the gateway once ended the output first, losing it.
 for _ in 1 2 3 4 5; do
