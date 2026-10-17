@@ -98,7 +98,9 @@ print("\n".join("  | " + line for line in lines[-40:]))' || true
 # the cluster starts the game again by itself. Only the image's own line
 # about a download counts: a timeout mentioned anywhere else in the log, by
 # the game or a plugin, says nothing about why the game stopped.
-FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload'
+FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload|Failed to download mojang_[^ ]*\.jar'
+# Paper's own launcher says it its own way, as it fetches the game's jar from
+# Mojang.
 # How many times that happened in this run, said at the end so that it shows.
 REFETCHED=0
 
