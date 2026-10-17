@@ -67,6 +67,27 @@ export const test = base.extend<Fixtures>({
     { auto: true },
   ],
 
+  // A request a test answers itself, from what the panel answers, has
+  // nothing left to answer once the page has gone on, as by reloading: the
+  // panel's answer goes with it. That is not the test failing; anything
+  // else a handler throws still is.
+  page: async ({ page }, use) => {
+    const route = page.route.bind(page);
+    page.route = ((url, handler, options) =>
+      route(
+        url,
+        async (r, request) => {
+          try {
+            await handler(r, request);
+          } catch (err) {
+            if (!/Response has been disposed|has been closed|Route is already handled/.test(String(err))) throw err;
+          }
+        },
+        options,
+      )) as Page["route"];
+    await use(page);
+  },
+
   as: async ({ context }, use) => {
     await use(async (who) => {
       await context.setExtraHTTPHeaders({ Authorization: `Bearer ${info().tokens[who]}` });

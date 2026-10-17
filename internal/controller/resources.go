@@ -301,11 +301,16 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 
 	if rp := mc.Spec.ResourcePack; rp != nil && rp.URL != "" {
 		env["RESOURCE_PACK"] = rp.URL
+		// One uploaded to the panel is fetched from wherever the panel
+		// serves packs now, which may have changed since.
+		if rp.Uploaded != nil && rp.SHA1 != "" && cfg.PackURL != "" {
+			env["RESOURCE_PACK"] = cfg.PackURL + "/packs/" + rp.SHA1 + ".zip"
+		}
 		env["RESOURCE_PACK_SHA1"] = rp.SHA1
 		env["RESOURCE_PACK_ENFORCE"] = strings.ToUpper(strconv.FormatBool(rp.Enforce))
-		if rp.Prompt != "" {
-			env["RESOURCE_PACK_PROMPT"] = rp.Prompt
-		}
+		// Always set, so that one taken away is gone from server.properties
+		// too, where the image would otherwise leave the one before.
+		env["RESOURCE_PACK_PROMPT"] = packPrompt(rp.Prompt)
 	}
 
 	if len(mc.Spec.Properties) > 0 {
@@ -525,8 +530,10 @@ func applyService(svc *corev1.Service, mc *avsysv1.MinecraftServer) {
 	svc.Spec.Selector = map[string]string{avsysv1.LabelServer: mc.Name}
 
 	port := corev1.ServicePort{Name: "minecraft", Port: MinecraftPort, TargetPort: intstr.FromString("minecraft"), Protocol: corev1.ProtocolTCP}
-	if len(svc.Spec.Ports) == 1 {
-		port.NodePort = svc.Spec.Ports[0].NodePort
+	for _, p := range svc.Spec.Ports {
+		if p.Name == "minecraft" || len(svc.Spec.Ports) == 1 {
+			port.NodePort = p.NodePort
+		}
 	}
 	svc.Spec.LoadBalancerIP = ""
 	switch mc.Spec.Expose.Type {
@@ -542,7 +549,7 @@ func applyService(svc *corev1.Service, mc *avsysv1.MinecraftServer) {
 		svc.Spec.Type = corev1.ServiceTypeClusterIP
 		port.NodePort = 0
 	}
-	svc.Spec.Ports = []corev1.ServicePort{port}
+	svc.Spec.Ports = append([]corev1.ServicePort{port}, extraServicePorts(mc, svc.Spec.Ports)...)
 }
 
 // addressFor is what a player types to join, or "" while it is not known yet.
@@ -578,4 +585,16 @@ func addressFor(mc *avsysv1.MinecraftServer, svc *corev1.Service, cfg Config) st
 		}
 		return host
 	}
+}
+
+// packPrompt is a resource pack's prompt as the game reads it from
+// server.properties: a JSON text component. Plain text, as typed in the
+// panel, is made a JSON string; one written as a component already, an
+// object, list or string, is left as it is.
+func packPrompt(prompt string) string {
+	if t := strings.TrimSpace(prompt); t != "" && strings.ContainsAny(t[:1], "{[\"") && json.Valid([]byte(t)) {
+		return t
+	}
+	quoted, _ := json.Marshal(prompt)
+	return string(quoted)
 }

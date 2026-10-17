@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { api, type Loader, type MinecraftVersions } from "./api";
+import { api, qs, type Loader, type MinecraftVersions, type PackFormats } from "./api";
 
 export const loaders: { id: Loader; name: string; blurb: string }[] = [
   { id: "vanilla", name: "Vanilla", blurb: "The unmodified game" },
@@ -49,3 +49,23 @@ export function toGigabytes(q: string | undefined): string {
 }
 
 export const fromGigabytes = (gb: string) => `${Math.round(Number(gb) * 1024)}Mi`;
+
+/**
+ * The resource pack formats game versions read: of several, from the oldest
+ * to the newest. Null where the panel cannot find out.
+ */
+export const packFormatsOf = (versions: string[]) =>
+  versions.length === 0
+    ? Promise.resolve(null)
+    : api.get<PackFormats>(`/catalog/minecraft/pack-formats?${qs({ versions: [...new Set(versions)].join(",") })}`).catch(() => null);
+
+/** The resource pack format a game version reads, where the panel can find out. */
+export function useGameFormat(version?: string) {
+  return useQuery({
+    queryKey: ["pack-format", version ?? ""],
+    queryFn: () => packFormatsOf([version ?? ""]),
+    enabled: !!version,
+    staleTime: Number.POSITIVE_INFINITY,
+    select: (f) => f?.max ?? null,
+  });
+}

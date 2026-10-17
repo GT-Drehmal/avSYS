@@ -633,3 +633,49 @@ func TestLoadingGameIsLetFinish(t *testing.T) {
 		}
 	}
 }
+
+// A pack uploaded to the panel is fetched from where the panel serves packs
+// now; one hosted elsewhere from its own URL.
+func TestUploadedPackURL(t *testing.T) {
+	sha := strings.Repeat("ab", 20)
+	pack := func(uploaded bool) *avsysv1.MinecraftServer {
+		return server(func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.ResourcePack = &avsysv1.ResourcePackSpec{URL: "https://old.example/packs/" + sha + ".zip", SHA1: sha}
+			if uploaded {
+				mc.Spec.ResourcePack.Uploaded = &avsysv1.UploadedPack{Name: "p.zip", Size: 10}
+			}
+		})
+	}
+	of := func(mc *avsysv1.MinecraftServer) string {
+		for _, e := range minecraftEnv(mc, Config{PackURL: "https://packs.example.org"}) {
+			if e.Name == "RESOURCE_PACK" {
+				return e.Value
+			}
+		}
+		return ""
+	}
+	if got := of(pack(true)); got != "https://packs.example.org/packs/"+sha+".zip" {
+		t.Errorf("uploaded: %s", got)
+	}
+	if got := of(pack(false)); got != "https://old.example/packs/"+sha+".zip" {
+		t.Errorf("hosted elsewhere: %s", got)
+	}
+}
+
+// The game reads a pack's prompt as a JSON text component: plain text
+// would be thrown away.
+func TestPackPrompt(t *testing.T) {
+	for in, want := range map[string]string{
+		"drehmal":                      `"drehmal"`,
+		`Say "yes"`:                    `"Say \"yes\""`,
+		"":                             `""`,
+		`{"text":"Hi","color":"gold"}`: `{"text":"Hi","color":"gold"}`,
+		`[{"text":"a"},{"text":"b"}]`:  `[{"text":"a"},{"text":"b"}]`,
+		`"already"`:                    `"already"`,
+		`{not json`:                    `"{not json"`,
+	} {
+		if got := packPrompt(in); got != want {
+			t.Errorf("%q: %s, want %s", in, got, want)
+		}
+	}
+}

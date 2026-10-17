@@ -7,7 +7,7 @@ import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, t
 import { ago, bytes, loaderNames } from "../lib/format";
 import { keys, useAction, useOffsite } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
-import { ContentList } from "./Content";
+import { ContentList, packTitle } from "./Content";
 import type { Selection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { Picture } from "./Picture";
@@ -18,6 +18,7 @@ export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "pre-restore") return "Before a restore";
   if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
   if (s.trigger === "copy") return s.by ? `For a copy ${s.by} made` : "For a copy";
+  if (s.trigger === "move") return s.by ? `For a move ${s.by} made` : "For a move";
   return s.by ? `By ${s.by}` : "Manual";
 };
 
@@ -29,10 +30,11 @@ const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   restore: ["Restoring", "Restore"],
   create: ["Copying a snapshot into", "Creation"],
   "delete-server": ["Deleting", "Deletion"],
+  move: ["Moving", "Move"],
 };
 
 /** Whether an operation holds its server stopped, and is shown on all of its pages rather than with its snapshots. */
-export const holdsTheServer = (op: Operation) => op.kind === "create" || op.kind === "restore";
+export const holdsTheServer = (op: Operation) => op.kind === "create" || op.kind === "restore" || op.kind === "move";
 
 /** A snapshot or restore that is running, with how far along it is. */
 export function OperationRow({ op }: { op: Operation }) {
@@ -315,7 +317,14 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
                   {(spec.whitelist?.length ?? 0) > 0 && <Fact label="Whitelist">{spec.whitelist!.join(", ")}</Fact>}
                   {spec.resourcePack?.url && (
                     <Fact label="Resource pack">
-                      <span className="font-mono text-xs break-all">{spec.resourcePack.url}</span>
+                      {spec.resourcePack.project || spec.resourcePack.uploaded ? (
+                        <>
+                          {packTitle(spec.resourcePack)}
+                          <span className="text-muted">{spec.resourcePack.uploaded ? " · uploaded" : ` · ${spec.resourcePack.project?.versionName ?? "Modrinth"}`}</span>
+                        </>
+                      ) : (
+                        <span className="font-mono text-xs break-all">{spec.resourcePack.url}</span>
+                      )}
                     </Fact>
                   )}
                 </dl>

@@ -557,9 +557,12 @@ func contentFilename(name string, kind avsysv1.ContentKind) (string, error) {
 }
 
 // uploadContent stores a mod, plugin or datapack sent from someone's computer
-// on the server's volume and lists it in the server's content.
+// on the server's volume and lists it in the server's content. With
+// ?wait=true it is for a server made a moment ago, made stopped to be given
+// it first: its volume is waited for.
 func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, mc, err := s.server(r, u, store.RoleAdmin)
+	wait := r.URL.Query().Get("wait") == "true"
+	a, mc, err := s.serverMaybeNew(r, u, wait)
 	if err != nil {
 		return err
 	}
@@ -590,11 +593,12 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 		return errBadRequest("%s is not a valid %s file.", name, path.Ext(name))
 	}
 
-	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
+	sc, done, err := s.filesOf(r.Context(), mc, wait)
 	if err != nil {
 		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
 		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. It may be restarting."}
 	}
+	defer done()
 	if err := sc.MkdirAll(controller.ContentDir); err != nil {
 		return fileError(err)
 	}
@@ -766,6 +770,11 @@ func contentLeftOf(mc *avsysv1.MinecraftServer) []string {
 			out = append(out, file)
 			continue
 		}
+		// An uploaded resource pack taken off it.
+		if dir == packDir && packFileName.MatchString(name) {
+			out = append(out, file)
+			continue
+		}
 		if world, ok := strings.CutSuffix(dir, "/datapacks"); ok && path.Dir(world) == dataRoot && plainName(path.Base(world)) {
 			out = append(out, file)
 		}
@@ -843,6 +852,10 @@ func (s *Server) lockContent(key client.ObjectKey) (unlock func()) {
 // the panel would remove: stored uploads and installed datapacks.
 func installedFiles(spec *avsysv1.MinecraftServerSpec) map[string]bool {
 	out := map[string]bool{}
+	// Its uploaded resource pack, which may be one taken off and put back.
+	if rp := spec.ResourcePack; rp != nil && rp.Uploaded != nil {
+		out[packFile(rp.SHA1)] = true
+	}
 	level := levelOf(spec)
 	for _, m := range spec.Mods {
 		if m.Source == avsysv1.SourceUpload {
