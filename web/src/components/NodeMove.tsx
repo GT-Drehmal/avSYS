@@ -30,7 +30,7 @@ export function NodeMove({ server }: { server: Server }) {
       .join(", ");
     return (
       <p className="text-[13px] text-muted">
-        {here ? `On ${here}. ` : ""}Kept to the nodes labelled <span className="font-mono">{labels}</span> by its node selector, set outside the panel. Change that to move it.
+        {here ? `On ${here}. ` : ""}Kept to nodes labelled <span className="font-mono">{labels}</span>, set outside the panel.
       </p>
     );
   }
@@ -48,11 +48,10 @@ export function NodeMove({ server }: { server: Server }) {
           </>
         ) : (
           "Not placed on a node yet."
-        )}{" "}
-        <span className="text-muted">{local ? "Its files are on that node's own disk." : "Its files are not tied to a node."}</span>
+        )}
       </p>
       {others.length === 0 ? (
-        <p className="text-xs text-muted">There is no other node to move it to.</p>
+        <p className="text-xs text-muted">No other node to move it to.</p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <Select aria-label="Move to" value={target} onChange={(e) => setTarget(e.target.value)} className="w-72 max-sm:w-full">
@@ -75,8 +74,8 @@ export function NodeMove({ server }: { server: Server }) {
         title={`Move ${server.name} to ${target}?`}
         description={
           local
-            ? `It is stopped, its files are saved to a snapshot and put back on ${target}, and it is started again if it was running. Players cannot join until that is done, which takes longer for a big world. The snapshot is kept.`
-            : `Its files are not tied to a node, so it is only started again on ${target}.`
+            ? `It stops, its files move to ${target}, and it starts again if it was running. Big worlds take longer.`
+            : `It starts again on ${target}.`
         }
         action="Move"
         loading={move.isPending}

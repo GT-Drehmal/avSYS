@@ -28,13 +28,13 @@ function VersionDialog({ title, project, current, filters, onPick, onClose }: Ve
   });
   const row = "flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-[13px] hover:bg-raised";
   return (
-    <Modal open onOpenChange={onClose} title={title} description="The version stays as chosen until you change it here.">
+    <Modal open onOpenChange={onClose} title={title} description="Stays on this version until you change it.">
       <ul className="-mx-2 flex flex-col">
         <li>
           <button className={row} onClick={() => onPick(null)}>
             <span className="min-w-0 flex-1">
               <span className="block font-medium">Update to the best fit</span>
-              <span className="block text-xs text-muted">The newest release that runs on this server as it is.</span>
+              <span className="block text-xs text-muted">The newest release that fits this server.</span>
             </span>
           </button>
         </li>
@@ -110,7 +110,7 @@ export function Mods() {
 
       {server.java.effective > server.java.game && (
         <Notice tone="info">
-          This server runs on Java {server.java.effective} instead of the game's usual Java {server.java.game}, because something installed needs it.
+          Uses Java {server.java.effective} instead of {server.java.game} because some content needs it.
         </Notice>
       )}
 
@@ -129,8 +129,8 @@ export function Mods() {
         !modpack && (
           <Empty title={server.spec.loader === "vanilla" ? "Vanilla servers take datapacks" : "Nothing installed yet"}>
             {server.spec.loader === "vanilla"
-              ? "To run mods or plugins, switch the server software under Settings."
-              : "Search Modrinth and add what you want."}
+              ? "To use mods or plugins, change the server type in Settings."
+              : "Add some from Modrinth."}
           </Empty>
         )
       ) : (

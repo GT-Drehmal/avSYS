@@ -52,4 +52,4 @@ export function PreviewsToggle({ versions, previews, onChange, selected }: Toggl
 }
 
 /** What choosing a snapshot costs, said while one is picked. */
-export const previewWarning = "A world opened in a snapshot may not open in an earlier version again.";
+export const previewWarning = "A world opened in a snapshot or pre-release may not open in older versions.";

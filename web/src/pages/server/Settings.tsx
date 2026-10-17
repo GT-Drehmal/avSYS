@@ -194,13 +194,13 @@ export function Settings() {
         <PicturePicker
           name={server.spec.displayName || server.name}
           path={`${serverPath(server.org, server.name)}/icon`}
-          hint="Shown to players in their server list, from the next restart on."
+          hint="Shown in the server list after a restart."
         />
         <Field label="Display name">{(id) => <Input id={id} {...text("displayName")} placeholder={server.name} />}</Field>
         <Field label="Message of the day">{(id) => <Input id={id} {...text("motd")} placeholder="A Minecraft Server" />}</Field>
       </Section>
 
-      <Section title="Software" description={server.spec.modpack ? "The modpack decides the game version and mod loader." : "Changing the loader or going back a version can break an existing world. Back it up first."}>
+      <Section title="Software" description={server.spec.modpack ? undefined : "Changing the type or going to an older version can break the world. Take a snapshot first."}>
         {server.spec.modpack ? (
           <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change its version under Content.</Notice>
         ) : (
@@ -220,7 +220,7 @@ export function Settings() {
               label="Game version"
               hint={
                 noBuild
-                  ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so the server cannot start. Its newest is ${versions.data?.latest}.`
+                  ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so it cannot start. The newest is ${versions.data?.latest}.`
                   : onPreview(versions.data, draft.version)
                     ? previewWarning
                     : undefined
@@ -248,7 +248,7 @@ export function Settings() {
         )}
       </Section>
 
-      <Section title="Gameplay" description="Fields left on Default leave server.properties as it is.">
+      <Section title="Gameplay">
         <div className="grid grid-cols-2 gap-4">
           <GameplayFields
             value={{ difficulty: draft.difficulty, gamemode: draft.gamemode, maxPlayers: draft.maxPlayers, pvp: draft.pvp }}
@@ -257,9 +257,7 @@ export function Settings() {
         </div>
         <Field
           label="Other properties"
-          hint={`One key=value per line, for anything else in server.properties.${
-            worldSet.length > 0 ? ` ${worldSet.join(", ")} ${worldSet.length === 1 ? "is" : "are"} only read while a world is generated; a change does not alter an existing world.` : ""
-          }`}
+          hint={`One key=value per line.${worldSet.length > 0 ? ` ${worldSet.join(", ")} only ${worldSet.length === 1 ? "affects" : "affect"} new worlds.` : ""}`}
         >
           {(id) => <Textarea id={id} rows={3} {...text("otherProperties")} placeholder={"view-distance=12\nspawn-protection=0"} className="font-mono" spellCheck={false} />}
         </Field>
@@ -292,7 +290,7 @@ export function Settings() {
             hint={
               draft.autoWhitelist !== "off" && draft.whitelistOn !== "true"
                 ? "Only matters with the whitelist on."
-                : "Members with this role who have linked a Minecraft account, as well as the players above."
+                : "Members need a linked Minecraft account."
             }
           >
             {(id) => (
@@ -302,7 +300,7 @@ export function Settings() {
               </Select>
             )}
           </Field>
-          <Field label="Operators by role" hint="Members with this role who have linked a Minecraft account, as well as the players above.">
+          <Field label="Operators by role" hint="Members need a linked Minecraft account.">
             {(id) => (
               <Select id={id} {...text("autoOp")}>
                 {autoOpOptions}
@@ -313,7 +311,7 @@ export function Settings() {
         {(members.data?.length ?? 0) > 0 && (
           <div className="flex flex-col gap-1.5">
             <div className="text-[13px] font-medium text-fg">Members</div>
-            <p className="text-xs text-muted">By role unless picked otherwise. A pick follows the person: a new Minecraft name, or leaving the organization.</p>
+            <p className="text-xs text-muted">Set by role unless you pick otherwise.</p>
             <MemberLists
               members={members.data ?? []}
               whitelistFrom={draft.autoWhitelist === "off" ? "" : (draft.autoWhitelist as Role)}
@@ -334,7 +332,7 @@ export function Settings() {
         <LaunchFlags aikar={draft.aikar} extra={draft.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} />
       </Section>
 
-      <Section title="Node" description="Where it runs. Moving it stops it until it is up on the other node.">
+      <Section title="Node" description="Moving it stops the server for a while.">
         <NodeMove server={server} />
       </Section>
 
@@ -347,11 +345,11 @@ export function Settings() {
           )}
         </Field>
         {draft.exposeType !== "None" && (
-          <Field label="Hostname" hint={usesRouter ? "Point this name's DNS at the avSYS router." : "Optional."}>
+          <Field label="Hostname" hint={usesRouter ? "Point its DNS at the avSYS router." : "Optional."}>
             {(id) => <Input id={id} required={usesRouter} {...text("hostname")} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
           </Field>
         )}
-        <Field label="Extra ports" hint="What mods and plugins listen on beside the game: voice chat, Geyser, a web map.">
+        <Field label="Extra ports" hint="For mods like voice chat, Geyser or a web map.">
           {() => <ExtraPorts ports={draft.ports} onChange={(ports) => set("ports", ports)} mods={server.spec.mods ?? []} status={server.status.ports ?? []} expose={draft.exposeType} sleeps={draft.sleepEnabled && draft.exposeType === "Router"} />}
         </Field>
         {draft.exposeType === "LoadBalancer" && (
@@ -367,7 +365,7 @@ export function Settings() {
           disabled={!usesRouter}
           onChange={(v) => set("sleepEnabled", v)}
           label="Sleep when empty"
-          hint={usesRouter ? "The first player to join wakes it and is asked to rejoin once it is up." : "Needs the shared address."}
+          hint={usesRouter ? "The first player to join wakes it, then joins again." : "Needs the shared address."}
         />
         {draft.sleepEnabled && usesRouter && <Field label="After minutes with no players">{(id) => <Input id={id} type="number" min={1} {...text("idleMinutes")} className="max-w-32" />}</Field>}
       </Section>
@@ -408,7 +406,7 @@ export function Settings() {
         open={deleting}
         onOpenChange={setDeleting}
         title={`Delete ${server.name}?`}
-        description={keeps ? "It is stopped and a last snapshot is taken, so it can be brought back from Backups." : "The world and every file of this server are deleted with it. This cannot be undone."}
+        description={keeps ? "A final snapshot is taken, so you can bring it back from Backups." : "Its world and files are deleted. This cannot be undone."}
         action={remove.isPending && keeps ? "Taking a snapshot" : "Delete server"}
         typeToConfirm={server.name}
         loading={remove.isPending}

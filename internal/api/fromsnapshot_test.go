@@ -239,7 +239,7 @@ func TestAHalfMadeServerIsHeld(t *testing.T) {
 	if err := p.srv.Client.Get(ctx, key, mc); err != nil {
 		t.Fatal(err)
 	}
-	if mc.Status.Snapshots == nil || !strings.Contains(mc.Status.Snapshots.Error, "Delete it and make it again") {
+	if mc.Status.Snapshots == nil || !strings.Contains(mc.Status.Snapshots.Error, "Delete it and create it again") {
 		t.Errorf("the server does not say it was never completed: %+v", mc.Status.Snapshots)
 	}
 

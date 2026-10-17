@@ -137,7 +137,7 @@ export function ServerSchedule({ server, canAdmin }: { server: Server; canAdmin:
     if (next !== stored) save(next === "off" ? { enabled: false, minute: null, keep: null } : null);
   };
   const shown = draft ?? { minute: effective.minute, keep: effective.keep };
-  const hint = mode === "org" ? describe(policy.data) : mode === "off" ? "This server is only snapshotted by hand." : undefined;
+  const hint = mode === "org" ? describe(policy.data) : mode === "off" ? "Only taken by hand." : undefined;
 
   return (
     <form
@@ -224,12 +224,12 @@ export function BackupSchedule({ org, canAdmin }: { org: string; canAdmin: boole
           onChange={(enabled) => store({ ...stored, enabled })}
           disabled={save.isPending}
           label="Daily snapshots"
-          hint={shown.enabled ? (policy.data.next ? `Every server. Next ${when(policy.data.next)}.` : "Every server.") : "Off. Servers are only snapshotted by hand."}
+          hint={shown.enabled ? (policy.data.next ? `Every server. Next ${when(policy.data.next)}.` : "Every server.") : "Snapshots are only taken by hand."}
         />
         <Button
           size="sm"
           loading={run.isPending}
-          onClick={() => run.mutate(undefined, { onSuccess: () => toast.info("Taking scheduled snapshots of every server") })}
+          onClick={() => run.mutate(undefined, { onSuccess: () => toast.info("Taking snapshots of every server") })}
         >
           Run now
         </Button>

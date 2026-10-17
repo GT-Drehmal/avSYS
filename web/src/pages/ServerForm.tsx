@@ -266,7 +266,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const nameHint = taken.has(name)
     ? `There is already a server named ${name}.`
     : history.has(name) && !bringingBack
-      ? `Snapshots of an earlier server named ${name} go with the name. Choose another${source ? "" : ", or bring that server back from the Backups page"}.`
+      ? `A deleted server used this name. Choose another${source ? "" : ", or bring it back from Backups"}.`
       : "It cannot be changed later.";
   const routed = v.exposeType === "Router";
   // What content fits. Until a pack is picked, what it will accept is still
@@ -291,7 +291,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const changeSoftware = (change: Partial<Values>) => {
     // Files to upload were picked for it too: a mod is not a plugin.
     const cleared = v.mods.length + v.uploads.length;
-    if (cleared > 0) toast.info(`Cleared ${cleared} item${cleared === 1 ? "" : "s"} picked for the previous software`);
+    if (cleared > 0) toast.info(`Removed ${cleared} item${cleared === 1 ? "" : "s"} that no longer fit`);
     setValues((was) => ({ ...was, ...change, mods: [], uploads: [] }));
   };
 
@@ -412,7 +412,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       return true;
     } catch (err) {
       const why = err instanceof Error ? ` (${err.message.replace(/\.$/, "")})` : "";
-      toast.error(`${v.displayName || server} was made, with its files, but could not be started${why}. Start it here.`);
+      toast.error(`${v.displayName || server} was created but could not start${why}.`);
       navigate(`/o/${org}/s/${server}`);
       return false;
     }
@@ -420,7 +420,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack, or switch to a game version.");
+    if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
     if (!source && v.kind === "game" && !v.loader) {
       setNeedsLoader(true);
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -438,7 +438,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         const placed = v.node === "auto" ? { spec: { ...copyRequest(), nodeSelector: {} } } : { ...(v.node ? { node: v.node } : {}), spec: copyRequest() };
         // With files to upload, the answer comes once its own are copied in,
         // which they then join.
-        if (toUpload) setStage("Copying its files. Yours are uploaded once they are in.");
+        if (toUpload) setStage("Copying files…");
         const server = await api.post<Server>(`/orgs/${org}/servers${toUpload ? "?wait=true" : ""}`, { name, ...from, ...pictured, ...placed });
         setStage(null);
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
@@ -446,7 +446,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           const failed = await uploadAll(server.name);
           await qc.invalidateQueries({ queryKey: keys.servers(org) });
           if (failed) {
-            toast.error(`${v.displayName || server.name} was made, and left stopped: ${failed} Add the rest here, then start it.`);
+            toast.error(`${v.displayName || server.name} was created but not started: ${failed} Add the rest here, then start it.`);
             navigate(`/o/${org}/s/${server.name}/content`);
             return;
           }
@@ -466,7 +466,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         await qc.invalidateQueries({ queryKey: keys.servers(org) });
         if (failed) {
           if (v.picture.kind === "file") void api.putRaw(`${serverPath(org, server.name)}/icon?wait=true`, v.picture.file).catch(() => undefined);
-          toast.error(`${v.displayName || server.name} was made, and left stopped: ${failed} Add the rest here, then start it.`);
+          toast.error(`${v.displayName || server.name} was created but not started: ${failed} Add the rest here, then start it.`);
           navigate(`/o/${org}/s/${server.name}/content`);
           return;
         }
@@ -481,9 +481,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           .putRaw(`${serverPath(org, server.name)}/icon?wait=true&start=true`, v.picture.file)
           .then(() => {
             qc.setQueryData(["picture-version"], Date.now());
-            toast.info(`${v.displayName || server.name} has its picture`);
+            toast.info(`Picture set for ${v.displayName || server.name}`);
           })
-          .catch((err) => toast.error(err instanceof ApiError ? `The picture was not set: ${err.message}` : "The picture was not set. Set it in the server's settings."))
+          .catch((err) => toast.error(err instanceof ApiError ? `Could not set the picture: ${err.message}` : "Could not set the picture. Try again in Settings."))
           .finally(() => qc.invalidateQueries({ queryKey: keys.servers(org) }));
       }
       navigate(`/o/${org}/s/${server.name}`);
@@ -502,7 +502,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const versionField = (
     <Field
       label="Game version"
-      hint={onPreview(versions.data, v.version) ? previewWarning : source && versionChanged ? "A world opened in a newer version does not open in an older one again." : undefined}
+      hint={onPreview(versions.data, v.version) ? previewWarning : source && versionChanged ? "A world opened in a newer version cannot open in an older one." : undefined}
     >
       {(id) => (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -539,7 +539,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       <PageHeader title={!source ? "New server" : duplicating ? `Duplicate ${source.name}` : copying ? `New server from a snapshot of ${source.name}` : `Bring back ${source.name}`} />
 
       {source ? (
-        <Section title="Starting point" description="Everything below starts as the original has it.">
+        <Section title="Starting point">
           <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
             <Picture name={spec?.displayName || source.name} url={brought} size={36} />
             <div className="min-w-0 flex-1">
@@ -621,13 +621,13 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         </Section>
       )}
 
-      <Section title="Name and picture" description="How it appears in the panel and in a player's server list.">
+      <Section title="Name and picture">
         <PictureChange name={v.displayName || source?.name || ""} current={brought} value={v.picture} onChange={(change) => set("picture", change)} />
         <Field label="Display name">{(id) => <Input id={id} required value={v.displayName} onChange={(e) => set("displayName", e.target.value)} />}</Field>
         <Field label="Short name" hint={nameHint}>
           {(id) => <Input id={id} required value={name} onChange={(e) => set("customName", e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
         </Field>
-        <Field label="Message of the day" hint={source ? "The line under its name in a player's server list." : "Optional. The line under its name in a player's server list."}>
+        <Field label="Message of the day" hint="Shown under the name in the server list.">
           {(id) => <Input id={id} value={v.motd} onChange={(e) => set("motd", e.target.value)} placeholder="A Minecraft Server" />}
         </Field>
       </Section>
@@ -636,17 +636,17 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         title="Content"
         description={
           !source
-            ? `${contentList(software)}. Optional, and can be added later.`
+            ? `${contentList(software)}. Optional.`
             : v.modpack
-              ? `Its modpack comes with it. ${contentList(software)} added on top of it can be changed here.`
-              : `${contentList(software)}. Its own come with it; what is taken away here is removed before it first starts.`
+              ? `${contentList(software)} on top of the modpack.`
+              : `${contentList(software)}. Copied from the original.`
         }
       >
         {v.mods.length + v.uploads.length > 0 ? (
           <ContentList
             // Files to upload are listed with the rest, by their names.
             mods={[...v.mods, ...v.uploads.map((u): ContentRef => ({ source: "upload", kind: u.kind, project: u.file.name, title: u.file.name }))]}
-            note={(_, i) => (i >= v.mods.length ? `${bytes(v.uploads[i - v.mods.length].file.size)} · uploaded once the server is made` : undefined)}
+            note={(_, i) => (i >= v.mods.length ? `${bytes(v.uploads[i - v.mods.length].file.size)} · uploaded when created` : undefined)}
             onRemove={(i) =>
               i < v.mods.length ? set("mods", v.mods.filter((_, j) => j !== i)) : set("uploads", v.uploads.filter((_, j) => j !== i - v.mods.length))
             }
@@ -661,7 +661,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           </Button>
           {source && (modsChanged || packChanged || toUpload) && (
             <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setValues((was) => ({ ...was, mods: start.mods, pack: start.pack, uploads: [], packFile: null }))}>
-              Put back as {source.name} has it
+              Undo changes
             </button>
           )}
         </div>
@@ -689,9 +689,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             // Kept here until the server is made, then uploaded before it first starts.
             onUpload={async (file, kind) => {
               setValues((was) => ({ ...was, uploads: [...was.uploads.filter((u) => u.file.name !== file.name), { file, kind }] }));
-              toast.info(`${file.name} is uploaded once the server is made`);
+              toast.info(`${file.name} will be uploaded when the server is created`);
             }}
-            uploadNote="They are uploaded once the server is made, before it first starts."
+            uploadNote="Uploaded after the server is created."
             start={addingMods}
             pack={{
               current: v.pack,
@@ -712,9 +712,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         title="World"
         description={
           source
-            ? "Its world comes with it. Settings left on Server default stay as its server.properties has them."
+            ? "Server default keeps the original's setting."
             : v.kind === "modpack"
-              ? "A pack that ships a ready-made world ignores the world options."
+              ? "Modpacks with their own world ignore these."
               : undefined
         }
       >
@@ -740,7 +740,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         {moreWorld && (
           <>
             <fieldset disabled={!!source} className="flex flex-col gap-4 rounded-md border border-line p-4 disabled:opacity-60">
-              <p className="text-xs text-muted">{source ? "Its world has been generated already: these are as it was made." : "Fixed once the world has been generated."}</p>
+              <p className="text-xs text-muted">{source ? "Set when its world was created." : "Cannot be changed after the world is created."}</p>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="World type">
                   {(id) => (
@@ -753,7 +753,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
                 <Field label="Seed">{(id) => <Input id={id} value={v.seed} onChange={(e) => set("seed", e.target.value)} placeholder="Random" className="font-mono" spellCheck={false} />}</Field>
               </div>
               <Toggle checked={v.structures} disabled={!!source} onChange={(on) => set("structures", on)} label="Generate structures" />
-              <Toggle checked={v.hardcore} disabled={!!source} onChange={(on) => set("hardcore", on)} label="Hardcore" hint="Difficulty is locked to hard, and players who die can only spectate." />
+              <Toggle checked={v.hardcore} disabled={!!source} onChange={(on) => set("hardcore", on)} label="Hardcore" hint="Hard difficulty. Players who die become spectators." />
             </fieldset>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Player limit">{(id) => <Input id={id} type="number" min={1} value={v.maxPlayers} onChange={(e) => set("maxPlayers", e.target.value)} placeholder="20" />}</Field>
@@ -785,7 +785,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               </Select>
             )}
           </Field>
-          <Field label="Operators by role" hint="Members with this role who have linked a Minecraft account are operators in game.">
+          <Field label="Operators by role" hint="Members need a linked Minecraft account.">
             {(id) => (
               <Select id={id} value={v.autoOp} onChange={(e) => set("autoOp", e.target.value)}>
                 {autoOpOptions}
@@ -795,9 +795,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         </div>
         {v.join !== "anyone" && v.join !== "list" && me && !me.minecraft && (
           <p className="text-xs leading-relaxed text-muted">
-            You have not linked a Minecraft account yet, so you could not join it yourself:{" "}
+            To join it yourself,{" "}
             <Link to="/account" className="text-accent hover:underline">
-              link it under Account
+              link your Minecraft account
             </Link>
             .
           </p>
@@ -806,7 +806,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
 
       <Section
         title="Resources"
-        description={source ? (source.size > 0 ? `Its files come to ${(source.size / GiB).toFixed(1)} GB.` : undefined) : v.kind === "modpack" ? "Large modpacks usually want 6 GB or more." : "4 GB suits a small server."}
+        description={source ? (source.size > 0 ? `Its files use ${(source.size / GiB).toFixed(1)} GB.` : undefined) : v.kind === "modpack" ? "Large modpacks need 6 GB or more." : "4 GB suits a small server."}
       >
         <div className="grid grid-cols-2 gap-4">
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={v.memory} onChange={(e) => set("memory", e.target.value)} />}</Field>
@@ -821,8 +821,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         <Field
           label="Hostname"
           hint={[
-            source ? "Optional. Its own: the original's address is not taken along." : "Optional. Point this name's DNS at the avSYS router.",
-            (domains.data?.domains.length ?? 0) > 0 ? `This organization's domains: ${domains.data?.domains.join(", ")}.` : "",
+            source ? "Optional. Not copied from the original." : "Optional. Point its DNS at the avSYS router.",
+            (domains.data?.domains.length ?? 0) > 0 ? `Your domains: ${domains.data?.domains.join(", ")}.` : "",
           ]
             .filter(Boolean)
             .join(" ")}
@@ -844,7 +844,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               disabled={!routed}
               onChange={(on) => set("sleep", on)}
               label="Sleep when empty"
-              hint={routed ? "Stops the game while nobody is playing. The first player to join wakes it and is asked to rejoin once it is up." : "Needs the shared address."}
+              hint={routed ? "Stops when nobody is playing. The first player to join wakes it, then joins again." : "Needs the shared address."}
             />
             {v.sleep && routed && (
               <Field label="After minutes with no players">
@@ -856,7 +856,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       </Section>
 
       <Section title="Backups">
-        <Field label="Scheduled snapshots" hint={source ? undefined : v.schedule === "org" ? "Taken daily with the rest of the organization's servers." : "Only snapshotted by hand."}>
+        <Field label="Scheduled snapshots" hint={source ? undefined : v.schedule === "org" ? "Taken daily." : "Only taken by hand."}>
           {(id) => (
             <Select id={id} value={v.schedule} onChange={(e) => set("schedule", e.target.value as Schedule)}>
               <option value="org">Same as the organization</option>
@@ -876,12 +876,12 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noreferrer" className="text-accent hover:underline">
                 Minecraft End User License Agreement
               </a>
-              , which applies to running a server.
+              .
             </span>
           </label>
         ) : (
           <>
-            <Toggle checked={startNow} onChange={setStartNow} label="Start it when its files are in place" />
+            <Toggle checked={startNow} onChange={setStartNow} label="Start when ready" />
             {custom && (
               <Toggle
                 checked={keepCustom}

@@ -94,7 +94,7 @@ func TestCheckPack(t *testing.T) {
 		"a format past any":     {"pack.mcmeta": `{"pack":{"description":"x","min_format":999999}}`},
 	} {
 		f, size := zipWith(t, files)
-		if _, err := checkPack(f, size); err == nil || !strings.Contains(err.Error(), "not a pack's metadata") {
+		if _, err := checkPack(f, size); err == nil || !strings.Contains(err.Error(), "is not valid") {
 			t.Errorf("%s: %v", what, err)
 		}
 	}
@@ -108,7 +108,7 @@ func TestCheckPack(t *testing.T) {
 		t.Errorf("a pack with pack.mcmeta at its top: %v, %v", formats, err)
 	}
 	nested, size := zipOf(t, "MyPack/pack.mcmeta", "MyPack/assets/x.json")
-	if _, err := checkPack(nested, size); err == nil || !strings.Contains(err.Error(), "in a folder, MyPack") {
+	if _, err := checkPack(nested, size); err == nil || !strings.Contains(err.Error(), "inside the folder MyPack") {
 		t.Errorf("a pack a folder down: %v", err)
 	}
 	none, size := zipOf(t, "assets/x.json")

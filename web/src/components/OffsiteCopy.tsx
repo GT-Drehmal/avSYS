@@ -29,7 +29,7 @@ export function OffsiteCopy({ org, canAdmin, empty }: { org: string; canAdmin: b
 
   if (!offsite.data) return null;
   if (!configured) {
-    return <Notice tone="info">Snapshots are kept on this cluster only. If its storage is lost, they are lost with it.</Notice>;
+    return <Notice tone="info">Snapshots are only on this cluster, with no offsite copy.</Notice>;
   }
   const { error, pending, running, lastSuccess, snapshots = 0 } = offsite.data;
   const there = lost.data?.snapshots.length ?? 0;
@@ -48,12 +48,12 @@ export function OffsiteCopy({ org, canAdmin, empty }: { org: string; canAdmin: b
           </Button>
         }
       >
-        The offsite copy holds {count(there)} of this organization, the newest from {ago(lost.data!.snapshots[0].time)}.
+        The offsite copy has {count(there)}, the newest from {ago(lost.data!.snapshots[0].time)}.
       </Notice>
     );
   }
   if (empty && lost.error) {
-    return <Notice tone="danger">The offsite copy could not be read: {lost.error instanceof ApiError ? lost.error.message : "it did not answer."}</Notice>;
+    return <Notice tone="danger">Could not read the offsite copy: {lost.error instanceof ApiError ? lost.error.message : "no answer."}</Notice>;
   }
   const again = canAdmin && (
     <Button size="sm" loading={copy.isPending || running} onClick={() => copy.mutate()}>

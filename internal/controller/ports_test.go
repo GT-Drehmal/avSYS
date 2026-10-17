@@ -243,7 +243,7 @@ func TestPortRangeFull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !retry || len(ports) != 2 || ports[0].PublicPort != 25601 || ports[0].Message != "" || ports[1].PublicPort != 0 || !strings.Contains(ports[1].Message, "every public port from 25600 to 25601") {
+	if !retry || len(ports) != 2 || ports[0].PublicPort != 25601 || ports[0].Message != "" || ports[1].PublicPort != 0 || !strings.Contains(ports[1].Message, "all public ports from 25600 to 25601") {
 		t.Fatalf("retry %v, ports %+v", retry, ports)
 	}
 	svc := &corev1.Service{}
@@ -286,7 +286,7 @@ func TestPortsServiceOfAnotherServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ports) != 1 || !strings.Contains(ports[0].Message, "another server's") {
+	if len(ports) != 1 || !strings.Contains(ports[0].Message, "another server, ") {
 		t.Errorf("ports: %+v", ports)
 	}
 	// No public port is held for them meanwhile.

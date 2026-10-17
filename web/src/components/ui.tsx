@@ -215,7 +215,7 @@ export function CopyText({ value, display, className, wrap }: { value: string; d
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
           },
-          () => toast.error("Could not copy. Select the text and copy it by hand."),
+          () => toast.error("Could not copy. Copy it by hand."),
         );
       }}
       className={cx("group inline-flex max-w-full items-center gap-1.5 rounded-sm text-left font-mono text-[13px] text-fg hover:text-accent", className)}

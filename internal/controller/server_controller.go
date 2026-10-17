@@ -234,7 +234,7 @@ func (r *Reconciler) moveVolume(ctx context.Context, mc *avsysv1.MinecraftServer
 func (r *Reconciler) waitForMove(ctx context.Context, mc *avsysv1.MinecraftServer, target string) error {
 	orig := mc.DeepCopy()
 	mc.Status.Phase = avsysv1.PhaseStopped
-	mc.Status.Message = fmt.Sprintf("Being moved to %s: its volume there is being made.", target)
+	mc.Status.Message = fmt.Sprintf("Moving to %s.", target)
 	mc.Status.Players = nil
 	if equality.Semantic.DeepEqual(orig.Status, mc.Status) {
 		return nil
@@ -414,32 +414,32 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 		switch {
 		case gameInPod:
 			if loading(pod) {
-				return avsysv1.PhaseStopping, "The game is still loading. It is stopped once it has, saving the world first."
+				return avsysv1.PhaseStopping, "The game is still loading. It stops once it has loaded."
 			}
 			return avsysv1.PhaseStopping, ""
 		// Before its stopped state, which a move sets too.
 		case mc.Annotations[avsysv1.AnnotationRestoring] != "" && mc.Annotations[avsysv1.AnnotationMoving] != "":
-			return avsysv1.PhaseStopped, fmt.Sprintf("Being moved to %s, and held stopped until its files are there.", mc.Annotations[avsysv1.AnnotationMoving])
+			return avsysv1.PhaseStopped, fmt.Sprintf("Moving to %s.", mc.Annotations[avsysv1.AnnotationMoving])
 		case mc.Annotations[avsysv1.AnnotationCreating] != "":
-			return avsysv1.PhaseStopped, "Made from a snapshot, and held stopped until all of its files are in place."
+			return avsysv1.PhaseStopped, "Copying files from a snapshot."
 		case mc.Spec.State == avsysv1.StateStopped:
 			return avsysv1.PhaseStopped, ""
 		case mc.Annotations[avsysv1.AnnotationRestoring] != "":
-			return avsysv1.PhaseStopped, "Held stopped until a restore of its files has completed."
+			return avsysv1.PhaseStopped, "Restoring files."
 		default:
 			return avsysv1.PhaseSleeping, ""
 		}
 	}
 	// Asked to restart while it loads: it is let finish first.
 	if gameInPod && pod.DeletionTimestamp.IsZero() && loading(pod) && pod.Annotations[avsysv1.AnnotationRestart] != mc.Annotations[avsysv1.AnnotationRestart] {
-		return avsysv1.PhaseStarting, "Restarting. The game is still loading, and stops once it has, saving the world first; then it starts again."
+		return avsysv1.PhaseStarting, "Restarting. The game is still loading."
 	}
 	if gameInPod && !pod.DeletionTimestamp.IsZero() {
 		// Restarted: the game it had stops before the next one starts.
 		if loading(pod) {
-			return avsysv1.PhaseStarting, "Restarting. The game is still loading, and stops once it has, saving the world first; then it starts again."
+			return avsysv1.PhaseStarting, "Restarting. The game is still loading."
 		}
-		return avsysv1.PhaseStarting, "Restarting. The game is saving the world and stopping; then it starts again."
+		return avsysv1.PhaseStarting, "Restarting. Saving the world first."
 	}
 	if !gameInPod {
 		return avsysv1.PhaseStarting, ""
@@ -517,9 +517,9 @@ func startFailure(pod *corev1.Pod, t *corev1.ContainerStateTerminated, restarts 
 		return "", "", false
 	}
 	if waited := notReadyFor(pod); restarts >= lookupRetries && waited >= lookupGrace {
-		return avsysv1.PhaseError, fmt.Sprintf("The game could not look up %s to download what it runs, and has kept failing for %d minutes. Check that the cluster can reach the internet and resolve names.", host, int(waited.Minutes())), true
+		return avsysv1.PhaseError, fmt.Sprintf("The game could not look up %s for %d minutes. Check that the cluster can reach the internet.", host, int(waited.Minutes())), true
 	}
-	return avsysv1.PhaseStarting, fmt.Sprintf("The game could not look up %s to download what it runs, and is being started again.", host), true
+	return avsysv1.PhaseStarting, fmt.Sprintf("The game could not look up %s to download its files. Trying again.", host), true
 }
 
 // lookupAtEnd is the name in the last failed lookup in a log, if that is how

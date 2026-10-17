@@ -43,9 +43,9 @@ const (
 	offsiteTimeout = 12 * time.Hour
 )
 
-var errHasSnapshots = &Error{Status: http.StatusConflict, Code: "has_snapshots", Message: "This organization has snapshots here already. Snapshots are only brought back into an organization that has none."}
+var errHasSnapshots = &Error{Status: http.StatusConflict, Code: "has_snapshots", Message: "This organization already has snapshots. Snapshots can only be brought back into one that has none."}
 
-var errNoOffsite = &Error{Status: http.StatusServiceUnavailable, Code: "no_offsite", Message: "No offsite copy is set up on this install."}
+var errNoOffsite = &Error{Status: http.StatusServiceUnavailable, Code: "no_offsite", Message: "No offsite copy is set up."}
 
 // claim marks an organization as being synced. ok is false if it is already.
 func (o *offsite) claim(org string) (release func(), ok bool) {
@@ -344,7 +344,7 @@ func (s *Server) offsiteNamesFree(ctx context.Context, a *access) error {
 	if len(taken) > 0 {
 		sort.Strings(taken)
 		return &Error{Status: http.StatusConflict, Code: "name_has_history", Message: fmt.Sprintf(
-			"The offsite copy has snapshots of earlier servers named %s, and servers of those names were made since. Bringing the snapshots back would make them those servers' history. Delete those servers first, then bring the snapshots back.",
+			"The offsite copy has snapshots of earlier servers named %s, which are in use now. Delete those servers first, then bring the snapshots back.",
 			strings.Join(taken, ", "))}
 	}
 	return nil

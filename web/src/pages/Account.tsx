@@ -203,7 +203,7 @@ function SSHKeys() {
         </form>
       </div>
 
-      <Modal open={adding} onOpenChange={setAdding} title="Add SSH key" description="Paste a public key, the contents of a file such as ~/.ssh/id_ed25519.pub.">
+      <Modal open={adding} onOpenChange={setAdding} title="Add SSH key" description="Paste a public key, such as ~/.ssh/id_ed25519.pub.">
         <form
           className="flex flex-col gap-4"
           onSubmit={(e) => {

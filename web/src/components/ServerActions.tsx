@@ -59,7 +59,7 @@ export function ServerActions({ server, compact }: { server: Server; compact?: b
   const asleep = phase === "Sleeping";
   // Starting, stopping to start again, or just asked to: a restart now would begin it over.
   const restarting = phase === "Starting" || phase === "Stopping" || restarted;
-  const restartTitle = restarting ? "Under way: it can be restarted again once it is running" : "Restart";
+  const restartTitle = restarting ? "Already restarting" : "Restart";
   return (
     <div className="flex items-center gap-2">
       {asleep && (

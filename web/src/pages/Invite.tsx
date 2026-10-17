@@ -28,7 +28,7 @@ export function Invite() {
   const gone = invite.data ? !invite.data.usable : invite.error instanceof ApiError && invite.error.status === 404;
   if (gone) {
     return (
-      <AuthFrame title="This invite is no longer valid" subtitle="It may have expired, been used up, or been revoked. Ask whoever sent it for a new one.">
+      <AuthFrame title="This invite is no longer valid" subtitle="It may have expired or been revoked. Ask for a new one.">
         <Link to="/" className="text-[13px] text-accent hover:underline">
           Go to avSYS
         </Link>
@@ -37,7 +37,7 @@ export function Invite() {
   }
   if (!invite.data || !meta.data) {
     return (
-      <AuthFrame title="Could not load this invite" subtitle="The panel did not answer. The invite itself may be fine; check your connection and try again.">
+      <AuthFrame title="Could not load this invite" subtitle="The panel did not answer. Check your connection and try again.">
         <Button
           className="h-9"
           loading={invite.isFetching || meta.isFetching}

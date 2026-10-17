@@ -173,7 +173,7 @@ func modrinthSearchParams(q url.Values) (url.Values, error) {
 	// last page again would have it grow for ever.
 	offset := max(0, atoi(q.Get("offset")))
 	if offset > modrinthLastOffset {
-		return nil, errBadRequest("A search goes as far as its first %d results. Narrow it down to see others.", modrinthLastOffset+modrinthPage)
+		return nil, errBadRequest("Only the first %d results can be shown. Narrow the search.", modrinthLastOffset+modrinthPage)
 	}
 	encoded, err := json.Marshal(facets)
 	if err != nil {
@@ -228,7 +228,7 @@ func (s *Server) modrinthCategories(w http.ResponseWriter, r *http.Request, _ *s
 	}
 	names, err := categoriesOf(body, tagType)
 	if err != nil {
-		return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Modrinth's list of categories could not be read."}
+		return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not load Modrinth's categories."}
 	}
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	writeJSON(w, http.StatusOK, names)
@@ -286,7 +286,7 @@ func (s *Server) modrinthProjects(w http.ResponseWriter, r *http.Request, _ *sto
 		ProjectType string  `json:"project_type"`
 	}
 	if err := json.Unmarshal(body, &projects); err != nil {
-		return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Modrinth's answer could not be read."}
+		return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not read Modrinth's answer."}
 	}
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	writeJSON(w, http.StatusOK, projects)
