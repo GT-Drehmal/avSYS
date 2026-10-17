@@ -41,42 +41,28 @@ function Profile() {
 }
 
 function Minecraft() {
-  const qc = useQueryClient();
   const me = useMe().data!;
   const [name, setName] = useState("");
-  // The check open, if one is: the account and until when.
-  const [check, setCheck] = useState<{ uuid: string; name: string; until: string } | null>(null);
+  // The check open, if one is: the account, where to join, and until when.
+  const [check, setCheck] = useState<{ uuid: string; name: string; address: string; until: string } | null>(null);
+  const [code, setCode] = useState("");
   const accounts = me.minecraftAccounts ?? (me.minecraft ? [me.minecraft] : []);
   const link = useAction(() => api.post("/me/minecraft-accounts", { name }), [keys.me]);
   const unlink = useAction((uuid: string) => api.del(`/me/minecraft-accounts/${uuid}`), [keys.me]);
   const main = useAction((uuid: string) => api.post(`/me/minecraft-accounts/${uuid}/main`), [keys.me]);
-  const verify = useAction((uuid: string) => api.post<{ name: string; until: string }>(`/me/minecraft-accounts/${uuid}/verify`));
+  const verify = useAction((uuid: string) => api.post<{ name: string; address: string; until: string }>(`/me/minecraft-accounts/${uuid}/verify`));
+  const confirm = useAction((uuid: string) => api.post(`/me/minecraft-accounts/${uuid}/verify`, { code }), [keys.me]);
   const busy = link.isPending || unlink.isPending || main.isPending;
-  const checked = check && accounts.find((a) => a.uuid === check.uuid);
-  // While a check is open, the account is looked at until it is proven.
+  // A check closes when it runs out.
   useEffect(() => {
     if (!check) return;
-    if (checked?.verified) {
-      toast.info(`${check.name} is verified`);
-      setCheck(null);
-      return;
-    }
-    const left = new Date(check.until).getTime() - Date.now();
-    if (left <= 0) {
-      setCheck(null);
-      return;
-    }
-    const t = setInterval(() => qc.invalidateQueries({ queryKey: keys.me }), 3000);
-    const end = setTimeout(() => setCheck(null), left);
-    return () => {
-      clearInterval(t);
-      clearTimeout(end);
-    };
-  }, [check, checked?.verified, qc]);
+    const t = setTimeout(() => setCheck(null), new Date(check.until).getTime() - Date.now());
+    return () => clearTimeout(t);
+  }, [check]);
   return (
     <Section
       title="Minecraft accounts"
-      description="Every account you play as: each is made an operator, or let in, on servers where your role allows it. Your main one is the name shown beside you. Below the operator role, only accounts you have verified are let in."
+      description="The accounts you play as. Your main one is shown beside your name. Viewers can only join with verified accounts."
     >
       {accounts.length > 0 && (
         <ul className="overflow-hidden rounded-lg border border-line bg-surface">
@@ -85,13 +71,20 @@ function Minecraft() {
               <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium">{a.name}</span>
               {a.verified ? (
                 <span className="text-xs text-muted">verified</span>
-              ) : (
+              ) : check?.uuid === a.uuid ? null : (
                 <Button
                   size="sm"
                   variant="ghost"
                   disabled={busy}
                   loading={verify.isPending && verify.variables === a.uuid}
-                  onClick={() => verify.mutate(a.uuid, { onSuccess: (got) => setCheck({ uuid: a.uuid, name: got.name, until: got.until }) })}
+                  onClick={() =>
+                    verify.mutate(a.uuid, {
+                      onSuccess: (got) => {
+                        setCode("");
+                        setCheck({ uuid: a.uuid, ...got });
+                      },
+                    })
+                  }
                 >
                   Verify
                 </Button>
@@ -110,11 +103,33 @@ function Minecraft() {
           ))}
         </ul>
       )}
-      {check && !checked?.verified && (
-        <Notice tone="info">
-          Open Minecraft signed in as <span className="font-mono">{check.name}</span> and join any server of this panel, at its shared address, before{" "}
-          {new Date(check.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Your game proves the account is yours, and tells you it worked.
-        </Notice>
+      {check && (
+        <form
+          className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            confirm.mutate(check.uuid, {
+              onSuccess: () => {
+                toast.info(`${check.name} is verified`);
+                setCheck(null);
+              },
+            });
+          }}
+        >
+          <p className="text-[13px]">
+            In Minecraft, sign in as <span className="font-mono">{check.name}</span> and join{" "}
+            {check.address ? <span className="font-mono">{check.address}</span> : "this panel's address"}. Enter the code it shows.
+          </p>
+          <div className="flex items-center gap-2">
+            <Input required value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-EFGH" className="w-36 font-mono" aria-label="Code" spellCheck={false} autoComplete="off" />
+            <Button type="submit" variant="primary" loading={confirm.isPending}>
+              Verify
+            </Button>
+            <Button variant="ghost" onClick={() => setCheck(null)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
       )}
       <form
         className="flex items-center gap-2"

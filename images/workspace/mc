@@ -57,13 +57,20 @@ console() {
 # only whole if nothing switches them back on or writes the world out under
 # it. Those commands wait until it is done.
 held=/tmp/avsys/saving-paused
-saving() {
-  set -- ${1#/}
-  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
-    save-on|save-off|save-all|minecraft:save-on|minecraft:save-off|minecraft:save-all) [ -e "$held" ] ;;
-    *) return 1 ;;
-  esac
-}
+saving() (
+  [ -e "$held" ] || return 1
+  set -f
+  # The command itself, and any that execute runs: what follows a "run".
+  first=1 prev=
+  for w in $(printf '%s' "$1" | tr '[:upper:]' '[:lower:]'); do
+    if [ -n "$first" ] || [ "$prev" = run ]; then
+      w=${w#/}
+      case "${w#minecraft:}" in save-on|save-off|save-all) return 0 ;; esac
+    fi
+    first= prev=$w
+  done
+  return 1
+)
 holding() {
   echo "A snapshot is being taken, which holds the game's saves until it is done. Try again once it has finished." >&2
 }

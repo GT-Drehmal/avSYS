@@ -282,9 +282,10 @@ func (c *checks) Proven(_ context.Context, name, uuid string) string {
 	return "Verified"
 }
 
-// A login by a name with a check open is not passed on to the server it
-// asked for: the router asks the game to prove who is playing. Any other
-// login goes on as ever, and a server list ping too.
+// A login by a name with a check open, at an address no server has, is not
+// passed on: the router asks the game to prove who is playing. At a server's
+// address it goes on to the server, as any other login does, so that a check
+// someone opened of another's name never keeps them from playing.
 func TestRouterProvesAccounts(t *testing.T) {
 	r, addr, g := routed(t, server("world", "world.example.org", avsysv1.PhaseRunning))
 	c := &checks{open: "Steve"}
@@ -293,7 +294,7 @@ func TestRouterProvesAccounts(t *testing.T) {
 
 	// Its first answer, read raw: an encryption request (0x01) for the
 	// player with a check open; for anyone else, the game's own.
-	first := func(name string) byte {
+	first := func(host, name string) byte {
 		t.Helper()
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
@@ -314,7 +315,7 @@ func TestRouterProvesAccounts(t *testing.T) {
 			return append(varint(nil, len(p)), p...)
 		}
 		hs := varint(nil, 767)
-		hs = str(hs, "world.example.org")
+		hs = str(hs, host)
 		hs = binary.BigEndian.AppendUint16(hs, 25565)
 		hs = varint(hs, 2)
 		login := append(str(nil, name), make([]byte, 16)...)
@@ -329,7 +330,7 @@ func TestRouterProvesAccounts(t *testing.T) {
 		}
 		return reply[2]
 	}
-	if id := first("steve"); id != 0x01 {
+	if id := first("verify.example.org", "steve"); id != 0x01 {
 		t.Errorf("a player with a check open was answered with packet %#x, want an encryption request", id)
 	}
 	g.mu.Lock()
@@ -338,13 +339,20 @@ func TestRouterProvesAccounts(t *testing.T) {
 	if reached != 0 {
 		t.Errorf("a player with a check open reached a server")
 	}
-	// Anyone else reaches the game, which here answers as for a status.
-	first("Alex")
+	// At a server's address, the same player reaches the game, which here
+	// answers as for a status; so does anyone else.
+	first("world.example.org", "Steve")
+	first("world.example.org", "Alex")
 	g.mu.Lock()
 	reached = len(g.dialed)
 	g.mu.Unlock()
-	if reached != 1 {
-		t.Errorf("a player with no check open did not reach the server: %d", reached)
+	if reached != 2 {
+		t.Errorf("logins at a server's address did not reach it: %d of 2", reached)
+	}
+	// Anyone with no check open, at an address no server has, is told so
+	// as ever: a disconnect (0x00), not an encryption request.
+	if id := first("verify.example.org", "Alex"); id != 0x00 {
+		t.Errorf("a player with no check open was answered with packet %#x at an unknown address", id)
 	}
 	if st, err := ping(t, addr, "world.example.org"); err != nil || lines(st) != "the game itself" {
 		t.Errorf("a ping: %+v, %v", st, err)
