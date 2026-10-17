@@ -44,6 +44,46 @@ export const api = {
   putRaw: <T = void>(path: string, data: BodyInit) => request<T>("PUT", path, undefined, data),
 };
 
+/** How much of an upload has been sent. */
+export interface Progress {
+  sent: number;
+  total: number;
+}
+
+/**
+ * PUT a file, as putRaw does, saying as it goes how much has been sent and
+ * stopping when the signal aborts. fetch cannot say how far an upload is.
+ */
+export function upload<T = void>(path: string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", base + path);
+    xhr.setRequestHeader("X-Avsys", "1");
+    xhr.upload.onprogress = (e) => onProgress({ sent: e.loaded, total: e.lengthComputable ? e.total : file.size });
+    // All of it is sent: the rest is the panel's.
+    xhr.upload.onload = () => onProgress({ sent: file.size, total: file.size });
+    xhr.onerror = () => reject(new ApiError(0, "network", "Could not reach the panel. Check your connection."));
+    xhr.onabort = () => reject(new ApiError(0, "aborted", "Upload cancelled."));
+    xhr.onload = () => {
+      const isJSON = xhr.getResponseHeader("Content-Type")?.includes("application/json");
+      let data: unknown = xhr.responseText;
+      if (isJSON) {
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {
+          data = null;
+        }
+      }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve((xhr.status === 204 ? undefined : data) as T);
+      const err = isJSON ? (data as { code?: string; message?: string } | null) : null;
+      reject(new ApiError(xhr.status, err?.code ?? "error", err?.message ?? `Request failed (${xhr.status}).`));
+    };
+    if (signal?.aborted) return reject(new ApiError(0, "aborted", "Upload cancelled."));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(file);
+  });
+}
+
 export const qs = (params: Record<string, string | number | undefined>) => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") p.set(k, String(v));
@@ -141,6 +181,8 @@ export interface ResourcePack {
   sha1?: string;
   enforce?: boolean;
   prompt?: string;
+  /** Set for a pack uploaded to the panel, which keeps it and serves it at url. */
+  uploaded?: { name?: string; size: number; time: string } | null;
 }
 
 export type ExposeType = "Router" | "LoadBalancer" | "NodePort" | "None";
