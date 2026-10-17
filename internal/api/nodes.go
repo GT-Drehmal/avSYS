@@ -118,11 +118,11 @@ func (s *Server) checkNode(ctx context.Context, name string, memory resource.Qua
 		return errBadRequest("There is no node named %q.", name)
 	}
 	if !controller.NodeReady(node) {
-		return errBadRequest("%s is not taking new servers right now: it is down, cordoned, or tainted.", name)
+		return errBadRequest("%s is not taking new servers right now.", name)
 	}
 	free := node.Status.Allocatable.Memory().Value() - reserved[name]
 	if need := controller.ServerNeeds(memory); free < need {
-		return errBadRequest("%s has %s of memory free, and the server needs %s. Give it less memory, or choose another node.", name, gib(free), gib(need))
+		return errBadRequest("%s has %s free, but the server needs %s. Use less memory or another node.", name, gib(free), gib(need))
 	}
 	return nil
 }

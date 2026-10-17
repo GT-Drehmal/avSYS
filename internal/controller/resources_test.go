@@ -296,7 +296,7 @@ func TestPhaseOf(t *testing.T) {
 	if phase, message := phaseOf(server(nil), replaced(loadingGame)); phase != avsysv1.PhaseStarting || !strings.Contains(message, "still loading") {
 		t.Errorf("restarted while loading: %s %q", phase, message)
 	}
-	if phase, message := phaseOf(server(nil), replaced(corev1.ContainerStatus{Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})); phase != avsysv1.PhaseStarting || !strings.Contains(message, "saving the world and stopping") {
+	if phase, message := phaseOf(server(nil), replaced(corev1.ContainerStatus{Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})); phase != avsysv1.PhaseStarting || !strings.Contains(message, "Saving the world first") {
 		t.Errorf("restarted while running: %s %q", phase, message)
 	}
 	// A game that crashed is not loading.
@@ -363,10 +363,10 @@ func TestPhaseOfLookupFailure(t *testing.T) {
 		{"paper", backingOff(read("paper-dns-timeout.log"), 2), avsysv1.PhaseStarting, "could not look up fill.papermc.io "},
 		{"curl", backingOff("curl: (6) Could not resolve host: cdn.modrinth.com\n", 0), avsysv1.PhaseStarting, "cdn.modrinth.com"},
 		{"go", backingOff(`Get "https://meta.fabricmc.net/v2": dial tcp: lookup meta.fabricmc.net. on 10.43.0.10:53: no such host`, 0), avsysv1.PhaseStarting, "meta.fabricmc.net "},
-		{"going on", notReady(backingOff(fabric, lookupRetries), lookupGrace+time.Minute), avsysv1.PhaseError, "kept failing for 6 minutes. Check that the cluster can reach the internet"},
-		{"not yet as many restarts", notReady(backingOff(fabric, lookupRetries-1), time.Hour), avsysv1.PhaseStarting, "being started again"},
+		{"going on", notReady(backingOff(fabric, lookupRetries), lookupGrace+time.Minute), avsysv1.PhaseError, "for 6 minutes. Check that the cluster can reach the internet"},
+		{"not yet as many restarts", notReady(backingOff(fabric, lookupRetries-1), time.Hour), avsysv1.PhaseStarting, "Trying again"},
 		// Restarts from earlier in the pod's life are not counted against it.
-		{"after earlier restarts", notReady(backingOff(fabric, 40), time.Minute), avsysv1.PhaseStarting, "being started again"},
+		{"after earlier restarts", notReady(backingOff(fabric, 40), time.Minute), avsysv1.PhaseStarting, "Trying again"},
 		{"a lookup before another crash", backingOff(pluginThenCrash, 1), avsysv1.PhaseError, "keeps crashing"},
 		{"in colour", backingOff("\x1b[0;39mCaused by: java.net.UnknownHostException: piston-meta.mojang.com\x1b[0m\n\tat x.y(Z.java:1)\n", 0), avsysv1.PhaseStarting, "piston-meta.mojang.com "},
 		{"a crash", backingOff("Exception in thread \"main\" java.lang.NoClassDefFoundError: foo\n", 1), avsysv1.PhaseError, "keeps crashing"},

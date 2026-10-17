@@ -143,7 +143,7 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 		return errBadRequest("Enter a command.")
 	}
 	if strings.ContainsAny(command, "\r\n") {
-		return errBadRequest("One command at a time: it has to fit on one line.")
+		return errBadRequest("Enter one command, on one line.")
 	}
 	if in.As != "" && in.As != "server" {
 		return errBadRequest(`"as" is "server" or left out.`)
@@ -155,7 +155,7 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 	// write the world out under it: the copy would hold files from before
 	// and after one another.
 	if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; paused && savesCommand(command) {
-		return &Error{Status: http.StatusConflict, Code: "snapshotting", Message: "A snapshot is being taken, which holds the game's saves until it is done. Try again once it has finished."}
+		return &Error{Status: http.StatusConflict, Code: "snapshotting", Message: "A snapshot is being taken. Try again when it is done."}
 	}
 	output := ""
 	typed := false

@@ -114,7 +114,7 @@ func (s *Server) retentionOf(ctx context.Context, a *access, snap *backup.Snapsh
 }
 
 func errNoRecord(err error) error {
-	return &Error{Status: http.StatusUnprocessableEntity, Code: "no_record", Message: fmt.Sprintf("This snapshot does not say what server it is of, so none can be made from it: %v", err)}
+	return &Error{Status: http.StatusUnprocessableEntity, Code: "no_record", Message: fmt.Sprintf("Cannot create a server from this snapshot: %v", err)}
 }
 
 // checkCopiedContent says whether what a request asks a server made from
@@ -124,7 +124,7 @@ func errNoRecord(err error) error {
 // files, and one not uploaded there has to wait until the server exists.
 func checkCopiedContent(requested, recorded *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage) error {
 	if requested.Modpack != nil {
-		return errBadRequest("A server made from another keeps its modpack. Change the modpack's version once the server exists.")
+		return errBadRequest("A copy keeps its modpack. Change the modpack's version after it is created.")
 	}
 	if _, said := given["mods"]; !said {
 		return nil
@@ -137,7 +137,7 @@ func checkCopiedContent(requested, recorded *avsysv1.MinecraftServerSpec, given 
 	}
 	for _, m := range requested.Mods {
 		if m.Source == avsysv1.SourceUpload && !uploaded[m.Project] {
-			return errBadRequest("%s was not uploaded to the original. Upload it once the server exists.", m.Project)
+			return errBadRequest("%s was not uploaded to the original. Upload it after the server is created.", m.Project)
 		}
 	}
 	return nil
@@ -301,7 +301,7 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 	}
 	changed := spec.Version != recorded.Version || spec.Loader != recorded.Loader || spec.LoaderVersion != recorded.LoaderVersion
 	if changed && spec.Modpack != nil {
-		return spec, errBadRequest("This server runs a modpack, which decides its game version and loader. Change the modpack's version once the server exists.")
+		return spec, errBadRequest("This server runs a modpack. Change the modpack's version after it is created.")
 	}
 	s.applyDefaults(a.Org.Slug, name, &spec)
 	// "Latest" is settled here, as for any new server.
@@ -390,7 +390,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		}
 	}
 	if spec.Storage.Size.Value() < snap.Size {
-		return errBadRequest("The snapshot holds %s of files. Give the server more storage than that.", sizeOf(snap.Size))
+		return errBadRequest("The snapshot has %s of files. Give the server more storage than that.", sizeOf(snap.Size))
 	}
 	// The server is created stopped and marked, so that nothing starts the
 	// game before its files are there, and gets the state asked for last.
@@ -404,7 +404,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	// there and anyone else may act on it.
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, name, kindCreate, snap.ID)
 	if !ok {
-		return &Error{Status: http.StatusConflict, Code: "busy", Message: "That snapshot is being deleted, or a server of this name is being made already."}
+		return &Error{Status: http.StatusConflict, Code: "busy", Message: "That snapshot is being deleted, or a server with this name is already being created."}
 	}
 	// It was looked up before the claim, and may have been deleted since.
 	// With the claim held it cannot be.

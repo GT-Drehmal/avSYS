@@ -69,7 +69,7 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 		return err
 	}
 	if len(mc.Spec.NodeSelector) > 0 {
-		return errBadRequest("This server is kept to the nodes labelled %s, set outside the panel. Change its node selector to move it.", labelsOf(mc.Spec.NodeSelector))
+		return errBadRequest("This server is kept to nodes labelled %s, set outside the panel.", labelsOf(mc.Spec.NodeSelector))
 	}
 	if in.Node == "" {
 		return errBadRequest("Say which node to move it to.")
@@ -103,11 +103,11 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 			return err
 		}
 		if !fits {
-			return errBadRequest("Its files are on storage that %s cannot use, as storage limited to a zone is. Choose a node where it can be used.", in.Node)
+			return errBadRequest("%s cannot use this server's storage. Choose another node.", in.Node)
 		}
 	}
 	if from != "" && !s.Backups.Available() {
-		return &Error{Status: http.StatusServiceUnavailable, Code: "backups_unavailable", Message: "Its files are on its node's own disk, and are carried over in a snapshot, which needs restic where the panel runs."}
+		return &Error{Status: http.StatusServiceUnavailable, Code: "backups_unavailable", Message: "Moving needs snapshots, which are not set up on this panel."}
 	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindMove, "")
 	if !ok {
@@ -358,7 +358,7 @@ func halfMoved(mc *avsysv1.MinecraftServer) error {
 	if node == "" {
 		return nil
 	}
-	return &Error{Status: http.StatusConflict, Code: "move_unfinished", Message: fmt.Sprintf("Its move to %s did not finish, so its files there are not complete. Restore snapshot %s from its Backups page to finish it; until then its files are not changed.", node, shortID(mc.Annotations[avsysv1.AnnotationRestoring]))}
+	return &Error{Status: http.StatusConflict, Code: "move_unfinished", Message: fmt.Sprintf("Its move to %s did not finish. Restore snapshot %s from its Backups tab to finish it.", node, shortID(mc.Annotations[avsysv1.AnnotationRestoring]))}
 }
 
 // heldForMove refuses restoring a server whose move did not finish to any
@@ -367,7 +367,7 @@ func heldForMove(mc *avsysv1.MinecraftServer, snapshot string) error {
 	if mc.Annotations[avsysv1.AnnotationMoving] == "" || mc.Annotations[avsysv1.AnnotationRestoring] == snapshot {
 		return nil
 	}
-	return &Error{Status: http.StatusConflict, Code: "move_unfinished", Message: fmt.Sprintf("Its move did not finish. Restore snapshot %s first, which finishes it; then any other can be restored.", shortID(mc.Annotations[avsysv1.AnnotationRestoring]))}
+	return &Error{Status: http.StatusConflict, Code: "move_unfinished", Message: fmt.Sprintf("Its move did not finish. Restore snapshot %s first.", shortID(mc.Annotations[avsysv1.AnnotationRestoring]))}
 }
 
 // stopAnew stops a server for a move and has its pod made again, stamped,

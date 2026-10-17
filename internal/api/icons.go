@@ -48,7 +48,7 @@ const (
 	serverIconPath = dataRoot + "/server-icon.png"
 )
 
-var errNotAPicture = errBadRequest("That is not a picture the panel can read. Use a PNG, JPEG or GIF of up to 4 MB.")
+var errNotAPicture = errBadRequest("Use a PNG, JPEG or GIF of up to 4 MB.")
 
 // decoding lets a few pictures be unpacked at a time. One of the largest
 // accepted takes some tens of megabytes while it is, and anyone signed in
@@ -785,7 +785,7 @@ func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 		}
 		if placed != nil {
 			s.Log.Warn("a new server's picture was not put in place", "server", key, "error", placed)
-			return &Error{Status: http.StatusGatewayTimeout, Code: "not_ready", Message: "The server's storage was not ready in time to take its picture. Set it in the server's settings."}
+			return &Error{Status: http.StatusGatewayTimeout, Code: "not_ready", Message: "The server was not ready for its picture. Set it in Settings."}
 		}
 	}
 	s.serverIcons.set(key, data)

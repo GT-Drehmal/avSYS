@@ -319,7 +319,7 @@ func TestMovingServer(t *testing.T) {
 	}}}
 	// Stopped for the move, as a move does: it says it is being moved.
 	moving.Spec.State = avsysv1.StateStopped
-	if phase, message := phaseOf(moving, nil); phase != avsysv1.PhaseStopped || message != "Being moved to b, and held stopped until its files are there." {
+	if phase, message := phaseOf(moving, nil); phase != avsysv1.PhaseStopped || message != "Moving to b." {
 		t.Errorf("phase %s, %q", phase, message)
 	}
 

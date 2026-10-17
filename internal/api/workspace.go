@@ -475,7 +475,7 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 		_ = sc.Remove(tmp)
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 GB are better copied with scp or rsync over SSH."}
+			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 GB must be copied over SSH, with scp or rsync."}
 		}
 		return fileError(err)
 	}
