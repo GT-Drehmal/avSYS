@@ -7,21 +7,14 @@ me=$(basename "$0")
 
 explain() {
   cat >&2 <<'TEXT'
-There is no root in a server's workspace, so packages cannot be installed
-into it with apt. Everyone with a shell here shares one unprivileged user,
-the same one the game runs as.
+There is no root in a server's workspace, so apt cannot install packages.
 
-What does work, and stays with the server:
+Instead:
+  tools install <name>       most programs, e.g. tools install ffmpeg
+  ~/.local/bin               a single-file program (it is on your PATH)
+  python3 -m venv ~/venv     Python packages
 
-  A program that is one file     put it in ~/.local/bin, which is on your PATH
-  Python packages                python3 -m venv ~/venv && ~/venv/bin/pip install <name>
-  Anything you can build         install it under ~ (for example with --prefix=$HOME/.local)
-
-Your home here is on the server's own storage, so these survive restarts.
-It is left out of snapshots, so a copy of the server starts without them.
-
-For a tool everyone should have, ask whoever runs this panel: the workspace
-image can be replaced with one that includes it.
+Your home is kept across restarts, but not in snapshots.
 TEXT
 }
 
