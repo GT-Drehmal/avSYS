@@ -224,10 +224,19 @@ func (s *Server) typeAtConsole(ctx context.Context, mc *avsysv1.MinecraftServer,
 }
 
 // savesCommand says whether a console command is one of the game's own for
-// its saving: save-on, save-off and save-all, with or without the game's
-// namespace before them.
+// its saving: save-on, save-off and save-all, with or without a slash or the
+// game's namespace before them, and also when execute runs one ("execute as
+// @a run save-all"), at any depth.
 func savesCommand(command string) bool {
-	name := strings.ToLower(strings.Fields(command + " ")[0])
-	name = strings.TrimPrefix(name, "minecraft:")
-	return name == "save-on" || name == "save-off" || name == "save-all"
+	words := strings.Fields(strings.ToLower(command))
+	for i, w := range words {
+		if i > 0 && words[i-1] != "run" {
+			continue
+		}
+		w = strings.TrimPrefix(strings.TrimPrefix(w, "/"), "minecraft:")
+		if w == "save-on" || w == "save-off" || w == "save-all" {
+			return true
+		}
+	}
+	return false
 }

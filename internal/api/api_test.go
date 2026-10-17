@@ -112,13 +112,13 @@ func TestConsoleKeepsSavesHeldForASnapshot(t *testing.T) {
 	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"save-on", "/save-off", "save-all flush", "minecraft:save-all", "SAVE-ON"} {
+	for _, command := range []string{"save-on", "/save-off", "save-all flush", "minecraft:save-all", "SAVE-ON", "execute run save-on", "minecraft:execute as @a at @s run execute run minecraft:save-all flush"} {
 		if got, code := p.do("operator", "POST", console, `{"command":"`+command+`"}`); got != 409 || code != "snapshotting" {
 			t.Errorf("%s: got %d %q, want 409 snapshotting", command, got, code)
 		}
 	}
 	// Any other command goes through: only the game's own for saving.
-	for _, command := range []string{"list", "say save-on", "save-onwards", "op save-all"} {
+	for _, command := range []string{"list", "say save-on", "save-onwards", "op save-all", "execute run say save-all"} {
 		if savesCommand(command) {
 			t.Errorf("%s is taken for a command for saving", command)
 		}
