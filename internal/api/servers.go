@@ -37,6 +37,10 @@ type serverView struct {
 	// Revision increases with every change to the resource. Clients use it
 	// to discard an update that arrives after a newer one.
 	Revision string `json:"revision"`
+	// Generation increases with every change to its settings. The status is
+	// of the settings as they are once its observedGeneration is as high:
+	// until then it may say what the server was doing before the change.
+	Generation int64 `json:"generation"`
 	// Java is what the game version ships with and what the server runs on,
 	// which is higher when installed content needs more. Zero when unknown.
 	Java   javaView                      `json:"java"`
@@ -51,7 +55,7 @@ type javaView struct {
 
 func (s *Server) view(mc *avsysv1.MinecraftServer) serverView {
 	org, _ := s.orgOfNamespace(mc.Namespace)
-	v := serverView{Org: org, Name: mc.Name, CreatedAt: mc.CreationTimestamp.Time, Revision: mc.ResourceVersion, Spec: mc.Spec, Status: mc.Status}
+	v := serverView{Org: org, Name: mc.Name, CreatedAt: mc.CreationTimestamp.Time, Revision: mc.ResourceVersion, Generation: mc.Generation, Spec: mc.Spec, Status: mc.Status}
 	v.Java.Game, v.Java.Effective = controller.JavaOf(&mc.Spec)
 	return v
 }
