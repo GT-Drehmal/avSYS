@@ -53,7 +53,9 @@ func (s *Server) setMinecraftAccount(w http.ResponseWriter, r *http.Request, u *
 	if err != nil {
 		return err
 	}
-	if err := s.Store.SetMinecraftAccount(r.Context(), u.ID, account); err != nil {
+	if err := s.Store.SetMinecraftAccount(r.Context(), u.ID, account); errors.Is(err, store.ErrTooManyAccounts) {
+		return errBadRequest("Up to %d Minecraft accounts can be linked. Unlink one first.", store.MaxMinecraftAccounts)
+	} else if err != nil {
 		return err
 	}
 	s.syncOpsOf(u)

@@ -27,7 +27,7 @@ const MaxMinecraftAccounts = 10
 // MinecraftAccounts returns the accounts a user has linked, their main one
 // first, then in the order they were linked.
 func (s *Store) MinecraftAccounts(ctx context.Context, userID string) ([]MinecraftAccount, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT uuid, name, linked_at, main FROM minecraft_links WHERE user_id = ? ORDER BY main DESC, linked_at, uuid`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT uuid, name, linked_at, main FROM minecraft_links WHERE user_id = ? ORDER BY main DESC, linked_at, rowid`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (s *Store) RemoveMinecraftAccount(ctx context.Context, userID, uuid string)
 func promoteMain(ctx context.Context, tx *sql.Tx, userID string) error {
 	_, err := tx.ExecContext(ctx,
 		`UPDATE minecraft_links SET main = 1 WHERE user_id = ?1 AND NOT EXISTS (SELECT 1 FROM minecraft_links WHERE user_id = ?1 AND main = 1)
-		 AND uuid = (SELECT uuid FROM minecraft_links WHERE user_id = ?1 ORDER BY linked_at, uuid LIMIT 1)`, userID)
+		 AND uuid = (SELECT uuid FROM minecraft_links WHERE user_id = ?1 ORDER BY linked_at, rowid LIMIT 1)`, userID)
 	return err
 }
 

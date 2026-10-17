@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -445,7 +446,7 @@ func TestLinkingSeveralMinecraftAccounts(t *testing.T) {
 	if code, _ := p.do("operator", "PUT", "/me/minecraft", `{"name":"notch"}`); code != 200 {
 		t.Fatal("linking with the one-account route")
 	}
-	if got := accounts(); got != "Notch* SteveAlt Steve" {
+	if got := accounts(); got != "Notch* Steve SteveAlt" {
 		t.Errorf("linked as the one account: %q", got)
 	}
 	if code, _ := p.do("operator", "DELETE", "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7", ""); code != 200 {
@@ -462,6 +463,18 @@ func TestLinkingSeveralMinecraftAccounts(t *testing.T) {
 		if code, _ := p.do("admin", "DELETE", path, ""); code != 404 {
 			t.Errorf("another's DELETE %s: %d", path, code)
 		}
+	}
+	// Past the limit, the one-account route says so as the other does.
+	for i := range store.MaxMinecraftAccounts {
+		if err := p.srv.Store.AddMinecraftAccount(context.Background(), p.users["operator"].ID, &store.MinecraftAccount{UUID: fmt.Sprint("fill-", i), Name: fmt.Sprint("Fill", i)}, false); err != nil && !errors.Is(err, store.ErrTooManyAccounts) {
+			t.Fatal(err)
+		}
+	}
+	if code, why := p.do("operator", "PUT", "/me/minecraft", `{"name":"steve"}`); code != 400 || why != "invalid" {
+		t.Errorf("past the limit with PUT: %d %s", code, why)
+	}
+	for i := range store.MaxMinecraftAccounts {
+		_ = p.srv.Store.RemoveMinecraftAccount(context.Background(), p.users["operator"].ID, fmt.Sprint("fill-", i))
 	}
 	if code, _ := p.do("", "POST", "/me/minecraft-accounts", `{"name":"steve"}`); code != 401 {
 		t.Errorf("signed out: %d", code)
