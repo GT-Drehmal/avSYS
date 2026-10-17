@@ -41,10 +41,29 @@ type Config struct {
 	AllowSignups bool
 	Providers    map[string]*auth.Provider
 	Version      string
+	// PackDir is where the panel keeps the resource packs uploaded to it,
+	// by hash, to serve them. Empty, packs cannot be uploaded.
+	PackDir string
+	// PackURL is the address players' games fetch uploaded packs from, at
+	// /packs/<sha1>.zip under it. Empty, it is PublicURL.
+	PackURL string
+	// PackCache is the most, in bytes, the packs kept in PackDir may take;
+	// zero is no limit. Over it, the least recently served of those that
+	// servers have are let go of, to be read out of their files again.
+	PackCache int64
 }
 
 type Server struct {
 	Config Config
+	// packFetches holds a lock per pack hash, so that a pack the panel has
+	// not kept is copied in once however many ask for it at a time.
+	packFetches sync.Map
+	// packServed is when each pack the panel keeps was last served, by
+	// hash, for letting go of the least recently served first.
+	packServed sync.Map
+	// packsPruned is when the packs the panel keeps were last cleared of
+	// those no server has; see prunePacks. Only opsTick reads and sets it.
+	packsPruned time.Time
 	// contentLocks holds a lock per server, by namespace/name: see lockContent.
 	contentLocks sync.Map
 	// hostnames holds the panel to one change at a time of who may have
@@ -347,10 +366,15 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/servers/{server}/snapshots", s.authed(s.listServerSnapshots))
 	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
 	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))
+	api("GET /orgs/{org}/servers/{server}/operation", s.authed(s.getOperation))
+	api("GET /orgs/{org}/servers/{server}/placement", s.authed(s.getPlacement))
+	api("POST /orgs/{org}/servers/{server}/move", s.authed(s.moveServer))
 	api("GET /orgs/{org}/servers/{server}/terminal", s.authed(s.terminal))
 	api("GET /orgs/{org}/servers/{server}/icon", s.authed(s.getServerIcon))
 	api("PUT /orgs/{org}/servers/{server}/icon", s.authed(s.putServerIcon))
 	api("DELETE /orgs/{org}/servers/{server}/icon", s.authed(s.deleteServerIcon))
+	api("PUT /orgs/{org}/servers/{server}/resource-pack", s.authed(s.putResourcePack))
+	api("DELETE /orgs/{org}/servers/{server}/resource-pack", s.authed(s.deleteResourcePack))
 	api("GET /orgs/{org}/servers/{server}/files", s.authed(s.listFiles))
 	api("DELETE /orgs/{org}/servers/{server}/files", s.authed(s.deleteFile))
 	api("GET /orgs/{org}/servers/{server}/files/content", s.authed(s.readFile))
@@ -367,6 +391,8 @@ func (s *Server) Handler() http.Handler {
 	api("GET /catalog/modrinth/projects/{id}/versions", s.authed(s.modrinthVersions))
 	api("POST /catalog/sha1", s.authed(s.hashURL))
 
+	// Uploaded resource packs, fetched by players' games with no session.
+	mux.Handle("/packs/", s.PackHandler())
 	mux.Handle("/api/", s.public(func(http.ResponseWriter, *http.Request) error { return errNotFound }))
 	if s.Static != nil {
 		mux.Handle("/", s.staticHandler())

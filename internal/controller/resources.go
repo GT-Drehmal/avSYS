@@ -301,6 +301,11 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 
 	if rp := mc.Spec.ResourcePack; rp != nil && rp.URL != "" {
 		env["RESOURCE_PACK"] = rp.URL
+		// One uploaded to the panel is fetched from wherever the panel
+		// serves packs now, which may have changed since.
+		if rp.Uploaded != nil && rp.SHA1 != "" && cfg.PackURL != "" {
+			env["RESOURCE_PACK"] = cfg.PackURL + "/packs/" + rp.SHA1 + ".zip"
+		}
 		env["RESOURCE_PACK_SHA1"] = rp.SHA1
 		env["RESOURCE_PACK_ENFORCE"] = strings.ToUpper(strconv.FormatBool(rp.Enforce))
 		if rp.Prompt != "" {

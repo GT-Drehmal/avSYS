@@ -190,6 +190,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if err := checkPorts(spec.Ports); err != nil {
 		return err
 	}
+	if err := packFits(spec); err != nil {
+		return err
+	}
 	spec.Expose.Hostname = router.NormalizeHostname(strings.TrimSpace(spec.Expose.Hostname))
 	if host := spec.Expose.Hostname; host != "" {
 		if !hostnamePattern.MatchString(host) {
@@ -354,6 +357,11 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	if !serverNamePattern.MatchString(in.Name) {
 		return errBadRequest("Server names are up to 40 characters: lowercase letters, digits and dashes, starting with a letter.")
+	}
+	// An uploaded pack is the server's own, and comes by uploading it or with
+	// the files of the one it is copied from, which a request leaves to them.
+	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
+		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made, or takes the one of the server it is copied from.")
 	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
@@ -548,6 +556,18 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		}
 	}
 	previous := mc.Spec.DeepCopy()
+	if err := keepUploadedPack(&spec, previous); err != nil {
+		return err
+	}
+	// A pack uploaded before, given another address now, has its file
+	// removed, which a snapshot under way may be copying: not while one is.
+	if was := previous.ResourcePack; was != nil && was.Uploaded != nil && (spec.ResourcePack == nil || spec.ResourcePack.Uploaded == nil) {
+		release, err := s.changing(mc, true)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	if err := s.resolveContent(r.Context(), &spec, previous); err != nil {
 		return err
 	}
@@ -573,6 +593,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
+	s.removeDroppedPack(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
 	// From which role members are operators in game, acted on now and not
 	// with the next look.
@@ -603,7 +624,8 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	// Without a last snapshot this is a plain delete.
 	if r.URL.Query().Get("snapshot") == "false" || !s.Backups.Available() {
-		release, err := s.changing(mc, false)
+		// A server whose move did not finish can still be deleted.
+		release, err := s.admit(mc, false)
 		if err != nil {
 			return err
 		}
@@ -817,6 +839,35 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 // portName is a Service port's name, which a port's is: a letter first, a
 // letter or digit last, no two dashes together.
 var portName = regexp.MustCompile(`^[a-z](-?[a-z0-9])*$`)
+
+// keepUploadedPack holds a change of settings to the pack uploaded to the
+// server: one can be kept, as it is, but not made up. A pack given another
+// address is one hosted elsewhere now, and no longer the uploaded one.
+func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
+	rp, was := spec.ResourcePack, previous.ResourcePack
+	// Saying none is not how an uploaded pack is removed, which takes its
+	// file too: it is what settings from before it was uploaded say.
+	if (rp == nil || rp.URL == "") && was != nil && was.Uploaded != nil {
+		spec.ResourcePack = was.DeepCopy()
+		// Checked as the version it is kept with, which may be another.
+		return packFits(spec)
+	}
+	if rp == nil || rp.Uploaded == nil {
+		return nil
+	}
+	if was == nil || was.Uploaded == nil {
+		return errBadRequest("A resource pack is uploaded with PUT /orgs/{org}/servers/{server}/resource-pack.")
+	}
+	if rp.URL != was.URL {
+		rp.Uploaded = nil
+		return nil
+	}
+	if rp.SHA1 != was.SHA1 {
+		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
+	}
+	rp.Uploaded = was.Uploaded.DeepCopy()
+	return nil
+}
 
 // rcon runs a console command on a running server.
 func (s *Server) rcon(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error) {

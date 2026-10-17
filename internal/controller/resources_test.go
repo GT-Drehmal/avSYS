@@ -532,3 +532,31 @@ func TestLaunchFlags(t *testing.T) {
 		t.Error("switching off flags that were never on changed the pod")
 	}
 }
+
+// A pack uploaded to the panel is fetched from where the panel serves packs
+// now; one hosted elsewhere from its own URL.
+func TestUploadedPackURL(t *testing.T) {
+	sha := strings.Repeat("ab", 20)
+	pack := func(uploaded bool) *avsysv1.MinecraftServer {
+		return server(func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.ResourcePack = &avsysv1.ResourcePackSpec{URL: "https://old.example/packs/" + sha + ".zip", SHA1: sha}
+			if uploaded {
+				mc.Spec.ResourcePack.Uploaded = &avsysv1.UploadedPack{Name: "p.zip", Size: 10}
+			}
+		})
+	}
+	of := func(mc *avsysv1.MinecraftServer) string {
+		for _, e := range minecraftEnv(mc, Config{PackURL: "https://packs.example.org"}) {
+			if e.Name == "RESOURCE_PACK" {
+				return e.Value
+			}
+		}
+		return ""
+	}
+	if got := of(pack(true)); got != "https://packs.example.org/packs/"+sha+".zip" {
+		t.Errorf("uploaded: %s", got)
+	}
+	if got := of(pack(false)); got != "https://old.example/packs/"+sha+".zip" {
+		t.Errorf("hosted elsewhere: %s", got)
+	}
+}

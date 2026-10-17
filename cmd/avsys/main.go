@@ -65,6 +65,9 @@ type options struct {
 	routerAddr          string
 	extraPorts          string
 	extraPortsNotes     string
+	packAddr            string
+	packURL             string
+	packCache           int
 	publicURL           string
 	sshPublicHost       string
 	sshPublicPort       int
@@ -108,6 +111,9 @@ func parseFlags() options {
 	str(&o.sshAddr, "ssh-addr", ":2222", "address the SSH gateway listens on (empty disables it)")
 	str(&o.routerAddr, "router-addr", ":25565", "address the Minecraft router listens on (empty disables it)")
 	str(&o.publicURL, "public-url", "http://localhost:8080", "URL people open the panel at")
+	str(&o.packAddr, "pack-addr", "", "address of a listener that serves nothing but uploaded resource packs, to open to players where the panel is not (empty: the panel serves them at its own address)")
+	flag.IntVar(&o.packCache, "pack-cache", envInt("pack-cache", 512), "most MiB the uploaded resource packs kept in the data directory may take (0: no limit); over it the least recently served are let go of and read from their servers' files again when asked for")
+	str(&o.packURL, "pack-url", "", "URL players' games fetch uploaded resource packs from, at /packs/<sha1>.zip under it (default: public-url)")
 	str(&o.sshPublicHost, "ssh-public-host", "", "hostname shown in SSH instructions (default: the host of public-url)")
 	flag.IntVar(&o.sshPublicPort, "ssh-public-port", envInt("ssh-public-port", 0), "port shown in SSH instructions (default: the port of ssh-addr)")
 	flag.IntVar(&o.routerPort, "router-public-port", envInt("router-public-port", 25565), "port players reach the router on")
@@ -123,6 +129,10 @@ func parseFlags() options {
 	flag.BoolVar(&o.installCRDs, "install-crds", env("install-crds", "true") == "true", "install or upgrade the MinecraftServer CRD on startup")
 	flag.Parse()
 	o.publicURL = strings.TrimRight(o.publicURL, "/")
+	o.packURL = strings.TrimRight(o.packURL, "/")
+	if o.packURL == "" {
+		o.packURL = o.publicURL
+	}
 	return o
 }
 
@@ -253,6 +263,7 @@ func run(opts options, log *slog.Logger) error {
 			PortRange:                portRange,
 			PortsServiceAnnotations:  annotationsOf(opts.extraPortsNotes),
 			RouterService:            routerService(),
+			PackURL:                  opts.packURL,
 		},
 	}).SetupWithManager(mgr); err != nil {
 		return err
@@ -308,6 +319,9 @@ func run(opts options, log *slog.Logger) error {
 			AllowSignups:    opts.allowSignups,
 			Providers:       oauth,
 			Version:         version,
+			PackDir:         filepath.Join(opts.dataDir, "packs"),
+			PackURL:         opts.packURL,
+			PackCache:       int64(opts.packCache) << 20,
 		},
 		Store:   st,
 		Client:  mgr.GetClient(),
@@ -370,6 +384,23 @@ func run(opts options, log *slog.Logger) error {
 		return nil
 	})); err != nil {
 		return err
+	}
+	if opts.packAddr != "" {
+		packServer := &http.Server{Addr: opts.packAddr, Handler: server.PackHandler(), ReadHeaderTimeout: 10 * time.Second}
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			context.AfterFunc(ctx, func() {
+				shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = packServer.Shutdown(shutdown)
+			})
+			log.Info("resource packs served", "addr", opts.packAddr, "url", opts.packURL)
+			if err := packServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			return nil
+		})); err != nil {
+			return err
+		}
 	}
 	if opts.sshAddr != "" {
 		if err := mgr.Add(listener("ssh gateway", opts.sshAddr, log, gateway.Serve)); err != nil {

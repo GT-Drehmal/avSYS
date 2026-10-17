@@ -18,6 +18,7 @@ export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "pre-restore") return "Before a restore";
   if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
   if (s.trigger === "copy") return s.by ? `For a copy ${s.by} made` : "For a copy";
+  if (s.trigger === "move") return s.by ? `For a move ${s.by} made` : "For a move";
   return s.by ? `By ${s.by}` : "Manual";
 };
 
@@ -29,10 +30,11 @@ const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   restore: ["Restoring", "Restore"],
   create: ["Copying a snapshot into", "Creation"],
   "delete-server": ["Deleting", "Deletion"],
+  move: ["Moving", "Move"],
 };
 
 /** Whether an operation holds its server stopped, and is shown on all of its pages rather than with its snapshots. */
-export const holdsTheServer = (op: Operation) => op.kind === "create" || op.kind === "restore";
+export const holdsTheServer = (op: Operation) => op.kind === "create" || op.kind === "restore" || op.kind === "move";
 
 /** A snapshot or restore that is running, with how far along it is. */
 export function OperationRow({ op }: { op: Operation }) {
