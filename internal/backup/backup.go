@@ -184,6 +184,10 @@ func (m *Manager) keyFile(org string) string { return filepath.Join(m.Dir, org+"
 // listed, so that one whose removal failed is never taken for a good one.
 func (m *Manager) rejectedFile(org string) string { return filepath.Join(m.Dir, org+".rejected") }
 
+// ErrRejectedLeft is returned by Forget while a rejected snapshot could not be
+// removed yet: retention waits for it.
+var ErrRejectedLeft = errors.New("an incomplete snapshot could not be removed yet, so none are let go of until it is")
+
 // rejected is the set of an organization's rejected snapshots.
 func (m *Manager) rejected(org string) map[string]bool {
 	m.rejectedMu.Lock()
@@ -641,6 +645,13 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (in
 	}
 	if !m.exists(org) {
 		return 0, nil
+	}
+	// A rejected snapshot still in the repository would be weighed with the
+	// rest, and could be kept in place of a good one: nothing is let go of
+	// until it is gone.
+	m.removeRejected(ctx, org)
+	if left := m.rejected(org); len(left) > 0 {
+		return 0, ErrRejectedLeft
 	}
 	lock := m.lock(org)
 	lock.Lock()

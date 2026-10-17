@@ -599,7 +599,7 @@ func TestLoadingGameIsLetFinish(t *testing.T) {
 		{"new settings while loading", newSettings, running(now.Add(-10*time.Second), false), false},
 		{"stopped once loaded", stop, running(now.Add(-time.Minute), true), true},
 		{"restarted once loaded", restart, running(now.Add(-time.Minute), true), true},
-		{"stopped after loading too long", stop, running(now.Add(-loadGrace-time.Second), false), true},
+		{"stopped after loading too long", stop, running(now.Add(-LoadGrace-time.Second), false), true},
 		{"stopped while crashed", stop, crashed, true},
 		// A moment after it was started: its container is still being made,
 		// and would start in the pod being deleted, as on the home lab.
@@ -613,7 +613,7 @@ func TestLoadingGameIsLetFinish(t *testing.T) {
 		mc := server(c.change)
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, pod).Build()
 		r := &Reconciler{Client: cl, Reader: cl, Scheme: scheme}
-		got, _, wait, err := r.ensurePod(context.Background(), mc)
+		got, pending, wait, err := r.ensurePod(context.Background(), mc)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -621,8 +621,13 @@ func TestLoadingGameIsLetFinish(t *testing.T) {
 		if replaced != c.replaced {
 			t.Errorf("%s: replaced = %v, want %v", c.name, replaced, c.replaced)
 		}
+		// Only new settings for a game that goes on running are pending: a
+		// stop or a restart asked for is not something to restart for.
+		if wantPending := !replaced && c.name == "new settings while loading"; pending != wantPending {
+			t.Errorf("%s: pending restart %v, want %v", c.name, pending, wantPending)
+		}
 		// Looked at again by the time it has had its grace, at the latest.
-		if !replaced && (wait <= 0 || wait > loadGrace) {
+		if !replaced && (wait <= 0 || wait > LoadGrace) {
 			t.Errorf("%s: looked at again in %s", c.name, wait)
 		}
 		if !replaced && c.change != nil {
