@@ -89,9 +89,8 @@ export function useLiveServers() {
     // Everything the stream keeps current: servers, and snapshots with the
     // operations running on them.
     const refetchAll = () => {
-      // What was running may have finished unheard. It is forgotten, and
-      // the next word of it, which comes every few seconds, notes it again.
-      qc.removeQueries({ queryKey: ["running"] });
+      // What was running may have finished unheard: it is asked for again.
+      qc.invalidateQueries({ queryKey: ["running"] });
       // Lists kept from a page left earlier are not asked for again until
       // it is opened; what they say is running may have finished too.
       qc.setQueriesData<SnapshotList>({ queryKey: ["snapshots"] }, (list) => list && { ...list, operations: [] });
@@ -125,6 +124,7 @@ export function useLiveServers() {
       qc.setQueryData<SnapshotList>(keys.serverSnapshots(done.org, done.server), without);
       // Only the end of what was running: a snapshot deleted meanwhile is
       // done too, with the server's snapshot still going.
+      qc.cancelQueries({ queryKey: keys.running(done.org, done.server) });
       qc.setQueryData<Operation | null>(keys.running(done.org, done.server), (running) => (running && running.kind !== done.kind ? running : null));
       // Both lists are refetched: the snapshot is new to them, or gone.
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
@@ -161,6 +161,8 @@ export function useLiveServers() {
  * and notes it for the server whether or not any list of it was loaded.
  */
 function applyOperation(qc: QueryClient, op: Operation) {
+  // Newer than any answer still on its way, which is not to overwrite it.
+  qc.cancelQueries({ queryKey: keys.running(op.org, op.server) });
   qc.setQueryData<Operation | null>(keys.running(op.org, op.server), op);
   const merge = (list: SnapshotList | undefined) =>
     list && { ...list, operations: [...list.operations.filter((o) => o.server !== op.server), op] };
@@ -169,11 +171,13 @@ function applyOperation(qc: QueryClient, op: Operation) {
 }
 
 /**
- * What is being done to a server's snapshots now, as far as the event stream
- * has said since the page was opened. Nothing is fetched for it.
+ * What is being done to a server's snapshots now: asked of the panel each
+ * time a page of it opens, which is quick, and kept current by the event
+ * stream meanwhile. An event cancels an answer still on its way, which is
+ * older than it.
  */
 export const useRunning = (org: string, server: string) =>
-  useQuery({ queryKey: keys.running(org, server), queryFn: () => null as Operation | null, enabled: false }).data ?? null;
+  useQuery({ queryKey: keys.running(org, server), queryFn: () => api.get<Operation | null>(`${serverPath(org, server)}/operation`), refetchOnMount: "always" }).data ?? null;
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });

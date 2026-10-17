@@ -366,6 +366,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/servers/{server}/snapshots", s.authed(s.listServerSnapshots))
 	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
 	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))
+	api("GET /orgs/{org}/servers/{server}/operation", s.authed(s.getOperation))
 	api("GET /orgs/{org}/servers/{server}/placement", s.authed(s.getPlacement))
 	api("POST /orgs/{org}/servers/{server}/move", s.authed(s.moveServer))
 	api("GET /orgs/{org}/servers/{server}/terminal", s.authed(s.terminal))
