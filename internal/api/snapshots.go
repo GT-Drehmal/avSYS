@@ -957,7 +957,7 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateStopped }); err != nil {
 		return undo, err
 	}
-	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
+	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, stopWait); err != nil {
 		return undo, fmt.Errorf("the server did not stop: %w", err)
 	}
 

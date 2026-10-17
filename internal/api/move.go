@@ -184,11 +184,11 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	restart := func() {
 		_ = s.putBack(context.WithoutCancel(ctx), key, wasRunning)
 	}
-	if err := s.waitRestarted(ctx, key, stamp, 5*time.Minute); err != nil {
+	if err := s.waitRestarted(ctx, key, stamp, stopWait); err != nil {
 		restart()
 		return nil, fmt.Errorf("the server did not stop, so it was not moved: %w", err)
 	}
-	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
+	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, stopWait); err != nil {
 		restart()
 		return nil, fmt.Errorf("the server did not stop, so it was not moved: %w", err)
 	}
@@ -391,6 +391,12 @@ func (s *Server) stopAnew(ctx context.Context, key client.ObjectKey, stamp strin
 	mc.Annotations[avsysv1.AnnotationRestart] = stamp
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }
+
+// stopWait is how long the panel waits for a server it stops to have
+// stopped: a game still loading is let finish first, for up to
+// controller.LoadGrace, and then saves and stops, which a large world can
+// take minutes to.
+const stopWait = controller.LoadGrace + 3*time.Minute
 
 // waitRestarted waits for a server's pod made again with this stamp to have
 // its workspace up.
