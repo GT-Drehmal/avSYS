@@ -560,14 +560,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           source && software && <p className="text-[13px] text-muted">{v.modpack ? "Nothing on top of its modpack." : `No ${kindsPhrase(software)}.`}</p>
         )}
         <div className="flex flex-wrap items-center gap-3">
+          {/* One picker for all of it, the resource pack too. */}
           <Button icon={<Plus className="size-4" />} disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => software && setAddingMods(kindsFor(software)[0])}>
-            Add {software ? kindsPhrase(software) : "content"}
+            Add content
           </Button>
-          {!v.pack && (
-            <Button disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => setAddingMods("resourcepack")}>
-              Choose a resource pack
-            </Button>
-          )}
           {source && (modsChanged || packChanged) && (
             <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setValues((was) => ({ ...was, mods: start.mods, pack: start.pack }))}>
               Put back as {source.name} has it

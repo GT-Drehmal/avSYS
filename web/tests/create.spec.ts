@@ -153,7 +153,7 @@ test("a copy can be given other content before it is made", async ({ page, as })
   await expect(page.getByText("LuckPerms", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Remove LuckPerms" }).click();
-  await page.getByRole("button", { name: "Add plugins or datapacks" }).click();
+  await page.getByRole("button", { name: "Add content" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "From URL" }).click();
   // Files are uploaded once the server exists: there is nowhere to put one yet.

@@ -251,14 +251,9 @@ function PackSection({
     <section className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-[13px] font-medium">Resource pack</h2>
-        {canEdit && !pack && (
-          <Button size="sm" onClick={onChoose}>
-            Choose one
-          </Button>
-        )}
       </div>
       {!pack ? (
-        <p className="text-[13px] text-muted">None. One from Modrinth, uploaded or at a URL is offered to each player's game as they join.</p>
+        <p className="text-[13px] text-muted">None. One added from Modrinth, an upload or a URL is offered to each player's game as they join.</p>
       ) : (
         <>
           <PackCard pack={pack}>
