@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -417,6 +418,63 @@ func TestSnapshotFinishesWhileADeleteWaits(t *testing.T) {
 	}
 	if list, err := m.List(ctx, "alpha"); err != nil || len(list) != 1 || list[0].ID == old.ID {
 		t.Errorf("after both: %+v, %v", list, err)
+	}
+}
+
+// An incomplete snapshot whose removal failed is never listed, as if it were
+// a good one, and is removed after the next snapshot.
+func TestARejectedSnapshotIsHiddenAndRemovedLater(t *testing.T) {
+	ws, m := workspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	sh(t, ws, `mkdir -p /data/world && echo fine > /data/world/level.dat`)
+	bad, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerManual, Record: map[string]any{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As when it was found incomplete and its removal failed.
+	if err := m.reject("alpha", bad.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := m.List(ctx, "alpha"); err != nil || len(list) != 0 {
+		t.Errorf("a rejected snapshot is listed: %+v, %v", list, err)
+	}
+	if _, err := m.Get(ctx, "alpha", bad.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a rejected snapshot is found: %v", err)
+	}
+	good, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerManual, Record: map[string]any{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := m.listAll(ctx, "alpha")
+	if err != nil || len(all) != 1 || all[0].ID != good.ID {
+		t.Errorf("after the next snapshot: %+v, %v; want only %s", all, err, good.ID)
+	}
+	if _, err := os.Stat(m.rejectedFile("alpha")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the rejected snapshot is still noted: %v", err)
+	}
+}
+
+func TestRejectedFile(t *testing.T) {
+	m := &Manager{Dir: t.TempDir()}
+	for _, id := range []string{"aaaa1111", "bbbb2222", "aaaa1111"} {
+		if err := m.reject("alpha", id, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := m.rejected("alpha"); len(got) != 2 || !got["aaaa1111"] || !got["bbbb2222"] {
+		t.Errorf("rejected: %v", got)
+	}
+	if got := m.rejected("beta"); len(got) != 0 {
+		t.Errorf("another organization's: %v", got)
+	}
+	for _, id := range []string{"aaaa1111", "bbbb2222"} {
+		if err := m.reject("alpha", id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(m.rejectedFile("alpha")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("an empty list is left as a file: %v", err)
 	}
 }
 

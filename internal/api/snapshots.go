@@ -954,8 +954,15 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	}
 
 	s.setOperation(mc.Namespace, op, "Stopping the server", 0)
-	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateStopped }); err != nil {
+	// Its pod is made again whether or not it was running, so that a shell
+	// or file transfer already open to its files ends: what it wrote could
+	// land among the restored ones. New ones wait for the restore.
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := s.stopReplacing(ctx, key, stamp, nil); err != nil {
 		return undo, err
+	}
+	if err := s.waitRestarted(ctx, key, stamp, 5*time.Minute); err != nil {
+		return undo, fmt.Errorf("the server did not stop: %w", err)
 	}
 	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
 		return undo, fmt.Errorf("the server did not stop: %w", err)

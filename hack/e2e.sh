@@ -410,8 +410,29 @@ expect "the game goes back to saving" "$(call -d '{"command":"save-on"}' "$SRV/c
 echo "changed after the snapshot" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
 echo "not in the snapshot" | call -X PUT --data-binary @- "$SRV/files/content?path=/stray.txt" >/dev/null
 set_spec '{"spec":{"mods":[{"source":"modrinth","kind":"plugin","project":"luckperms"}]}}'
+# A shell open to its files while they are put back could write among the
+# restored ones: the restore ends it, however it was opened. On a server
+# that is stopped already, which stopping it again does not do.
+call -X POST "$SRV/stop" >/dev/null
+wait_phase Stopped
+ssh-keygen -q -t ed25519 -N '' -f "$WORK/restore-key" -C avsys-e2e-restore
+RESTORE_KEY=$(call -d "{\"name\":\"e2e-restore\",\"publicKey\":\"$(cat "$WORK/restore-key.pub")\"}" "$API/me/ssh-keys" | field "d['id']")
+ssh -n -i "$WORK/restore-key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$(echo "$AVSYS_URL" | sed -E 's#^[a-z]+://##; s#[:/].*$##')" 'sleep 900' >/dev/null 2>&1 &
+held=$!
+sleep 5
+kill -0 "$held" 2>/dev/null || fail "a shell could not be opened before the restore"
 restored=$(call -X POST "$SRV/snapshots/$SNAP/restore?wait=true")
 expect "a restore is accepted" "$(echo "$restored" | field "d['id'] == '$SNAP'")" True
+for _ in $(seq 1 20); do kill -0 "$held" 2>/dev/null || break; sleep 1; done
+if kill -0 "$held" 2>/dev/null; then
+  kill "$held"
+  fail "a shell open before the restore was still open after it"
+fi
+echo "ok: a shell open to its files is ended by the restore"
+call -X DELETE "$API/me/ssh-keys/$RESTORE_KEY" >/dev/null
+expect "a server stopped before the restore stays stopped" "$(call "$SRV" | field "d['spec']['state']")" Stopped
+call -X POST "$SRV/start" >/dev/null
 wait_phase Running
 expect "a changed file is put back" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "a file added since is removed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/stray.txt")" 404

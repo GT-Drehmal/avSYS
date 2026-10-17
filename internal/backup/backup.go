@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -109,6 +110,9 @@ type Manager struct {
 
 	mu    sync.Mutex
 	locks map[string]*sync.RWMutex
+	// rejectedMu holds the files of rejected snapshots to one change at a
+	// time; see reject.
+	rejectedMu sync.Mutex
 	// changed is when an organization's snapshots last changed, as far as
 	// this process has seen.
 	changed map[string]time.Time
@@ -174,6 +178,74 @@ type Progress struct {
 
 func (m *Manager) repoDir(org string) string { return filepath.Join(m.Dir, org) }
 func (m *Manager) keyFile(org string) string { return filepath.Join(m.Dir, org+".key") }
+
+// rejectedFile lists, one to a line, the snapshots of an organization that
+// were found incomplete and are to be removed: until they are, they are not
+// listed, so that one whose removal failed is never taken for a good one.
+func (m *Manager) rejectedFile(org string) string { return filepath.Join(m.Dir, org+".rejected") }
+
+// rejected is the set of an organization's rejected snapshots.
+func (m *Manager) rejected(org string) map[string]bool {
+	m.rejectedMu.Lock()
+	defer m.rejectedMu.Unlock()
+	return m.readRejected(org)
+}
+
+func (m *Manager) readRejected(org string) map[string]bool {
+	out := map[string]bool{}
+	data, err := os.ReadFile(m.rejectedFile(org))
+	if err != nil {
+		return out
+	}
+	for _, id := range strings.Fields(string(data)) {
+		out[id] = true
+	}
+	return out
+}
+
+// reject adds a snapshot to its organization's rejected ones, or with gone
+// takes it off once it has been removed.
+func (m *Manager) reject(org, id string, gone bool) error {
+	m.rejectedMu.Lock()
+	defer m.rejectedMu.Unlock()
+	ids := m.readRejected(org)
+	if gone {
+		delete(ids, id)
+	} else {
+		ids[id] = true
+	}
+	if len(ids) == 0 {
+		if err := os.Remove(m.rejectedFile(org)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	lines := make([]string, 0, len(ids))
+	for id := range ids {
+		lines = append(lines, id)
+	}
+	sort.Strings(lines)
+	tmp := m.rejectedFile(org) + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, m.rejectedFile(org))
+}
+
+// removeRejected tries again to remove the snapshots of an organization that
+// were rejected and are still there.
+func (m *Manager) removeRejected(ctx context.Context, org string) {
+	for id := range m.rejected(org) {
+		err := m.Delete(ctx, org, id)
+		if err == nil || errors.Is(err, ErrNotFound) {
+			if err := m.reject(org, id, true); err != nil {
+				m.Log.Warn("could not note a rejected snapshot as removed", "org", org, "snapshot", id, "error", err)
+			}
+			continue
+		}
+		m.Log.Warn("could not remove a rejected snapshot; trying again after the next", "org", org, "snapshot", id, "error", err)
+	}
+}
 
 // Available reports whether the panel can run restic at all.
 func (m *Manager) Available() bool {
@@ -347,7 +419,27 @@ func (m *Manager) List(ctx context.Context, org string) ([]Snapshot, error) {
 
 // list is List for callers that already hold the repository's lock. Taking a
 // read lock twice deadlocks as soon as a writer is waiting in between.
+// Rejected snapshots are left out.
 func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
+	all, err := m.listAll(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	rejected := m.rejected(org)
+	if len(rejected) == 0 {
+		return all, nil
+	}
+	out := all[:0:0]
+	for _, s := range all {
+		if !rejected[s.ID] {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// listAll is list with the rejected snapshots too.
+func (m *Manager) listAll(ctx context.Context, org string) ([]Snapshot, error) {
 	if !m.exists(org) {
 		return []Snapshot{}, nil
 	}
@@ -499,7 +591,8 @@ func (m *Manager) DeleteMany(ctx context.Context, org string, ids []string) erro
 	lock := m.lock(org)
 	lock.Lock()
 	defer lock.Unlock()
-	list, err := m.list(ctx, org)
+	// Rejected ones too, which are only ever removed.
+	list, err := m.listAll(ctx, org)
 	if err != nil {
 		return err
 	}
@@ -851,13 +944,23 @@ func (m *Manager) Snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 		return nil, err
 	}
 	if incomplete != nil {
+		// Not listed from here, whatever happens next: one whose removal
+		// fails is not taken for a good one.
+		if err := m.reject(org, snap.ID, false); err != nil {
+			m.Log.Error("could not note an incomplete snapshot as rejected", "org", org, "server", meta.Server, "snapshot", snap.ID, "error", err)
+		}
 		// Removed with the lock released: removal needs it alone.
 		if err := m.Delete(context.WithoutCancel(ctx), org, snap.ID); err != nil {
-			m.Log.Error("could not remove an incomplete snapshot", "org", org, "server", meta.Server, "snapshot", snap.ID, "error", err)
+			m.Log.Error("could not remove an incomplete snapshot; it is not listed, and is removed after the next snapshot", "org", org, "server", meta.Server, "snapshot", snap.ID, "error", err)
+		} else if err := m.reject(org, snap.ID, true); err != nil {
+			m.Log.Warn("could not note a rejected snapshot as removed", "org", org, "snapshot", snap.ID, "error", err)
 		}
 		return nil, incomplete
 	}
 	m.touch(org)
+	// One rejected before whose removal failed is tried again now that the
+	// repository has been written to.
+	m.removeRejected(context.WithoutCancel(ctx), org)
 	return snap, nil
 }
 

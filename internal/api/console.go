@@ -151,6 +151,12 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 	if mc.Status.Phase != avsysv1.PhaseRunning {
 		return &Error{Status: http.StatusConflict, Code: "not_running", Message: "The server is not running."}
 	}
+	// While a snapshot holds the game's saves, none is let undo that or
+	// write the world out under it: the copy would hold files from before
+	// and after one another.
+	if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; paused && savesCommand(command) {
+		return &Error{Status: http.StatusConflict, Code: "snapshotting", Message: "A snapshot is being taken, which holds the game's saves until it is done. Try again once it has finished."}
+	}
 	output := ""
 	typed := false
 	if in.As == "server" {
@@ -215,4 +221,13 @@ func (s *Server) typeAtConsole(ctx context.Context, mc *avsysv1.MinecraftServer,
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// savesCommand says whether a console command is one of the game's own for
+// its saving: save-on, save-off and save-all, with or without the game's
+// namespace before them.
+func savesCommand(command string) bool {
+	name := strings.ToLower(strings.Fields(command + " ")[0])
+	name = strings.TrimPrefix(name, "minecraft:")
+	return name == "save-on" || name == "save-off" || name == "save-all"
 }
