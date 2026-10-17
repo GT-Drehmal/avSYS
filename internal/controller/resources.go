@@ -308,9 +308,9 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		}
 		env["RESOURCE_PACK_SHA1"] = rp.SHA1
 		env["RESOURCE_PACK_ENFORCE"] = strings.ToUpper(strconv.FormatBool(rp.Enforce))
-		if rp.Prompt != "" {
-			env["RESOURCE_PACK_PROMPT"] = rp.Prompt
-		}
+		// Always set, so that one taken away is gone from server.properties
+		// too, where the image would otherwise leave the one before.
+		env["RESOURCE_PACK_PROMPT"] = packPrompt(rp.Prompt)
 	}
 
 	if len(mc.Spec.Properties) > 0 {
@@ -585,4 +585,16 @@ func addressFor(mc *avsysv1.MinecraftServer, svc *corev1.Service, cfg Config) st
 		}
 		return host
 	}
+}
+
+// packPrompt is a resource pack's prompt as the game reads it from
+// server.properties: a JSON text component. Plain text, as typed in the
+// panel, is made a JSON string; one written as a component already, an
+// object, list or string, is left as it is.
+func packPrompt(prompt string) string {
+	if t := strings.TrimSpace(prompt); t != "" && strings.ContainsAny(t[:1], "{[\"") && json.Valid([]byte(t)) {
+		return t
+	}
+	quoted, _ := json.Marshal(prompt)
+	return string(quoted)
 }

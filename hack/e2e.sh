@@ -265,6 +265,12 @@ restarted
 expect "the game offers it to players" "$(call "$SRV/files/content?path=/server.properties" | python3 -c 'import sys; p = dict(l.split("=", 1) for l in sys.stdin.read().replace("\\:", ":").splitlines() if "=" in l and not l.startswith("#")); print(p.get("resource-pack"), p.get("resource-pack-sha1"))')" "$PACK_URL $PACK_SHA"
 expect "and it is taken away again" "$(call -X DELETE "$SRV/resource-pack" | field "d['spec'].get('resourcePack')")" None
 expect "with its file" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip")" 404
+# One picked from Modrinth says which project and version it is, and stops
+# saying so once it is given another address.
+picked=$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://cdn.modrinth.com/data/e2e/pack.zip","sha1":"'"$PACK_SHA"'","project":{"source":"modrinth","id":"e2e-pack","version":"v1","versionName":"1.0","title":"E2E Pack"}}}}' "$SRV")
+expect "a pack picked from Modrinth says which" "$(echo "$picked" | field "(d['spec']['resourcePack']['project']['id'], d['spec']['resourcePack']['project']['versionName'])")" "('e2e-pack', '1.0')"
+expect "given another address, it is no longer the project's" "$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://example.org/pack.zip"}}}' "$SRV" | field "d['spec']['resourcePack'].get('project')")" None
+call -X DELETE "$SRV/resource-pack" >/dev/null
 
 step "snapshots"
 snap=$(call -X POST "$SRV/snapshots?wait=true")

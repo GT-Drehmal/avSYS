@@ -65,7 +65,9 @@ createRoot(document.getElementById("root")!).render(
                   <Route index element={<Console />} />
                   <Route path="files/*" element={<Suspense fallback={<Loading />}><Files /></Suspense>} />
                   <Route path="terminal" element={<Suspense fallback={<Loading />}><Terminal /></Suspense>} />
-                  <Route path="mods" element={<Mods />} />
+                  <Route path="content" element={<Mods />} />
+                  {/* Where it was before it was called Content. */}
+                  <Route path="mods" element={<Navigate to="../content" replace />} />
                   <Route path="backups" element={<Snapshots />} />
                   <Route path="settings" element={<Settings />} />
                 </Route>

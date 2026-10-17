@@ -3,7 +3,7 @@ import { content, expect, test } from "./panel";
 // The picker for mods, against canned answers from Modrinth.
 test.beforeEach(async ({ page, as }) => {
   await as("owner");
-  await page.goto("/o/friends/s/creative/mods");
+  await page.goto("/o/friends/s/creative/content");
   await page.getByRole("button", { name: /^Add/ }).first().click();
   await expect(page.getByRole("dialog")).toBeVisible();
 });
@@ -59,7 +59,7 @@ test("picking one adds it to the server", async ({ page, org, api, as }) => {
   // On a server of its own, so that nothing else sees the change.
   const slug = await org(["modded"]);
   await as("owner");
-  await page.goto(`/o/${slug}/s/modded/mods`);
+  await page.goto(`/o/${slug}/s/modded/content`);
   await page.getByRole("button", { name: /^Add/ }).first().click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: /Chunky/ }).first().click();

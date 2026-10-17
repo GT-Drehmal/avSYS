@@ -153,7 +153,7 @@ test("a copy can be given other content before it is made", async ({ page, as })
   await expect(page.getByText("LuckPerms", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Remove LuckPerms" }).click();
-  await page.getByRole("button", { name: "Add plugins or datapacks" }).click();
+  await page.getByRole("button", { name: "Add content" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "From URL" }).click();
   // Files are uploaded once the server exists: there is nowhere to put one yet.
@@ -649,4 +649,18 @@ test("the panel's administrator sees the nodes and what runs on each; nobody els
   await page.getByRole("button", { name: /admin/ }).click();
   await expect(page.getByRole("menuitem", { name: "Account" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Nodes" })).toHaveCount(0);
+});
+
+test("the content section says what can go in it, by what the server runs", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await expect(page.getByText("Mods or plugins, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  const type = page.getByRole("group", { name: "Server type" });
+  await type.getByRole("button", { name: /^Paper/ }).click();
+  await expect(page.getByText("Plugins, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  await type.getByRole("button", { name: /^Fabric/ }).click();
+  await expect(page.getByText("Mods, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  await type.getByRole("button", { name: /^Vanilla/ }).click();
+  await expect(page.getByText("Datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
 });
