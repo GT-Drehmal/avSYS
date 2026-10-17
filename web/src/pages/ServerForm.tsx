@@ -257,6 +257,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [keepCustom, setKeepCustom] = useState(custom);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // What a long wait on Create is for, while there is one.
+  const [stage, setStage] = useState<string | null>(null);
   const { sending, send, cancel } = useUpload();
 
   const name = v.customName ?? slugify(v.displayName);
@@ -347,6 +349,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     // That one only made required keeps its file: the panel knows it by
     // its address, and a request does not say a pack was uploaded.
     if (packChanged) changes.resourcePack = v.pack && { ...v.pack, uploaded: null };
+    // One to upload is the copy's once its files are in: the original's goes.
+    if (v.packFile) changes.resourcePack = null;
     const jvm: NonNullable<ServerSpec["jvm"]> = {};
     if (v.aikar !== start.aikar) jvm.aikarFlags = v.aikar;
     if (v.extraFlags !== start.extraFlags) jvm.extraFlags = v.extraFlags;
@@ -356,7 +360,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     if (Object.keys(jvm).length > 0) changes.jvm = legacy ? { aikarFlags: v.aikar, extraFlags: v.extraFlags } : jvm;
     return {
       displayName: v.displayName,
-      state: startNow ? "Running" : "Stopped",
+      // Files to upload go in before it first starts: it is started after.
+      state: startNow && !toUpload ? "Running" : "Stopped",
       resources: { memory: fromGigabytes(v.memory) },
       storage: { size: fromGigabytes(v.storage) },
       // Reached the way the original is unless that was changed: a server
@@ -412,8 +417,22 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         // "auto" lets the panel choose for a copy of a server kept to some
         // nodes, which would otherwise be kept to them too.
         const placed = v.node === "auto" ? { spec: { ...copyRequest(), nodeSelector: {} } } : { ...(v.node ? { node: v.node } : {}), spec: copyRequest() };
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed });
+        // With files to upload, the answer comes once its own are copied in,
+        // which they then join.
+        if (toUpload) setStage("Copying its files. Yours are uploaded once they are in.");
+        const server = await api.post<Server>(`/orgs/${org}/servers${toUpload ? "?wait=true" : ""}`, { name, ...from, ...pictured, ...placed });
+        setStage(null);
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
+        if (toUpload) {
+          const failed = await uploadAll(server.name);
+          await qc.invalidateQueries({ queryKey: keys.servers(org) });
+          if (failed) {
+            toast.error(`${v.displayName || server.name} was made, and left stopped: ${failed} Add the rest here, then start it.`);
+            navigate(`/o/${org}/s/${server.name}/content`);
+            return;
+          }
+          if (startNow) await api.post(`${serverPath(org, server.name)}/start`);
+        }
         // How the copying goes shows on the server's page until its files are in.
         navigate(`/o/${org}/s/${server.name}`);
         return;
@@ -450,6 +469,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       }
       navigate(`/o/${org}/s/${server.name}`);
     } catch (err) {
+      setStage(null);
       setError(err instanceof ApiError ? err.message : "Could not create the server.");
       setBusy(false);
     }
@@ -620,8 +640,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <Button icon={<Plus className="size-4" />} disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => software && setAddingMods(kindsFor(software)[0])}>
             Add content
           </Button>
-          {source && (modsChanged || packChanged) && (
-            <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setValues((was) => ({ ...was, mods: start.mods, pack: start.pack }))}>
+          {source && (modsChanged || packChanged || toUpload) && (
+            <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setValues((was) => ({ ...was, mods: start.mods, pack: start.pack, uploads: [], packFile: null }))}>
               Put back as {source.name} has it
             </button>
           )}
@@ -644,25 +664,19 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <AddContentDialog
             software={software}
             mods={v.mods}
-            description={source ? "Downloaded when the server first starts. Files can be uploaded once it exists." : "Downloaded when the server first starts."}
+            description="Downloaded when the server first starts."
             onAdd={(ref) => setValues((was) => ({ ...was, mods: [...was.mods, ref] }))}
             // Kept here until the server is made, then uploaded before it first starts.
-            onUpload={
-              source
-                ? undefined
-                : async (file, kind) => {
-                    setValues((was) => ({ ...was, uploads: [...was.uploads.filter((u) => u.file.name !== file.name), { file, kind }] }));
-                    toast.info(`${file.name} is uploaded once the server is made`);
-                  }
-            }
+            onUpload={async (file, kind) => {
+              setValues((was) => ({ ...was, uploads: [...was.uploads.filter((u) => u.file.name !== file.name), { file, kind }] }));
+              toast.info(`${file.name} is uploaded once the server is made`);
+            }}
             uploadNote="They are uploaded once the server is made, before it first starts."
             start={addingMods}
             pack={{
               current: v.pack,
               onPick: async (pack) => setValues((was) => ({ ...was, packFile: null, pack: { ...pack, enforce: !!was.pack?.enforce, prompt: was.pack?.prompt ?? "" } })),
-              keep: source
-                ? undefined
-                : (file) =>
+              keep: (file) =>
                     setValues((was) => ({
                       ...was,
                       packFile: file,
@@ -872,6 +886,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           </>
         )}
         {error && <Notice tone="danger">{error}</Notice>}
+        {stage && <p className="text-xs text-muted" role="status">{stage}</p>}
         {sending && <UploadProgress sending={sending} onCancel={cancel} />}
         <div className="flex gap-2">
           <Button type="submit" variant="primary" loading={busy}>
