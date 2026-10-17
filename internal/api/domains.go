@@ -139,6 +139,9 @@ func (s *Server) checkHostnameOwner(ctx context.Context, org *store.Org, host st
 	// name in the router's domain: <name>.<org>.<domain>. Those are that
 	// organization's alone, whatever is claimed, and whether or not it has
 	// been made yet.
+	if v := s.verifyAddress(); v != "" && host == v {
+		return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: host + " is kept for players proving an account is theirs."}
+	}
 	if d := router.NormalizeHostname(s.Config.RouterDomain); d != "" && strings.HasSuffix(host, "."+d) {
 		labels := strings.Split(strings.TrimSuffix(host, "."+d), ".")
 		if zone := labels[len(labels)-1]; len(labels) > 1 {

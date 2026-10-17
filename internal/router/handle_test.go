@@ -269,3 +269,92 @@ func TestRouterIgnoresNoise(t *testing.T) {
 		t.Errorf("noise reached a game: %v", g.dialed)
 	}
 }
+
+// checks is a Verifier with a check open for one name.
+type checks struct {
+	open   string
+	proven []string
+}
+
+func (c *checks) Pending(name string) bool { return strings.EqualFold(name, c.open) }
+func (c *checks) Proven(_ context.Context, name, uuid string) string {
+	c.proven = append(c.proven, name+"="+uuid)
+	return "Verified"
+}
+
+// A login by a name with a check open, at an address no server has, is not
+// passed on: the router asks the game to prove who is playing. At a server's
+// address it goes on to the server, as any other login does, so that a check
+// someone opened of another's name never keeps them from playing.
+func TestRouterProvesAccounts(t *testing.T) {
+	r, addr, g := routed(t, server("world", "world.example.org", avsysv1.PhaseRunning))
+	c := &checks{open: "Steve"}
+	r.Verify = c
+	r.HasJoined = func(context.Context, string, string) (string, error) { return "", mcproto.ErrNotJoined }
+
+	// Its first answer, read raw: an encryption request (0x01) for the
+	// player with a check open; for anyone else, the game's own.
+	first := func(host, name string) byte {
+		t.Helper()
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		varint := func(b []byte, v int) []byte {
+			for uint32(v) >= 0x80 {
+				b = append(b, byte(v)|0x80)
+				v = int(uint32(v) >> 7)
+			}
+			return append(b, byte(v))
+		}
+		str := func(b []byte, s string) []byte { return append(varint(b, len(s)), s...) }
+		packet := func(id int, body []byte) []byte {
+			p := append(varint(nil, id), body...)
+			return append(varint(nil, len(p)), p...)
+		}
+		hs := varint(nil, 767)
+		hs = str(hs, host)
+		hs = binary.BigEndian.AppendUint16(hs, 25565)
+		hs = varint(hs, 2)
+		login := append(str(nil, name), make([]byte, 16)...)
+		_, _ = conn.Write(append(packet(0, hs), packet(0, login)...))
+		reply := make([]byte, 3)
+		if _, err := io.ReadFull(conn, reply); err != nil {
+			return 0
+		}
+		// A length of one or two bytes, then the packet's ID.
+		if reply[0]&0x80 == 0 {
+			return reply[1]
+		}
+		return reply[2]
+	}
+	if id := first("verify.example.org", "steve"); id != 0x01 {
+		t.Errorf("a player with a check open was answered with packet %#x, want an encryption request", id)
+	}
+	g.mu.Lock()
+	reached := len(g.dialed)
+	g.mu.Unlock()
+	if reached != 0 {
+		t.Errorf("a player with a check open reached a server")
+	}
+	// At a server's address, the same player reaches the game, which here
+	// answers as for a status; so does anyone else.
+	first("world.example.org", "Steve")
+	first("world.example.org", "Alex")
+	g.mu.Lock()
+	reached = len(g.dialed)
+	g.mu.Unlock()
+	if reached != 2 {
+		t.Errorf("logins at a server's address did not reach it: %d of 2", reached)
+	}
+	// Anyone with no check open, at an address no server has, is told so
+	// as ever: a disconnect (0x00), not an encryption request.
+	if id := first("verify.example.org", "Alex"); id != 0x00 {
+		t.Errorf("a player with no check open was answered with packet %#x at an unknown address", id)
+	}
+	if st, err := ping(t, addr, "world.example.org"); err != nil || lines(st) != "the game itself" {
+		t.Errorf("a ping: %+v, %v", st, err)
+	}
+}

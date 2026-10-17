@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PicturePicker } from "../components/Picture";
 import { Button, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
@@ -43,21 +43,52 @@ function Profile() {
 function Minecraft() {
   const me = useMe().data!;
   const [name, setName] = useState("");
+  // The check open, if one is: the account, where to join, and until when.
+  const [check, setCheck] = useState<{ uuid: string; name: string; address: string; until: string } | null>(null);
+  const [code, setCode] = useState("");
   const accounts = me.minecraftAccounts ?? (me.minecraft ? [me.minecraft] : []);
   const link = useAction(() => api.post("/me/minecraft-accounts", { name }), [keys.me]);
   const unlink = useAction((uuid: string) => api.del(`/me/minecraft-accounts/${uuid}`), [keys.me]);
   const main = useAction((uuid: string) => api.post(`/me/minecraft-accounts/${uuid}/main`), [keys.me]);
+  const verify = useAction((uuid: string) => api.post<{ name: string; address: string; until: string }>(`/me/minecraft-accounts/${uuid}/verify`));
+  const confirm = useAction((uuid: string) => api.post(`/me/minecraft-accounts/${uuid}/verify`, { code }), [keys.me]);
   const busy = link.isPending || unlink.isPending || main.isPending;
+  // A check closes when it runs out.
+  useEffect(() => {
+    if (!check) return;
+    const t = setTimeout(() => setCheck(null), new Date(check.until).getTime() - Date.now());
+    return () => clearTimeout(t);
+  }, [check]);
   return (
     <Section
       title="Minecraft accounts"
-      description="Every account you play as: each is made an operator, or let in, on servers where your role allows it. Your main one is the name shown beside you."
+      description="The accounts you play as. Your main one is shown beside your name. Viewers can only join with verified accounts."
     >
       {accounts.length > 0 && (
         <ul className="overflow-hidden rounded-lg border border-line bg-surface">
           {accounts.map((a) => (
             <li key={a.uuid} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
               <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium">{a.name}</span>
+              {a.verified ? (
+                <span className="text-xs text-muted">verified</span>
+              ) : check?.uuid === a.uuid ? null : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  loading={verify.isPending && verify.variables === a.uuid}
+                  onClick={() =>
+                    verify.mutate(a.uuid, {
+                      onSuccess: (got) => {
+                        setCode("");
+                        setCheck({ uuid: a.uuid, ...got });
+                      },
+                    })
+                  }
+                >
+                  Verify
+                </Button>
+              )}
               {a.main ? (
                 <Chip>main</Chip>
               ) : (
@@ -71,6 +102,34 @@ function Minecraft() {
             </li>
           ))}
         </ul>
+      )}
+      {check && (
+        <form
+          className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            confirm.mutate(check.uuid, {
+              onSuccess: () => {
+                toast.info(`${check.name} is verified`);
+                setCheck(null);
+              },
+            });
+          }}
+        >
+          <p className="text-[13px]">
+            In Minecraft, sign in as <span className="font-mono">{check.name}</span> and join{" "}
+            {check.address ? <span className="font-mono">{check.address}</span> : "this panel's address"}. Enter the code it shows.
+          </p>
+          <div className="flex items-center gap-2">
+            <Input required value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-EFGH" className="w-36 font-mono" aria-label="Code" spellCheck={false} autoComplete="off" />
+            <Button type="submit" variant="primary" loading={confirm.isPending}>
+              Verify
+            </Button>
+            <Button variant="ghost" onClick={() => setCheck(null)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
       )}
       <form
         className="flex items-center gap-2"

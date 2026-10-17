@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS minecraft_links (
 	name      TEXT NOT NULL,
 	linked_at INTEGER NOT NULL,
 	main      INTEGER NOT NULL DEFAULT 0,
+	-- When the player proved it is theirs, by logging in as it; 0 for not.
+	verified_at INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (user_id, uuid)
 );
 CREATE TABLE IF NOT EXISTS identities (
@@ -135,6 +137,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
+	if err := addVerifiedAt(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
 	if err := migrateMinecraftAccounts(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
@@ -143,6 +149,20 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// addVerifiedAt gives a table of linked accounts from before accounts could
+// be proven the column for it, with every account in it taken as proven.
+func addVerifiedAt(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('minecraft_links') WHERE name = 'verified_at'`).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	if _, err := db.Exec(`ALTER TABLE minecraft_links ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	_, err := db.Exec(`UPDATE minecraft_links SET verified_at = linked_at`)
+	return err
+}
 
 // migrateMinecraftAccounts moves the one Minecraft account each user could
 // link before into the table that holds several, as their main one, once.
@@ -156,7 +176,9 @@ func migrateMinecraftAccounts(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO minecraft_links (user_id, uuid, name, linked_at, main) SELECT user_id, uuid, name, linked_at, 1 FROM minecraft_accounts`); err != nil {
+	// Linked before an account could be proven, it is taken as proven:
+	// nobody already let in is shut out by the change.
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO minecraft_links (user_id, uuid, name, linked_at, main, verified_at) SELECT user_id, uuid, name, linked_at, 1, linked_at FROM minecraft_accounts`); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DROP TABLE minecraft_accounts`); err != nil {

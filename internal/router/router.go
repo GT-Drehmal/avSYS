@@ -8,9 +8,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -47,7 +50,51 @@ type Router struct {
 	// is optional. A running server sends its own; this is for the entries
 	// the router answers itself.
 	Icon func(ctx context.Context, namespace, name string) []byte
+	// Verify, if set, is told of players proving an account is theirs: a
+	// login by a name it has a check pending for, at an address no server
+	// has, has the game prove who is playing.
+	Verify Verifier
+	// HasJoined asks Mojang whether a player is who they say; nil is
+	// Mojang's own session server.
+	HasJoined mcproto.HasJoined
 }
+
+// Verifier keeps the checks of Minecraft accounts people have asked for.
+type Verifier interface {
+	// Pending says whether a check is waiting for a player of this name.
+	Pending(name string) bool
+	// Proven is told that the player who logged in as name is, as Mojang
+	// vouches, the account of this UUID. It says what to tell them.
+	Proven(ctx context.Context, name, uuid string) string
+}
+
+// mojangHasJoined asks Mojang's session server whether a player joined the
+// server of a hash, as an online-mode server does.
+func mojangHasJoined(ctx context.Context, name, hash string) (string, error) {
+	u := "https://sessionserver.mojang.com/session/minecraft/hasJoined?" + url.Values{"username": {name}, "serverId": {hash}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := mojangHTTP.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusForbidden {
+		return "", mcproto.ErrNotJoined
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("mojang answered %s", resp.Status)
+	}
+	var profile struct{ ID string }
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&profile); err != nil || profile.ID == "" {
+		return "", mcproto.ErrNotJoined
+	}
+	return profile.ID, nil
+}
+
+var mojangHTTP = &http.Client{Timeout: 10 * time.Second}
 
 // iconWait is how long a server list is kept waiting for an icon that has
 // to be read out of the server's files. One that takes longer is left out
@@ -119,14 +166,22 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 	if err != nil {
 		return
 	}
-	_ = conn.SetReadDeadline(time.Time{})
-
 	host := hs.Hostname()
 	mc, err := r.lookup(ctx, host)
 	if err != nil {
 		r.Log.Error("looking up server", "host", host, "error", err)
 		return
 	}
+	// A player proving an account is theirs joins an address no server
+	// has, so that their joins of a server are never kept from it, by
+	// whoever opened a check of their name.
+	if mc == nil && hs.NextState == mcproto.NextLogin && r.Verify != nil {
+		if name, err := mcproto.LoginName(br); err == nil && r.Verify.Pending(name) {
+			r.prove(ctx, conn, br, hs, name)
+			return
+		}
+	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	// answer replies without involving a backend: a line for the server list,
 	// or a reason shown when a join is refused.
@@ -176,6 +231,30 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 	default:
 		answer(entry{title: name, detail: "Offline.", closed: "Offline", icon: icon})
 	}
+}
+
+// prove has the game of a player with a check pending prove who is playing,
+// and tells them how it went.
+func (r *Router) prove(ctx context.Context, conn net.Conn, br *bufio.Reader, hs mcproto.Handshake, name string) {
+	joined := r.HasJoined
+	if joined == nil {
+		joined = mojangHasJoined
+	}
+	uuid, refuse, err := mcproto.Authenticate(ctx, conn, br, hs.Protocol, name, joined)
+	say := func(title, detail string) {
+		msg := mcproto.Text{Text: title + "\n\n", Extra: []mcproto.Text{{Text: detail, Color: "gray"}}}
+		if refuse != nil {
+			_ = refuse(msg)
+		} else {
+			_ = mcproto.Disconnect(conn, msg)
+		}
+	}
+	if err != nil {
+		r.Log.Info("a Minecraft account could not be proven", "name", name, "error", err)
+		say("Not verified", "Mojang could not confirm you are "+name+". Sign in as that account and try again.")
+		return
+	}
+	say("avSYS", r.Verify.Proven(ctx, name, uuid))
 }
 
 // entry is what the router says of a server it is not connecting a player
