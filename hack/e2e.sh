@@ -480,6 +480,14 @@ expect "a program put in ~/.local/bin is found by a login shell" "$own" "a tool 
 expect "the panel's own commands do not look in anyone's home" "$own" "restic is /usr/local/bin/restic"
 expect "python is there" "$own" "42"
 expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
+# What a command says on stderr reaches whoever ran it, though nothing came
+# on stdout before: the gateway once ended the output first, losing it.
+for _ in 1 2 3 4 5; do
+  said=$(ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+    -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'ls /no-such-dir' 2>&1) || true
+  case "$said" in *"No such file or directory"*) ;; *) fail "a command's error did not come through the gateway: '$said'" ;; esac
+done
+echo "ok: a command's errors come through, every time"
 
 step "extra ports"
 # A port a mod listens on beside the game is opened to players: here a web

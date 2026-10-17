@@ -170,6 +170,10 @@ func (g *Gateway) handle(ctx context.Context, nc net.Conn, cfg *ssh.ServerConfig
 	log.Info("ssh session closed")
 }
 
+// workspaceDials is how many times a workspace is tried, a second apart,
+// before it is taken as unreachable: long enough for a pod being replaced.
+var workspaceDials = 15
+
 // dialWorkspace opens an SSH connection to a server's workspace, waiting
 // briefly for a pod that is being replaced.
 func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
@@ -183,7 +187,7 @@ func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string) (
 		Timeout:         10 * time.Second,
 	}
 	var lastErr error
-	for attempt := 0; attempt < 15; attempt++ {
+	for attempt := 0; attempt < workspaceDials; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():

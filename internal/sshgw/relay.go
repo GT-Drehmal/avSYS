@@ -59,17 +59,25 @@ func relayChannels(dst ssh.Conn, chans <-chan ssh.NewChannel, env map[string]str
 // everything the closing side sent (output, stderr, exit status) is delivered
 // before the other side is closed.
 func splice(a ssh.Channel, aReqs <-chan *ssh.Request, b ssh.Channel, bReqs <-chan *ssh.Request) {
-	type half struct{ data, stderr, reqs chan struct{} }
+	type half struct{ data, stderr, sent, reqs chan struct{} }
 	run := func(dst, src ssh.Channel, srcReqs <-chan *ssh.Request) half {
-		h := half{make(chan struct{}), make(chan struct{}), make(chan struct{})}
+		h := half{make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})}
 		go func() {
 			_, _ = io.Copy(dst, src)
-			_ = dst.CloseWrite()
 			close(h.data)
 		}()
 		go func() {
 			_, _ = io.Copy(dst.Stderr(), src.Stderr())
 			close(h.stderr)
+		}()
+		// The end of what was sent only once both are through: after it,
+		// nothing more can be written, and stderr that came after the
+		// output ended would be lost.
+		go func() {
+			<-h.data
+			<-h.stderr
+			_ = dst.CloseWrite()
+			close(h.sent)
 		}()
 		go func() {
 			for req := range srcReqs {
@@ -91,8 +99,7 @@ func splice(a ssh.Channel, aReqs <-chan *ssh.Request, b ssh.Channel, bReqs <-cha
 	case <-fromB.reqs:
 		closing = fromB
 	}
-	<-closing.data
-	<-closing.stderr
+	<-closing.sent
 	a.Close()
 	b.Close()
 }
