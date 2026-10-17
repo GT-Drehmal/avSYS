@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
-import { AddContentDialog, ContentList, filtersFor, kindsFor, kindsPhrase, newestPack, PackCard, packOfVersion, type PickKind } from "../../components/Content";
+import { AddContentDialog, ContentList, filtersFor, kindsFor, kindsPhrase, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { ProjectIcon } from "../../components/ModrinthSearch";
 import { Button, Chip, Empty, Field, Input, Modal, Notice, Spinner, Toggle } from "../../components/ui";
 import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
@@ -148,7 +148,7 @@ export function Mods() {
         />
       )}
 
-      <PackSection server={server} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
+      <PackSection server={server} gameVersion={server.spec.modpack ? server.spec.modpack.gameVersion : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
 
       {adding && (
         <AddContentDialog
@@ -183,7 +183,7 @@ export function Mods() {
             // which would otherwise land after, and over, what was done.
             setLooking(true);
             try {
-              const next = v ? packOfVersion(v, project) : await newestPack(project, filtersFor(server.spec, "resourcepack", latest).gameVersion);
+              const next = v ? await packOfVersion(v, project) : await newestPack(project, filtersFor(server.spec, "resourcepack", latest).gameVersion);
               await update.mutateAsync({ resourcePack: { ...next, enforce: !!rp.enforce, prompt: rp.prompt ?? "" } });
             } catch (err) {
               if (!(err instanceof ApiError)) toast.error(err instanceof Error ? err.message : "Something went wrong.");
@@ -228,7 +228,15 @@ export function Mods() {
  * installed: one at most, chosen in the same picker, with whether it is
  * required and what the game asks.
  */
-function PackSection({ server, looking, canEdit, update, onChoose, onVersion }: { server: Server; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onVersion: () => void }) {
+function PackSection({
+  server,
+  gameVersion,
+  looking,
+  canEdit,
+  update,
+  onChoose,
+  onVersion,
+}: { server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onVersion: () => void }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
   // An uploaded one takes its file with it, which only this does.
@@ -279,6 +287,7 @@ function PackSection({ server, looking, canEdit, update, onChoose, onVersion }: 
               </>
             )}
           </PackCard>
+          <PackFit pack={pack} version={gameVersion} />
           <div className="flex flex-col gap-3 px-1">
             <Toggle checked={!!pack.enforce} disabled={!canEdit || busy} onChange={(enforce) => change({ enforce })} label="Required" hint="Players who decline the pack are disconnected." />
             <Field label="Prompt" hint="Shown when the game asks to download the pack.">

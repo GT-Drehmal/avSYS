@@ -10,6 +10,7 @@ import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
+import { PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
@@ -240,6 +241,10 @@ export function Settings() {
               )}
             </Field>
           </div>
+        )}
+        {/* What a change of version does to the pack it offers. */}
+        {!server.spec.modpack && server.spec.resourcePack?.url && draft.version !== server.spec.version && (
+          <PackFit pack={server.spec.resourcePack} version={draft.version === "LATEST" ? versions.data?.latest : draft.version} />
         )}
       </Section>
 

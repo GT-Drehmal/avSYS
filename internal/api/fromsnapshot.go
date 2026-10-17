@@ -188,7 +188,7 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	} else if rp, was := spec.ResourcePack, recorded.ResourcePack; rp != nil && was != nil && was.Uploaded != nil && rp.URL == was.URL {
 		// The original's uploaded pack, made required or given a prompt:
 		// still the one that comes in its files.
-		rp.SHA1, rp.Uploaded, rp.Project = was.SHA1, was.Uploaded, nil
+		rp.SHA1, rp.Uploaded, rp.Project, rp.Formats = was.SHA1, was.Uploaded, nil, was.Formats
 	}
 	// What its mods listen on goes with them. The public ports given out
 	// to the original are its own, and the copy gets ports of its own.
@@ -292,6 +292,11 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 	// A pack given with the copy is checked; the original's, kept or made
 	// required, is as it has it.
 	if err := checkPackSHA1(spec.ResourcePack, recorded.ResourcePack); err != nil {
+		return spec, err
+	}
+	// And its formats: given another address with the original's, they are
+	// not known to be the new pack's.
+	if err := checkPackFormats(spec.ResourcePack, recorded.ResourcePack); err != nil {
 		return spec, err
 	}
 	changed := spec.Version != recorded.Version || spec.Loader != recorded.Loader || spec.LoaderVersion != recorded.LoaderVersion

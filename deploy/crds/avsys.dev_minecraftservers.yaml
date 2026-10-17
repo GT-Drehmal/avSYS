@@ -565,6 +565,25 @@ spec:
                 properties:
                   enforce:
                     type: boolean
+                  formats:
+                    description: |-
+                      Formats are the pack formats it is made for, where known: read from
+                      its pack.mcmeta, or for one picked from Modrinth from the game
+                      versions it is listed for. Only for saying when it does not fit the
+                      server's game version.
+                    properties:
+                      max:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      min:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - max
+                    - min
+                    type: object
                   project:
                     description: |-
                       Project is set for a pack picked from Modrinth: URL and SHA1 are of
