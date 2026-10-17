@@ -279,7 +279,7 @@ export function MemberLists({ members, whitelistFrom, opFrom, whitelist, ops, on
                 <td className="px-3 py-2">
                   <div className="font-medium text-fg">{name}</div>
                   <div className="text-xs text-muted">
-                    {m.role} · {m.minecraftName ? <span className="font-mono">{m.minecraftName}</span> : "no Minecraft account linked"}
+                    {m.role} · {m.minecraftName ? <span className="font-mono">{(m.minecraftAccounts ?? []).map((a) => a.name).join(", ") || m.minecraftName}</span> : "no Minecraft account linked"}
                   </div>
                 </td>
                 {columns.map((c) => {

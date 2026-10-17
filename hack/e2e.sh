@@ -265,6 +265,16 @@ expect "a member picked is put on the whitelist, though no role is" "$(whitelist
 set_spec '{"spec":{"autoWhitelist":"viewer","whitelistMembers":{"also":[],"except":["'"$ME"'"]}}}'
 for _ in $(seq 1 20); do whitelisted | grep -q "$PLAYER" || break; sleep 1; done
 case "$(whitelisted)" in *"$PLAYER"*) fail "a member left out stays off the whitelist, though every member is on it" ;; *) echo "ok: a member left out stays off the whitelist, though every member is on it" ;; esac
+# Every account a member plays as is on it, their alts too, and an alt
+# unlinked is taken off.
+set_spec '{"spec":{"autoWhitelist":"viewer","whitelistMembers":null}}'
+ALT=$(call -d '{"name":"jeb_"}' "$API/me/minecraft-accounts" | field "[a['uuid'] for a in d if a['name'].lower() == 'jeb_'][0]") || fail "an alt could not be linked"
+for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" && break; sleep 1; done
+expect "a member's alt is on the whitelist with them" "$(whitelisted)" "jeb_"
+expect "and so is their main one" "$(whitelisted)" "$PLAYER"
+call -X DELETE "$API/me/minecraft-accounts/$ALT" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" || break; sleep 1; done
+case "$(whitelisted)" in *jeb_*) fail "an alt unlinked stays on the whitelist" ;; *) echo "ok: an alt unlinked is taken off" ;; esac
 set_spec '{"spec":{"autoWhitelist":"off","whitelistMembers":null}}'
 if [ -n "$linked_here" ]; then call -X DELETE "$API/me/minecraft" >/dev/null; fi
 

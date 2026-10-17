@@ -32,11 +32,13 @@ CREATE TABLE IF NOT EXISTS users (
 	is_admin      INTEGER NOT NULL DEFAULT 0,
 	created_at    INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS minecraft_accounts (
-	user_id   TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS minecraft_links (
+	user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	uuid      TEXT NOT NULL,
 	name      TEXT NOT NULL,
-	linked_at INTEGER NOT NULL
+	linked_at INTEGER NOT NULL,
+	main      INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (user_id, uuid)
 );
 CREATE TABLE IF NOT EXISTS identities (
 	provider TEXT NOT NULL,
@@ -133,10 +135,35 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
+	if err := migrateMinecraftAccounts(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// migrateMinecraftAccounts moves the one Minecraft account each user could
+// link before into the table that holds several, as their main one, once.
+func migrateMinecraftAccounts(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'minecraft_accounts'`).Scan(&n); err != nil || n == 0 {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO minecraft_links (user_id, uuid, name, linked_at, main) SELECT user_id, uuid, name, linked_at, 1 FROM minecraft_accounts`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE minecraft_accounts`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 var idEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 

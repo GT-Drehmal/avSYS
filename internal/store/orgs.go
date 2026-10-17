@@ -150,13 +150,15 @@ type Member struct {
 	// MinecraftUUID is that player's account, which keeps its UUID when
 	// its name changes.
 	MinecraftUUID string `json:"-"`
+	// Minecraft is every account they have linked, the main one first.
+	Minecraft []MinecraftAccount `json:"minecraftAccounts"`
 }
 
 func (s *Store) Members(ctx context.Context, orgID string) ([]Member, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT u.id, u.username, u.display_name, u.avatar_url, m.role, m.created_at, COALESCE(a.name, ''), COALESCE(a.uuid, '')
 		 FROM memberships m JOIN users u ON u.id = m.user_id
-		 LEFT JOIN minecraft_accounts a ON a.user_id = u.id
+		 LEFT JOIN minecraft_links a ON a.user_id = u.id AND a.main = 1
 		 WHERE m.org_id = ? ORDER BY m.created_at`, orgID)
 	if err != nil {
 		return nil, err
@@ -172,7 +174,11 @@ func (s *Store) Members(ctx context.Context, orgID string) ([]Member, error) {
 		m.JoinedAt = unix(joined)
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return out, s.withMinecraftAccounts(ctx, orgID, out)
 }
 
 func (s *Store) SetRole(ctx context.Context, orgID, userID string, role Role) error {
@@ -311,4 +317,33 @@ func (s *Store) AcceptInvite(ctx context.Context, token, userID string) (*Org, e
 		return nil, err
 	}
 	return org, tx.Commit()
+}
+
+// withMinecraftAccounts fills in every account each member has linked.
+func (s *Store) withMinecraftAccounts(ctx context.Context, orgID string, members []Member) error {
+	byUser := map[string]*Member{}
+	for i := range members {
+		members[i].Minecraft = []MinecraftAccount{}
+		byUser[members[i].UserID] = &members[i]
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT a.user_id, a.uuid, a.name, a.linked_at, a.main FROM minecraft_links a
+		 JOIN memberships m ON m.user_id = a.user_id WHERE m.org_id = ? ORDER BY a.main DESC, a.linked_at, a.uuid`, orgID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var user string
+		var a MinecraftAccount
+		var linked int64
+		if err := rows.Scan(&user, &a.UUID, &a.Name, &linked, &a.Main); err != nil {
+			return err
+		}
+		a.LinkedAt = unix(linked)
+		if m := byUser[user]; m != nil {
+			m.Minecraft = append(m.Minecraft, a)
+		}
+	}
+	return rows.Err()
 }

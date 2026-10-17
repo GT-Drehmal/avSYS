@@ -377,3 +377,96 @@ func TestPicksAreTidiedOnSave(t *testing.T) {
 		t.Errorf("operator picks of no member: %+v", mc.Spec.OpMembers)
 	}
 }
+
+// Someone with a main and an alt has both on a list they are on, and on no
+// list they are not.
+func TestEveryLinkedAccountIsOnTheLists(t *testing.T) {
+	members := []store.Member{
+		{UserID: "u-olive", Role: store.RoleOwner, MinecraftName: "Olive", Minecraft: []store.MinecraftAccount{{Name: "Olive", Main: true}, {Name: "OliveAlt"}, {Name: "OliveBedrock"}}},
+		{UserID: "u-vera", Role: store.RoleViewer, MinecraftName: "Vera", Minecraft: []store.MinecraftAccount{{Name: "Vera", Main: true}, {Name: "VeraAlt"}}},
+		// The same alt, linked by two: one entry.
+		{UserID: "u-ada", Role: store.RoleAdmin, MinecraftName: "Ada", Minecraft: []store.MinecraftAccount{{Name: "Ada", Main: true}, {Name: "olivealt"}}},
+	}
+	if got := strings.Join(wantedOps(&avsysv1.MinecraftServerSpec{}, members), " "); got != "Ada Olive OliveAlt OliveBedrock" {
+		t.Errorf("operators: %q", got)
+	}
+	picks := &avsysv1.MemberPicks{Also: []string{"u-vera"}, Except: []string{"u-ada"}}
+	if got := strings.Join(wantedFrom(store.RoleAdmin, picks, members), " "); got != "Olive OliveAlt OliveBedrock Vera VeraAlt" {
+		t.Errorf("admins and up, plus Vera, less Ada: %q", got)
+	}
+}
+
+// Accounts are added beside one another, one is the main one, and each can
+// be unlinked; the one-account routes are of the main one.
+func TestLinkingSeveralMinecraftAccounts(t *testing.T) {
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = offline{
+		"https://api.mojang.com/users/profiles/minecraft/steve":    `{"id":"8667ba71b85a4004af54457a9734eed7","name":"Steve"}`,
+		"https://api.mojang.com/users/profiles/minecraft/stevealt": `{"id":"1111ba71b85a4004af54457a9734eed7","name":"SteveAlt"}`,
+		"https://api.mojang.com/users/profiles/minecraft/notch":    `{"id":"069a79f444e94726a5befca90e38aaf5","name":"Notch"}`,
+	}
+	accounts := func() string {
+		_, me := p.get("operator", "GET", "/me", "")
+		list, _ := me["minecraftAccounts"].([]any)
+		out := []string{}
+		for _, a := range list {
+			m := a.(map[string]any)
+			name := m["name"].(string)
+			if m["main"] == true {
+				name += "*"
+			}
+			out = append(out, name)
+		}
+		return strings.Join(out, " ")
+	}
+	if got := accounts(); got != "" {
+		t.Fatalf("before any: %q", got)
+	}
+	for _, name := range []string{"steve", "stevealt"} {
+		if code, _ := p.do("operator", "POST", "/me/minecraft-accounts", `{"name":"`+name+`"}`); code != 200 {
+			t.Fatalf("linking %s: %d", name, code)
+		}
+	}
+	if got := accounts(); got != "Steve* SteveAlt" {
+		t.Errorf("two linked: %q", got)
+	}
+	if code, _ := p.do("operator", "POST", "/me/minecraft-accounts/1111ba71b85a4004af54457a9734eed7/main", ""); code != 200 {
+		t.Fatalf("making the alt main: %d", code)
+	}
+	if got := accounts(); got != "SteveAlt* Steve" {
+		t.Errorf("the alt made main: %q", got)
+	}
+	// Both show beside the member, the main one as their name.
+	members := p.members("alpha")
+	if members["operator"] != "SteveAlt" {
+		t.Errorf("members with their players: %v", members)
+	}
+	// Linked with the one-account route, it is the main one.
+	if code, _ := p.do("operator", "PUT", "/me/minecraft", `{"name":"notch"}`); code != 200 {
+		t.Fatal("linking with the one-account route")
+	}
+	if got := accounts(); got != "Notch* SteveAlt Steve" {
+		t.Errorf("linked as the one account: %q", got)
+	}
+	if code, _ := p.do("operator", "DELETE", "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7", ""); code != 200 {
+		t.Fatal("unlinking one")
+	}
+	if code, _ := p.do("operator", "DELETE", "/me/minecraft", ""); code != 204 {
+		t.Fatal("unlinking the main one with the one-account route")
+	}
+	if got := accounts(); got != "SteveAlt*" {
+		t.Errorf("after unlinking two: %q", got)
+	}
+	// Someone else's, or none at all, is not found; nobody signed out gets in.
+	for _, path := range []string{"/me/minecraft-accounts/1111ba71b85a4004af54457a9734eed7", "/me/minecraft-accounts/nobody"} {
+		if code, _ := p.do("admin", "DELETE", path, ""); code != 404 {
+			t.Errorf("another's DELETE %s: %d", path, code)
+		}
+	}
+	if code, _ := p.do("", "POST", "/me/minecraft-accounts", `{"name":"steve"}`); code != 401 {
+		t.Errorf("signed out: %d", code)
+	}
+	if got := accounts(); got != "SteveAlt*" {
+		t.Errorf("after another's tries: %q", got)
+	}
+}
