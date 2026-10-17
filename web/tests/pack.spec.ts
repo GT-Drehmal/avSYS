@@ -430,7 +430,7 @@ test("one picked from Modrinth is made for the formats of the game versions it i
   const asked = await packFormats(page, formats);
   const state = await survival(page, null);
   await page.goto("/o/friends/s/survival/mods");
-  await page.getByRole("button", { name: "Choose one" }).click();
+  await choosePack(page);
   let dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
   await expect(dialog).toHaveCount(0);
@@ -467,8 +467,9 @@ test("a new server's pack says when it is not made for the version chosen", asyn
   await page.goto(`/o/${slug}/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Game version").selectOption("1.21.4");
-  await page.getByRole("button", { name: "Choose a resource pack" }).click();
+  await page.getByRole("button", { name: "Add content" }).click();
   const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Resource pack", exact: true }).click();
   await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
