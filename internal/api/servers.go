@@ -379,8 +379,10 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 	}
-	if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
-		return err
+	if raw.FromSnapshot == "" && raw.FromServer == "" {
+		if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
+			return err
+		}
 	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
@@ -762,7 +764,7 @@ func (s *Server) finalSnapshot(ctx context.Context, org string, mc *avsysv1.Mine
 	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateStopped }); err != nil {
 		return nil, false, err
 	}
-	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
+	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, stopWait); err != nil {
 		return nil, false, fmt.Errorf("the server did not stop: %w", err)
 	}
 	snap, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerFinal, by)
@@ -841,11 +843,14 @@ func restartsInPlace(mc *avsysv1.MinecraftServer) bool {
 // live reads a server as it is now, where the cache may lag a change just
 // made.
 func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv1.MinecraftServer, error) {
-	if s.Reader == nil {
-		return mc, nil
+	// Read again through the client where there is no reader of its own:
+	// mc may be one a change was already merged into, and be stale.
+	reader := s.Reader
+	if reader == nil {
+		reader = s.Client
 	}
 	now := &avsysv1.MinecraftServer{}
-	if err := s.Reader.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
 		return nil, err
 	}
 	return now, nil

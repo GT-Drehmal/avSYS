@@ -344,7 +344,9 @@ func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer)
 	if finished || stateChanged || restartAsked || (specChanged && !serving) {
 		if !finished {
 			if wait := letLoad(existing, time.Now()); wait > 0 {
-				return existing, specChanged, wait, nil
+				// Only new settings for a game that goes on running are
+				// pending: a stop or a restart asked for is not.
+				return existing, specChanged && !stateChanged && !restartAsked, wait, nil
 			}
 		}
 		if err := r.Delete(ctx, existing); client.IgnoreNotFound(err) != nil {
@@ -381,13 +383,14 @@ func loading(pod *corev1.Pod) bool {
 	return cs.State.Running != nil
 }
 
-// loadGrace is how long a game is let load before it is stopped anyway: one
-// that takes longer is taken as stuck.
-const loadGrace = 5 * time.Minute
+// LoadGrace is how long a game is let load before it is stopped anyway: one
+// that takes longer is taken as stuck. Whatever waits for a server to stop
+// waits at least this long, and the time a game takes to stop, besides.
+const LoadGrace = 5 * time.Minute
 
 // letLoad is how much longer a pod's game that is loading is let finish
 // before it is stopped, or zero for one that is not loading or has had
-// loadGrace.
+// LoadGrace.
 func letLoad(pod *corev1.Pod, now time.Time) time.Duration {
 	if !loading(pod) {
 		return 0
@@ -396,7 +399,7 @@ func letLoad(pod *corev1.Pod, now time.Time) time.Duration {
 	if r := containerStatus(pod, MinecraftContainer).State.Running; r != nil {
 		since = r.StartedAt.Time
 	}
-	return max(since.Add(loadGrace).Sub(now), 0)
+	return max(since.Add(LoadGrace).Sub(now), 0)
 }
 
 func containerReady(pod *corev1.Pod, name string) bool {
