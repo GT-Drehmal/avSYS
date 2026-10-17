@@ -238,3 +238,25 @@ func TestVerifiedAtAdded(t *testing.T) {
 		t.Errorf("proving one not linked: %v", err)
 	}
 }
+
+// Accounts linked in the same second keep the order they were linked in,
+// whatever their UUIDs: the main one gone, the first linked of the rest is.
+func TestMinecraftAccountsOrderWithinASecond(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	u := user(t, s, "quick")
+	for _, a := range []MinecraftAccount{{UUID: "zzz", Name: "First"}, {UUID: "mmm", Name: "Second"}, {UUID: "aaa", Name: "Third"}} {
+		if err := s.AddMinecraftAccount(ctx, u.ID, &a, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := names(t, s, u); got != "First* Second Third" {
+		t.Errorf("linked at once: %q", got)
+	}
+	if err := s.RemoveMinecraftAccount(ctx, u.ID, "zzz"); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(t, s, u); got != "Second* Third" {
+		t.Errorf("the main one gone: %q", got)
+	}
+}

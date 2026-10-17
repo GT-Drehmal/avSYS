@@ -455,6 +455,38 @@ func TestARejectedSnapshotIsHiddenAndRemovedLater(t *testing.T) {
 	}
 }
 
+// Retention never weighs a rejected snapshot with the good ones, where it
+// could be kept in place of one: it is removed first.
+func TestRetentionRemovesRejectedFirst(t *testing.T) {
+	ws, m := workspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	sh(t, ws, `mkdir -p /data/world && echo one > /data/world/level.dat`)
+	bad, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerScheduled, Record: map[string]any{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh(t, ws, `echo two > /data/world/level.dat`)
+	good, err := m.Snapshot(ctx, "alpha", ws, Meta{Server: "probe", Trigger: TriggerScheduled, Record: map[string]any{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As when the first was found incomplete and its removal failed.
+	if err := m.reject("alpha", bad.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 1}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := m.listAll(ctx, "alpha")
+	if err != nil || len(all) != 1 || all[0].ID != good.ID {
+		t.Errorf("after retention: %+v, %v; want only %s", all, err, good.ID)
+	}
+	if len(m.rejected("alpha")) != 0 {
+		t.Error("the rejected snapshot is still noted")
+	}
+}
+
 func TestRejectedFile(t *testing.T) {
 	m := &Manager{Dir: t.TempDir()}
 	for _, id := range []string{"aaaa1111", "bbbb2222", "aaaa1111"} {
