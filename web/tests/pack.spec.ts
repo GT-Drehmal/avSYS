@@ -315,8 +315,8 @@ test("a new server can be given a pack from Modrinth when it is made", async ({ 
   await page.getByRole("button", { name: "Add content" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Resource pack", exact: true }).click();
-  // Nowhere to put a file until the server exists.
-  await expect(dialog.getByRole("button", { name: "Upload", exact: true })).toHaveCount(0);
+  // One from this computer could be chosen too, uploaded once it is made.
+  await expect(dialog.getByRole("button", { name: "Upload", exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
   await expect(dialog).toHaveCount(0);
   await page.getByRole("switch", { name: "Pack required" }).click();

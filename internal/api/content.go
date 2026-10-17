@@ -557,9 +557,12 @@ func contentFilename(name string, kind avsysv1.ContentKind) (string, error) {
 }
 
 // uploadContent stores a mod, plugin or datapack sent from someone's computer
-// on the server's volume and lists it in the server's content.
+// on the server's volume and lists it in the server's content. With
+// ?wait=true it is for a server made a moment ago, made stopped to be given
+// it first: its volume is waited for.
 func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, mc, err := s.server(r, u, store.RoleAdmin)
+	wait := r.URL.Query().Get("wait") == "true"
+	a, mc, err := s.serverMaybeNew(r, u, wait)
 	if err != nil {
 		return err
 	}
@@ -590,11 +593,12 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 		return errBadRequest("%s is not a valid %s file.", name, path.Ext(name))
 	}
 
-	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
+	sc, done, err := s.filesOf(r.Context(), mc, wait)
 	if err != nil {
 		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
 		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. It may be restarting."}
 	}
+	defer done()
 	if err := sc.MkdirAll(controller.ContentDir); err != nil {
 		return fileError(err)
 	}

@@ -557,6 +557,27 @@ copy=$(call "$SRV/snapshots" | field "[s['id'] for s in d['snapshots'] if s['tri
 expect "deleting several stops at one that is unknown" "$(call -o /dev/null -w '%{http_code}' -X DELETE -d "{\"ids\":[\"$copy\",\"0000000000000000\"]}" "$API/orgs/$ORG/snapshots")" 404
 expect "the snapshot it was made from is an ordinary one" "$(call -X DELETE -d "{\"ids\":[\"$copy\"]}" "$API/orgs/$ORG/snapshots" | field "d['deleted']")" 1
 
+step "a new server given files from this computer"
+# As the new-server form does it: made stopped, its files sent straight
+# after, before its volume is there, which is waited for; then started.
+FRESH=$API/orgs/$ORG/servers/fresh
+made=$(call -d '{"name":"fresh","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"2Gi"},"storage":{"size":"2Gi"}}}' "$API/orgs/$ORG/servers")
+case "$made" in *'"spec"'*) ;; *) fail "the server was not made: $made" ;; esac
+curl -sSfL -o "$WORK/veinminer.zip" "$PACK" || fail "could not fetch the datapack to upload"
+sent=$(call -X PUT --data-binary @"$WORK/veinminer.zip" "$FRESH/content?kind=datapack&name=Veinminer-1.2.4.zip&wait=true")
+expect "a file sent before its volume is there waits for it, and is listed" "$(echo "$sent" | field "[m['project'] for m in d['spec']['mods'] if m['source'] == 'upload']")" "['Veinminer-1.2.4.zip']"
+packed=$(call -X PUT --data-binary @"$WORK/pack.zip" "$FRESH/resource-pack?name=e2e-pack.zip&wait=true")
+expect "and so does a resource pack" "$(echo "$packed" | field "d['spec']['resourcePack']['sha1']")" "$PACK_SHA"
+call -X POST "$FRESH/start" >/dev/null
+wait_phase Running "$FRESH"
+expect "started, the game has the datapack" "$(call -d '{"command":"datapack list enabled"}' "$FRESH/console" | field "d['output']")" "Veinminer-1.2.4.zip"
+expect "and offers the pack" "$(call "$FRESH/files/content?path=/server.properties" | python3 -c 'import sys; p = dict(l.split("=", 1) for l in sys.stdin.read().splitlines() if "=" in l and not l.startswith("#")); print(p.get("resource-pack-sha1"))')" "$PACK_SHA"
+call -o /dev/null -X DELETE "$FRESH?snapshot=false"
+for _ in $(seq 1 30); do
+  [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
+  sleep 2
+done
+
 step "snapshots outlive the server"
 # Something that is in no snapshot yet. Deleting the server must not lose it.
 echo "written just before the end" | call -X PUT --data-binary @- "$SRV/files/content?path=/last.txt" >/dev/null
