@@ -188,23 +188,28 @@ func (m *Manager) rejectedFile(org string) string { return filepath.Join(m.Dir, 
 // removed yet: retention waits for it.
 var ErrRejectedLeft = errors.New("an incomplete snapshot could not be removed yet, so none are let go of until it is")
 
-// rejected is the set of an organization's rejected snapshots.
-func (m *Manager) rejected(org string) map[string]bool {
+// rejected is the set of an organization's rejected snapshots. Only a file
+// that is not there means none: one that cannot be read is an error, so that
+// a rejected snapshot is never listed for want of reading it.
+func (m *Manager) rejected(org string) (map[string]bool, error) {
 	m.rejectedMu.Lock()
 	defer m.rejectedMu.Unlock()
 	return m.readRejected(org)
 }
 
-func (m *Manager) readRejected(org string) map[string]bool {
+func (m *Manager) readRejected(org string) (map[string]bool, error) {
 	out := map[string]bool{}
 	data, err := os.ReadFile(m.rejectedFile(org))
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("reading the rejected snapshots: %w", err)
 	}
 	for _, id := range strings.Fields(string(data)) {
 		out[id] = true
 	}
-	return out
+	return out, nil
 }
 
 // reject adds a snapshot to its organization's rejected ones, or with gone
@@ -212,7 +217,10 @@ func (m *Manager) readRejected(org string) map[string]bool {
 func (m *Manager) reject(org, id string, gone bool) error {
 	m.rejectedMu.Lock()
 	defer m.rejectedMu.Unlock()
-	ids := m.readRejected(org)
+	ids, err := m.readRejected(org)
+	if err != nil {
+		return err
+	}
 	if gone {
 		delete(ids, id)
 	} else {
@@ -239,7 +247,12 @@ func (m *Manager) reject(org, id string, gone bool) error {
 // removeRejected tries again to remove the snapshots of an organization that
 // were rejected and are still there.
 func (m *Manager) removeRejected(ctx context.Context, org string) {
-	for id := range m.rejected(org) {
+	ids, err := m.rejected(org)
+	if err != nil {
+		m.Log.Warn("could not read the rejected snapshots", "org", org, "error", err)
+		return
+	}
+	for id := range ids {
 		err := m.Delete(ctx, org, id)
 		if err == nil || errors.Is(err, ErrNotFound) {
 			if err := m.reject(org, id, true); err != nil {
@@ -429,7 +442,10 @@ func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	rejected := m.rejected(org)
+	rejected, err := m.rejected(org)
+	if err != nil {
+		return nil, err
+	}
 	if len(rejected) == 0 {
 		return all, nil
 	}
@@ -650,7 +666,9 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (in
 	// rest, and could be kept in place of a good one: nothing is let go of
 	// until it is gone.
 	m.removeRejected(ctx, org)
-	if left := m.rejected(org); len(left) > 0 {
+	if left, err := m.rejected(org); err != nil {
+		return 0, err
+	} else if len(left) > 0 {
 		return 0, ErrRejectedLeft
 	}
 	lock := m.lock(org)
