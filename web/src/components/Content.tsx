@@ -80,6 +80,8 @@ interface AddContentProps {
   busy?: boolean;
   /** Stores a file from this computer on the server. Omit where there is no server yet. */
   onUpload?: (file: File, kind: ContentKind) => Promise<unknown>;
+  /** What happens to files chosen to upload, where it is not the usual. */
+  uploadNote?: string;
   description: string;
   /** The resource pack, where it can be chosen here too. */
   pack?: PackPicker;
@@ -95,10 +97,12 @@ export interface PackPicker {
   onPick: (pack: ResourcePack) => Promise<unknown>;
   /** Where one is uploaded, for a server that exists, and what to do with the server after. */
   upload?: { path: string; onDone: (next: Server) => void };
+  /** For a server not made yet: keeps the file chosen, to upload once it is. */
+  keep?: (file: File) => void;
 }
 
 /** A dialog for picking mods, plugins, datapacks or the resource pack, from Modrinth, a URL or this computer. */
-export function AddContentDialog({ software, mods, onAdd, busy, onUpload, description, pack, start, onClose }: AddContentProps) {
+export function AddContentDialog({ software, mods, onAdd, busy, onUpload, uploadNote, description, pack, start, onClose }: AddContentProps) {
   const kinds: PickKind[] = [...kindsFor(software), ...(pack ? (["resourcepack"] as const) : [])];
   const [kind, setKind] = useState<PickKind>(start && kinds.includes(start) ? start : kinds[0]);
   const [tab, setTab] = useState<"modrinth" | "url" | "upload">("modrinth");
@@ -131,7 +135,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
   const filters = filtersFor(software, kind, latest);
 
   const tabClass = (active: boolean) => cx("h-7 rounded-sm px-2.5 text-xs font-medium", active ? "bg-hover text-fg" : "text-muted hover:text-fg");
-  const canUpload = kind === "resourcepack" ? !!pack?.upload : !!onUpload;
+  const canUpload = kind === "resourcepack" ? !!(pack?.upload || pack?.keep) : !!onUpload;
   const sourceTab = tab === "upload" && !canUpload ? "modrinth" : tab;
   return (
     <Modal open onOpenChange={onClose} size="lg" title="Add content" description={kind === "resourcepack" ? "Offered to each player's game as they join." : description}>
@@ -201,7 +205,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, descri
                 <Upload className="size-5 text-muted" />
                 <p className="text-[13px] font-medium">Choose {extension} files, or drop them here</p>
                 <p className="max-w-sm text-xs leading-relaxed text-muted">
-                  For {kindNames[kind].toLowerCase()} you have on this computer. They are stored with the server and installed when it next starts.
+                  For {kindNames[kind].toLowerCase()} you have on this computer. {uploadNote ?? "They are stored with the server and installed when it next starts."}
                 </p>
               </>
             )}
@@ -295,7 +299,14 @@ function PackPane({
     }
   };
   const upload = async (file: File | undefined) => {
-    if (!file || !pack.upload || busy) return;
+    if (!file || busy) return;
+    // Not made yet: kept, and uploaded once it is.
+    if (pack.keep) {
+      pack.keep(file);
+      onClose();
+      return;
+    }
+    if (!pack.upload) return;
     try {
       pack.upload.onDone(await send<Server>(file.name, `${pack.upload.path}?name=${encodeURIComponent(file.name)}`, file));
       toast.info(`${file.name} is the resource pack now`);
@@ -404,7 +415,13 @@ export function PackCard({ pack, children }: { pack: ResourcePack; children?: Re
           )}
         </p>
         <p className="truncate font-mono text-xs text-faint">
-          {pack.uploaded ? `${bytes(pack.uploaded.size)} · uploaded ${ago(pack.uploaded.time)} · served by the panel` : p ? `modrinth:${p.id}` : pack.url}
+          {pack.uploaded && !pack.url
+            ? `${bytes(pack.uploaded.size)} · uploaded once the server is made`
+            : pack.uploaded
+              ? `${bytes(pack.uploaded.size)} · uploaded ${ago(pack.uploaded.time)} · served by the panel`
+              : p
+                ? `modrinth:${p.id}`
+                : pack.url}
         </p>
       </div>
       <Chip>resource pack</Chip>
@@ -444,10 +461,12 @@ interface ContentListProps {
   gameJava?: number;
   /** Rendered between an entry's kind and its remove button, e.g. a version picker. */
   extra?: (mod: ContentRef, index: number) => ReactNode;
+  /** Said of an entry in place of where it comes from, where there is more to say. */
+  note?: (mod: ContentRef, index: number) => string | undefined;
   onRemove?: (index: number) => void;
 }
 
-export function ContentList({ mods, gameJava, extra, onRemove }: ContentListProps) {
+export function ContentList({ mods, gameJava, extra, note, onRemove }: ContentListProps) {
   return (
     <ul className="overflow-hidden rounded-lg border border-line bg-surface">
       {mods.map((m, i) => (
@@ -462,7 +481,7 @@ export function ContentList({ mods, gameJava, extra, onRemove }: ContentListProp
                 </a>
               )}
             </p>
-            <p className="truncate font-mono text-xs text-faint">{sourceLine(m)}</p>
+            <p className="truncate font-mono text-xs text-faint">{note?.(m, i) ?? sourceLine(m)}</p>
           </div>
           {!!gameJava && !!m.java && m.java > gameJava && (
             <Chip className="border-warn/40 text-warn" >needs Java {m.java}</Chip>
