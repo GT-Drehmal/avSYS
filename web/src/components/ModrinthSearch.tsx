@@ -240,7 +240,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
         {hasNextPage &&
           (isFetchNextPageError ? (
             <li className="flex items-center justify-center gap-3 py-3 text-xs text-muted">
-              More could not be loaded.
+              Could not load more.
               <Button size="sm" onClick={() => fetchNextPage()}>
                 Try again
               </Button>

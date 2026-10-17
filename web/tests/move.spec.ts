@@ -25,7 +25,6 @@ test("a server is moved to another node that has room, after saying what that do
   });
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByText("Runs on fast.")).toBeVisible();
-  await expect(page.getByText("Its files are on that node's own disk.")).toBeVisible();
   const to = page.getByLabel("Move to");
   // Not the node it is on, and not one without room for its 4 GB.
   await expect(to.locator('option[value="fast"]')).toHaveCount(0);
@@ -35,7 +34,7 @@ test("a server is moved to another node that has room, after saying what that do
   await page.getByRole("button", { name: "Move", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Move survival to pi?" })).toBeVisible();
-  await expect(dialog).toContainText("its files are saved to a snapshot and put back on pi");
+  await expect(dialog).toContainText("its files move to pi");
   await dialog.getByRole("button", { name: "Move", exact: true }).click();
   await expect.poll(() => sent).toEqual([{ node: "pi" }]);
   await expect(page.getByText("Moving survival to pi")).toBeVisible();
@@ -44,16 +43,16 @@ test("a server is moved to another node that has room, after saying what that do
 test("a server whose files are not tied to a node is only started again there", async ({ page }) => {
   await page.route("**/api/v1/orgs/friends/servers/survival/placement", (route) => route.fulfill({ json: { node: "fast", local: false } }));
   await page.goto("/o/friends/s/survival/settings");
-  await expect(page.getByText("Its files are not tied to a node.")).toBeVisible();
+  await expect(page.getByText("Runs on fast.")).toBeVisible();
   await page.getByLabel("Move to").selectOption("pi");
   await page.getByRole("button", { name: "Move", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("it is only started again on pi");
+  await expect(page.getByRole("dialog")).toContainText("It starts again on pi");
 });
 
 test("a server kept to nodes by labels set outside the panel is not offered a move", async ({ page }) => {
   await page.route("**/api/v1/orgs/friends/servers/survival/placement", (route) => route.fulfill({ json: { node: "fast", local: true, labels: { disk: "ssd" } } }));
   await page.goto("/o/friends/s/survival/settings");
-  await expect(page.getByText(/Kept to the nodes labelled/)).toContainText("disk=ssd");
+  await expect(page.getByText(/Kept to nodes labelled/)).toContainText("disk=ssd");
   await expect(page.getByLabel("Move to")).toHaveCount(0);
 });
 
@@ -62,6 +61,6 @@ test("with one node there is nowhere to move it", async ({ page }) => {
   await page.route("**/api/v1/nodes?*", (route) => route.fulfill({ json: { automatic: "fast", nodes: nodes.nodes.slice(0, 1) } }));
   await page.route("**/api/v1/orgs/friends/servers/survival/placement", (route) => route.fulfill({ json: { node: "fast", local: true } }));
   await page.goto("/o/friends/s/survival/settings");
-  await expect(page.getByText("There is no other node to move it to.")).toBeVisible();
+  await expect(page.getByText("No other node to move it to.")).toBeVisible();
   await expect(page.getByLabel("Move to")).toHaveCount(0);
 });

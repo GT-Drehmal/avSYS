@@ -121,11 +121,11 @@ func checkJVM(jvm *avsysv1.JVMSpec) error {
 	for _, f := range flags {
 		switch {
 		case !strings.HasPrefix(f, "-"):
-			return errBadRequest("%q is not a JVM option: each starts with a dash, as -XX:+AlwaysPreTouch.", f)
+			return errBadRequest("%q is not a JVM option. Options start with a dash.", f)
 		case heapFlags.MatchString(f):
-			return errBadRequest("%s sets the heap, which is the server's memory. Change Memory instead.", f)
+			return errBadRequest("%s sets the memory. Change Memory instead.", f)
 		case aikar && collectors.MatchString(f):
-			return errBadRequest("%s picks a garbage collector, and Aikar's flags pick G1. Switch Aikar's flags off to use another.", f)
+			return errBadRequest("%s does not work with Aikar's flags. Turn them off to use it.", f)
 		}
 	}
 	jvm.ExtraFlags = strings.Join(flags, "\n")
@@ -463,7 +463,7 @@ func (s *Server) serviceNameIsFree(ctx context.Context, namespace, name string) 
 	// The name is that server's from when it is made, before its Service is.
 	if base, ok := strings.CutSuffix(name, "-ports"); ok {
 		if err := s.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: base}, &avsysv1.MinecraftServer{}); err == nil {
-			return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is the name %s's extra ports are opened under. Choose another.", name, base)}
+			return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is used by %s's extra ports. Choose another name.", name, base)}
 		} else if !apierrors.IsNotFound(err) {
 			return err
 		}
@@ -477,7 +477,7 @@ func (s *Server) serviceNameIsFree(ctx context.Context, namespace, name string) 
 		return err
 	}
 	if owner := metav1.GetControllerOf(svc); owner != nil && owner.Kind == "MinecraftServer" && owner.Name != name {
-		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is the name %s's extra ports are opened under. Choose another.", name, owner.Name)}
+		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is used by %s's extra ports. Choose another name.", name, owner.Name)}
 	}
 	return nil
 }
@@ -517,7 +517,7 @@ func (s *Server) nameIsFree(ctx context.Context, a *access, name string) error {
 }
 
 func errNameHasHistory(name string) error {
-	return &Error{Status: http.StatusConflict, Code: "name_has_history", Message: fmt.Sprintf("There are snapshots of an earlier server named %s, and the name goes with them. Bring that server back from one of them, or give this one another name. Deleting all of them frees the name.", name)}
+	return &Error{Status: http.StatusConflict, Code: "name_has_history", Message: fmt.Sprintf("A deleted server named %s still has snapshots. Bring it back, or choose another name.", name)}
 }
 
 // updateServer applies a JSON merge patch to the server's spec: fields left
@@ -727,12 +727,12 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if unfinished(mc) == nil {
 		snap, stopped, err := s.finalSnapshot(ctx, a.Org.Slug, mc, op, u.Username)
 		if err != nil {
-			state := "It was left as it was."
+			state := "Nothing changed."
 			if stopped {
 				state = "It is stopped now."
 			}
 			return fail(&Error{Status: http.StatusBadGateway, Code: "snapshot_failed",
-				Message: fmt.Sprintf("%s was not deleted, because a final snapshot of it could not be taken: %s. %s To delete it without one, say so when deleting.", mc.Name, operationFailed(err).Error(), state)})
+				Message: fmt.Sprintf("%s was not deleted: the final snapshot failed: %s. %s To delete it anyway, turn off the final snapshot.", mc.Name, operationFailed(err).Error(), state)})
 		}
 		if snap != nil {
 			detail = "final snapshot " + snap.ID
@@ -922,10 +922,10 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 			p.Protocol = corev1.ProtocolTCP
 		}
 		if len(p.Name) > 15 || !portName.MatchString(p.Name) {
-			return errBadRequest("A port's name is up to 15 lowercase letters, digits and dashes, starting with a letter and ending with a letter or digit, with no two dashes together, as voice-chat.")
+			return errBadRequest("Port names are up to 15 lowercase letters, digits and dashes, like voice-chat. Start with a letter, end with a letter or digit, and use no double dashes.")
 		}
 		if p.Name == "minecraft" {
-			return errBadRequest("minecraft is the game port's name; call it something else.")
+			return errBadRequest("minecraft is the game port's name. Choose another.")
 		}
 		if p.Port < 1 || p.Port > 65535 {
 			return errBadRequest("%d is not a port.", p.Port)
@@ -934,14 +934,14 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 			return errBadRequest("25565 is the game's own port, not an extra one.")
 		}
 		if p.Port == 25575 {
-			return errBadRequest("25575 is the game's console, and is not opened.")
+			return errBadRequest("25575 is the game's console port and cannot be opened.")
 		}
 		if p.Protocol != corev1.ProtocolTCP && p.Protocol != corev1.ProtocolUDP {
 			return errBadRequest("A port is TCP or UDP.")
 		}
 		key := fmt.Sprintf("%d/%s", p.Port, p.Protocol)
 		if names[p.Name] || numbers[key] {
-			return errBadRequest("Each port is there once: %s (%s) appears twice.", p.Name, key)
+			return errBadRequest("%s (%s) is listed twice.", p.Name, key)
 		}
 		names[p.Name], numbers[key] = true, true
 	}

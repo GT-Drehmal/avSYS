@@ -358,7 +358,7 @@ expect "an uploaded pack is the server's, at its hash" "$(echo "$packed" | field
 expect "and is made for the formats its pack.mcmeta says" "$(echo "$packed" | field "d['spec']['resourcePack'].get('formats')")" "{'min': 46, 'max': 46}"
 expect "and served to anyone, as a game fetches it" "$(curl -sS "$PACK_URL" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
 expect "it is kept in the server's files" "$(call "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
-expect "a pack a folder down is refused, saying so" "$(call -X PUT --data-binary @"$WORK/nested.zip" "$SRV/resource-pack?name=nested.zip" | field "d['message']")" "in a folder, E2E Pack"
+expect "a pack a folder down is refused, saying so" "$(call -X PUT --data-binary @"$WORK/nested.zip" "$SRV/resource-pack?name=nested.zip" | field "d['message']")" "inside the folder E2E Pack"
 restarted
 expect "the game offers it to players" "$(call "$SRV/files/content?path=/server.properties" | python3 -c 'import sys; p = dict(l.split("=", 1) for l in sys.stdin.read().replace("\\:", ":").splitlines() if "=" in l and not l.startswith("#")); print(p.get("resource-pack"), p.get("resource-pack-sha1"))')" "$PACK_URL $PACK_SHA"
 game_clean "and reads all that was written for the pack, its prompt too"

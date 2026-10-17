@@ -100,14 +100,14 @@ test("the console says a server is starting, and only a stopped one is not runni
     route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: waiting\ndata: null\n\n" }),
   );
   await page.goto("/o/friends/s/creative");
-  await expect(page.getByText("This server is not running. Its log appears here once it starts.")).toBeVisible();
+  await expect(page.getByText("The server is not running.")).toBeVisible();
 
   await page.route("**/api/v1/orgs/friends/servers", async (route) => {
     const list = await (await route.fetch()).json();
     return route.fulfill({ json: list.map((s: { name: string; status: object }) => (s.name === "creative" ? { ...s, status: { ...s.status, phase: "Starting" } } : s)) });
   });
   await page.reload();
-  await expect(page.getByText("The game is starting. Its log appears here as soon as it is up.")).toBeVisible();
+  await expect(page.getByText("The server is starting.")).toBeVisible();
 });
 
 test("earlier logs and crash reports can be opened from the console, searched and downloaded", async ({ page, as }) => {
@@ -242,14 +242,14 @@ test("an organization's domains are set by the panel's administrator, and shown 
 
   // The new-server form says which are its own.
   await page.goto(`/o/${a}/new`);
-  await expect(page.getByText(`This organization's domains: ${mine}.`)).toBeVisible();
+  await expect(page.getByText(`Your domains: ${mine}.`)).toBeVisible();
 });
 
 test("an organization's admin sees its domains and cannot change them", async ({ page, as }) => {
   await as("admin");
   await page.goto("/o/friends/settings");
   await expect(page.getByRole("heading", { name: "Domains" })).toBeVisible();
-  await expect(page.getByText(/Given by the panel's administrator/)).toBeVisible();
+  await expect(page.getByText(/Set by the panel's administrator/)).toBeVisible();
   await expect(page.getByLabel("One per line")).toHaveCount(0);
 });
 

@@ -85,9 +85,9 @@ func checkPack(f io.ReaderAt, size int64) (*avsysv1.PackFormats, error) {
 		}
 	}
 	if nested != "" && len(folders) == 1 {
-		return nil, errBadRequest("The pack is in a folder, %s, inside the zip. Zip what is inside that folder instead, so that pack.mcmeta is at the top.", nested)
+		return nil, errBadRequest("The pack is inside the folder %s. Zip what is inside that folder instead.", nested)
 	}
-	return nil, errBadRequest("There is no pack.mcmeta at the top of that zip, so it is not a resource pack.")
+	return nil, errBadRequest("There is no pack.mcmeta at the top of that zip.")
 }
 
 // packFits says whether a server's uploaded pack is one the game of its
@@ -102,7 +102,7 @@ func packFits(spec *avsysv1.MinecraftServerSpec) error {
 // checkMeta says whether pack.mcmeta is what the game reads it as: a file of
 // JSON with a pack in it, and which formats it says the pack is made for.
 func checkMeta(e *zip.File) (*avsysv1.PackFormats, error) {
-	bad := errBadRequest("pack.mcmeta in that zip is not a pack's metadata: the game could not read it.")
+	bad := errBadRequest("The pack.mcmeta in that zip is not valid.")
 	if e.FileInfo().IsDir() {
 		return nil, bad
 	}
@@ -165,7 +165,7 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	// One change to its files at a time: content, and its pack.
 	defer s.lockContent(client.ObjectKeyFromObject(mc))()
 	if s.Config.PackDir == "" {
-		return &Error{Status: http.StatusServiceUnavailable, Code: "packs_unavailable", Message: "This panel has nowhere to keep resource packs."}
+		return &Error{Status: http.StatusServiceUnavailable, Code: "packs_unavailable", Message: "Resource pack uploads are not set up on this panel."}
 	}
 	limit := packLimit(mc.Spec.Version)
 	if err := os.MkdirAll(s.Config.PackDir, 0o750); err != nil {
@@ -180,7 +180,7 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	h := sha1.New()
 	size, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r.Body, limit+1))
 	if err != nil {
-		return errBadRequest("The upload did not arrive whole.")
+		return errBadRequest("The upload was incomplete.")
 	}
 	if size > limit {
 		return errBadRequest("That pack is over %d MB, the most the game takes for %s.", limit>>20, mc.Spec.Version)

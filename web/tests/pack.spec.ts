@@ -84,7 +84,7 @@ test("one at a URL replaces the one there was, with its hash and the same settin
   await page.goto("/o/friends/s/survival/content");
   await page.getByRole("button", { name: "Replace" }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("A server offers one resource pack. Choosing one here replaces Faithful 32x.")).toBeVisible();
+  await expect(dialog.getByText("This replaces Faithful 32x.")).toBeVisible();
   // The one it has is shown as such.
   await expect(dialog.getByRole("button", { name: /^Faithful 32x/ })).toBeDisabled();
   await dialog.getByRole("button", { name: "From URL" }).click();
@@ -120,7 +120,7 @@ test("one at a URL is given its SHA-1, or taken without one when the panel canno
   await dialog.getByRole("button", { name: "From URL" }).click();
   await dialog.getByLabel("Download URL").fill("https://players-only.example.org/other.zip");
   await dialog.getByRole("button", { name: "Use this pack" }).click();
-  await expect(page.getByText(/Its SHA-1 could not be worked out \(The panel could not reach that address\.\)/)).toBeVisible();
+  await expect(page.getByText(/Could not get its SHA-1 \(The panel could not reach that address\.\)/)).toBeVisible();
   expect(hashed).toBe(1);
   expect(state.sent[1].resourcePack).toMatchObject({ url: "https://players-only.example.org/other.zip", sha1: "" });
 });
@@ -233,7 +233,7 @@ test("one uploaded in the picker is kept and served by the panel, and removing i
   await expect(dialog).toHaveCount(0);
   expect(state.asked).toEqual(["PUT ?name=faithful.zip"]);
   await expect(page.getByText("faithful.zip", { exact: true })).toBeVisible();
-  await expect(page.getByText(/3\.0 MB · uploaded .* · served by the panel/)).toBeVisible();
+  await expect(page.getByText(/3\.0 MB · uploaded /)).toBeVisible();
 
   await page.getByRole("button", { name: "Remove the resource pack" }).click();
   await expect.poll(() => state.asked).toEqual(["PUT ?name=faithful.zip", "DELETE "]);
@@ -245,7 +245,7 @@ test("an upload says how far it is and can be stopped, and says why the panel re
   const asked: string[] = [];
   await page.route("**/api/v1/orgs/friends/servers/survival/resource-pack*", async (route) => {
     asked.push(route.request().method());
-    if (refuse) return route.fulfill({ status: 400, json: { code: "bad_request", message: "There is no pack.mcmeta at the top of that zip, so it is not a resource pack." } });
+    if (refuse) return route.fulfill({ status: 400, json: { code: "bad_request", message: "There is no pack.mcmeta at the top of that zip." } });
     // Never answered: it is still on its way when it is stopped.
     await new Promise(() => {});
   });
@@ -266,7 +266,7 @@ test("an upload says how far it is and can be stopped, and says why the panel re
 
   refuse = true;
   await dialog.getByLabel("Resource pack file").setInputFiles(pack);
-  await expect(page.getByText("There is no pack.mcmeta at the top of that zip, so it is not a resource pack.")).toBeVisible();
+  await expect(page.getByText("There is no pack.mcmeta at the top of that zip.")).toBeVisible();
   await expect(status).toHaveCount(0);
   expect(asked).toEqual(["PUT", "PUT"]);
 });
@@ -372,7 +372,7 @@ test("files put in the file explorer are uploaded one by one, saying which and h
   // One upload at a time: another is not started while this one is under way.
   await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
   await page.locator('input[type="file"]').setInputFiles({ name: "other.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
-  await expect(page.getByText("Wait for the upload under way to finish, or cancel it.")).toBeVisible();
+  await expect(page.getByText("Wait for the current upload to finish, or cancel it.")).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "world.zip (1 of 2)" })).toBeVisible();
   await expect.poll(() => answer).toBeDefined();
   answer?.();
@@ -404,7 +404,7 @@ test("a pack made for an older or newer version of the game than the server's sa
   await survival(page, { ...picked, formats: { min: 15, max: 15 } });
   await page.goto("/o/friends/s/survival/content");
   const section = page.locator("section").filter({ hasText: "Resource pack" });
-  await expect(section.getByText("This pack is made for an older version of the game (pack format 15; 1.21.4 reads 46). Players' games still load it, but what has changed since, such as custom shaders, models and sounds, may not work.")).toBeVisible();
+  await expect(section.getByText("This pack is for an older game version (pack format 15; 1.21.4 uses 46). Some parts may not work.")).toBeVisible();
 });
 
 test("a pack made for the server's version, or a range with it, says nothing", async ({ page }) => {
@@ -446,7 +446,7 @@ test("one picked from Modrinth is made for the formats of the game versions it i
   await dialog.getByRole("button", { name: "Use this pack" }).click();
   await expect(dialog).toHaveCount(0);
   expect(state.sent[1].resourcePack).toMatchObject({ url: "https://packs.example.org/new.zip", formats: { min: 88, max: 97 }, project: null });
-  await expect(page.getByText("This pack is made for a newer version of the game (pack formats 88 to 97; 1.21.4 reads 46). Players' games still load it, but what it uses from newer versions will not work.")).toBeVisible();
+  await expect(page.getByText("This pack is for a newer game version (pack formats 88 to 97; 1.21.4 uses 46). Some parts may not work.")).toBeVisible();
 });
 
 test("changing the game version in settings says when the pack is not made for the new one", async ({ page }) => {
@@ -456,7 +456,7 @@ test("changing the game version in settings says when the pack is not made for t
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
   await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
   await page.getByLabel("Game version").selectOption("26.3");
-  await expect(page.getByText(/This pack is made for an older version of the game \(pack format 46; 26\.3 reads 97\)/)).toBeVisible();
+  await expect(page.getByText(/This pack is for an older game version \(pack format 46; 26\.3 uses 97\)/)).toBeVisible();
   await page.getByLabel("Game version").selectOption("1.21.4");
   await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
 });
@@ -475,5 +475,5 @@ test("a new server's pack says when it is not made for the version chosen", asyn
   await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
   await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
   await page.getByLabel("Game version").selectOption("26.3");
-  await expect(page.getByText(/This pack is made for an older version of the game \(pack format 46; 26\.3 reads 97\)/)).toBeVisible();
+  await expect(page.getByText(/This pack is for an older game version \(pack format 46; 26\.3 uses 97\)/)).toBeVisible();
 });

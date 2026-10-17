@@ -138,7 +138,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
   const canUpload = kind === "resourcepack" ? !!(pack?.upload || pack?.keep) : !!onUpload;
   const sourceTab = tab === "upload" && !canUpload ? "modrinth" : tab;
   return (
-    <Modal open onOpenChange={onClose} size="lg" title="Add content" description={kind === "resourcepack" ? "Offered to each player's game as they join." : description}>
+    <Modal open onOpenChange={onClose} size="lg" title="Add content" description={kind === "resourcepack" ? "Offered to players when they join." : description}>
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex gap-1 rounded-md border border-line bg-bg p-0.5">
@@ -205,7 +205,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
                 <Upload className="size-5 text-muted" />
                 <p className="text-[13px] font-medium">Choose {extension} files, or drop them here</p>
                 <p className="max-w-sm text-xs leading-relaxed text-muted">
-                  For {kindNames[kind].toLowerCase()} you have on this computer. {uploadNote ?? "They are stored with the server and installed when it next starts."}
+                  {uploadNote ?? "Installed when the server next starts."}
                 </p>
               </>
             )}
@@ -317,7 +317,7 @@ function PackPane({
   };
   return (
     <div className="flex flex-col gap-3">
-      {current && <Notice tone="info">A server offers one resource pack. Choosing one here replaces {packTitle(current)}.</Notice>}
+      {current && <Notice tone="info">This replaces {packTitle(current)}.</Notice>}
       {tab === "modrinth" ? (
         <div className="h-[min(56vh,520px)]">
           <ModrinthSearch
@@ -351,7 +351,7 @@ function PackPane({
             <>
               <Upload className="size-5 text-muted" />
               <p className="text-[13px] font-medium">Choose a .zip</p>
-              <p className="max-w-sm text-xs leading-relaxed text-muted">With pack.mcmeta at its top. The panel keeps it with the server's files and serves it to players.</p>
+              <p className="max-w-sm text-xs leading-relaxed text-muted">With pack.mcmeta at its top.</p>
             </>
           )}
         </label>
@@ -372,7 +372,7 @@ function PackPane({
               let formats: PackFormats | null = null;
               if (!hash) {
                 const got = await api.post<{ sha1: string; formats?: PackFormats }>("/catalog/sha1", { url: address }).catch((err) => {
-                  toast.info(`Its SHA-1 could not be worked out (${err instanceof Error ? err.message : "the panel could not fetch it"}), so players' games fetch it on every join. Give it here to change that.`);
+                  toast.info(`Could not get its SHA-1 (${err instanceof Error ? err.message : "could not download it"}). Players download it on every join until you enter one.`);
                   return null;
                 });
                 hash = got?.sha1 ?? "";
@@ -382,10 +382,10 @@ function PackPane({
             });
           }}
         >
-          <Field label="Download URL" hint="A direct link to the .zip, which every player must be able to reach.">
+          <Field label="Download URL" hint="A direct link to the .zip that players can reach.">
             {(id) => <Input id={id} type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/pack.zip" className="font-mono" />}
           </Field>
-          <Field label="SHA-1" hint="Optional. Worked out by the panel when left empty, if it can fetch the pack.">
+          <Field label="SHA-1" hint="Optional. Filled in for you if the panel can download the pack.">
             {(id) => <Input id={id} value={sha1} onChange={(e) => setSha1(e.target.value)} pattern="\s*[0-9a-fA-F]{40}\s*" title="40 hexadecimal digits" className="font-mono" spellCheck={false} />}
           </Field>
           <div className="flex justify-end">
@@ -416,9 +416,9 @@ export function PackCard({ pack, children }: { pack: ResourcePack; children?: Re
         </p>
         <p className="truncate font-mono text-xs text-faint">
           {pack.uploaded && !pack.url
-            ? `${bytes(pack.uploaded.size)} · uploaded once the server is made`
+            ? `${bytes(pack.uploaded.size)} · uploaded when created`
             : pack.uploaded
-              ? `${bytes(pack.uploaded.size)} · uploaded ${ago(pack.uploaded.time)} · served by the panel`
+              ? `${bytes(pack.uploaded.size)} · uploaded ${ago(pack.uploaded.time)}`
               : p
                 ? `modrinth:${p.id}`
                 : pack.url}
@@ -444,11 +444,11 @@ export function PackFit({ pack, version }: { pack: ResourcePack; version?: strin
   const name = version === "LATEST" ? "the newest release" : version;
   return game > f.max ? (
     <Notice>
-      This pack is made for an older version of the game ({made}; {name} reads {game}). Players' games still load it, but what has changed since, such as custom shaders, models and sounds, may not work.
+      This pack is for an older game version ({made}; {name} uses {game}). Some parts may not work.
     </Notice>
   ) : (
     <Notice>
-      This pack is made for a newer version of the game ({made}; {name} reads {game}). Players' games still load it, but what it uses from newer versions will not work.
+      This pack is for a newer game version ({made}; {name} uses {game}). Some parts may not work.
     </Notice>
   );
 }

@@ -50,9 +50,9 @@ test("a stop clicked twice does not start the server again: Start is offered onc
 
   // Still loading, it says why it takes a while.
   s.phase = "Stopping";
-  s.message = "The game is still loading. It is stopped once it has, saving the world first.";
+  s.message = "The game is still loading. It stops once it has loaded.";
   await page.reload();
-  await expect(page.getByText("The game is still loading. It is stopped once it has, saving the world first.")).toBeVisible();
+  await expect(page.getByText("The game is still loading. It stops once it has loaded.")).toBeVisible();
   await expect(header(page).getByRole("button", { name: "Stopping" })).toBeDisabled();
 
   // Stopped, it can be started.

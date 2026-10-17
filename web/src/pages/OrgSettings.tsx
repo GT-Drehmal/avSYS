@@ -49,7 +49,7 @@ export function OrgSettings() {
         </form>
       </Section>
       <Domains org={org} />
-      <Section title="Delete organization" description="Its servers must be deleted first. Members keep their accounts. Its snapshots are deleted with it.">
+      <Section title="Delete organization" description="Delete its servers first. Its snapshots are deleted too.">
         <div>
           <Button variant="danger" onClick={() => setDeleting(true)}>
             Delete {membership.name}
@@ -60,8 +60,8 @@ export function OrgSettings() {
         open={deleting}
         onOpenChange={setDeleting}
         title={`Delete ${membership.name}?`}
-        description={`The organization and its memberships are removed${
-          snapshots === undefined ? ", along with any snapshots it has" : snapshots > 0 ? `, along with its ${snapshots} snapshot${snapshots === 1 ? "" : "s"}` : ""
+        description={`This deletes the organization${
+          snapshots === undefined ? " and any snapshots it has" : snapshots > 0 ? ` and its ${snapshots} snapshot${snapshots === 1 ? "" : "s"}` : ""
         }. This cannot be undone.`}
         action="Delete organization"
         typeToConfirm={membership.slug}
@@ -93,7 +93,7 @@ function Domains({ org }: { org: string }) {
   if (!d) return null;
   const shown = text ?? d.domains.join("\n");
   return (
-    <Section title="Domains" description="Hostnames under these, such as mc.play.example.org, are for this organization's servers only. Any organization may use a hostname outside them.">
+    <Section title="Domains" description="Hostnames under these are for this organization's servers only.">
       {d.editable ? (
         <form
           className="flex flex-col gap-4"
@@ -109,13 +109,13 @@ function Domains({ org }: { org: string }) {
             });
           }}
         >
-          <Field label="One per line" hint="Each covers itself and every name under it, so example.org and *.example.org are the same. Only you, as the panel's administrator, can change them.">
+          <Field label="One per line" hint="Each covers every name under it.">
             {(id) => <Textarea id={id} rows={3} value={shown} onChange={(e) => setText(e.target.value)} placeholder="play.example.org" className="font-mono" spellCheck={false} />}
           </Field>
           {inUse && inUse.length > 0 && (
             <Notice>
-              Servers of other organizations already use names under these, and keep them:{" "}
-              {inUse.map((u) => `${u.hostname} (${u.org}/${u.server})`).join(", ")}. They cannot be given another one there.
+              Already used by other organizations, who keep them:{" "}
+              {inUse.map((u) => `${u.hostname} (${u.org}/${u.server})`).join(", ")}.
             </Notice>
           )}
           <div>
@@ -126,7 +126,7 @@ function Domains({ org }: { org: string }) {
         </form>
       ) : (
         <p className="text-[13px] text-muted">
-          {d.domains.length > 0 ? <span className="font-mono text-fg">{d.domains.join(", ")}</span> : "None."} Given by the panel's administrator.
+          {d.domains.length > 0 ? <span className="font-mono text-fg">{d.domains.join(", ")}</span> : "None."} Set by the panel's administrator.
         </p>
       )}
     </Section>

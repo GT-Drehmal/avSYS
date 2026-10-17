@@ -107,7 +107,7 @@ func (s *Server) putDomains(w http.ResponseWriter, r *http.Request, u *store.Use
 			if o, err := s.Store.OrgByID(r.Context(), c.OrgID); err == nil {
 				other = o.Name
 			}
-			return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: fmt.Sprintf("%s overlaps %s, which %s has. A domain has one organization.", c.Domain, c.Claimed, other)}
+			return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: fmt.Sprintf("%s overlaps %s, which belongs to %s.", c.Domain, c.Claimed, other)}
 		}
 		return err
 	}
@@ -140,7 +140,7 @@ func (s *Server) checkHostnameOwner(ctx context.Context, org *store.Org, host st
 	// organization's alone, whatever is claimed, and whether or not it has
 	// been made yet.
 	if v := s.verifyAddress(); v != "" && host == v {
-		return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: host + " is kept for players proving an account is theirs."}
+		return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: host + " is reserved for verifying Minecraft accounts."}
 	}
 	if d := router.NormalizeHostname(s.Config.RouterDomain); d != "" && strings.HasSuffix(host, "."+d) {
 		labels := strings.Split(strings.TrimSuffix(host, "."+d), ".")
@@ -148,7 +148,7 @@ func (s *Server) checkHostnameOwner(ctx context.Context, org *store.Org, host st
 			if zone == org.Slug {
 				return nil
 			}
-			return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: fmt.Sprintf("%s is under %s.%s, where the panel names the servers of the organization %s.", host, zone, d, zone)}
+			return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: fmt.Sprintf("%s is reserved for the organization %s.", host, zone)}
 		}
 	}
 	owner, err := s.Store.DomainOwner(ctx, host)
@@ -156,9 +156,9 @@ func (s *Server) checkHostnameOwner(ctx context.Context, org *store.Org, host st
 		return err
 	}
 	own, _ := s.Store.Domains(ctx, org.ID)
-	hint := "Use a hostname under a domain this organization has, or ask the panel's administrator for one."
+	hint := "Use one of your own domains, or ask the panel's administrator for one."
 	if len(own) > 0 {
-		hint = "This organization's are " + strings.Join(own, ", ") + "."
+		hint = "Your domains: " + strings.Join(own, ", ") + "."
 	}
-	return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: fmt.Sprintf("%s is under a domain another organization has. %s", host, hint)}
+	return &Error{Status: http.StatusConflict, Code: "domain_claimed", Message: fmt.Sprintf("%s belongs to another organization. %s", host, hint)}
 }

@@ -60,7 +60,7 @@ test("everything a server can be given later can be given when it is made", asyn
 
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/lobby$`));
-  await expect(page.getByText("Lobby has its picture")).toBeVisible();
+  await expect(page.getByText("Picture set for Lobby")).toBeVisible();
   expect(pictured).toBe("PUT image/png");
 
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/lobby`);
@@ -149,7 +149,7 @@ test("a copy can be given other content before it is made", async ({ page, as })
   await page.getByRole("button", { name: "Remove LuckPerms" }).click();
   await expect(page.getByText("No plugins or datapacks.")).toBeVisible();
   // Put back as it was, and so not sent.
-  await page.getByRole("button", { name: "Put back as survival has it" }).click();
+  await page.getByRole("button", { name: "Undo changes" }).click();
   await expect(page.getByText("LuckPerms", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Remove LuckPerms" }).click();
@@ -222,21 +222,21 @@ test("a name that snapshots of a deleted server are under is not suggested, and 
   await expect(page.getByLabel("Short name")).toHaveValue("survival-copy-2");
   await expect(page.getByText("It cannot be changed later.")).toBeVisible();
   await page.getByLabel("Short name").fill("survival-copy");
-  await expect(page.getByText("Snapshots of an earlier server named survival-copy go with the name. Choose another.")).toBeVisible();
+  await expect(page.getByText("A deleted server used this name. Choose another.")).toBeVisible();
   await page.getByLabel("Short name").fill("survival");
   await expect(page.getByText("There is already a server named survival.")).toBeVisible();
 
   await page.goto("/o/friends/new");
   await page.getByLabel("Display name").fill("Survival copy");
   await expect(page.getByLabel("Short name")).toHaveValue("survival-copy");
-  await expect(page.getByText(/Snapshots of an earlier server named survival-copy go with the name/)).toBeVisible();
+  await expect(page.getByText(/A deleted server used this name/)).toBeVisible();
 });
 
 test("a copy opens where any new server does, with how its copying goes on every tab", async ({ page, as }) => {
   await as("owner");
   // Nothing here can copy files: the copy is lobby, made a moment ago and
   // held until its files are in, with its copying a third done.
-  const held = { phase: "Stopped", message: "Made from a snapshot, and held stopped until all of its files are in place." };
+  const held = { phase: "Stopped", message: "Copying files from a snapshot." };
   await page.route("**/api/v1/orgs/friends/servers", async (route) => {
     if (route.request().method() === "POST") {
       const list = await (await route.fetch({ method: "GET" })).json();
@@ -293,7 +293,7 @@ test("a copy keeps the picture its files bring, or is given its own, or none", a
     return canvas.toDataURL("image/png").split(",")[1];
   });
   await page.getByLabel("Picture for survival copy").setInputFiles({ name: "big.png", mimeType: "image/png", buffer: Buffer.from(big, "base64") });
-  await expect(page.getByText("Put in place before it first starts.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Replace", exact: true })).toBeVisible();
   await duplicate.click();
   await expect.poll(() => sent.length).toBe(2);
   const own = sent[1].picture;
@@ -305,7 +305,7 @@ test("a copy keeps the picture its files bring, or is given its own, or none", a
 
   // Taken away, it is asked to have none.
   await page.getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(page.getByText("It will have none.")).toBeVisible();
+  await expect(page.getByText("No picture.")).toBeVisible();
   await duplicate.click();
   await expect.poll(() => sent.length).toBe(3);
   expect(sent[2].picture).toBeNull();
@@ -358,14 +358,14 @@ test("picking the latest release for a copy already on it changes nothing", asyn
   await page.getByLabel("Game version").selectOption("LATEST");
   // The starting point says what the original runs, not what was picked.
   await expect(page.getByText(`Paper ${latest}`, { exact: true })).toBeVisible();
-  await expect(page.getByText("A world opened in a newer version does not open in an older one again.")).toHaveCount(0);
+  await expect(page.getByText("A world opened in a newer version cannot open in an older one.")).toHaveCount(0);
   const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   expect((await sent).postDataJSON().spec).not.toHaveProperty("version");
 
   // Another version is a change, and says what that means.
   await page.getByLabel("Game version").selectOption("1.21.4");
-  await expect(page.getByText("A world opened in a newer version does not open in an older one again.")).toBeVisible();
+  await expect(page.getByText("A world opened in a newer version cannot open in an older one.")).toBeVisible();
 });
 
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
@@ -414,7 +414,7 @@ test("a copy's picture can be taken away even when it could not be shown", async
     return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
   });
   await page.goto("/o/friends/new?from=server:survival");
-  await expect(page.getByText("None could be shown for it.")).toBeVisible();
+  await expect(page.getByText("Could not show its picture.")).toBeVisible();
   await page.getByRole("button", { name: "Remove", exact: true }).click();
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect.poll(() => sent.length).toBe(1);
@@ -483,7 +483,7 @@ test("a copy starts with the original's launch flags, sends only what changed, a
   await page.getByRole("button", { name: /^Launch flags/ }).click();
   await expect(page.getByRole("switch", { name: /Aikar's flags/ })).toBeChecked();
   await expect(page.getByLabel("Extra JVM flags")).toHaveValue("");
-  await expect(page.getByText(/Not taken from a snapshot/)).toBeVisible();
+  await expect(page.getByText(/Not copied from a snapshot/)).toBeVisible();
 });
 
 test("a server with Aikar's flags in its environment shows them as its launch flags, and saving moves them there", async ({ page, as }) => {
@@ -581,7 +581,7 @@ test("with one node, the node is still shown", async ({ page, as, org }) => {
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
   const choice = page.getByLabel("Node", { exact: true });
   await expect(choice.locator("option")).toHaveText(["Automatic (now fast)", /^fast · speed 2\.00/]);
-  await expect(page.getByText("The only node there is.")).toBeVisible();
+  await expect(page.getByText("The only node.")).toBeVisible();
   // Changing the memory asks again, and the field stays.
   await page.getByLabel("Memory (GB)").fill("2");
   await expect(choice).toBeVisible();
@@ -655,14 +655,14 @@ test("the content section says what can go in it, by what the server runs", asyn
   const slug = await org([]);
   await as("owner");
   await page.goto(`/o/${slug}/new`);
-  await expect(page.getByText("Mods or plugins, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  await expect(page.getByText("Mods or plugins, datapacks and a resource pack. Optional.")).toBeVisible();
   const type = page.getByRole("group", { name: "Server type" });
   await type.getByRole("button", { name: /^Paper/ }).click();
-  await expect(page.getByText("Plugins, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  await expect(page.getByText("Plugins, datapacks and a resource pack. Optional.")).toBeVisible();
   await type.getByRole("button", { name: /^Fabric/ }).click();
-  await expect(page.getByText("Mods, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  await expect(page.getByText("Mods, datapacks and a resource pack. Optional.")).toBeVisible();
   await type.getByRole("button", { name: /^Vanilla/ }).click();
-  await expect(page.getByText("Datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  await expect(page.getByText("Datapacks and a resource pack. Optional.")).toBeVisible();
 });
 
 /**
@@ -708,11 +708,11 @@ test("a new server is given files from this computer: made stopped, they are upl
   await page.getByRole("button", { name: "Add content" }).click();
   let dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Upload", exact: true }).click();
-  await expect(dialog.getByText("They are uploaded once the server is made, before it first starts.")).toBeVisible();
+  await expect(dialog.getByText("Uploaded after the server is created.")).toBeVisible();
   await dialog.locator('input[type="file"]').setInputFiles([{ name: "mine.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
   await page.keyboard.press("Escape");
   await expect(page.getByText("mine.jar", { exact: true })).toBeVisible();
-  await expect(page.getByText(/· uploaded once the server is made/)).toBeVisible();
+  await expect(page.getByText(/· uploaded when created/)).toBeVisible();
   // And a resource pack, made required.
   await page.getByRole("button", { name: "Add content" }).click();
   dialog = page.getByRole("dialog");
@@ -721,7 +721,7 @@ test("a new server is given files from this computer: made stopped, they are upl
   await dialog.getByLabel("Resource pack file").setInputFiles({ name: "world.zip", mimeType: "application/zip", buffer: Buffer.from("PK zip") });
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText("world.zip", { exact: true })).toBeVisible();
-  await expect(page.getByText(/6 B · uploaded once the server is made/)).toHaveCount(2);
+  await expect(page.getByText(/6 B · uploaded when created/)).toHaveCount(2);
   await page.getByRole("switch", { name: "Pack required" }).click();
 
   await page.getByRole("button", { name: "Create server" }).click();
@@ -740,7 +740,7 @@ test("a new server whose upload is refused is left stopped, and its content page
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up/content$`));
-  await expect(page.getByText(/Up was made, and left stopped: broken\.jar is not a valid \.jar file\. Add the rest here, then start it\./)).toBeVisible();
+  await expect(page.getByText(/Up was created but not started: broken\.jar is not a valid \.jar file\. Add the rest here, then start it\./)).toBeVisible();
   expect(asked).toEqual(["create Stopped", "PUT /content broken.jar true"]);
 });
 
@@ -764,13 +764,13 @@ test("a copy is given files from this computer too: its own are copied in first,
   await page.getByRole("button", { name: "Add content" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Upload", exact: true }).click();
-  await expect(dialog.getByText("They are uploaded once the server is made, before it first starts.")).toBeVisible();
+  await expect(dialog.getByText("Uploaded after the server is created.")).toBeVisible();
   await dialog.locator('input[type="file"]').setInputFiles([{ name: "mine.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
   await page.keyboard.press("Escape");
-  await expect(page.getByText(/· uploaded once the server is made/)).toBeVisible();
+  await expect(page.getByText(/· uploaded when created/)).toBeVisible();
   // Put back as the original has it takes it off again.
-  await page.getByRole("button", { name: /^Put back as survival has it/ }).click();
-  await expect(page.getByText(/· uploaded once the server is made/)).toHaveCount(0);
+  await page.getByRole("button", { name: /^Undo changes/ }).click();
+  await expect(page.getByText(/· uploaded when created/)).toHaveCount(0);
   await page.getByRole("button", { name: "Add content" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Upload", exact: true }).click();
   await page.getByRole("dialog").locator('input[type="file"]').setInputFiles([{ name: "mine.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
@@ -792,7 +792,7 @@ test("files picked to upload for one kind of server are cleared when another kin
   await expect(page.getByText("plugin.jar", { exact: true })).toBeVisible();
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ }).click();
   await expect(page.getByText("plugin.jar", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Cleared 1 item picked for the previous software")).toBeVisible();
+  await expect(page.getByText("Removed 1 item that no longer fit")).toBeVisible();
 });
 
 test("a new server whose files went up but that could not be started goes on to its page, saying so", async ({ page, as, org }) => {
@@ -806,6 +806,6 @@ test("a new server whose files went up but that could not be started goes on to 
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
-  await expect(page.getByText("Up was made, with its files, but could not be started (The panel is busy). Start it here.")).toBeVisible();
+  await expect(page.getByText("Up was created but could not start (The panel is busy).")).toBeVisible();
   expect(asked).toEqual(["create Stopped", "PUT /content mine.jar true", "POST /start"]);
 });

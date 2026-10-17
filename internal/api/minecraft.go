@@ -36,7 +36,7 @@ func (s *Server) minecraftProfile(ctx context.Context, name string) (*store.Mine
 	}
 	var profile struct{ ID, Name string }
 	if err := json.Unmarshal(body, &profile); err != nil || profile.ID == "" || !minecraftNamePattern.MatchString(profile.Name) {
-		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Mojang's answer about that name could not be read."}
+		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not check that name with Mojang."}
 	}
 	return &store.MinecraftAccount{UUID: profile.ID, Name: profile.Name}, nil
 }

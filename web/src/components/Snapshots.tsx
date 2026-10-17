@@ -212,18 +212,16 @@ const listed = (words: string[]) => (words.length < 2 ? words.join("") : `${word
 function keptFor(detail: SnapshotDetail) {
   const { scheduled, kept = [], paused } = detail.retention;
   if (!scheduled) {
-    return detail.trigger === "scheduled"
-      ? "Until it is deleted by hand: its server is gone, or has been taken out of scheduled snapshots."
-      : "Until it is deleted by hand. The schedule only removes snapshots it took itself.";
+    return "Until you delete it.";
   }
   const rules = listed(kept.map((k) => ruleNames[k]));
   // Off is not the same as never: running the schedule by hand applies its rules.
   if (paused) {
     return kept.length === 0
-      ? "Daily snapshots are off, so it stays for now. It is past everything the schedule keeps, and is removed if they are run by hand or switched back on."
-      : `Daily snapshots are off, so it stays for now. If they are run by hand or switched back on, the schedule keeps it as the newest of its ${rules}.`;
+      ? "Scheduled snapshots are off, so it stays for now. It is removed when they run again."
+      : `Scheduled snapshots are off, so it stays for now. When they run again, it is kept as the newest of its ${rules}.`;
   }
-  if (kept.length === 0) return "The schedule removes it the next time it runs: it is past everything the schedule keeps.";
+  if (kept.length === 0) return "Removed the next time the schedule runs.";
   return `Kept by the schedule, as the newest of its ${rules}.`;
 }
 
@@ -271,9 +269,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
             <Fact label="Why">{s.trigger === "manual" ? (s.by ? `Taken by hand, by ${s.by}` : "Taken by hand") : triggerLabel(s)}</Fact>
             <Fact label="Size">
               {bytes(s.size)} in {s.files.toLocaleString()} file{s.files === 1 ? "" : "s"}.{" "}
-              <span className="text-muted">
-                It added {bytes(s.added)} to storage{s.added < s.size ? "; the rest was already there from earlier snapshots." : "."}
-              </span>
+              <span className="text-muted">It added {bytes(s.added)} to storage.</span>
             </Fact>
             {detail.data && <Fact label="Kept">{keptFor(detail.data)}</Fact>}
             {offsite.data?.configured && <Fact label="Offsite">{copied ? "In the offsite copy." : "Not in the offsite copy yet."}</Fact>}
@@ -291,7 +287,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
             {detail.isPending ? (
               <Loading />
             ) : !spec ? (
-              <Notice tone="danger">{detail.error instanceof ApiError ? detail.error.message : "What it recorded of its server could not be read."}</Notice>
+              <Notice tone="danger">{detail.error instanceof ApiError ? detail.error.message : "Could not load its details."}</Notice>
             ) : (
               <>
                 <dl className="divide-y divide-line">
@@ -414,9 +410,9 @@ export function RestoreDialog({ server, snapshot, onClose }: { server: Server; s
     >
       <div className="flex flex-col gap-4">
         <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-relaxed text-muted">
-          <li>The server is stopped while its files are put back{server.spec.state === "Stopped" ? "" : ", then started again"}.</li>
-          <li>Its world, files, game version and mods return to how they were. Anything added since is removed.</li>
-          <li>What is there now is saved as a snapshot first, so a restore can be undone.</li>
+          <li>The server stops while its files are restored{server.spec.state === "Stopped" ? "" : ", then starts again"}.</li>
+          <li>Its world, files, version and mods go back to how they were. Anything newer is removed.</li>
+          <li>A snapshot is taken first, so you can undo this.</li>
         </ul>
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>

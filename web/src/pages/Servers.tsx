@@ -82,7 +82,7 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
       ),
     );
     const failed = targets.filter((_, i) => results[i].status === "rejected");
-    const reasons = results.flatMap((r, i) => (r.status === "rejected" ? [`${targets[i].name}: ${r.reason instanceof ApiError ? r.reason.message : "it could not be reached"}`] : []));
+    const reasons = results.flatMap((r, i) => (r.status === "rejected" ? [`${targets[i].name}: ${r.reason instanceof ApiError ? r.reason.message : "no answer"}`] : []));
     const succeeded = targets.length - failed.length;
     if (succeeded > 0 && act !== "snapshot") toast.info(`${done[act]} ${plural(succeeded, "server")}`);
     if (failed.length > 0) toast.error(`${failed.length} of ${targets.length} failed. ${reasons.join(" ")}`);
@@ -128,8 +128,8 @@ function BulkActions({ org, chosen, canAdmin, onDone }: { org: string; chosen: S
           <>
             <span className="font-medium text-fg">{chosen.map((s) => s.name).join(", ")}</span>.{" "}
             {keeps
-              ? "Each is stopped and a last snapshot of it is taken, so it can be brought back from Backups."
-              : "The world and every file of each are deleted with it. This cannot be undone."}
+              ? "A final snapshot of each is taken, so you can bring them back from Backups."
+              : "Their worlds and files are deleted. This cannot be undone."}
           </>
         }
         action={running === "delete" ? (keeps ? "Taking snapshots" : "Deleting") : `Delete ${plural(chosen.length, "server")}`}

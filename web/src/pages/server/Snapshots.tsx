@@ -17,9 +17,9 @@ export function Snapshots() {
   const selection = useSelection(list.data?.snapshots.map((s) => s.id) ?? [], `${server.org}/${server.name}`);
 
   if (list.isPending) return <Loading />;
-  if (!list.data) return <Notice tone="danger">The snapshots could not be loaded.</Notice>;
+  if (!list.data) return <Notice tone="danger">Could not load snapshots.</Notice>;
   if (!list.data.available) {
-    return <Notice>Snapshots are not available: restic is not installed on the panel.</Notice>;
+    return <Notice>Snapshots are not set up on this panel.</Notice>;
   }
   const { snapshots, operations } = list.data;
   const op = operations[0];
@@ -38,7 +38,7 @@ export function Snapshots() {
       {snapshots.length === 0 ? (
         !op && (
           <Empty title="Nothing saved yet">
-            A snapshot saves this server's files and settings so they can be put back later.
+            A snapshot saves this server's files and settings.
           </Empty>
         )
       ) : (

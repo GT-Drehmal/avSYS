@@ -151,7 +151,7 @@ func (s *Server) heldIn(ctx context.Context, namespace, snapshot string) (string
 	// Not knowing is not taken as free: it may be the only copy of a
 	// server's files.
 	if err := s.Client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-		return "", &Error{Status: http.StatusServiceUnavailable, Code: "unavailable", Message: "Could not see whether a server is waiting for its files from this snapshot, so nothing was deleted. Try again."}
+		return "", &Error{Status: http.StatusServiceUnavailable, Code: "unavailable", Message: "Could not check whether this snapshot is in use, so nothing was deleted. Try again."}
 	}
 	for _, mc := range list.Items {
 		if mc.Annotations[avsysv1.AnnotationRestoring] == snapshot {
@@ -245,7 +245,7 @@ type operationDone struct {
 
 var (
 	errBusy           = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot or restore is already running on this server."}
-	errNoBackups      = &Error{Status: http.StatusServiceUnavailable, Code: "backups_unavailable", Message: "Snapshots are not available: restic is not installed where the panel runs."}
+	errNoBackups      = &Error{Status: http.StatusServiceUnavailable, Code: "backups_unavailable", Message: "Snapshots are not set up on this panel."}
 	errNoSuchSnapshot = &Error{Status: http.StatusNotFound, Code: "not_found", Message: "No such snapshot."}
 )
 
@@ -263,16 +263,16 @@ var (
 	errRestoring    = &Error{Status: http.StatusConflict, Code: "restoring", Message: "This server is being restored. Wait for that to finish."}
 	errDeleting     = &Error{Status: http.StatusConflict, Code: "deleting", Message: "This server is being deleted."}
 	errMoving       = &Error{Status: http.StatusConflict, Code: "moving", Message: "This server is being moved to another node. Wait for that to finish."}
-	errCreating     = &Error{Status: http.StatusConflict, Code: "creating", Message: "This server is still being made from a snapshot. Wait for that to finish."}
+	errCreating     = &Error{Status: http.StatusConflict, Code: "creating", Message: "This server is still being created. Wait for that to finish."}
 	errSnapshotting = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot of this server is being taken. Try again when it has finished."}
 	// errRestoreIncomplete is returned to anything that would run the game
 	// on files a restore started on and did not finish.
 	errRestoreIncomplete = &Error{Status: http.StatusConflict, Code: "restore_incomplete",
-		Message: "A restore of this server did not finish, so its files may be incomplete. Restore it again before starting it; the state from before that restore is in its newest snapshot."}
+		Message: "A restore did not finish, so files may be missing. Restore it again before starting it."}
 	// errCreateIncomplete is the same for a server that never received all of
 	// the files it was to be made from.
 	errCreateIncomplete = &Error{Status: http.StatusConflict, Code: "create_incomplete",
-		Message: "This server was being made from a snapshot and that did not finish, so its files are incomplete. Delete it and make it again."}
+		Message: "Creating this server did not finish, so files are missing. Delete it and create it again."}
 )
 
 // changing admits a request that changes a server. While a restore owns the
@@ -513,7 +513,7 @@ func operationFailed(err error) error {
 		return e
 	}
 	if errors.Is(err, backup.ErrOldWorkspace) {
-		return &Error{Status: http.StatusConflict, Code: "workspace_outdated", Message: "This server was started before snapshots existed. Restart it, then try again."}
+		return &Error{Status: http.StatusConflict, Code: "workspace_outdated", Message: "Restart the server, then try again."}
 	}
 	return &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: err.Error()}
 }
@@ -746,7 +746,7 @@ func (s *Server) resumeSaving(ctx context.Context) {
 			}
 			mc.Status.Snapshots.Error = "A restore was interrupted when the panel restarted, so this server's files may be incomplete. Restore it again before starting it; the state from before is in its newest snapshot."
 			if createUnfinished(mc) {
-				mc.Status.Snapshots.Error = "This server was being made from a snapshot when the panel restarted, so its files are incomplete. Delete it and make it again."
+				mc.Status.Snapshots.Error = "Creating this server did not finish, so files are missing. Delete it and create it again."
 			}
 			if err := s.Client.Status().Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
 				s.Log.Error("could not report an interrupted restore", "server", mc.Name, "namespace", mc.Namespace, "error", err)
@@ -1178,13 +1178,13 @@ func (s *Server) deleteSnapshots(w http.ResponseWriter, r *http.Request, u *stor
 	for i, snap := range snaps {
 		release, ok := s.ops.remove(a.Namespace, snap.ID)
 		if !ok {
-			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("A server is being restored to the snapshot of %s from %s. Nothing was deleted; wait for that to finish.", snap.Server, snap.Time.Format("2 Jan 15:04"))}
+			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("The snapshot of %s from %s is being restored. Nothing was deleted.", snap.Server, snap.Time.Format("2 Jan 15:04"))}
 		}
 		defer release()
 		if held, err := s.heldIn(r.Context(), a.Namespace, snap.ID); err != nil {
 			return err
 		} else if held != "" {
-			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s is waiting for its files to be put back from the snapshot of %s from %s. Nothing was deleted; restore it first.", held, snap.Server, snap.Time.Format("2 Jan 15:04"))}
+			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s still needs the snapshot of %s from %s. Nothing was deleted. Restore it first.", held, snap.Server, snap.Time.Format("2 Jan 15:04"))}
 		}
 		ids[i] = snap.ID
 	}
@@ -1219,13 +1219,13 @@ func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	}
 	release, ok := s.ops.remove(a.Namespace, snap.ID)
 	if !ok {
-		return &Error{Status: http.StatusConflict, Code: "in_use", Message: "A server is being restored to this snapshot. Wait for that to finish."}
+		return &Error{Status: http.StatusConflict, Code: "in_use", Message: "This snapshot is being restored. Wait for that to finish."}
 	}
 	defer release()
 	if held, err := s.heldIn(r.Context(), a.Namespace, snap.ID); err != nil {
 		return err
 	} else if held != "" {
-		return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s is waiting for its files to be put back from this snapshot. Restore it first.", held)}
+		return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s still needs this snapshot. Restore it first.", held)}
 	}
 	if err := s.Backups.Delete(context.WithoutCancel(r.Context()), a.Org.Slug, snap.ID); err != nil {
 		return snapshotError(err)

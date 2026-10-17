@@ -22,7 +22,7 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 func (s *Server) createOrg(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	if !u.IsAdmin {
-		return &Error{Status: http.StatusForbidden, Code: "forbidden", Message: "Only instance admins can create organizations."}
+		return &Error{Status: http.StatusForbidden, Code: "forbidden", Message: "Only the panel's administrator can create organizations."}
 	}
 	var in struct{ Name, Slug string }
 	if err := decode(r, &in); err != nil {
@@ -33,7 +33,7 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request, u *store.User
 		return errBadRequest("Give the organization a name of up to 64 characters.")
 	}
 	if !slugPattern.MatchString(in.Slug) {
-		return errBadRequest("The URL name is up to 32 characters: lowercase letters, digits and dashes.")
+		return errBadRequest("Short names are up to 32 characters: lowercase letters, digits and dashes.")
 	}
 	org := &store.Org{Name: in.Name, Slug: in.Slug}
 	if err := s.Store.CreateOrg(r.Context(), org, u.ID); err != nil {

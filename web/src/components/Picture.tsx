@@ -124,7 +124,7 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint }: P
       if (kind === "remove") setFound(false);
       onChange?.();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "The picture could not be changed.");
+      toast.error(err instanceof ApiError ? err.message : "Could not change the picture.");
     } finally {
       setBusy(null);
     }
@@ -186,14 +186,14 @@ export function PictureChange({ name, current, value, onChange }: { name: string
   const url = value.kind === "file" ? preview : value.kind === "keep" ? current : undefined;
   const hint =
     value.kind === "file"
-      ? "Put in place before it first starts."
+      ? undefined
       : value.kind === "none"
         ? current
-          ? "It will have none."
-          : "Optional. Shown to players in their server list."
+          ? "No picture."
+          : "Optional. Shown in the server list."
         : brought === false
-          ? "None could be shown for it."
-          : "The one its files bring.";
+          ? "Could not show its picture."
+          : "From the original.";
   return (
     <div className="flex items-center gap-4">
       <Picture name={name || "?"} url={url} size={56} onFound={value.kind === "keep" ? setBrought : undefined} />
@@ -214,7 +214,7 @@ export function PictureChange({ name, current, value, onChange }: { name: string
             </Button>
           )}
         </div>
-        <p className="text-xs leading-relaxed text-muted">{hint}</p>
+        {hint && <p className="text-xs leading-relaxed text-muted">{hint}</p>}
       </div>
       <input
         ref={input}
@@ -246,7 +246,7 @@ export async function pictureForRequest(file: File, side = 256): Promise<string>
   canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("The picture could not be read.");
+  if (!blob) throw new Error("Could not read the picture.");
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));

@@ -471,7 +471,7 @@ func (s *Server) runBackupPolicy(w http.ResponseWriter, r *http.Request, u *stor
 	sort.Slice(servers, func(i, j int) bool { return servers[i].Name < servers[j].Name })
 	release, ok := s.schedule.claim(a.Org.ID)
 	if !ok {
-		return &Error{Status: http.StatusConflict, Code: "busy", Message: "The scheduled snapshots of this organization are being taken right now."}
+		return &Error{Status: http.StatusConflict, Code: "busy", Message: "Scheduled snapshots are being taken right now."}
 	}
 	s.audit(r.Context(), u, a.Org, "backups.run", a.Org.Slug, fmt.Sprintf("%d servers", len(servers)))
 	work := func() []scheduleResult {

@@ -22,7 +22,7 @@ function InviteDialog({ org, myRole, onClose }: { org: string; myRole: Role; onC
   );
   if (created) {
     return (
-      <Modal open onOpenChange={onClose} title="Invite link" description="Anyone who has this link can use it.">
+      <Modal open onOpenChange={onClose} title="Invite link" description="Anyone with this link can join.">
         <div className="flex flex-col gap-4">
           <div className="rounded-md border border-line bg-bg px-3 py-2">
             <CopyText value={inviteURL(created.token)} className="text-xs" wrap />
@@ -180,7 +180,7 @@ export function Members() {
         open={!!removing}
         onOpenChange={() => setRemoving(null)}
         title={removing?.userId === me.user.id ? `Leave ${membership?.name}?` : `Remove ${removing?.username}?`}
-        description="They lose access to this organization's servers, including SSH. Their account is not deleted."
+        description={removing?.userId === me.user.id ? "You lose access to its servers." : "They lose access to its servers. Their account is kept."}
         action={removing?.userId === me.user.id ? "Leave" : "Remove"}
         loading={remove.isPending}
         onConfirm={() => removing && remove.mutate(removing.userId, { onSuccess: () => setRemoving(null) })}
