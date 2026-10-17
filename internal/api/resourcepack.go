@@ -143,8 +143,12 @@ func (s *Server) packURL(sha string) string {
 // putResourcePack takes an uploaded pack as the server's resource pack: it
 // is checked, kept in the server's files and in the panel's own, and served.
 // The server's pack settings, required or not and the prompt, are kept.
+//
+// With ?wait=true it is for a server made a moment ago, made stopped to be
+// given it first: its volume is waited for.
 func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	a, mc, err := s.server(r, u, store.RoleAdmin)
+	wait := r.URL.Query().Get("wait") == "true"
+	a, mc, err := s.serverMaybeNew(r, u, wait)
 	if err != nil {
 		return err
 	}
@@ -196,10 +200,11 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	}
 
 	// Into the server's files first, written beside its place and moved in.
-	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
+	sc, done, err := s.filesOf(r.Context(), mc, wait)
 	if err != nil {
 		return err
 	}
+	defer done()
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return err
 	}

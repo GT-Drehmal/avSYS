@@ -664,3 +664,88 @@ test("the content section says what can go in it, by what the server runs", asyn
   await type.getByRole("button", { name: /^Vanilla/ }).click();
   await expect(page.getByText("Datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
 });
+
+/**
+ * A new server's form, Paper 1.21.4, with what is sent after it is made
+ * answered here and listed in order: an upload's or the pack's answer is the
+ * server, and an upload named in refuse is refused.
+ */
+async function newWithUploads(page: import("@playwright/test").Page, slug: string, refuse = "") {
+  const asked: string[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers`, async (route) => {
+    if (route.request().method() === "POST") asked.push(`create ${route.request().postDataJSON().spec.state ?? ""}`);
+    return route.fallback();
+  });
+  await page.route(`**/api/v1/orgs/${slug}/servers/up`, async (route) => {
+    if (route.request().method() === "PATCH") asked.push(`PATCH ${JSON.stringify(route.request().postDataJSON().spec)}`);
+    return route.fallback();
+  });
+  await page.route(`**/api/v1/orgs/${slug}/servers/up/**`, async (route) => {
+    if (route.request().method() === "GET") return route.fallback();
+    const url = new URL(route.request().url());
+    const what = `${route.request().method()} ${url.pathname.split("/servers/up")[1]} ${url.searchParams.get("name") ?? ""} ${url.searchParams.get("wait") ?? ""}`.trim();
+    asked.push(what);
+    if (refuse && url.searchParams.get("name") === refuse) return route.fulfill({ status: 400, json: { code: "invalid", message: `${refuse} is not a valid .jar file.` } });
+    if (url.pathname.endsWith("/start") || url.pathname.endsWith("/content") || url.pathname.endsWith("/resource-pack")) {
+      const server = await (await page.request.get(`/api/v1/orgs/${slug}/servers/up`)).json();
+      return route.fulfill({ json: server });
+    }
+    return route.fallback();
+  });
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Up");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  return asked;
+}
+
+test("a new server is given files from this computer: made stopped, they are uploaded, then it is started", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const asked = await newWithUploads(page, slug);
+  await page.getByRole("button", { name: "Add content" }).click();
+  let dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+  await expect(dialog.getByText("They are uploaded once the server is made, before it first starts.")).toBeVisible();
+  await dialog.locator('input[type="file"]').setInputFiles([{ name: "mine.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("mine.jar", { exact: true })).toBeVisible();
+  await expect(page.getByText(/· uploaded once the server is made/)).toBeVisible();
+  // And a resource pack, made required.
+  await page.getByRole("button", { name: "Add content" }).click();
+  dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Resource pack", exact: true }).click();
+  await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+  await dialog.getByLabel("Resource pack file").setInputFiles({ name: "world.zip", mimeType: "application/zip", buffer: Buffer.from("PK zip") });
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("world.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText(/6 B · uploaded once the server is made/)).toHaveCount(2);
+  await page.getByRole("switch", { name: "Pack required" }).click();
+
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
+  expect(asked).toEqual(["create Stopped", "PUT /content mine.jar true", "PUT /resource-pack world.zip true", 'PATCH {"resourcePack":{"enforce":true,"prompt":""}}', "POST /start"]);
+});
+
+test("a new server whose upload is refused is left stopped, and its content page says why", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const asked = await newWithUploads(page, slug, "broken.jar");
+  await page.getByRole("button", { name: "Add content" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+  await dialog.locator('input[type="file"]').setInputFiles([{ name: "broken.jar", mimeType: "application/java-archive", buffer: Buffer.from("not a jar") }]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up/content$`));
+  await expect(page.getByText(/Up was made, and left stopped: broken\.jar is not a valid \.jar file\. Add the rest here, then start it\./)).toBeVisible();
+  expect(asked).toEqual(["create Stopped", "PUT /content broken.jar true"]);
+});
+
+test("a copy's files from this computer are uploaded once it exists, as before", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/new?from=server:survival");
+  await page.getByRole("button", { name: "Add content" }).click();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Upload", exact: true })).toHaveCount(0);
+});
