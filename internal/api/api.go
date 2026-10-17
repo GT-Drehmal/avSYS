@@ -61,6 +61,8 @@ type Server struct {
 	// packServed is when each pack the panel keeps was last served, by
 	// hash, for letting go of the least recently served first.
 	packServed sync.Map
+	// proofs are the checks of Minecraft accounts that are open.
+	proofs proofs
 	// gameFormats is the resource pack format each game version reads, by
 	// version, as found out: see packFormatOf. gameFormatLock holds the
 	// panel to finding out one at a time.
@@ -316,6 +318,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /me/minecraft-accounts", s.authed(s.addMinecraftAccount))
 	api("DELETE /me/minecraft-accounts/{uuid}", s.authed(s.removeMinecraftAccount))
 	api("POST /me/minecraft-accounts/{uuid}/main", s.authed(s.mainMinecraftAccount))
+	api("POST /me/minecraft-accounts/{uuid}/verify", s.authed(s.verifyMinecraftAccount))
 	api("PUT /me/avatar", s.authed(s.putAvatar))
 	api("DELETE /me/avatar", s.authed(s.deleteAvatar))
 	api("GET /users/{user}/avatar", s.authed(s.getAvatar))

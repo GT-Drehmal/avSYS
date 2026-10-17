@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -49,7 +50,7 @@ func TestPickedMembers(t *testing.T) {
 	members := []store.Member{
 		{UserID: "u-olive", Role: store.RoleOwner, MinecraftName: "Olive"},
 		{UserID: "u-ada", Role: store.RoleAdmin, MinecraftName: "Ada"},
-		{UserID: "u-vera", Role: store.RoleViewer, MinecraftName: "Vera"},
+		{UserID: "u-vera", Role: store.RoleViewer, MinecraftName: "Vera", Minecraft: []store.MinecraftAccount{{Name: "Vera", Main: true, Verified: true}}},
 		{UserID: "u-nolink", Role: store.RoleViewer},
 	}
 	picks := &avsysv1.MemberPicks{Also: []string{"u-vera", "u-nolink", "u-gone"}, Except: []string{"u-ada"}}
@@ -262,7 +263,8 @@ func TestWhitelistByRole(t *testing.T) {
 		{Username: "owner", Role: store.RoleOwner, MinecraftName: "Olive"},
 		{Username: "admin", Role: store.RoleAdmin, MinecraftName: "Ada"},
 		{Username: "operator", Role: store.RoleOperator, MinecraftName: "Otto"},
-		{Username: "viewer", Role: store.RoleViewer, MinecraftName: "Vera"},
+		// Proven hers: a viewer is let in only by accounts proven theirs.
+		{Username: "viewer", Role: store.RoleViewer, MinecraftName: "Vera", Minecraft: []store.MinecraftAccount{{Name: "Vera", Main: true, Verified: true}}},
 		{Username: "unlinked", Role: store.RoleViewer},
 	}
 	for setting, want := range map[string]string{
@@ -383,7 +385,7 @@ func TestPicksAreTidiedOnSave(t *testing.T) {
 func TestEveryLinkedAccountIsOnTheLists(t *testing.T) {
 	members := []store.Member{
 		{UserID: "u-olive", Role: store.RoleOwner, MinecraftName: "Olive", Minecraft: []store.MinecraftAccount{{Name: "Olive", Main: true}, {Name: "OliveAlt"}, {Name: "OliveBedrock"}}},
-		{UserID: "u-vera", Role: store.RoleViewer, MinecraftName: "Vera", Minecraft: []store.MinecraftAccount{{Name: "Vera", Main: true}, {Name: "VeraAlt"}}},
+		{UserID: "u-vera", Role: store.RoleViewer, MinecraftName: "Vera", Minecraft: []store.MinecraftAccount{{Name: "Vera", Main: true, Verified: true}, {Name: "VeraAlt", Verified: true}, {Name: "NotVera"}}},
 		// The same alt, linked by two: one entry.
 		{UserID: "u-ada", Role: store.RoleAdmin, MinecraftName: "Ada", Minecraft: []store.MinecraftAccount{{Name: "Ada", Main: true}, {Name: "olivealt"}}},
 	}
@@ -468,5 +470,83 @@ func TestLinkingSeveralMinecraftAccounts(t *testing.T) {
 	}
 	if got := accounts(); got != "SteveAlt*" {
 		t.Errorf("after another's tries: %q", got)
+	}
+}
+
+// Someone below operator, who could not put a player on a list themselves,
+// gets on it only the accounts they have proven are theirs. An operator and
+// above gets every one, as they could add any player at the console.
+func TestUnprovenAccountsOfViewers(t *testing.T) {
+	members := []store.Member{
+		{UserID: "u-vera", Role: store.RoleViewer, MinecraftName: "Vera", Minecraft: []store.MinecraftAccount{{Name: "Vera", Main: true, Verified: true}, {Name: "SomeoneElse"}}},
+		{UserID: "u-otto", Role: store.RoleOperator, MinecraftName: "Otto", Minecraft: []store.MinecraftAccount{{Name: "Otto", Main: true}, {Name: "OttoAlt"}}},
+	}
+	if got := strings.Join(wantedFrom(store.RoleViewer, nil, members), " "); got != "Otto OttoAlt Vera" {
+		t.Errorf("every member: %q", got)
+	}
+	// Picked by name, the same.
+	if got := strings.Join(wantedFrom("", &avsysv1.MemberPicks{Also: []string{"u-vera"}}, members), " "); got != "Vera" {
+		t.Errorf("Vera picked: %q", got)
+	}
+}
+
+// A check is opened for one's own account only; the router is told it is
+// pending, and its outcome is recorded once, for that account only.
+func TestProvingAMinecraftAccount(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	p.srv.catalog.http.Transport = offline{
+		"https://api.mojang.com/users/profiles/minecraft/steve": `{"id":"8667ba71b85a4004af54457a9734eed7","name":"Steve"}`,
+	}
+	if code, _ := p.do("viewer", "POST", "/me/minecraft-accounts", `{"name":"steve"}`); code != 200 {
+		t.Fatal("linking")
+	}
+	verified := func() bool {
+		all, err := p.srv.Store.MinecraftAccounts(ctx, p.users["viewer"].ID)
+		if err != nil || len(all) != 1 {
+			t.Fatalf("accounts: %v %v", all, err)
+		}
+		return all[0].Verified
+	}
+	if verified() {
+		t.Fatal("verified on linking")
+	}
+	if p.srv.Pending("Steve") {
+		t.Fatal("pending before a check was asked for")
+	}
+	// Someone else's, or one not linked, is not found.
+	for who, path := range map[string]string{"admin": "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify", "viewer": "/me/minecraft-accounts/nobody/verify"} {
+		if code, _ := p.do(who, "POST", path, ""); code != 404 {
+			t.Errorf("%s %s: %d", who, path, code)
+		}
+	}
+	code, got := p.get("viewer", "POST", "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify", "")
+	if code != 200 || got["name"] != "Steve" || got["until"] == nil {
+		t.Fatalf("opening a check: %d %v", code, got)
+	}
+	if !p.srv.Pending("steve") {
+		t.Fatal("not pending, by name in any case")
+	}
+	// Signed in as another account: not this one, and the check is closed.
+	if msg := p.srv.Proven(ctx, "Steve", "0000ba71b85a4004af54457a9734eed7"); !strings.Contains(msg, "another account") || verified() || p.srv.Pending("Steve") {
+		t.Errorf("another account: %q, verified %v", msg, verified())
+	}
+	p.get("viewer", "POST", "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify", "")
+	if msg := p.srv.Proven(ctx, "Steve", "8667BA71B85A4004AF54457A9734EED7"); !strings.HasPrefix(msg, "Verified: Steve") || !verified() {
+		t.Errorf("proven: %q, verified %v", msg, verified())
+	}
+	// Once only.
+	if msg := p.srv.Proven(ctx, "Steve", "8667ba71b85a4004af54457a9734eed7"); !strings.Contains(msg, "No check of Steve is open") {
+		t.Errorf("proven again: %q", msg)
+	}
+	// One that has run out is not pending.
+	p.get("viewer", "POST", "/me/minecraft-accounts/8667ba71b85a4004af54457a9734eed7/verify", "")
+	p.srv.proofs.mu.Lock()
+	pr := p.srv.proofs.byName["steve"]
+	pr.until = time.Now().Add(-time.Second)
+	p.srv.proofs.byName["steve"] = pr
+	p.srv.proofs.mu.Unlock()
+	if p.srv.Pending("Steve") {
+		t.Error("a check that ran out is pending")
 	}
 }

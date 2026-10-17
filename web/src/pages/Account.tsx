@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PicturePicker } from "../components/Picture";
 import { Button, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
@@ -41,23 +41,61 @@ function Profile() {
 }
 
 function Minecraft() {
+  const qc = useQueryClient();
   const me = useMe().data!;
   const [name, setName] = useState("");
+  // The check open, if one is: the account and until when.
+  const [check, setCheck] = useState<{ uuid: string; name: string; until: string } | null>(null);
   const accounts = me.minecraftAccounts ?? (me.minecraft ? [me.minecraft] : []);
   const link = useAction(() => api.post("/me/minecraft-accounts", { name }), [keys.me]);
   const unlink = useAction((uuid: string) => api.del(`/me/minecraft-accounts/${uuid}`), [keys.me]);
   const main = useAction((uuid: string) => api.post(`/me/minecraft-accounts/${uuid}/main`), [keys.me]);
+  const verify = useAction((uuid: string) => api.post<{ name: string; until: string }>(`/me/minecraft-accounts/${uuid}/verify`));
   const busy = link.isPending || unlink.isPending || main.isPending;
+  const checked = check && accounts.find((a) => a.uuid === check.uuid);
+  // While a check is open, the account is looked at until it is proven.
+  useEffect(() => {
+    if (!check) return;
+    if (checked?.verified) {
+      toast.info(`${check.name} is verified`);
+      setCheck(null);
+      return;
+    }
+    const left = new Date(check.until).getTime() - Date.now();
+    if (left <= 0) {
+      setCheck(null);
+      return;
+    }
+    const t = setInterval(() => qc.invalidateQueries({ queryKey: keys.me }), 3000);
+    const end = setTimeout(() => setCheck(null), left);
+    return () => {
+      clearInterval(t);
+      clearTimeout(end);
+    };
+  }, [check, checked?.verified, qc]);
   return (
     <Section
       title="Minecraft accounts"
-      description="Every account you play as: each is made an operator, or let in, on servers where your role allows it. Your main one is the name shown beside you."
+      description="Every account you play as: each is made an operator, or let in, on servers where your role allows it. Your main one is the name shown beside you. Below the operator role, only accounts you have verified are let in."
     >
       {accounts.length > 0 && (
         <ul className="overflow-hidden rounded-lg border border-line bg-surface">
           {accounts.map((a) => (
             <li key={a.uuid} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
               <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium">{a.name}</span>
+              {a.verified ? (
+                <span className="text-xs text-muted">verified</span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  loading={verify.isPending && verify.variables === a.uuid}
+                  onClick={() => verify.mutate(a.uuid, { onSuccess: (got) => setCheck({ uuid: a.uuid, name: got.name, until: got.until }) })}
+                >
+                  Verify
+                </Button>
+              )}
               {a.main ? (
                 <Chip>main</Chip>
               ) : (
@@ -71,6 +109,12 @@ function Minecraft() {
             </li>
           ))}
         </ul>
+      )}
+      {check && !checked?.verified && (
+        <Notice tone="info">
+          Open Minecraft signed in as <span className="font-mono">{check.name}</span> and join any server of this panel, at its shared address, before{" "}
+          {new Date(check.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Your game proves the account is yours, and tells you it worked.
+        </Notice>
       )}
       <form
         className="flex items-center gap-2"

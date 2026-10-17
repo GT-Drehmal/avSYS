@@ -19,6 +19,9 @@ type MinecraftAccount struct {
 	LinkedAt time.Time `json:"linkedAt"`
 	// Main is set on the one shown beside them.
 	Main bool `json:"main"`
+	// Verified is set once the player proved the account is theirs, by
+	// logging in as it.
+	Verified bool `json:"verified"`
 }
 
 // MaxMinecraftAccounts is the most accounts one user links.
@@ -27,7 +30,7 @@ const MaxMinecraftAccounts = 10
 // MinecraftAccounts returns the accounts a user has linked, their main one
 // first, then in the order they were linked.
 func (s *Store) MinecraftAccounts(ctx context.Context, userID string) ([]MinecraftAccount, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT uuid, name, linked_at, main FROM minecraft_links WHERE user_id = ? ORDER BY main DESC, linked_at, uuid`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT uuid, name, linked_at, main, verified_at > 0 FROM minecraft_links WHERE user_id = ? ORDER BY main DESC, linked_at, uuid`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +39,7 @@ func (s *Store) MinecraftAccounts(ctx context.Context, userID string) ([]Minecra
 	for rows.Next() {
 		var a MinecraftAccount
 		var linked int64
-		if err := rows.Scan(&a.UUID, &a.Name, &linked, &a.Main); err != nil {
+		if err := rows.Scan(&a.UUID, &a.Name, &linked, &a.Main, &a.Verified); err != nil {
 			return nil, err
 		}
 		a.LinkedAt = unix(linked)
@@ -165,4 +168,17 @@ func (s *Store) ClearMinecraftAccount(ctx context.Context, userID string) error 
 // SetMinecraftAccount links an account as a user's main one.
 func (s *Store) SetMinecraftAccount(ctx context.Context, userID string, a *MinecraftAccount) error {
 	return s.AddMinecraftAccount(ctx, userID, a, true)
+}
+
+// VerifyMinecraftAccount records that the player proved an account is the
+// user's own.
+func (s *Store) VerifyMinecraftAccount(ctx context.Context, userID, uuid string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE minecraft_links SET verified_at = ? WHERE user_id = ? AND uuid = ?`, time.Now().Unix(), userID, uuid)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
