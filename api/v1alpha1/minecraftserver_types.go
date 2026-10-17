@@ -36,6 +36,18 @@ const (
 	// it with nothing running never received all of its files. There is
 	// nothing in it worth keeping: it is deleted and made again.
 	AnnotationCreating = "avsys.dev/creating"
+	// AnnotationMoving is set, to a node's name, while a server is being
+	// moved there: a volume of it that is tied to another node is deleted,
+	// with its pod, and one is made on that node. The server's files are in
+	// a snapshot taken before it is set, and are put back from there; it is
+	// held stopped by AnnotationRestoring meanwhile. The panel removes it
+	// once they are; a volume already on that node is left alone.
+	AnnotationMoving = "avsys.dev/moving"
+	// AnnotationMoveWas is set, to the state it was in, from when a move
+	// stops a server until the move is over. A move cut short, by the panel
+	// restarting, before AnnotationMoving was set, has not touched its
+	// files: the panel then puts it back in that state.
+	AnnotationMoveWas = "avsys.dev/move-was"
 	// AnnotationAutoOps lists the players the panel has made operators on a
 	// server for their role in its organization, separated by commas. Only
 	// these are ever taken off again by it: operators made any other way
@@ -48,6 +60,10 @@ const (
 	// the panel could not delete then, one path per line, for it to delete
 	// when it next can.
 	AnnotationContentLeft = "avsys.dev/content-left"
+	// AnnotationPublicPorts records the public ports given out to the extra
+	// ports of a server that shares the router's address, as name=port,...
+	// They are the server's for as long as it has those ports.
+	AnnotationPublicPorts = "avsys.dev/public-ports"
 	// AnnotationRestart is copied to the pod template; changing it rolls the pod.
 	AnnotationRestart = "avsys.dev/restarted-at"
 )
@@ -284,6 +300,39 @@ type JVMSpec struct {
 	ExtraFlags string `json:"extraFlags,omitempty"`
 }
 
+// ExtraPort is a port a mod or plugin listens on in the server.
+// +kubebuilder:validation:XValidation:rule="self.port != 25565 && self.port != 25575",message="25565 is the game's and 25575 its console's"
+// +kubebuilder:validation:XValidation:rule="self.name != 'minecraft'",message="minecraft is the game port's name"
+type ExtraPort struct {
+	// Name says what it is for, as voice-chat. It is the port's name in a
+	// Service, held to the same rules: a letter first, a letter or digit
+	// last, and no two dashes together.
+	// +kubebuilder:validation:MaxLength=15
+	// +kubebuilder:validation:Pattern=`^[a-z](-?[a-z0-9])*$`
+	Name string `json:"name"`
+	// Port is the one it listens on in the server.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+	// +kubebuilder:validation:Enum=TCP;UDP
+	// +kubebuilder:default=TCP
+	Protocol corev1.Protocol `json:"protocol,omitempty"`
+}
+
+// PortStatus is where players reach an extra port.
+type PortStatus struct {
+	Name     string          `json:"name"`
+	Port     int32           `json:"port"`
+	Protocol corev1.Protocol `json:"protocol"`
+	// PublicPort is the port it is reached on from outside, 0 while there
+	// is none yet.
+	PublicPort int32 `json:"publicPort,omitempty"`
+	// Address is host:port to reach it at, when the host is known.
+	Address string `json:"address,omitempty"`
+	// Message says why it is not open, when it cannot be.
+	Message string `json:"message,omitempty"`
+}
+
 type MinecraftServerSpec struct {
 	DisplayName string `json:"displayName,omitempty"`
 
@@ -325,7 +374,15 @@ type MinecraftServerSpec struct {
 	JVM     JVMSpec     `json:"jvm,omitzero"`
 	Storage StorageSpec `json:"storage,omitempty"`
 	Expose  ExposeSpec  `json:"expose,omitempty"`
-	Sleep   SleepSpec   `json:"sleep,omitempty"`
+	// Ports are what mods and plugins listen on beside the game: voice
+	// chat, Geyser, a web map. Each is opened to players next to the
+	// game's own.
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:XValidation:rule="self.all(x, self.exists_one(y, y.port == x.port && (has(y.protocol) ? y.protocol : 'TCP') == (has(x.protocol) ? x.protocol : 'TCP')))",message="each port and protocol is listed once"
+	// +listType=map
+	// +listMapKey=name
+	Ports []ExtraPort `json:"ports,omitempty"`
+	Sleep SleepSpec   `json:"sleep,omitempty"`
 	// Backups is the server's own schedule for snapshots, where it has one.
 	Backups *BackupSpec `json:"backups,omitempty"`
 	// AutoOp says which members of the organization are operators in game
@@ -392,6 +449,8 @@ type MinecraftServerStatus struct {
 	Message string `json:"message,omitempty"`
 	// Address is what players type into the multiplayer screen.
 	Address string `json:"address,omitempty"`
+	// Ports are where the server's extra ports are reached.
+	Ports []PortStatus `json:"ports,omitempty"`
 	// Version is the game version the running server reports.
 	Version string         `json:"version,omitempty"`
 	Players *PlayersStatus `json:"players,omitempty"`

@@ -690,3 +690,20 @@ func TestFile(t *testing.T) {
 		t.Errorf("a snapshot that is not there: %v", err)
 	}
 }
+
+// A whole snapshot, which carries a server to another node, takes the
+// workspace's home along, leaving out only caches.
+func TestWholeKeepsTheWorkspaceHome(t *testing.T) {
+	for _, path := range exclusions(true) {
+		if path == "/.workspace" {
+			t.Error("a whole snapshot leaves out the workspace's home")
+		}
+	}
+	found := false
+	for _, path := range exclusions(false) {
+		found = found || path == "/.workspace"
+	}
+	if !found {
+		t.Error("an ordinary snapshot takes the workspace's home")
+	}
+}
