@@ -961,10 +961,10 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	if err := s.stopReplacing(ctx, key, stamp, nil); err != nil {
 		return undo, err
 	}
-	if err := s.waitRestarted(ctx, key, stamp, 5*time.Minute); err != nil {
+	if err := s.waitRestarted(ctx, key, stamp, stopWait); err != nil {
 		return undo, fmt.Errorf("the server did not stop: %w", err)
 	}
-	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
+	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, stopWait); err != nil {
 		return undo, fmt.Errorf("the server did not stop: %w", err)
 	}
 

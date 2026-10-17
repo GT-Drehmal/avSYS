@@ -294,6 +294,11 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 	if err := checkPackSHA1(spec.ResourcePack, recorded.ResourcePack); err != nil {
 		return spec, err
 	}
+	// And its formats: given another address with the original's, they are
+	// not known to be the new pack's.
+	if err := checkPackFormats(spec.ResourcePack, recorded.ResourcePack); err != nil {
+		return spec, err
+	}
 	changed := spec.Version != recorded.Version || spec.Loader != recorded.Loader || spec.LoaderVersion != recorded.LoaderVersion
 	if changed && spec.Modpack != nil {
 		return spec, errBadRequest("This server runs a modpack, which decides its game version and loader. Change the modpack's version once the server exists.")

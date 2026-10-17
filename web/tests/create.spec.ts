@@ -670,7 +670,7 @@ test("the content section says what can go in it, by what the server runs", asyn
  * answered here and listed in order: an upload's or the pack's answer is the
  * server, and an upload named in refuse is refused.
  */
-async function newWithUploads(page: import("@playwright/test").Page, slug: string, refuse = "") {
+async function newWithUploads(page: import("@playwright/test").Page, slug: string, refuse = "", failStart = false) {
   const asked: string[] = [];
   await page.route(`**/api/v1/orgs/${slug}/servers`, async (route) => {
     if (route.request().method() === "POST") asked.push(`create ${route.request().postDataJSON().spec.state ?? ""}`);
@@ -686,6 +686,7 @@ async function newWithUploads(page: import("@playwright/test").Page, slug: strin
     const what = `${route.request().method()} ${url.pathname.split("/servers/up")[1]} ${url.searchParams.get("name") ?? ""} ${url.searchParams.get("wait") ?? ""}`.trim();
     asked.push(what);
     if (refuse && url.searchParams.get("name") === refuse) return route.fulfill({ status: 400, json: { code: "invalid", message: `${refuse} is not a valid .jar file.` } });
+    if (failStart && url.pathname.endsWith("/start")) return route.fulfill({ status: 503, json: { code: "busy", message: "The panel is busy." } });
     if (url.pathname.endsWith("/start") || url.pathname.endsWith("/content") || url.pathname.endsWith("/resource-pack")) {
       const server = await (await page.request.get(`/api/v1/orgs/${slug}/servers/up`)).json();
       return route.fulfill({ json: server });
@@ -777,4 +778,34 @@ test("a copy is given files from this computer too: its own are copied in first,
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect(page).toHaveURL(/\/o\/friends\/s\/survival-copy$/);
   expect(asked).toEqual(["copy survival Stopped undefined", "PUT /content mine.jar", "POST /start"]);
+});
+
+test("files picked to upload for one kind of server are cleared when another kind is picked", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await newWithUploads(page, slug);
+  await page.getByRole("button", { name: "Add content" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+  await dialog.locator('input[type="file"]').setInputFiles([{ name: "plugin.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("plugin.jar", { exact: true })).toBeVisible();
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ }).click();
+  await expect(page.getByText("plugin.jar", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Cleared 1 item picked for the previous software")).toBeVisible();
+});
+
+test("a new server whose files went up but that could not be started goes on to its page, saying so", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const asked = await newWithUploads(page, slug, "", true);
+  await page.getByRole("button", { name: "Add content" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+  await dialog.locator('input[type="file"]').setInputFiles([{ name: "mine.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
+  await expect(page.getByText("Up was made, with its files, but could not be started (The panel is busy). Start it here.")).toBeVisible();
+  expect(asked).toEqual(["create Stopped", "PUT /content mine.jar true", "POST /start"]);
 });
