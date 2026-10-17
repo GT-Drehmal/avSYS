@@ -482,8 +482,27 @@ func TestRetentionRemovesRejectedFirst(t *testing.T) {
 	if err != nil || len(all) != 1 || all[0].ID != good.ID {
 		t.Errorf("after retention: %+v, %v; want only %s", all, err, good.ID)
 	}
-	if len(m.rejected("alpha")) != 0 {
-		t.Error("the rejected snapshot is still noted")
+	if left, err := m.rejected("alpha"); err != nil || len(left) != 0 {
+		t.Errorf("the rejected snapshot is still noted: %v %v", left, err)
+	}
+}
+
+// A list of rejected snapshots that cannot be read is not taken for an empty
+// one: nothing is listed from it, and it is not written over.
+func TestRejectedFileUnreadable(t *testing.T) {
+	m := &Manager{Dir: t.TempDir()}
+	// A directory where the file would be cannot be read as one.
+	if err := os.Mkdir(m.rejectedFile("alpha"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.rejected("alpha"); err == nil {
+		t.Errorf("read as %v", got)
+	}
+	if err := m.reject("alpha", "aaaa1111", false); err == nil {
+		t.Error("written over")
+	}
+	if fi, err := os.Stat(m.rejectedFile("alpha")); err != nil || !fi.IsDir() {
+		t.Errorf("what was there is gone: %v", err)
 	}
 }
 
@@ -494,11 +513,11 @@ func TestRejectedFile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := m.rejected("alpha"); len(got) != 2 || !got["aaaa1111"] || !got["bbbb2222"] {
-		t.Errorf("rejected: %v", got)
+	if got, err := m.rejected("alpha"); err != nil || len(got) != 2 || !got["aaaa1111"] || !got["bbbb2222"] {
+		t.Errorf("rejected: %v %v", got, err)
 	}
-	if got := m.rejected("beta"); len(got) != 0 {
-		t.Errorf("another organization's: %v", got)
+	if got, err := m.rejected("beta"); err != nil || len(got) != 0 {
+		t.Errorf("another organization's: %v %v", got, err)
 	}
 	for _, id := range []string{"aaaa1111", "bbbb2222"} {
 		if err := m.reject("alpha", id, true); err != nil {
