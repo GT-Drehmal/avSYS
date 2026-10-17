@@ -375,8 +375,10 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 	}
-	if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
-		return err
+	if raw.FromSnapshot == "" && raw.FromServer == "" {
+		if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
+			return err
+		}
 	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
