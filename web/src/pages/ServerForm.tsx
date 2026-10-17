@@ -654,7 +654,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               </Button>
               <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Remove the resource pack" onClick={() => setValues((was) => ({ ...was, pack: null, packFile: null }))} />
             </PackCard>
-            <PackFit pack={v.pack} version={v.kind === "modpack" ? undefined : effective(v.version)} />
+            <PackFit pack={v.pack} version={v.kind === "modpack" ? v.modpack?.gameVersion : effective(v.version)} />
             <Toggle checked={!!v.pack.enforce} onChange={(enforce) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, enforce } }))} label="Pack required" hint="Players who decline the pack are disconnected." />
             <Field label="Pack prompt" hint="Shown when the game asks to download the pack.">
               {(id) => <Input id={id} value={v.pack?.prompt ?? ""} onChange={(e) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, prompt: e.target.value } }))} placeholder="A pack made for this world" />}
