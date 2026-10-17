@@ -125,7 +125,7 @@ export function Members() {
                 </p>
                 <p className="truncate font-mono text-xs text-faint">
                   {m.username}
-                  {m.minecraftName && <span title="Minecraft account"> · {m.minecraftName} in game</span>}
+                  {m.minecraftName && <span title="Minecraft accounts"> · {inGame(m)} in game</span>}
                 </p>
               </div>
               <span className="text-xs text-faint max-sm:hidden">joined {ago(m.joinedAt)}</span>
@@ -187,4 +187,10 @@ export function Members() {
       />
     </>
   );
+}
+
+/** The accounts a member plays as, the main one first: "Steve, SteveAlt". */
+function inGame(m: Member) {
+  const names = (m.minecraftAccounts ?? []).map((a) => a.name);
+  return names.length > 0 ? names.join(", ") : m.minecraftName;
 }

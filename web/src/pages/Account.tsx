@@ -43,37 +43,56 @@ function Profile() {
 function Minecraft() {
   const me = useMe().data!;
   const [name, setName] = useState("");
-  const link = useAction(() => api.put("/me/minecraft", { name }), [keys.me]);
-  const unlink = useAction(() => api.del("/me/minecraft"), [keys.me]);
+  const accounts = me.minecraftAccounts ?? (me.minecraft ? [me.minecraft] : []);
+  const link = useAction(() => api.post("/me/minecraft-accounts", { name }), [keys.me]);
+  const unlink = useAction((uuid: string) => api.del(`/me/minecraft-accounts/${uuid}`), [keys.me]);
+  const main = useAction((uuid: string) => api.post(`/me/minecraft-accounts/${uuid}/main`), [keys.me]);
+  const busy = link.isPending || unlink.isPending || main.isPending;
   return (
-    <Section title="Minecraft account" description="Makes you an operator in game on servers where your role allows it.">
-      {me.minecraft ? (
-        <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5">
-          {/* Said in full: the name alone, under this heading, does not read as "the player you are". */}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px]">
-              In game you are <span className="font-mono font-medium">{me.minecraft.name}</span>
-            </p>
-            <p className="truncate text-xs text-faint">Not the name you play as? Unlink it and link the right one.</p>
-          </div>
-          <Button size="sm" loading={unlink.isPending} onClick={() => unlink.mutate(undefined)}>
-            Unlink
-          </Button>
-        </div>
-      ) : (
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            link.mutate(undefined, { onSuccess: () => setName("") });
-          }}
-        >
-          <Input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name in game" className="w-56" aria-label="Minecraft username" spellCheck={false} autoComplete="off" />
-          <Button type="submit" loading={link.isPending}>
-            Link
-          </Button>
-        </form>
+    <Section
+      title="Minecraft accounts"
+      description="Every account you play as: each is made an operator, or let in, on servers where your role allows it. Your main one is the name shown beside you."
+    >
+      {accounts.length > 0 && (
+        <ul className="overflow-hidden rounded-lg border border-line bg-surface">
+          {accounts.map((a) => (
+            <li key={a.uuid} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
+              <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium">{a.name}</span>
+              {a.main ? (
+                <Chip>main</Chip>
+              ) : (
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => main.mutate(a.uuid)}>
+                  Make main
+                </Button>
+              )}
+              <Button size="sm" disabled={busy} loading={unlink.isPending && unlink.variables === a.uuid} aria-label={`Unlink ${a.name}`} onClick={() => unlink.mutate(a.uuid)}>
+                Unlink
+              </Button>
+            </li>
+          ))}
+        </ul>
       )}
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          link.mutate(undefined, { onSuccess: () => setName("") });
+        }}
+      >
+        <Input
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={accounts.length > 0 ? "Another name you play as" : "Your name in game"}
+          className="w-56"
+          aria-label="Minecraft username"
+          spellCheck={false}
+          autoComplete="off"
+        />
+        <Button type="submit" loading={link.isPending} disabled={busy && !link.isPending}>
+          Link
+        </Button>
+      </form>
     </Section>
   );
 }
