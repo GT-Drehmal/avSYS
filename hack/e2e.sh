@@ -179,6 +179,17 @@ $bad"
 # phase_now [SERVER]: what the server is doing, as the panel says.
 phase_now() { call "${1:-$SRV}" | field "d['status'].get('phase')"; }
 
+# settled [SERVER]: waits until the status is of the server's settings as
+# they are now. Straight after a change it may still say what the server was
+# doing before, which is not what the change did.
+settled() {
+  for _ in $(seq 1 60); do
+    [ "$(call "${1:-$SRV}" | field "d['status'].get('observedGeneration', 0) >= d['generation']")" = True ] && return 0
+    sleep 1
+  done
+  fail "the status never caught up with the settings"
+}
+
 # wait_until PHASE [SERVER]: as wait_phase, for a phase the server passes
 # through on the way, which it is caught in or has gone by.
 wait_until() {
@@ -373,6 +384,7 @@ game_clean "with nothing in its log"
 
 call -X POST "$SRV/stop" >/dev/null
 call -X POST "$SRV/start" >/dev/null
+settled
 wait_phase Running
 stays Running 10
 echo "ok: stopped and started again at once, it ends running"
@@ -381,6 +393,7 @@ call -X POST "$SRV/stop" >/dev/null
 wait_phase Stopped
 call -X POST "$SRV/start" >/dev/null
 call -X POST "$SRV/stop" >/dev/null
+settled
 wait_phase Stopped
 stays Stopped 15
 echo "ok: started and stopped again at once, it ends stopped, and stays so"
