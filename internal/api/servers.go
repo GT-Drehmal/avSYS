@@ -839,11 +839,14 @@ func restartsInPlace(mc *avsysv1.MinecraftServer) bool {
 // live reads a server as it is now, where the cache may lag a change just
 // made.
 func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv1.MinecraftServer, error) {
-	if s.Reader == nil {
-		return mc, nil
+	// Read again through the client where there is no reader of its own:
+	// mc may be one a change was already merged into, and be stale.
+	reader := s.Reader
+	if reader == nil {
+		reader = s.Client
 	}
 	now := &avsysv1.MinecraftServer{}
-	if err := s.Reader.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
 		return nil, err
 	}
 	return now, nil

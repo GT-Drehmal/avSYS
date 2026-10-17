@@ -13,7 +13,7 @@ import (
 )
 
 // A change to a server's settings is merged into the server as it is when
-// it is written. One that found it changed since it was read, as by the
+// it is written, with no reader of the panel's own too, as here. One that found it changed since it was read, as by the
 // controller saying how the server is doing, which it does all the time, is
 // read and merged again, not refused as changed by someone else.
 func TestUpdateIsMergedAgainWhenTheServerMoved(t *testing.T) {
@@ -39,7 +39,6 @@ func TestUpdateIsMergedAgainWhenTheServerMoved(t *testing.T) {
 				return c.Update(ctx, obj, opts...)
 			},
 		})
-		p.srv.Reader = p.srv.Client
 	}
 	refuse(2)
 	if got, code := p.do("owner", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"displayName":"Renamed"}}`); got != 200 {
