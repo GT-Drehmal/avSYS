@@ -53,11 +53,61 @@ func (s *Server) setMinecraftAccount(w http.ResponseWriter, r *http.Request, u *
 	if err != nil {
 		return err
 	}
-	if err := s.Store.SetMinecraftAccount(r.Context(), u.ID, account); err != nil {
+	if err := s.Store.SetMinecraftAccount(r.Context(), u.ID, account); errors.Is(err, store.ErrTooManyAccounts) {
+		return errBadRequest("Up to %d Minecraft accounts can be linked. Unlink one first.", store.MaxMinecraftAccounts)
+	} else if err != nil {
 		return err
 	}
 	s.syncOpsOf(u)
 	writeJSON(w, http.StatusOK, account)
+	return nil
+}
+
+// addMinecraftAccount links another account to the user, beside their others.
+func (s *Server) addMinecraftAccount(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	var in struct {
+		Name string
+		Main bool
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	account, err := s.minecraftProfile(r.Context(), strings.TrimSpace(in.Name))
+	if err != nil {
+		return err
+	}
+	if err := s.Store.AddMinecraftAccount(r.Context(), u.ID, account, in.Main); errors.Is(err, store.ErrTooManyAccounts) {
+		return errBadRequest("Up to %d Minecraft accounts can be linked. Unlink one first.", store.MaxMinecraftAccounts)
+	} else if err != nil {
+		return err
+	}
+	s.syncOpsOf(u)
+	return s.writeMinecraftAccounts(w, r, u)
+}
+
+// removeMinecraftAccount unlinks one of the user's accounts.
+func (s *Server) removeMinecraftAccount(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if err := s.Store.RemoveMinecraftAccount(r.Context(), u.ID, r.PathValue("uuid")); err != nil {
+		return err
+	}
+	s.syncOpsOf(u)
+	return s.writeMinecraftAccounts(w, r, u)
+}
+
+// mainMinecraftAccount makes one of the user's accounts their main one.
+func (s *Server) mainMinecraftAccount(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if err := s.Store.SetMainMinecraftAccount(r.Context(), u.ID, r.PathValue("uuid")); err != nil {
+		return err
+	}
+	return s.writeMinecraftAccounts(w, r, u)
+}
+
+func (s *Server) writeMinecraftAccounts(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	all, err := s.Store.MinecraftAccounts(r.Context(), u.ID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, all)
 	return nil
 }
 
@@ -159,14 +209,33 @@ func wantedFrom(min store.Role, picks *avsysv1.MemberPicks, members []store.Memb
 	}
 	seen := map[string]bool{}
 	for _, m := range members {
-		key := strings.ToLower(m.MinecraftName)
 		byRole := min != "" && m.Role.AtLeast(min) && !except[m.UserID]
-		if m.MinecraftName != "" && (byRole || also[m.UserID]) && !seen[key] {
-			seen[key] = true
-			out = append(out, m.MinecraftName)
+		if !byRole && !also[m.UserID] {
+			continue
+		}
+		// Every account they have linked: a main and an alt are both theirs.
+		for _, name := range accountNames(m) {
+			if key := strings.ToLower(name); !seen[key] {
+				seen[key] = true
+				out = append(out, name)
+			}
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// accountNames is the names of every account a member has linked.
+func accountNames(m store.Member) []string {
+	if len(m.Minecraft) == 0 && m.MinecraftName != "" {
+		return []string{m.MinecraftName}
+	}
+	out := make([]string, 0, len(m.Minecraft))
+	for _, a := range m.Minecraft {
+		if a.Name != "" {
+			out = append(out, a.Name)
+		}
+	}
 	return out
 }
 
@@ -338,22 +407,25 @@ func (s *Server) syncOrgOps(ctx context.Context, org *store.Org) {
 func (s *Server) refreshNames(ctx context.Context, members []store.Member) {
 	for i := range members {
 		m := &members[i]
-		if m.MinecraftUUID == "" {
-			continue
+		for k := range m.Minecraft {
+			a := &m.Minecraft[k]
+			body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(a.UUID), 6*time.Hour)
+			if err != nil {
+				continue
+			}
+			var profile struct{ Name string }
+			if json.Unmarshal(body, &profile) != nil || !minecraftNamePattern.MatchString(profile.Name) || profile.Name == a.Name {
+				continue
+			}
+			if err := s.Store.RenameMinecraftAccount(ctx, a.UUID, profile.Name); err != nil {
+				continue
+			}
+			s.Log.Info("a linked Minecraft account was renamed", "user", m.Username, "from", a.Name, "to", profile.Name)
+			if a.Main {
+				m.MinecraftName = profile.Name
+			}
+			a.Name = profile.Name
 		}
-		body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(m.MinecraftUUID), 6*time.Hour)
-		if err != nil {
-			continue
-		}
-		var profile struct{ Name string }
-		if json.Unmarshal(body, &profile) != nil || !minecraftNamePattern.MatchString(profile.Name) || profile.Name == m.MinecraftName {
-			continue
-		}
-		if err := s.Store.RenameMinecraftAccount(ctx, m.UserID, profile.Name); err != nil {
-			continue
-		}
-		s.Log.Info("a linked Minecraft account was renamed", "user", m.Username, "from", m.MinecraftName, "to", profile.Name)
-		m.MinecraftName = profile.Name
 	}
 }
 

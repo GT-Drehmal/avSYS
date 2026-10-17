@@ -143,8 +143,19 @@ export interface Me {
   orgs: Org[];
   identities: { provider: string; login: string }[];
   hasPassword: boolean;
-  /** The Minecraft account they have linked, if any. */
-  minecraft?: { uuid: string; name: string; linkedAt: string };
+  /** Their main Minecraft account, if they have linked any. */
+  minecraft?: MinecraftAccount;
+  /** Every Minecraft account they have linked, the main one first. */
+  minecraftAccounts?: MinecraftAccount[];
+}
+
+/** A Minecraft account a person has linked. */
+export interface MinecraftAccount {
+  uuid: string;
+  name: string;
+  linkedAt: string;
+  /** The one shown as their name. */
+  main: boolean;
 }
 
 export type Phase = "Stopped" | "Stopping" | "Starting" | "Running" | "Sleeping" | "Error";
@@ -394,8 +405,10 @@ export interface Member {
   avatarUrl: string;
   role: Role;
   joinedAt: string;
-  /** The player they say they are in game. */
+  /** The player they say they are in game: their main account. */
   minecraftName?: string;
+  /** Every account they have linked, the main one first. */
+  minecraftAccounts?: MinecraftAccount[];
 }
 
 export interface Invite {

@@ -332,11 +332,15 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request, u *store.User) er
 	me := map[string]any{
 		"user": u, "orgs": orgs, "identities": identities, "hasPassword": u.PasswordHash != "",
 	}
-	// Left out, not null, for someone who has linked none.
-	if account, err := s.Store.MinecraftAccount(r.Context(), u.ID); err == nil {
-		me["minecraft"] = account
-	} else if !errors.Is(err, store.ErrNotFound) {
+	// Their main one, left out, not null, for someone who has linked none;
+	// and all of them.
+	accounts, err := s.Store.MinecraftAccounts(r.Context(), u.ID)
+	if err != nil {
 		return err
+	}
+	me["minecraftAccounts"] = accounts
+	if len(accounts) > 0 {
+		me["minecraft"] = accounts[0]
 	}
 	writeJSON(w, http.StatusOK, me)
 	return nil
