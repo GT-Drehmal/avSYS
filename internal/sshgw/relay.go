@@ -3,6 +3,7 @@ package sshgw
 import (
 	"errors"
 	"io"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -59,24 +60,39 @@ func relayChannels(dst ssh.Conn, chans <-chan ssh.NewChannel, env map[string]str
 // everything the closing side sent (output, stderr, exit status) is delivered
 // before the other side is closed.
 func splice(a ssh.Channel, aReqs <-chan *ssh.Request, b ssh.Channel, bReqs <-chan *ssh.Request) {
-	type half struct{ data, stderr, reqs chan struct{} }
+	type half struct {
+		data, stderr, sent, reqs chan struct{}
+		// busy is held while a request is passed on and its reply passed
+		// back.
+		busy chan struct{}
+	}
 	run := func(dst, src ssh.Channel, srcReqs <-chan *ssh.Request) half {
-		h := half{make(chan struct{}), make(chan struct{}), make(chan struct{})}
+		h := half{make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{}, 1)}
 		go func() {
 			_, _ = io.Copy(dst, src)
-			_ = dst.CloseWrite()
 			close(h.data)
 		}()
 		go func() {
 			_, _ = io.Copy(dst.Stderr(), src.Stderr())
 			close(h.stderr)
 		}()
+		// The end of what was sent only once both are through: after it,
+		// nothing more can be written, and stderr that came after the
+		// output ended would be lost.
+		go func() {
+			<-h.data
+			<-h.stderr
+			_ = dst.CloseWrite()
+			close(h.sent)
+		}()
 		go func() {
 			for req := range srcReqs {
+				h.busy <- struct{}{}
 				ok, err := dst.SendRequest(req.Type, req.WantReply, req.Payload)
 				if req.WantReply {
 					_ = req.Reply(ok && err == nil, nil)
 				}
+				<-h.busy
 			}
 			close(h.reqs)
 		}()
@@ -85,14 +101,20 @@ func splice(a ssh.Channel, aReqs <-chan *ssh.Request, b ssh.Channel, bReqs <-cha
 	fromA, fromB := run(b, a, aReqs), run(a, b, bReqs)
 
 	// A channel's request stream ends when that side closes the channel.
-	closing := fromA
+	closing, other := fromA, fromB
 	select {
 	case <-fromA.reqs:
 	case <-fromB.reqs:
-		closing = fromB
+		closing, other = fromB, fromA
 	}
-	<-closing.data
-	<-closing.stderr
+	<-closing.sent
+	// A reply the closing side gave just before it closed is passed back
+	// first: a command that ends at once has its exec answered, and the
+	// person's side does not see the channel end before it started.
+	select {
+	case other.busy <- struct{}{}:
+	case <-time.After(5 * time.Second):
+	}
 	a.Close()
 	b.Close()
 }
