@@ -35,6 +35,13 @@ field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.ar
 step() { printf '\n== %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 expect() { case "$2" in *"$3"*) printf 'ok: %s\n' "$1" ;; *) fail "$1: expected to find '$3' in: $2" ;; esac; }
+# set_spec BODY [SERVER]: changes a server's settings, failing with the panel's
+# answer if it refused. Its answer is not otherwise needed, and a change
+# that was refused would show only later, as something else.
+set_spec() {
+  out=$(call -X PATCH -d "$1" "${2:-$SRV}")
+  case "$out" in *'"spec"'*) ;; *) fail "a change of settings was refused: $out" ;; esac
+}
 
 cleanup() {
   status=$?
@@ -205,13 +212,13 @@ if [ -z "$PLAYER" ]; then
   linked_here=1
 fi
 whitelisted() { call -d '{"command":"whitelist list"}' "$SRV/console" | field "d['output']"; }
-call -X PATCH -d '{"spec":{"autoWhitelist":"off","whitelistMembers":{"also":["'"$ME"'"]}}}' "$SRV" >/dev/null
+set_spec '{"spec":{"autoWhitelist":"off","whitelistMembers":{"also":["'"$ME"'"]}}}'
 for _ in $(seq 1 20); do whitelisted | grep -q "$PLAYER" && break; sleep 1; done
 expect "a member picked is put on the whitelist, though no role is" "$(whitelisted)" "$PLAYER"
-call -X PATCH -d '{"spec":{"autoWhitelist":"viewer","whitelistMembers":{"also":[],"except":["'"$ME"'"]}}}' "$SRV" >/dev/null
+set_spec '{"spec":{"autoWhitelist":"viewer","whitelistMembers":{"also":[],"except":["'"$ME"'"]}}}'
 for _ in $(seq 1 20); do whitelisted | grep -q "$PLAYER" || break; sleep 1; done
 case "$(whitelisted)" in *"$PLAYER"*) fail "a member left out stays off the whitelist, though every member is on it" ;; *) echo "ok: a member left out stays off the whitelist, though every member is on it" ;; esac
-call -X PATCH -d '{"spec":{"autoWhitelist":"off","whitelistMembers":null}}' "$SRV" >/dev/null
+set_spec '{"spec":{"autoWhitelist":"off","whitelistMembers":null}}'
 if [ -n "$linked_here" ]; then call -X DELETE "$API/me/minecraft" >/dev/null; fi
 
 step "files"
@@ -234,11 +241,11 @@ restarted() {
 PACK=https://cdn.modrinth.com/data/OhduvhIc/versions/8cEJouzY/Veinminer-1.2.4.zip
 mods=$(call "$SRV" | field "__import__('json').dumps(d['spec']['mods'])")
 with=$(python3 -c 'import json, sys; m = json.loads(sys.argv[1]); m.append({"source": "url", "kind": "datapack", "project": sys.argv[2]}); print(json.dumps({"spec": {"mods": m}}))' "$mods" "$PACK")
-call -X PATCH -d "$with" "$SRV" >/dev/null
+set_spec "$with"
 restarted
 expect "a datapack from a URL is installed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/world/datapacks/Veinminer-1.2.4.zip")" 200
 expect "and enabled" "$(call -d '{"command":"datapack list enabled"}' "$SRV/console" | field "d['output']")" "Veinminer-1.2.4.zip"
-call -X PATCH -d "{\"spec\":{\"mods\":$mods}}" "$SRV" >/dev/null
+set_spec "{\"spec\":{\"mods\":$mods}}"
 expect "taken off, its file is removed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/world/datapacks/Veinminer-1.2.4.zip")" 404
 restarted
 expect "and the game no longer has it" "$(call -d '{"command":"datapack list"}' "$SRV/console" | field "'Veinminer' not in d['output']")" True
@@ -321,7 +328,7 @@ expect "the game goes back to saving" "$(call -d '{"command":"save-on"}' "$SRV/c
 # Change a file, add one, and take away a plugin, then go back.
 echo "changed after the snapshot" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
 echo "not in the snapshot" | call -X PUT --data-binary @- "$SRV/files/content?path=/stray.txt" >/dev/null
-call -X PATCH -d '{"spec":{"mods":[{"source":"modrinth","kind":"plugin","project":"luckperms"}]}}' "$SRV" >/dev/null
+set_spec '{"spec":{"mods":[{"source":"modrinth","kind":"plugin","project":"luckperms"}]}}'
 restored=$(call -X POST "$SRV/snapshots/$SNAP/restore?wait=true")
 expect "a restore is accepted" "$(echo "$restored" | field "d['id'] == '$SNAP'")" True
 wait_phase Running

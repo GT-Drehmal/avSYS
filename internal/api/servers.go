@@ -187,10 +187,10 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if err := checkJVM(&spec.JVM); err != nil {
 		return err
 	}
-	if err := checkPorts(spec.Ports); err != nil {
+	if err := packFits(spec); err != nil {
 		return err
 	}
-	if err := packFits(spec); err != nil {
+	if err := checkPorts(spec.Ports); err != nil {
 		return err
 	}
 	spec.Expose.Hostname = router.NormalizeHostname(strings.TrimSpace(spec.Expose.Hostname))
@@ -528,12 +528,6 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	defer release()
-	// The change is made to the server as it is now, not as the cache last
-	// saw it: one made a moment before, as by the request just before this
-	// one, is not taken for someone else's and refused.
-	if mc, err = s.live(r.Context(), mc); err != nil {
-		return err
-	}
 	var in struct{ Spec json.RawMessage }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -541,81 +535,52 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if len(in.Spec) == 0 {
 		return errBadRequest("Nothing to change: send {\"spec\": {...}}.")
 	}
-	current, err := json.Marshal(mc.Spec)
-	if err != nil {
-		return err
-	}
-	merged, err := jsonpatch.MergePatch(current, in.Spec)
-	if err != nil {
-		return errBadRequest("Malformed spec patch.")
-	}
-	var spec avsysv1.MinecraftServerSpec
-	if err := json.Unmarshal(merged, &spec); err != nil {
-		return errBadRequest("Invalid spec: %v", err)
-	}
-	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
-	if err := s.validateSpec(r.Context(), a.Namespace, mc.Name, &spec); err != nil {
-		return err
-	}
-	// Only a change of software is checked. A server whose version has since
-	// left its software's list can still have everything else changed.
-	if spec.Loader != mc.Spec.Loader || spec.Version != mc.Spec.Version || spec.LoaderVersion != mc.Spec.LoaderVersion {
-		if err := s.checkVersion(r.Context(), &spec); err != nil {
+	var previous *avsysv1.MinecraftServerSpec
+	var unlock, dropPack func()
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	// Merged into the server as it is now, not as the cache last saw it,
+	// which can lag a change made a moment ago: by this panel, or the
+	// controller saying how the server is doing. Changed again between that
+	// read and the write, it is read and merged into again: a merge patch
+	// only changes what it names.
+	for attempt := 1; ; attempt++ {
+		if mc, err = s.live(r.Context(), mc); err != nil {
 			return err
 		}
-	}
-	// What Java the version needs is the panel's to say, not the request's.
-	if spec.Version != mc.Spec.Version || spec.GameJava != mc.Spec.GameJava {
-		s.resolveJava(r.Context(), &spec)
-	}
-	// Setting the state to Running here is starting the server by another
-	// route, and is held to the same rules as the start action.
-	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
-		if err := unfinished(mc); err != nil {
+		if previous, err = s.mergeSpec(r.Context(), a, mc, in.Spec); err != nil {
 			return err
 		}
-		if s.ops.current(a.Namespace, mc.Name) != nil {
-			return errSnapshotting
+		// A pack uploaded before, given another address now, has its file
+		// removed, which a snapshot under way may be copying: not while one is.
+		if was := previous.ResourcePack; dropPack == nil && was != nil && was.Uploaded != nil && (mc.Spec.ResourcePack == nil || mc.Spec.ResourcePack.Uploaded == nil) {
+			if dropPack, err = s.changing(mc, true); err != nil {
+				return err
+			}
+			defer dropPack()
+		}
+		// The server's content is held still from here until what was taken
+		// off it is removed.
+		if unlock == nil {
+			unlock = s.lockContent(client.ObjectKeyFromObject(mc))
+		}
+		update := func() error { return s.Client.Update(r.Context(), mc) }
+		// A hostname it has already is left alone, even under a domain claimed
+		// by another since; only a new one is held to who claims what. It is
+		// compared as the router reads it: a server made outside the panel may
+		// have it in another case, or with a final dot.
+		if mc.Spec.Expose.Hostname != router.NormalizeHostname(previous.Expose.Hostname) {
+			err = s.withHostname(r.Context(), a.Org, mc.Spec.Expose.Hostname, update)
+		} else {
+			err = update()
+		}
+		if !apierrors.IsConflict(err) || attempt == 3 {
+			break
 		}
 	}
-	previous := mc.Spec.DeepCopy()
-	if err := keepUploadedPack(&spec, previous); err != nil {
-		return err
-	}
-	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
-		return err
-	}
-	if err := checkPackFormats(spec.ResourcePack, previous.ResourcePack); err != nil {
-		return err
-	}
-	// A pack uploaded before, given another address now, has its file
-	// removed, which a snapshot under way may be copying: not while one is.
-	if was := previous.ResourcePack; was != nil && was.Uploaded != nil && (spec.ResourcePack == nil || spec.ResourcePack.Uploaded == nil) {
-		release, err := s.changing(mc, true)
-		if err != nil {
-			return err
-		}
-		defer release()
-	}
-	if err := s.resolveContent(r.Context(), &spec, previous); err != nil {
-		return err
-	}
-	// A hostname it has already is left alone, even under a domain claimed
-	// by another since; only a new one is held to who claims what. It is
-	// compared as the router reads it: a server made outside the panel may
-	// have it in another case, or with a final dot.
-	mc.Spec = spec
-	// The server's content is held still from here until what was taken
-	// off it is removed.
-	defer s.lockContent(client.ObjectKeyFromObject(mc))()
-	update := func() error { return s.Client.Update(r.Context(), mc) }
-	if spec.Expose.Hostname != router.NormalizeHostname(previous.Expose.Hostname) {
-		err = s.withHostname(r.Context(), a.Org, spec.Expose.Hostname, update)
-	} else {
-		err = update()
-	}
-	// Update carries the resource version read above, so a concurrent edit
-	// is rejected instead of silently overwritten.
 	if apierrors.IsConflict(err) {
 		return &Error{Status: http.StatusConflict, Code: "stale", Message: "This server was changed by someone else just now. Try again."}
 	} else if err != nil {
@@ -632,6 +597,64 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	writeJSON(w, http.StatusOK, s.view(mc))
 	return nil
+}
+
+// mergeSpec applies a merge patch to a server's spec, checks the result and
+// fills in what follows from it, and puts it on mc. It returns the spec as
+// it was.
+func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.MinecraftServer, patch json.RawMessage) (*avsysv1.MinecraftServerSpec, error) {
+	current, err := json.Marshal(mc.Spec)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := jsonpatch.MergePatch(current, patch)
+	if err != nil {
+		return nil, errBadRequest("Malformed spec patch.")
+	}
+	var spec avsysv1.MinecraftServerSpec
+	if err := json.Unmarshal(merged, &spec); err != nil {
+		return nil, errBadRequest("Invalid spec: %v", err)
+	}
+	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
+	if err := s.validateSpec(ctx, a.Namespace, mc.Name, &spec); err != nil {
+		return nil, err
+	}
+	// Only a change of software is checked. A server whose version has since
+	// left its software's list can still have everything else changed.
+	if spec.Loader != mc.Spec.Loader || spec.Version != mc.Spec.Version || spec.LoaderVersion != mc.Spec.LoaderVersion {
+		if err := s.checkVersion(ctx, &spec); err != nil {
+			return nil, err
+		}
+	}
+	// What Java the version needs is the panel's to say, not the request's.
+	if spec.Version != mc.Spec.Version || spec.GameJava != mc.Spec.GameJava {
+		s.resolveJava(ctx, &spec)
+	}
+	// Setting the state to Running here is starting the server by another
+	// route, and is held to the same rules as the start action.
+	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
+		if err := unfinished(mc); err != nil {
+			return nil, err
+		}
+		if s.ops.current(a.Namespace, mc.Name) != nil {
+			return nil, errSnapshotting
+		}
+	}
+	previous := mc.Spec.DeepCopy()
+	if err := keepUploadedPack(&spec, previous); err != nil {
+		return nil, err
+	}
+	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
+		return nil, err
+	}
+	if err := checkPackFormats(spec.ResourcePack, previous.ResourcePack); err != nil {
+		return nil, err
+	}
+	if err := s.resolveContent(ctx, &spec, previous); err != nil {
+		return nil, err
+	}
+	mc.Spec = spec
+	return previous, nil
 }
 
 func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.User) error {
@@ -816,11 +839,14 @@ func restartsInPlace(mc *avsysv1.MinecraftServer) bool {
 // live reads a server as it is now, where the cache may lag a change just
 // made.
 func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv1.MinecraftServer, error) {
-	if s.Reader == nil {
-		return mc, nil
+	// Read again through the client where there is no reader of its own:
+	// mc may be one a change was already merged into, and be stale.
+	reader := s.Reader
+	if reader == nil {
+		reader = s.Client
 	}
 	now := &avsysv1.MinecraftServer{}
-	if err := s.Reader.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(mc), now); err != nil {
 		return nil, err
 	}
 	return now, nil
@@ -840,6 +866,45 @@ func checkPackSHA1(rp, was *avsysv1.ResourcePackSpec) error {
 	if !sha1Pattern.MatchString(rp.SHA1) {
 		return errBadRequest("A resource pack's SHA-1 is 40 hexadecimal digits.")
 	}
+	return nil
+}
+
+// keepUploadedPack holds a change of settings to the pack uploaded to the
+// server: one can be kept, as it is, but not made up. A pack given another
+// address is one hosted elsewhere now, and no longer the uploaded one.
+func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
+	rp, was := spec.ResourcePack, previous.ResourcePack
+	// A pack picked from a project is that project's file: given another
+	// address, and not another project or version with it, it is no
+	// longer the project's.
+	if rp != nil && rp.Project != nil && was != nil && was.Project != nil && *rp.Project == *was.Project && rp.URL != was.URL {
+		rp.Project = nil
+	}
+	// Saying none is not how an uploaded pack is removed, which takes its
+	// file too: it is what settings from before it was uploaded say.
+	if (rp == nil || rp.URL == "") && was != nil && was.Uploaded != nil {
+		spec.ResourcePack = was.DeepCopy()
+		// Checked as the version it is kept with, which may be another.
+		return packFits(spec)
+	}
+	if rp == nil || rp.Uploaded == nil {
+		return nil
+	}
+	if was == nil || was.Uploaded == nil {
+		return errBadRequest("A resource pack is uploaded with PUT /orgs/{org}/servers/{server}/resource-pack.")
+	}
+	if rp.URL != was.URL {
+		rp.Uploaded = nil
+		return nil
+	}
+	if rp.SHA1 != was.SHA1 {
+		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
+	}
+	rp.Uploaded = was.Uploaded.DeepCopy()
+	// Its formats are what its file says.
+	rp.Formats = was.Formats.DeepCopy()
+	// The panel's own file is no project's.
+	rp.Project = nil
 	return nil
 }
 
@@ -885,45 +950,6 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 // portName is a Service port's name, which a port's is: a letter first, a
 // letter or digit last, no two dashes together.
 var portName = regexp.MustCompile(`^[a-z](-?[a-z0-9])*$`)
-
-// keepUploadedPack holds a change of settings to the pack uploaded to the
-// server: one can be kept, as it is, but not made up. A pack given another
-// address is one hosted elsewhere now, and no longer the uploaded one.
-func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
-	rp, was := spec.ResourcePack, previous.ResourcePack
-	// A pack picked from a project is that project's file: given another
-	// address, and not another project or version with it, it is no
-	// longer the project's.
-	if rp != nil && rp.Project != nil && was != nil && was.Project != nil && *rp.Project == *was.Project && rp.URL != was.URL {
-		rp.Project = nil
-	}
-	// Saying none is not how an uploaded pack is removed, which takes its
-	// file too: it is what settings from before it was uploaded say.
-	if (rp == nil || rp.URL == "") && was != nil && was.Uploaded != nil {
-		spec.ResourcePack = was.DeepCopy()
-		// Checked as the version it is kept with, which may be another.
-		return packFits(spec)
-	}
-	if rp == nil || rp.Uploaded == nil {
-		return nil
-	}
-	if was == nil || was.Uploaded == nil {
-		return errBadRequest("A resource pack is uploaded with PUT /orgs/{org}/servers/{server}/resource-pack.")
-	}
-	if rp.URL != was.URL {
-		rp.Uploaded = nil
-		return nil
-	}
-	if rp.SHA1 != was.SHA1 {
-		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
-	}
-	rp.Uploaded = was.Uploaded.DeepCopy()
-	// Its formats are what its file says.
-	rp.Formats = was.Formats.DeepCopy()
-	// The panel's own file is no project's.
-	rp.Project = nil
-	return nil
-}
 
 // rcon runs a console command on a running server.
 func (s *Server) rcon(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error) {
