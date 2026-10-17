@@ -570,7 +570,8 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	// Without a last snapshot this is a plain delete.
 	if r.URL.Query().Get("snapshot") == "false" || !s.Backups.Available() {
-		release, err := s.changing(mc, false)
+		// A server whose move did not finish can still be deleted.
+		release, err := s.admit(mc, false)
 		if err != nil {
 			return err
 		}
