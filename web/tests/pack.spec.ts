@@ -57,7 +57,7 @@ async function survival(page: Page, pack: object | null) {
 
 test("one picked from Modrinth is its newest release that fits, and another version can be chosen", async ({ page }) => {
   const state = await survival(page, null);
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await expect(page.getByText(/^None\. One added from Modrinth/)).toBeVisible();
   await choosePack(page);
   const dialog = page.getByRole("dialog");
@@ -81,7 +81,7 @@ test("one picked from Modrinth is its newest release that fits, and another vers
 test("one at a URL replaces the one there was, with its hash and the same settings", async ({ page }) => {
   const state = await survival(page, { ...picked, enforce: true, prompt: "For the map" });
   await page.route("**/api/v1/catalog/sha1", (route) => route.fulfill({ json: { sha1: "ef".repeat(20) } }));
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await page.getByRole("button", { name: "Replace" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("A server offers one resource pack. Choosing one here replaces Faithful 32x.")).toBeVisible();
@@ -103,7 +103,7 @@ test("one at a URL is given its SHA-1, or taken without one when the panel canno
     hashed++;
     return route.fulfill({ status: 502, json: { code: "fetch", message: "The panel could not reach that address." } });
   });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await choosePack(page);
   let dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "From URL" }).click();
@@ -132,7 +132,7 @@ test("while one choice is being made, no other can be made on another tab", asyn
     await new Promise<void>((resolve) => (answer = resolve));
     return route.fulfill({ json: { sha1: "ef".repeat(20) } });
   });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await choosePack(page);
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "From URL" }).click();
@@ -149,7 +149,7 @@ test("while one choice is being made, no other can be made on another tab", asyn
 
 test("a pack's address that does not decode is shown as it is", async ({ page }) => {
   await survival(page, { url: "https://packs.example.org/bad%E0%A4%A.zip" });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await expect(page.getByText("bad%E0%A4%A.zip", { exact: true })).toBeVisible();
 });
 
@@ -160,7 +160,7 @@ test("while a change to it is being saved, it is not replaced or removed", async
     if (route.request().method() === "PATCH") await new Promise<void>((resolve) => (answer = resolve));
     return route.fallback();
   });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await page.getByLabel("Prompt").fill("For the map");
   await page.getByLabel("Prompt").press("Enter");
   await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeDisabled();
@@ -190,7 +190,7 @@ test("while its newest version is looked up, it is not replaced or removed", asy
     if (++asked > 1) await new Promise<void>((resolve) => (answer = resolve));
     return route.fallback();
   });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await page.getByRole("button", { name: "1.21.4-a" }).click();
   await expect(page.getByRole("dialog").getByRole("button", { name: /^1\.21\.4-b/ })).toBeVisible();
   await page.getByRole("dialog").getByRole("button", { name: /^Update to the best fit/ }).click();
@@ -225,7 +225,7 @@ test("for a new server on the latest version, a pack is picked once it is known 
 
 test("one uploaded in the picker is kept and served by the panel, and removing it takes its file", async ({ page }) => {
   const state = await survival(page, null);
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await choosePack(page);
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Upload", exact: true }).click();
@@ -249,7 +249,7 @@ test("an upload says how far it is and can be stopped, and says why the panel re
     // Never answered: it is still on its way when it is stopped.
     await new Promise(() => {});
   });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await choosePack(page);
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Upload", exact: true }).click();
@@ -273,7 +273,7 @@ test("an upload says how far it is and can be stopped, and says why the panel re
 
 test("whether it is required and its prompt are saved from the content page", async ({ page }) => {
   const state = await survival(page, { url: "https://packs.example.org/world.zip", sha1: "" });
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await page.getByRole("switch", { name: "Required" }).click();
   await expect.poll(() => state.sent).toEqual([{ resourcePack: { enforce: true } }]);
   await expect(page.getByRole("switch", { name: "Required" })).toBeChecked();
@@ -286,7 +286,7 @@ test("whether it is required and its prompt are saved from the content page", as
 test("someone who cannot change the server sees its pack and nothing to change it with", async ({ page, as }) => {
   await as("operator");
   await survival(page, picked);
-  await page.goto("/o/friends/s/survival/mods");
+  await page.goto("/o/friends/s/survival/content");
   await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Replace" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Remove the resource pack" })).toHaveCount(0);

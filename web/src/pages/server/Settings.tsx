@@ -196,7 +196,7 @@ export function Settings() {
 
       <Section title="Software" description={server.spec.modpack ? "The modpack decides the game version and mod loader." : "Changing the loader or going back a version can break an existing world. Back it up first."}>
         {server.spec.modpack ? (
-          <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change its version under Mods.</Notice>
+          <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change its version under Content.</Notice>
         ) : (
           <div className="grid grid-cols-2 gap-4">
             <Field label="Type">
