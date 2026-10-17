@@ -225,6 +225,8 @@ export interface ServerSpec {
   jvm?: { aikarFlags?: boolean | null; extraFlags?: string };
   storage: { size: string; storageClassName?: string };
   expose: { type: ExposeType; hostname?: string; loadBalancerIP?: string; nodePort?: number };
+  /** What mods and plugins listen on beside the game, opened to players. */
+  ports?: ExtraPort[] | null;
   sleep: { enabled?: boolean; idleMinutes: number };
   /** From which role members are operators in game: "" is operator, "off" is nobody. */
   autoOp?: "" | "operator" | "admin" | "owner" | "off";
@@ -241,10 +243,29 @@ export interface ServerSpec {
   env?: { name: string; value?: string }[];
 }
 
+/** A port a mod or plugin listens on in the server. */
+export interface ExtraPort {
+  name: string;
+  port: number;
+  protocol?: "TCP" | "UDP";
+}
+
+/** Where an extra port is reached from outside. */
+export interface PortStatus {
+  name: string;
+  port: number;
+  protocol: "TCP" | "UDP";
+  publicPort?: number;
+  address?: string;
+  /** Why it is not open, when it cannot be. */
+  message?: string;
+}
+
 export interface ServerStatus {
   phase?: Phase;
   message?: string;
   address?: string;
+  ports?: PortStatus[];
   version?: string;
   players?: { online: number; max: number; names?: string[] } | null;
   lastActive?: string;
@@ -256,7 +277,7 @@ export interface ServerStatus {
   snapshots?: { lastTime?: string; lastID?: string; error?: string; /** When the daily snapshot last completed, whether or not anything had changed. */ lastRun?: string } | null;
 }
 
-export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore" | "final" | "copy";
+export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore" | "final" | "copy" | "move";
 
 /** One saved state of a server. */
 export interface Snapshot {
@@ -290,7 +311,7 @@ export interface SnapshotDetail extends Snapshot {
 
 /** A snapshot or restore under way on a server, or a new server receiving its files. */
 export interface Operation {
-  kind: "snapshot" | "restore" | "create" | "delete-server";
+  kind: "snapshot" | "restore" | "create" | "delete-server" | "move";
   org: string;
   server: string;
   stage: string;
@@ -299,7 +320,7 @@ export interface Operation {
 }
 
 export interface OperationDone {
-  kind: "snapshot" | "restore" | "create" | "delete" | "delete-server";
+  kind: "snapshot" | "restore" | "create" | "delete" | "delete-server" | "move";
   org: string;
   server: string;
   error?: string;
@@ -470,6 +491,15 @@ export interface MinecraftVersions {
 export const serverPath = (org: string, name: string) => `/orgs/${org}/servers/${name}`;
 
 /** A node of the cluster, as one is chosen for a server. */
+/** Where a server runs, and what moving it involves. */
+export interface Placement {
+  node?: string;
+  /** Its files are on that node's own disk, and go with it in a snapshot. */
+  local: boolean;
+  /** Node labels it is kept to, set outside the panel. */
+  labels?: Record<string, string>;
+}
+
 export interface NodeInfo {
   name: string;
   /** Up and taking pods. */
