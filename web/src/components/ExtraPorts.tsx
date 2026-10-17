@@ -33,7 +33,7 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
   const installed = new Set(mods.map((m) => m.project));
   const needed = known.filter((k) => k.slugs.some((s) => installed.has(s)) && !has(k.port));
   const where = (p: PortDraft) => status.find((s) => s.name === p.name && String(s.port) === p.port && s.protocol === p.protocol);
-  if (expose === "None") return <p className="text-xs text-muted">Not reachable from outside, so no port is opened.</p>;
+  if (expose === "None") return <p className="text-xs text-muted">Not reachable from outside.</p>;
   return (
     <div className="flex flex-col gap-2.5">
       {needed.map((k) => (
@@ -88,13 +88,13 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
           ))}
       </div>
       {ports.length > 0 && sleeps && (
-        <p className="text-xs text-warn">It sleeps when empty, and only joining through the game's own address wakes it: these ports do not answer while it sleeps, so Bedrock players through Geyser cannot wake it.</p>
+        <p className="text-xs text-warn">These ports do not work while the server sleeps. Bedrock players through Geyser cannot wake it.</p>
       )}
       {ports.length > 0 && (
         <p className="text-xs text-muted">
           {expose === "Router"
-            ? "Each gets a public port of its own, as the address is shared. Let it through your router or firewall."
-            : "Opened beside the game's on the server's own address."}
+            ? "Each gets its own public port. Allow it through your firewall."
+            : "Opened on the server's address."}
         </p>
       )}
     </div>

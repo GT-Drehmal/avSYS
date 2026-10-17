@@ -13,12 +13,12 @@ const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 export function Nodes() {
   const me = useMe().data;
   const nodes = useQuery({ queryKey: ["nodes", "all"], queryFn: () => api.get<{ nodes: NodeInfo[] }>("/nodes"), refetchInterval: 15_000 });
-  if (me && !me.user.isAdmin) return <Empty title="Not yours to see">The cluster's nodes are for the panel's administrator.</Empty>;
+  if (me && !me.user.isAdmin) return <Empty title="Admins only">Only the panel's administrator can see nodes.</Empty>;
   if (nodes.isPending) return <Loading />;
-  if (!nodes.data) return <Notice tone="danger">{nodes.error instanceof ApiError ? nodes.error.message : "The nodes could not be read."}</Notice>;
+  if (!nodes.data) return <Notice tone="danger">{nodes.error instanceof ApiError ? nodes.error.message : "Could not load nodes."}</Notice>;
   return (
     <>
-      <PageHeader title="Nodes" description="Where game servers run. New ones go to the fastest node with room, unless one is chosen when the server is made." />
+      <PageHeader title="Nodes" description="New servers go to the fastest node with room." />
       <ul className="flex flex-col gap-3">
         {nodes.data.nodes.map((n) => {
           const used = n.memory > 0 ? Math.min(1, (n.memory - n.free) / n.memory) : 0;
@@ -59,7 +59,7 @@ export function Nodes() {
         })}
       </ul>
       <p className="mt-6 text-xs leading-relaxed text-muted">
-        To keep new servers off a node unless chosen, label it: <span className="font-mono">kubectl label node NAME avsys.dev/game-servers=false</span>. Its speed is measured by <span className="font-mono">hack/rank-nodes.sh</span>.
+        To keep new servers off a node, run <span className="font-mono">kubectl label node NAME avsys.dev/game-servers=false</span>. Measure speed with <span className="font-mono">hack/rank-nodes.sh</span>.
       </p>
     </>
   );

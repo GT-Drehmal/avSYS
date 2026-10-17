@@ -35,7 +35,7 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
       <>
         {back}
         <PageHeader title="New server" />
-        <Notice tone="danger">{servers.error instanceof ApiError ? servers.error.message : "The organization's servers could not be loaded."}</Notice>
+        <Notice tone="danger">{servers.error instanceof ApiError ? servers.error.message : "Could not load servers."}</Notice>
       </>
     );
   }
@@ -62,7 +62,7 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
             ? `There is no server named ${origin.name} to copy.`
             : snapshot.error instanceof ApiError
               ? snapshot.error.message
-              : "The snapshot could not be read."}
+              : "Could not load the snapshot."}
         </Notice>
       </>
     );

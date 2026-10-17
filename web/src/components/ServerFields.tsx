@@ -120,7 +120,7 @@ export type Join = "anyone" | "viewer" | "operator" | "admin" | "owner" | "list"
 
 /** What "who can join" says under its control. */
 export const joinHint = (join: Join) =>
-  join === "anyone" ? "No whitelist." : join === "list" ? "The players on its whitelist." : "Those who have linked a Minecraft account, and the players on its whitelist.";
+  join === "anyone" ? "No whitelist." : join === "list" ? undefined : "Members need a linked Minecraft account. Whitelisted players can join too.";
 
 /** The choices for who can join. */
 export const joinOptions = (
@@ -150,16 +150,10 @@ export function More({ label, changed = 0, open, onToggle }: { label: string; ch
 export function LaunchFlags({ aikar, extra, onAikar, onExtra, fromSnapshot }: { aikar: boolean; extra: string; onAikar: (on: boolean) => void; onExtra: (text: string) => void; fromSnapshot?: boolean }) {
   return (
     <div className="flex flex-col gap-4">
-      <Toggle checked={aikar} onChange={onAikar} label="Use Aikar's flags (recommended)" hint="Garbage collection tuned for the game, so that it pauses less. Suits nearly every server." />
+      <Toggle checked={aikar} onChange={onAikar} label="Use Aikar's flags (recommended)" hint="Fewer lag spikes. Good for most servers." />
       <Field
         label="Extra JVM flags"
-        hint={
-          fromSnapshot
-            ? "Not taken from a snapshot. One per line, as -XX:+AlwaysPreTouch."
-            : aikar
-              ? "Optional, added after Aikar's. One per line, as -XX:+AlwaysPreTouch. Memory is set above."
-              : "Optional. One per line. With Aikar's off and none here, Java starts with its own defaults."
-        }
+        hint={fromSnapshot ? "Not copied from a snapshot. One per line." : "Optional. One per line."}
       >
         {(id) => <Textarea id={id} rows={2} value={extra} onChange={(e) => onExtra(e.target.value)} placeholder="-XX:+AlwaysPreTouch" className="font-mono" spellCheck={false} />}
       </Field>
@@ -191,12 +185,12 @@ export function NodeChoice({ memory, value, kept, onChange }: { memory: string; 
       label="Node"
       hint={
         value && value !== "auto"
-          ? "Its world is kept on this node's disk."
+          ? undefined
           : keptTo && !value
-            ? "Where the original may run, as the nodes are labelled. Its world is kept on that node's disk."
+            ? "The nodes the original can run on."
             : list.length === 1
-              ? "The only node there is. Its world is kept on its disk."
-              : "Chosen by speed and free memory. Its world is kept on that node's disk."
+              ? "The only node."
+              : "The fastest node with room."
       }
     >
       {(id) => (

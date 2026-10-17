@@ -142,7 +142,7 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
       const page = await api.get<LogPage>(`${url}&${query}`);
       if (asked === generation.current) place(page);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "That part of the log could not be read.");
+      toast.error(err instanceof ApiError ? err.message : "Could not load that part of the log.");
     } finally {
       setLoading(false);
     }
@@ -204,8 +204,8 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
               : errorAt
                 ? `Line ${errorAt}`
                 : first.data?.truncated
-                  ? "Nothing in the part of this log shown tells of an error."
-                  : "Nothing in this log tells of an error."
+                  ? "No errors in the lines shown."
+                  : "No errors in this log."
           }
           className="h-7 rounded-md px-2.5 text-xs font-medium text-muted hover:bg-raised hover:text-fg disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
         >
@@ -347,8 +347,8 @@ function LiveConsole() {
             {!waiting
               ? "Waiting for output…"
               : server.status.phase === "Starting"
-                ? "The game is starting. Its log appears here as soon as it is up."
-                : "This server is not running. Its log appears here once it starts."}
+                ? "The server is starting."
+                : "The server is not running."}
           </p>
         )}
       </div>

@@ -44,7 +44,7 @@ test("a server is opened to see its snapshots, and one of them to see what it ho
   // A snapshot taken by hand is nobody's to remove but a person's.
   await snapshots.nth(1).click();
   await expect(dialog).toContainText("Taken by hand, by owner");
-  await expect(dialog).toContainText("Until it is deleted by hand.");
+  await expect(dialog).toContainText("Until you delete it.");
 });
 
 test("by server, each server that exists is snapshotted from its row, one with none yet too", async ({ page }) => {
@@ -87,7 +87,7 @@ test("by time: everything in order, each with its server, and narrowed by server
   await expect(snapshots).toHaveCount(1);
   await expect(rows.first()).toContainText("oldworld");
   await page.getByLabel("Why it was taken").selectOption("copy");
-  await expect(page.getByText("No snapshot matches that.")).toBeVisible();
+  await expect(page.getByText("No matching snapshots.")).toBeVisible();
 });
 
 test("the arrangement chosen is remembered", async ({ page }) => {
@@ -177,7 +177,7 @@ test("a snapshot of a server that exists can be restored from here, and one of a
   await restore.first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Restore survival?" })).toBeVisible();
-  await expect(dialog).toContainText("saved as a snapshot first");
+  await expect(dialog).toContainText("A snapshot is taken first");
   await dialog.getByRole("button", { name: "Restore", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(asked).toHaveLength(1);
@@ -270,7 +270,7 @@ test("a server's header fits a phone, its buttons wrapping", async ({ page }) =>
 test("by server, a list of servers that could not be loaded is said, not taken for none", async ({ page }) => {
   await page.route("**/api/v1/orgs/friends/servers", (route) => route.fulfill({ status: 500, json: { code: "test", message: "Not today." } }));
   await page.reload();
-  await expect(page.getByText(/The list of servers could not be loaded/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/Could not load servers/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: /^Snapshot .* now$/ })).toHaveCount(0);
 });
 

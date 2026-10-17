@@ -96,7 +96,7 @@ export function Backups() {
     return (
       <>
         {header}
-        <Notice tone="danger">The snapshots could not be loaded.</Notice>
+        <Notice tone="danger">Could not load snapshots.</Notice>
       </>
     );
   }
@@ -104,7 +104,7 @@ export function Backups() {
     return (
       <>
         {header}
-        <Notice>Snapshots are not available: restic is not installed on the panel.</Notice>
+        <Notice>Snapshots are not set up on this panel.</Notice>
       </>
     );
   }
@@ -136,12 +136,12 @@ export function Backups() {
           </p>
           <OffsiteCopy org={org} canAdmin={canAdmin} empty={snapshots.length === 0 && operations.length === 0} />
         </div>
-        {servers.isError && <Notice tone="danger">The list of servers could not be loaded, so only servers with snapshots are shown, and nothing can be done to them here.</Notice>}
+        {servers.isError && <Notice tone="danger">Could not load servers. Only servers with snapshots are shown.</Notice>}
         <BackupSchedule org={org} canAdmin={canAdmin} />
         {operations.map((op) => (
           <OperationRow key={op.server} op={op} />
         ))}
-        {byServer.size === 0 && operations.length === 0 && <Empty title="Nothing saved yet">Snapshots of this organization's servers are listed here.</Empty>}
+        {byServer.size === 0 && operations.length === 0 && <Empty title="Nothing saved yet" />}
 
         {byServer.size > 0 && (
           <div className="flex flex-col gap-3">
@@ -178,7 +178,7 @@ export function Backups() {
 
             {view === "time" ? (
               filtered.length === 0 ? (
-                <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No snapshot matches that.</p>
+                <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No matching snapshots.</p>
               ) : (
                 <SnapshotRows
                   org={org}
@@ -314,7 +314,7 @@ function ServerGroup({ org, name, server, known, items, concern, open, onToggle,
             size="sm"
             icon={<Camera className="size-3.5" />}
             aria-label={`Snapshot ${name} now`}
-            title={busy ? "Something is being done to its snapshots now." : undefined}
+            title={busy ? "Busy with another task." : undefined}
             disabled={busy || !server}
             loading={snapshot.isPending}
             onClick={take}
