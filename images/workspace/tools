@@ -1,0 +1,70 @@
+#!/bin/sh
+# tools installs programs into your home, without root: from conda-forge,
+# which has most of what a server's files are worked on with (ffmpeg, Java,
+# Node, Python packages, image tools, ...). They go in ~/.local/tools, which
+# is on your PATH in a login shell, and like the rest of your home they stay
+# with the server across restarts. They are left out of snapshots, so a copy
+# of the server starts without them.
+set -e
+prefix="$HOME/.local/tools"
+export MAMBA_ROOT_PREFIX="$HOME/.local/mamba"
+mm() { micromamba --quiet "$@"; }
+# What was downloaded to install from is let go of once it is in: it is on
+# the server's own storage, and would take it up for nothing.
+tidy() { micromamba --quiet clean --all --yes >/dev/null 2>&1 || true; }
+
+usage() {
+  cat <<'TEXT'
+tools: install programs into your home, without root.
+
+  tools install <name>...   install, as: tools install ffmpeg
+  tools remove <name>...    take them out again
+  tools list                what you have installed
+  tools search <name>       look for something to install
+
+Programs come from conda-forge (https://conda-forge.org/packages) and go in
+~/.local/tools/bin, which is on your PATH in a new login shell.
+TEXT
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  install|add)
+    [ $# -gt 0 ] || { usage >&2; exit 2; }
+    if [ -d "$prefix/conda-meta" ]; then
+      mm install --yes --prefix "$prefix" --channel conda-forge "$@"
+    else
+      mm create --yes --prefix "$prefix" --channel conda-forge "$@"
+    fi
+    tidy
+    case ":$PATH:" in
+      *":$prefix/bin:"*) ;;
+      *) echo "Installed. Start a new shell, or run: export PATH=\"$prefix/bin:\$PATH\"" ;;
+    esac
+    ;;
+  remove|uninstall|rm)
+    [ $# -gt 0 ] || { usage >&2; exit 2; }
+    mm remove --yes --prefix "$prefix" "$@"
+    tidy
+    ;;
+  list|ls)
+    if [ -d "$prefix/conda-meta" ]; then
+      mm list --prefix "$prefix"
+    else
+      echo "Nothing installed yet. Try: tools install ffmpeg"
+    fi
+    ;;
+  search|find)
+    [ $# -gt 0 ] || { usage >&2; exit 2; }
+    mm search --channel conda-forge "$@"
+    ;;
+  ""|help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "tools: no command $cmd" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

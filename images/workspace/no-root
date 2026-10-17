@@ -13,6 +13,7 @@ the same one the game runs as.
 
 What does work, and stays with the server:
 
+  Most programs                  tools install <name>, as: tools install ffmpeg
   A program that is one file     put it in ~/.local/bin, which is on your PATH
   Python packages                python3 -m venv ~/venv && ~/venv/bin/pip install <name>
   Anything you can build         install it under ~ (for example with --prefix=$HOME/.local)
