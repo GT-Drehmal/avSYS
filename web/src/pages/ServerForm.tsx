@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { AddContentDialog, ContentList, kindsFor, kindsPhrase, PackCard, PackFit, type PickKind, type Software } from "../components/Content";
+import { AddContentDialog, ContentList, contentList, kindsFor, kindsPhrase, PackCard, PackFit, type PickKind, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, NodeChoice, type Join } from "../components/ServerFields";
@@ -546,12 +546,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         title="Content"
         description={
           !source
-            ? software
-              ? "Optional. Can also be added later."
-              : "Optional."
+            ? `${contentList(software)}. Optional, and can be added later.`
             : v.modpack
-              ? "Its modpack comes with it. Anything added on top of it can be changed here."
-              : "Comes with it. What is taken away here is removed before it first starts."
+              ? `Its modpack comes with it. ${contentList(software)} added on top of it can be changed here.`
+              : `${contentList(software)}. Its own come with it; what is taken away here is removed before it first starts.`
         }
       >
         {v.mods.length > 0 ? (

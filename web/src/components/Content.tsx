@@ -63,6 +63,14 @@ export const kindsPhrase = (software: Software) =>
     .map((k) => kindNames[k].toLowerCase())
     .join(" or ");
 
+/** What a server can be given, as a list: "Plugins, datapacks and a resource pack". Without its software, either kind. */
+export function contentList(software?: Software | null) {
+  const kinds = software ? kindsFor(software).map((k) => kindNames[k].toLowerCase()) : ["mods or plugins", "datapacks"];
+  const all = [...kinds, "a resource pack"];
+  const list = `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
+  return list.charAt(0).toUpperCase() + list.slice(1);
+}
+
 interface AddContentProps {
   software: Software;
   /** What is already chosen, so it can be shown as such. */
