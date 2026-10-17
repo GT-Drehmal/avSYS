@@ -650,3 +650,17 @@ test("the panel's administrator sees the nodes and what runs on each; nobody els
   await expect(page.getByRole("menuitem", { name: "Account" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Nodes" })).toHaveCount(0);
 });
+
+test("the content section says what can go in it, by what the server runs", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await expect(page.getByText("Mods or plugins, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  const type = page.getByRole("group", { name: "Server type" });
+  await type.getByRole("button", { name: /^Paper/ }).click();
+  await expect(page.getByText("Plugins, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  await type.getByRole("button", { name: /^Fabric/ }).click();
+  await expect(page.getByText("Mods, datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+  await type.getByRole("button", { name: /^Vanilla/ }).click();
+  await expect(page.getByText("Datapacks and a resource pack. Optional, and can be added later.")).toBeVisible();
+});
