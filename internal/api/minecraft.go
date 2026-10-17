@@ -214,7 +214,7 @@ func wantedFrom(min store.Role, picks *avsysv1.MemberPicks, members []store.Memb
 			continue
 		}
 		// Every account they have linked: a main and an alt are both theirs.
-		for _, name := range accountNames(m) {
+		for _, name := range accountNames(m, m.Role.AtLeast(store.RoleOperator)) {
 			if key := strings.ToLower(name); !seen[key] {
 				seen[key] = true
 				out = append(out, name)
@@ -225,14 +225,21 @@ func wantedFrom(min store.Role, picks *avsysv1.MemberPicks, members []store.Memb
 	return out
 }
 
-// accountNames is the names of every account a member has linked.
-func accountNames(m store.Member) []string {
+// accountNames is the names of the accounts a member has linked that a list
+// takes: every one for someone who could put any player on it themselves,
+// as an operator can at the console; for anyone else, only those they have
+// proven are theirs. Otherwise a viewer could have anyone let in by linking
+// their name.
+func accountNames(m store.Member, trusted bool) []string {
 	if len(m.Minecraft) == 0 && m.MinecraftName != "" {
-		return []string{m.MinecraftName}
+		if trusted {
+			return []string{m.MinecraftName}
+		}
+		return nil
 	}
 	out := make([]string, 0, len(m.Minecraft))
 	for _, a := range m.Minecraft {
-		if a.Name != "" {
+		if a.Name != "" && (trusted || a.Verified) {
 			out = append(out, a.Name)
 		}
 	}

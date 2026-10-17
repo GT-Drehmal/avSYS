@@ -156,6 +156,8 @@ export interface MinecraftAccount {
   linkedAt: string;
   /** The one shown as their name. */
   main: boolean;
+  /** Proven to be theirs, by logging in as it. */
+  verified: boolean;
 }
 
 export type Phase = "Stopped" | "Stopping" | "Starting" | "Running" | "Sleeping" | "Error";

@@ -331,7 +331,7 @@ func (s *Store) withMinecraftAccounts(ctx context.Context, orgID string, members
 		byUser[members[i].UserID] = &members[i]
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT a.user_id, a.uuid, a.name, a.linked_at, a.main FROM minecraft_links a
+		`SELECT a.user_id, a.uuid, a.name, a.linked_at, a.main, a.verified_at > 0 FROM minecraft_links a
 		 JOIN memberships m ON m.user_id = a.user_id WHERE m.org_id = ? ORDER BY a.main DESC, a.linked_at, a.rowid`, orgID)
 	if err != nil {
 		return err
@@ -341,7 +341,7 @@ func (s *Store) withMinecraftAccounts(ctx context.Context, orgID string, members
 		var user string
 		var a MinecraftAccount
 		var linked int64
-		if err := rows.Scan(&user, &a.UUID, &a.Name, &linked, &a.Main); err != nil {
+		if err := rows.Scan(&user, &a.UUID, &a.Name, &linked, &a.Main, &a.Verified); err != nil {
 			return err
 		}
 		a.LinkedAt = unix(linked)

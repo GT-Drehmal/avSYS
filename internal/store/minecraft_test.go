@@ -183,7 +183,59 @@ func TestMinecraftAccountsMigrated(t *testing.T) {
 		if got := names(t, s, u); got != "OldName*" {
 			t.Errorf("after opening: %q", got)
 		}
+		// Linked before accounts could be proven: taken as proven.
+		if all, _ := s.MinecraftAccounts(context.Background(), u.ID); len(all) != 1 || !all[0].Verified {
+			t.Errorf("an account from before is not taken as proven: %+v", all)
+		}
 		s.Close()
+	}
+}
+
+// A table of several accounts from before they could be proven gets the
+// column, with every account in it taken as proven; a new one is not.
+func TestVerifiedAtAdded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounts.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := user(t, s, "u")
+	s.Close()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`DROP TABLE minecraft_links`,
+		`CREATE TABLE minecraft_links (user_id TEXT NOT NULL, uuid TEXT NOT NULL, name TEXT NOT NULL, linked_at INTEGER NOT NULL, main INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, uuid))`,
+		`INSERT INTO minecraft_links VALUES ('` + u.ID + `', 'a', 'Before', 1700000000, 1)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.AddMinecraftAccount(ctx, u.ID, &MinecraftAccount{UUID: "b", Name: "After"}, false); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := s.MinecraftAccounts(ctx, u.ID)
+	if len(all) != 2 || !all[0].Verified || all[1].Verified {
+		t.Errorf("%+v", all)
+	}
+	if err := s.VerifyMinecraftAccount(ctx, u.ID, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := s.MinecraftAccounts(ctx, u.ID); !all[1].Verified {
+		t.Errorf("proven, not recorded: %+v", all)
+	}
+	if err := s.VerifyMinecraftAccount(ctx, u.ID, "nobody"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("proving one not linked: %v", err)
 	}
 }
 
