@@ -316,6 +316,18 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			return nil
 		}
 	}
+	// The members too: a look that read them before an account was linked
+	// or unlinked, and got the lock after one that read them since, would
+	// otherwise undo it.
+	if slug, ok := s.orgOfNamespace(fresh.Namespace); ok {
+		org, err := s.Store.OrgBySlug(ctx, slug)
+		if err != nil {
+			return err
+		}
+		if members, err = s.Store.Members(ctx, org.ID); err != nil {
+			return err
+		}
+	}
 	orig := fresh.DeepCopy()
 	if fresh.Annotations == nil {
 		fresh.Annotations = map[string]string{}
