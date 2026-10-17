@@ -1,8 +1,8 @@
 import { ExternalLink, FileArchive, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { api, qs, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackProject, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
+import { api, qs, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
-import { useGameVersions } from "../lib/software";
+import { packFormatsOf, useGameFormat, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
 import { ModrinthSearch, ProjectIcon } from "./ModrinthSearch";
 import { Button, Chip, cx, Field, Input, Modal, Notice, Spinner } from "./ui";
@@ -238,11 +238,12 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
   );
 }
 
-/** A Modrinth version's file as a server's resource pack. */
-export function packOfVersion(v: ModrinthVersion, project: Omit<PackProject, "version" | "versionName">): ResourcePack {
+/** A Modrinth version's file as a server's resource pack, made for the formats of the game versions it is listed for. */
+export async function packOfVersion(v: ModrinthVersion, project: Omit<PackProject, "version" | "versionName">): Promise<ResourcePack> {
   const file = v.files?.find((f) => f.primary) ?? v.files?.[0];
   if (!file) throw new Error(`${project.title || project.id} ${v.version_number} has no file to offer.`);
-  return { url: file.url, sha1: file.hashes.sha1 ?? "", uploaded: null, project: { ...project, version: v.id, versionName: v.version_number } };
+  const formats = await packFormatsOf(v.game_versions ?? []);
+  return { url: file.url, sha1: file.hashes.sha1 ?? "", uploaded: null, project: { ...project, version: v.id, versionName: v.version_number }, formats };
 }
 
 /** The newest release of a Modrinth project that fits, as a resource pack. */
@@ -366,17 +367,18 @@ function PackPane({
               // is fetched on every join. One given is used; otherwise the
               // panel works it out if it can reach the pack, which players
               // may when it cannot.
+              // Fetched, it says too which formats it is made for.
               let hash = sha1.trim();
+              let formats: PackFormats | null = null;
               if (!hash) {
-                hash = await api
-                  .post<{ sha1: string }>("/catalog/sha1", { url: address })
-                  .then((r) => r.sha1)
-                  .catch((err) => {
-                    toast.info(`Its SHA-1 could not be worked out (${err instanceof Error ? err.message : "the panel could not fetch it"}), so players' games fetch it on every join. Give it here to change that.`);
-                    return "";
-                  });
+                const got = await api.post<{ sha1: string; formats?: PackFormats }>("/catalog/sha1", { url: address }).catch((err) => {
+                  toast.info(`Its SHA-1 could not be worked out (${err instanceof Error ? err.message : "the panel could not fetch it"}), so players' games fetch it on every join. Give it here to change that.`);
+                  return null;
+                });
+                hash = got?.sha1 ?? "";
+                formats = got?.formats ?? null;
               }
-              return { url: address, sha1: hash, uploaded: null, project: null };
+              return { url: address, sha1: hash, uploaded: null, project: null, formats };
             });
           }}
         >
@@ -425,6 +427,29 @@ export function PackCard({ pack, children }: { pack: ResourcePack; children?: Re
       <Chip>resource pack</Chip>
       {children}
     </div>
+  );
+}
+
+/**
+ * Says when a resource pack is made for other game versions than the one a
+ * server runs. Players' games load it all the same, so it is not refused,
+ * but what changed between them may not work.
+ */
+export function PackFit({ pack, version }: { pack: ResourcePack; version?: string }) {
+  const f = pack.formats;
+  // Only asked for when there is something to compare it with.
+  const game = useGameFormat(f ? version : undefined).data;
+  if (!f || !game || !version || (game >= f.min && game <= f.max)) return null;
+  const made = f.min === f.max ? `pack format ${f.min}` : `pack formats ${f.min} to ${f.max}`;
+  const name = version === "LATEST" ? "the newest release" : version;
+  return game > f.max ? (
+    <Notice>
+      This pack is made for an older version of the game ({made}; {name} reads {game}). Players' games still load it, but what has changed since, such as custom shaders, models and sounds, may not work.
+    </Notice>
+  ) : (
+    <Notice>
+      This pack is made for a newer version of the game ({made}; {name} reads {game}). Players' games still load it, but what it uses from newer versions will not work.
+    </Notice>
   );
 }
 

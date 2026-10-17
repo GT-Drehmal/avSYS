@@ -12,6 +12,7 @@ import (
 	"time"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -184,6 +185,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		return errBadRequest("A server needs at least 1Gi of storage.")
 	}
 	if err := checkJVM(&spec.JVM); err != nil {
+		return err
+	}
+	if err := checkPorts(spec.Ports); err != nil {
 		return err
 	}
 	if err := packFits(spec); err != nil {
@@ -371,6 +375,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 	}
+	if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
+		return err
+	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
 	}
@@ -443,6 +450,32 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	return nil
 }
 
+// serviceNameIsFree says whether a new server can have its Service by this
+// name: not when another server's Service has it, as the one its extra
+// ports are opened on, which is named after that server.
+func (s *Server) serviceNameIsFree(ctx context.Context, namespace, name string) error {
+	// The name is that server's from when it is made, before its Service is.
+	if base, ok := strings.CutSuffix(name, "-ports"); ok {
+		if err := s.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: base}, &avsysv1.MinecraftServer{}); err == nil {
+			return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is the name %s's extra ports are opened under. Choose another.", name, base)}
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	svc := &corev1.Service{}
+	err := s.nodeReader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, svc)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if owner := metav1.GetControllerOf(svc); owner != nil && owner.Kind == "MinecraftServer" && owner.Name != name {
+		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("%s is the name %s's extra ports are opened under. Choose another.", name, owner.Name)}
+	}
+	return nil
+}
+
 // nameIsFree says whether a new server, other than one brought back, may
 // take this name. One that a server has now is taken. So is one that a
 // deleted server's snapshots are under: snapshots are kept by server name,
@@ -456,6 +489,9 @@ func (s *Server) nameIsFree(ctx context.Context, a *access, name string) error {
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &avsysv1.MinecraftServer{}); err == nil {
 		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
 	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err := s.serviceNameIsFree(ctx, a.Namespace, name); err != nil {
 		return err
 	}
 	if !s.Backups.Available() {
@@ -547,6 +583,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return err
 	}
+	if err := checkPackFormats(spec.ResourcePack, previous.ResourcePack); err != nil {
+		return err
+	}
 	// A pack uploaded before, given another address now, has its file
 	// removed, which a snapshot under way may be copying: not while one is.
 	if was := previous.ResourcePack; was != nil && was.Uploaded != nil && (spec.ResourcePack == nil || spec.ResourcePack.Uploaded == nil) {
@@ -612,7 +651,8 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	// Without a last snapshot this is a plain delete.
 	if r.URL.Query().Get("snapshot") == "false" || !s.Backups.Available() {
-		release, err := s.changing(mc, false)
+		// A server whose move did not finish can still be deleted.
+		release, err := s.admit(mc, false)
 		if err != nil {
 			return err
 		}
@@ -801,6 +841,49 @@ func checkPackSHA1(rp, was *avsysv1.ResourcePackSpec) error {
 	return nil
 }
 
+// checkPorts checks a server's extra ports beyond what the CRD says: each
+// name and each number and protocol once, and not the game's own.
+func checkPorts(ports []avsysv1.ExtraPort) error {
+	names, numbers := map[string]bool{}, map[string]bool{}
+	for i := range ports {
+		p := &ports[i]
+		if p.Protocol == "" {
+			p.Protocol = corev1.ProtocolTCP
+		}
+		if len(p.Name) > 15 || !portName.MatchString(p.Name) {
+			return errBadRequest("A port's name is up to 15 lowercase letters, digits and dashes, starting with a letter and ending with a letter or digit, with no two dashes together, as voice-chat.")
+		}
+		if p.Name == "minecraft" {
+			return errBadRequest("minecraft is the game port's name; call it something else.")
+		}
+		if p.Port < 1 || p.Port > 65535 {
+			return errBadRequest("%d is not a port.", p.Port)
+		}
+		if p.Port == 25565 {
+			return errBadRequest("25565 is the game's own port, not an extra one.")
+		}
+		if p.Port == 25575 {
+			return errBadRequest("25575 is the game's console, and is not opened.")
+		}
+		if p.Protocol != corev1.ProtocolTCP && p.Protocol != corev1.ProtocolUDP {
+			return errBadRequest("A port is TCP or UDP.")
+		}
+		key := fmt.Sprintf("%d/%s", p.Port, p.Protocol)
+		if names[p.Name] || numbers[key] {
+			return errBadRequest("Each port is there once: %s (%s) appears twice.", p.Name, key)
+		}
+		names[p.Name], numbers[key] = true, true
+	}
+	if len(ports) > 8 {
+		return errBadRequest("A server has up to 8 extra ports.")
+	}
+	return nil
+}
+
+// portName is a Service port's name, which a port's is: a letter first, a
+// letter or digit last, no two dashes together.
+var portName = regexp.MustCompile(`^[a-z](-?[a-z0-9])*$`)
+
 // keepUploadedPack holds a change of settings to the pack uploaded to the
 // server: one can be kept, as it is, but not made up. A pack given another
 // address is one hosted elsewhere now, and no longer the uploaded one.
@@ -833,6 +916,8 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
 	}
 	rp.Uploaded = was.Uploaded.DeepCopy()
+	// Its formats are what its file says.
+	rp.Formats = was.Formats.DeepCopy()
 	// The panel's own file is no project's.
 	rp.Project = nil
 	return nil

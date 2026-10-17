@@ -593,15 +593,15 @@ func TestFromSnapshotKeepsTheStorageClass(t *testing.T) {
 // in its files, which a request cannot say it has.
 func TestFromSnapshotResourcePack(t *testing.T) {
 	sha := strings.Repeat("ab", 20)
-	recorded := &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://panel.example/packs/" + sha + ".zip", SHA1: sha, Uploaded: &avsysv1.UploadedPack{Name: "p.zip", Size: 9}}}
+	recorded := &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://panel.example/packs/" + sha + ".zip", SHA1: sha, Uploaded: &avsysv1.UploadedPack{Name: "p.zip", Size: 9}, Formats: &avsysv1.PackFormats{Min: 15, Max: 15}}}
 	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil); got.ResourcePack == nil || got.ResourcePack.Uploaded == nil {
 		t.Errorf("none asked: %+v, want the original's", got.ResourcePack)
 	}
 	said := map[string]json.RawMessage{"resourcePack": json.RawMessage(`{}`)}
 	asked := &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: recorded.ResourcePack.URL, Enforce: true, Prompt: "Please"}}
 	got := fromSnapshot(asked, recorded, said)
-	if rp := got.ResourcePack; rp == nil || rp.Uploaded == nil || rp.SHA1 != sha || !rp.Enforce || rp.Prompt != "Please" {
-		t.Errorf("made required: %+v, want the uploaded one, required", rp)
+	if rp := got.ResourcePack; rp == nil || rp.Uploaded == nil || rp.SHA1 != sha || !rp.Enforce || rp.Prompt != "Please" || rp.Formats == nil || rp.Formats.Min != 15 {
+		t.Errorf("made required: %+v, want the uploaded one, required, with its formats", rp)
 	}
 	asked = &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://cdn.modrinth.example/p.zip", SHA1: strings.Repeat("cd", 20), Project: &avsysv1.PackProject{Source: "modrinth", ID: "faithful"}}}
 	if rp := fromSnapshot(asked, recorded, said).ResourcePack; rp == nil || rp.Uploaded != nil || rp.Project == nil {
@@ -743,6 +743,7 @@ var notRestored = map[string]string{
 	"Resources":        "what it is given to run on stays as it is now",
 	"Storage":          "what it is given to run on stays as it is now",
 	"Expose":           "its address stays as it is now",
+	"Ports":            "how it is reached stays as it is now, as its address does",
 	"Sleep":            "what it is given to run on stays as it is now",
 	"Backups":          "when it is snapshotted is not recorded",
 	"AutoOp":           "who is an operator by role is decided now, not by the files",

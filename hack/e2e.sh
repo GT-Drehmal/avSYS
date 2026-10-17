@@ -258,6 +258,7 @@ packed=$(call -X PUT --data-binary @"$WORK/pack.zip" "$SRV/resource-pack?name=e2
 PACK_URL=$(echo "$packed" | field "d['spec']['resourcePack']['url']") || fail "no pack was taken: $packed"
 PACK_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack.zip")
 expect "an uploaded pack is the server's, at its hash" "$(echo "$packed" | field "(d['spec']['resourcePack']['sha1'], d['spec']['resourcePack']['uploaded']['name'])")" "('$PACK_SHA', 'e2e-pack.zip')"
+expect "and is made for the formats its pack.mcmeta says" "$(echo "$packed" | field "d['spec']['resourcePack'].get('formats')")" "{'min': 46, 'max': 46}"
 expect "and served to anyone, as a game fetches it" "$(curl -sS "$PACK_URL" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
 expect "it is kept in the server's files" "$(call "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
 expect "a pack a folder down is refused, saying so" "$(call -X PUT --data-binary @"$WORK/nested.zip" "$SRV/resource-pack?name=nested.zip" | field "d['message']")" "in a folder, E2E Pack"
@@ -318,6 +319,44 @@ expect "the panel's own commands do not look in anyone's home" "$own" "restic is
 expect "python is there" "$own" "42"
 expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
 
+step "extra ports"
+# A port a mod listens on beside the game is opened to players: here a web
+# server in the workspace, which shares the game's pod, stands in for one.
+ported=$(call -X PATCH -d '{"spec":{"ports":[{"name":"web","port":8100,"protocol":"TCP"}]}}' "$SRV")
+expect "a server is given an extra port" "$(echo "$ported" | field "d['spec']['ports']")" "'name': 'web'"
+for _ in $(seq 1 60); do
+  PUBLIC=$(call "$SRV" | field "next((p.get('publicPort', 0) for p in d['status'].get('ports', [])), 0)")
+  [ "$PUBLIC" != 0 ] && break
+  sleep 2
+done
+[ "$PUBLIC" != 0 ] || fail "the extra port was not opened: $(call "$SRV" | field "d['status'].get('ports')")"
+echo "ok: it is opened on public port $PUBLIC"
+if [ -n "${AVSYS_E2E_PORT_RANGE:-}" ]; then
+  first=${AVSYS_E2E_PORT_RANGE%-*}; last=${AVSYS_E2E_PORT_RANGE#*-}
+  expect "from the range the install gives out" "$([ "$PUBLIC" -ge "$first" ] && [ "$PUBLIC" -le "$last" ] && echo yes)" yes
+  expect "and players are told where" "$(call "$SRV" | field "d['status']['ports'][0].get('address', '')")" ":$PUBLIC"
+fi
+expect "the game's own port cannot be one" "$(call -X PATCH -d '{"spec":{"ports":[{"name":"game","port":25565}]}}' "$SRV" | field "d['message']")" "the game's own"
+if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
+  # Served for as long as a session of its own lasts, which is ended once
+  # it has been reached, or after two minutes.
+  ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p "$SSH_PORT" "probe.$ORG@$ssh_host" \
+    'echo reached through its port > /tmp/port.txt; cd /tmp && exec timeout 120 python3 -m http.server 8100' >/dev/null 2>&1 &
+  serving=$!
+  reached=""
+  for _ in $(seq 1 30); do
+    # From where the install's players would be: beside the node, or on it
+    # when nothing else can reach its address.
+    reached=$(${AVSYS_E2E_ON_NODE:-} wget -q -T 3 -O - "http://$AVSYS_E2E_NODE_IP:$PUBLIC/port.txt" 2>/dev/null) && break
+    sleep 2
+  done
+  expect "something listening on it is reached from outside" "$reached" "reached through its port"
+  kill "$serving" 2>/dev/null || true
+else
+  echo "skip: reaching an extra port needs a node's address"
+fi
+expect "and the port is closed again" "$(call -X PATCH -d '{"spec":{"ports":[]}}' "$SRV" | field "d['spec'].get('ports') or []")" "[]"
+
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"
@@ -333,6 +372,33 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 expect "a server put on a node runs there" "$(call "$API/orgs/$ORG/servers/placed" | field "d['status'].get('node')")" "$NODE"
+# With another node, the server is moved there, its files with it.
+OTHER_NODE=$(call "$API/nodes?memory=1Gi" | field "next((n['name'] for n in d['nodes'] if n['ready'] and n['name'] != '$NODE'), '')")
+if [ -n "$OTHER_NODE" ]; then
+  PLACED="$API/orgs/$ORG/servers/placed"
+  for _ in $(seq 1 90); do
+    echo "moved with it" | call -f -X PUT --data-binary @- "$PLACED/files/content?path=/moved.txt" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  # Its workspace home too, where people keep what they install, which an
+  # ordinary snapshot leaves out.
+  echo "home moved with it" | call -X PUT --data-binary @- "$PLACED/files/content?path=/.workspace/moved-home.txt" >/dev/null
+  placement=$(call "$PLACED/placement")
+  expect "its files are on its node's own disk" "$(echo "$placement" | field "(d.get('node'), d.get('local'))" 2>/dev/null) $placement" "('$NODE', True)"
+  moved=$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move?wait=true")
+  case "$moved" in *'"code"'*) fail "moving the server: $moved" ;; esac
+  expect "a server is moved to another node" "$(call "$PLACED" | field "d['status'].get('node')")" "$OTHER_NODE"
+  expect "with its files" "$(call "$PLACED/files/content?path=/moved.txt")" "moved with it"
+  expect "and its workspace home" "$(call "$PLACED/files/content?path=/.workspace/moved-home.txt")" "home moved with it"
+  expect "and is as it was, stopped" "$(call "$PLACED" | field "(d['spec']['state'], d['status']['phase'])")" "('Stopped', 'Stopped')"
+  expect "the snapshot that carried them is kept" "$(call "$PLACED/snapshots" | field "[s['trigger'] for s in d['snapshots']]")" "'move'"
+  expect "and it cannot be moved to where it is" "$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move" | field "d['message']")" "on $OTHER_NODE already"
+  # Its snapshot is let go of, so that the organization's are the probe's.
+  ids=$(call "$PLACED/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
+  call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
+else
+  echo "skip: moving a server needs a second node"
+fi
 call -X DELETE "$API/orgs/$ORG/servers/placed?snapshot=false" >/dev/null
 
 step "domains"

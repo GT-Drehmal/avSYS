@@ -61,6 +61,11 @@ type Server struct {
 	// packServed is when each pack the panel keeps was last served, by
 	// hash, for letting go of the least recently served first.
 	packServed sync.Map
+	// gameFormats is the resource pack format each game version reads, by
+	// version, as found out: see packFormatOf. gameFormatLock holds the
+	// panel to finding out one at a time.
+	gameFormats    sync.Map
+	gameFormatLock sync.Mutex
 	// packsPruned is when the packs the panel keeps were last cleared of
 	// those no server has; see prunePacks. Only opsTick reads and sets it.
 	packsPruned time.Time
@@ -366,6 +371,9 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/servers/{server}/snapshots", s.authed(s.listServerSnapshots))
 	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
 	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))
+	api("GET /orgs/{org}/servers/{server}/operation", s.authed(s.getOperation))
+	api("GET /orgs/{org}/servers/{server}/placement", s.authed(s.getPlacement))
+	api("POST /orgs/{org}/servers/{server}/move", s.authed(s.moveServer))
 	api("GET /orgs/{org}/servers/{server}/terminal", s.authed(s.terminal))
 	api("GET /orgs/{org}/servers/{server}/icon", s.authed(s.getServerIcon))
 	api("PUT /orgs/{org}/servers/{server}/icon", s.authed(s.putServerIcon))
@@ -382,6 +390,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /events", s.authed(s.streamEvents))
 
 	api("GET /catalog/minecraft/versions", s.authed(s.minecraftVersions))
+	api("GET /catalog/minecraft/pack-formats", s.authed(s.packFormats))
 	api("GET /catalog/modrinth/search", s.authed(s.modrinthSearch))
 	api("GET /catalog/modrinth/categories", s.authed(s.modrinthCategories))
 	api("GET /catalog/modrinth/projects", s.authed(s.modrinthProjects))

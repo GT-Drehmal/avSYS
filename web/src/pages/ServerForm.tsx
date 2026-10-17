@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { AddContentDialog, ContentList, contentList, kindsFor, kindsPhrase, PackCard, type PickKind, type Software } from "../components/Content";
+import { AddContentDialog, ContentList, contentList, kindsFor, kindsPhrase, PackCard, PackFit, type PickKind, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, NodeChoice, type Join } from "../components/ServerFields";
@@ -654,6 +654,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               </Button>
               <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Remove the resource pack" onClick={() => setValues((was) => ({ ...was, pack: null, packFile: null }))} />
             </PackCard>
+            <PackFit pack={v.pack} version={v.kind === "modpack" ? undefined : effective(v.version)} />
             <Toggle checked={!!v.pack.enforce} onChange={(enforce) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, enforce } }))} label="Pack required" hint="Players who decline the pack are disconnected." />
             <Field label="Pack prompt" hint="Shown when the game asks to download the pack.">
               {(id) => <Input id={id} value={v.pack?.prompt ?? ""} onChange={(e) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, prompt: e.target.value } }))} placeholder="A pack made for this world" />}

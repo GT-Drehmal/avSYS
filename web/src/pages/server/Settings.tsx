@@ -10,7 +10,10 @@ import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
+import { PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
+import { ExtraPorts, type PortDraft } from "../../components/ExtraPorts";
+import { NodeMove } from "../../components/NodeMove";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -26,6 +29,7 @@ interface Draft {
   exposeType: ExposeType;
   hostname: string;
   loadBalancerIP: string;
+  ports: PortDraft[];
   sleepEnabled: boolean;
   idleMinutes: string;
   motd: string;
@@ -67,6 +71,7 @@ function toDraft(spec: ServerSpec): Draft {
     exposeType: spec.expose.type,
     hostname: spec.expose.hostname ?? "",
     loadBalancerIP: spec.expose.loadBalancerIP ?? "",
+    ports: (spec.ports ?? []).map((p) => ({ name: p.name, port: String(p.port), protocol: p.protocol ?? "TCP" })),
     sleepEnabled: !!spec.sleep.enabled,
     idleMinutes: String(spec.sleep.idleMinutes),
     motd: p["motd"] ?? "",
@@ -117,6 +122,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     resources: { ...current.resources, memory: fromGigabytes(d.memory) },
     storage: { ...current.storage, size: fromGigabytes(d.storage) },
     expose: { type: d.exposeType, hostname: d.hostname.trim(), loadBalancerIP: d.loadBalancerIP.trim() },
+    ports: d.ports.filter((p) => p.name.trim() || p.port.trim()).map((p) => ({ name: p.name.trim(), port: Number(p.port), protocol: p.protocol })),
     sleep: { enabled: d.sleepEnabled, idleMinutes: Number(d.idleMinutes) || 15 },
     properties: properties as Record<string, string>,
     ops: lines(d.ops),
@@ -236,6 +242,10 @@ export function Settings() {
             </Field>
           </div>
         )}
+        {/* What a change of version does to the pack it offers. */}
+        {!server.spec.modpack && server.spec.resourcePack?.url && draft.version !== server.spec.version && (
+          <PackFit pack={server.spec.resourcePack} version={draft.version === "LATEST" ? versions.data?.latest : draft.version} />
+        )}
       </Section>
 
       <Section title="Gameplay" description="Fields left on Default leave server.properties as it is.">
@@ -324,6 +334,10 @@ export function Settings() {
         <LaunchFlags aikar={draft.aikar} extra={draft.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} />
       </Section>
 
+      <Section title="Node" description="Where it runs. Moving it stops it until it is up on the other node.">
+        <NodeMove server={server} />
+      </Section>
+
       <Section title="Network">
         <Field label="Exposure">
           {(id) => (
@@ -337,6 +351,9 @@ export function Settings() {
             {(id) => <Input id={id} required={usesRouter} {...text("hostname")} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
           </Field>
         )}
+        <Field label="Extra ports" hint="What mods and plugins listen on beside the game: voice chat, Geyser, a web map.">
+          {() => <ExtraPorts ports={draft.ports} onChange={(ports) => set("ports", ports)} mods={server.spec.mods ?? []} status={server.status.ports ?? []} expose={draft.exposeType} sleeps={draft.sleepEnabled && draft.exposeType === "Router"} />}
+        </Field>
         {draft.exposeType === "LoadBalancer" && (
           <Field label="Requested IP" hint="Optional.">
             {(id) => <Input id={id} {...text("loadBalancerIP")} placeholder="192.168.1.240" className="font-mono" />}
