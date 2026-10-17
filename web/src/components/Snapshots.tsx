@@ -7,7 +7,7 @@ import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, t
 import { ago, bytes, loaderNames } from "../lib/format";
 import { keys, useAction, useOffsite } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
-import { ContentList } from "./Content";
+import { ContentList, packTitle } from "./Content";
 import type { Selection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { Picture } from "./Picture";
@@ -317,7 +317,14 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
                   {(spec.whitelist?.length ?? 0) > 0 && <Fact label="Whitelist">{spec.whitelist!.join(", ")}</Fact>}
                   {spec.resourcePack?.url && (
                     <Fact label="Resource pack">
-                      <span className="font-mono text-xs break-all">{spec.resourcePack.url}</span>
+                      {spec.resourcePack.project || spec.resourcePack.uploaded ? (
+                        <>
+                          {packTitle(spec.resourcePack)}
+                          <span className="text-muted">{spec.resourcePack.uploaded ? " · uploaded" : ` · ${spec.resourcePack.project?.versionName ?? "Modrinth"}`}</span>
+                        </>
+                      ) : (
+                        <span className="font-mono text-xs break-all">{spec.resourcePack.url}</span>
+                      )}
                     </Fact>
                   )}
                 </dl>

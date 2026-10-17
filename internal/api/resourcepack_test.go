@@ -201,6 +201,20 @@ func TestKeepUploadedPack(t *testing.T) {
 	if err := keepUploadedPack(spec, uploaded()); err == nil {
 		t.Error("an uploaded pack's hash changed by hand was taken")
 	}
+	// Picked from Modrinth over it, the upload's record left in by the
+	// merge: the picked one.
+	spec = uploaded()
+	spec.ResourcePack.URL, spec.ResourcePack.SHA1 = "https://cdn.modrinth.example/p.zip", strings.Repeat("cd", 20)
+	spec.ResourcePack.Project = &avsysv1.PackProject{Source: "modrinth", ID: "faithful"}
+	if err := keepUploadedPack(spec, uploaded()); err != nil || spec.ResourcePack.Uploaded != nil || spec.ResourcePack.Project == nil {
+		t.Errorf("picked over it: %v %+v", err, spec.ResourcePack)
+	}
+	// A project said of the uploaded one is not taken.
+	spec = uploaded()
+	spec.ResourcePack.Project = &avsysv1.PackProject{Source: "modrinth", ID: "faithful"}
+	if err := keepUploadedPack(spec, uploaded()); err != nil || spec.ResourcePack.Uploaded == nil || spec.ResourcePack.Project != nil {
+		t.Errorf("project on the upload: %v %+v", err, spec.ResourcePack)
+	}
 }
 
 func TestPackFits(t *testing.T) {
@@ -249,6 +263,31 @@ func TestPrunePacks(t *testing.T) {
 	}
 }
 
+func TestKeepPackProject(t *testing.T) {
+	picked := func() *avsysv1.MinecraftServerSpec {
+		return &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://cdn.modrinth.example/v1.zip", SHA1: strings.Repeat("ab", 20), Project: &avsysv1.PackProject{Source: "modrinth", ID: "faithful", Version: "v1"}}}
+	}
+	// Another address and nothing said of the project, as the merge leaves
+	// it: no longer the project's.
+	spec := picked()
+	spec.ResourcePack.URL = "https://elsewhere.example/p.zip"
+	if err := keepUploadedPack(spec, picked()); err != nil || spec.ResourcePack.Project != nil {
+		t.Errorf("elsewhere: %v %+v", err, spec.ResourcePack.Project)
+	}
+	// Another version of it, with its own file: still the project's.
+	spec = picked()
+	spec.ResourcePack.URL, spec.ResourcePack.Project.Version = "https://cdn.modrinth.example/v2.zip", "v2"
+	if err := keepUploadedPack(spec, picked()); err != nil || spec.ResourcePack.Project == nil || spec.ResourcePack.Project.Version != "v2" {
+		t.Errorf("another version: %v %+v", err, spec.ResourcePack.Project)
+	}
+	// Only made required: as it was.
+	spec = picked()
+	spec.ResourcePack.Enforce = true
+	if err := keepUploadedPack(spec, picked()); err != nil || spec.ResourcePack.Project == nil {
+		t.Errorf("required: %v %+v", err, spec.ResourcePack.Project)
+	}
+}
+
 // The uploaded pack a server has is a file it uses: a note that it was
 // taken off, from before it was put back, does not remove it.
 func TestInstalledFilesHaveThePack(t *testing.T) {
@@ -260,6 +299,27 @@ func TestInstalledFilesHaveThePack(t *testing.T) {
 	spec.ResourcePack.Uploaded = nil
 	if installedFiles(spec)[packFile(sha)] {
 		t.Error("a pack hosted elsewhere is among its files")
+	}
+}
+
+func TestPackSHA1IsChecked(t *testing.T) {
+	rp := &avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip", SHA1: " " + strings.Repeat("AB", 20) + " "}
+	if err := checkPackSHA1(rp, nil); err != nil {
+		t.Fatalf("a good SHA-1, in capitals: %v", err)
+	}
+	if rp.SHA1 != strings.Repeat("ab", 20) {
+		t.Errorf("kept as %q, want it in lower case", rp.SHA1)
+	}
+	rp.SHA1 = "not-a-hash"
+	if err := checkPackSHA1(rp, nil); err == nil || !strings.Contains(err.Error(), "40 hexadecimal") {
+		t.Errorf("a bad SHA-1: %v", err)
+	}
+	// One it had before this was checked does not hold up other changes.
+	if err := checkPackSHA1(rp, &avsysv1.ResourcePackSpec{SHA1: "not-a-hash"}); err != nil {
+		t.Errorf("a bad SHA-1 it had already: %v", err)
+	}
+	if err := checkPackSHA1(&avsysv1.ResourcePackSpec{URL: "https://example.org/p.zip"}, nil); err != nil {
+		t.Errorf("none: %v", err)
 	}
 }
 

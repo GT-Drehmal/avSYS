@@ -183,6 +183,18 @@ export interface ResourcePack {
   prompt?: string;
   /** Set for a pack uploaded to the panel, which keeps it and serves it at url. */
   uploaded?: { name?: string; size: number; time: string } | null;
+  /** Set for a pack picked from Modrinth: url and sha1 are of the version's file. */
+  project?: PackProject | null;
+}
+
+export interface PackProject {
+  source: "modrinth";
+  /** Its slug. */
+  id: string;
+  version?: string;
+  versionName?: string;
+  title?: string;
+  iconUrl?: string;
 }
 
 export type ExposeType = "Router" | "LoadBalancer" | "NodePort" | "None";
@@ -457,6 +469,7 @@ export interface ModrinthVersion {
   game_versions: string[];
   loaders: string[];
   date_published: string;
+  files?: { url: string; filename: string; primary: boolean; size: number; hashes: { sha1?: string } }[];
   /** What it needs or clashes with. One names a project, or only a version of one. */
   dependencies?: { project_id: string | null; version_id?: string | null; dependency_type: "required" | "optional" | "incompatible" | "embedded" }[];
 }

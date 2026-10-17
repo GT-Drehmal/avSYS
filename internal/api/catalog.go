@@ -307,6 +307,9 @@ func (s *Server) modrinthVersions(w http.ResponseWriter, r *http.Request, _ *sto
 		params.Set("loaders", string(encoded))
 	} else if q.Get("loader") == "datapack" {
 		params.Set("loaders", `["datapack"]`)
+	} else if q.Get("loader") == "resourcepack" {
+		// Modrinth files resource packs under the game itself.
+		params.Set("loaders", `["minecraft"]`)
 	}
 	if v := q.Get("gameVersion"); v != "" && v != "LATEST" {
 		encoded, _ := json.Marshal([]string{v})

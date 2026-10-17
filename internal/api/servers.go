@@ -231,6 +231,11 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if rp := spec.ResourcePack; rp != nil && rp.URL != "" && !strings.HasPrefix(rp.URL, "http://") && !strings.HasPrefix(rp.URL, "https://") {
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
+	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
+		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
+			return errBadRequest("A resource pack picked from a project names it: source modrinth, and its id.")
+		}
+	}
 	switch spec.AutoOp {
 	case "", "off", string(store.RoleOperator), string(store.RoleAdmin), string(store.RoleOwner):
 	default:
@@ -362,6 +367,13 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	// the files of the one it is copied from, which a request leaves to them.
 	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
 		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made, or takes the one of the server it is copied from.")
+	}
+	// One given here is checked. A copy's is checked once it is known what
+	// its original has: the original's own is taken as it is.
+	if raw.FromSnapshot == "" && raw.FromServer == "" {
+		if err := checkPackSHA1(in.Spec.ResourcePack, nil); err != nil {
+			return err
+		}
 	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
@@ -511,6 +523,12 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	defer release()
+	// The change is made to the server as it is now, not as the cache last
+	// saw it: one made a moment before, as by the request just before this
+	// one, is not taken for someone else's and refused.
+	if mc, err = s.live(r.Context(), mc); err != nil {
+		return err
+	}
 	var in struct{ Spec json.RawMessage }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -557,6 +575,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	previous := mc.Spec.DeepCopy()
 	if err := keepUploadedPack(&spec, previous); err != nil {
+		return err
+	}
+	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return err
 	}
 	// A pack uploaded before, given another address now, has its file
@@ -797,6 +818,23 @@ func (s *Server) live(ctx context.Context, mc *avsysv1.MinecraftServer) (*avsysv
 	return now, nil
 }
 
+var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// checkPackSHA1 checks a resource pack's SHA-1, which the game checks the
+// pack it downloads against: a wrong one would have every player refuse it.
+// One the server had before (was) is left as it is, as one typed before
+// this was checked: it does not hold up changes to anything else.
+func checkPackSHA1(rp, was *avsysv1.ResourcePackSpec) error {
+	if rp == nil || rp.SHA1 == "" || (was != nil && rp.SHA1 == was.SHA1) {
+		return nil
+	}
+	rp.SHA1 = strings.ToLower(strings.TrimSpace(rp.SHA1))
+	if !sha1Pattern.MatchString(rp.SHA1) {
+		return errBadRequest("A resource pack's SHA-1 is 40 hexadecimal digits.")
+	}
+	return nil
+}
+
 // checkPorts checks a server's extra ports beyond what the CRD says: each
 // name and each number and protocol once, and not the game's own.
 func checkPorts(ports []avsysv1.ExtraPort) error {
@@ -845,6 +883,12 @@ var portName = regexp.MustCompile(`^[a-z](-?[a-z0-9])*$`)
 // address is one hosted elsewhere now, and no longer the uploaded one.
 func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 	rp, was := spec.ResourcePack, previous.ResourcePack
+	// A pack picked from a project is that project's file: given another
+	// address, and not another project or version with it, it is no
+	// longer the project's.
+	if rp != nil && rp.Project != nil && was != nil && was.Project != nil && *rp.Project == *was.Project && rp.URL != was.URL {
+		rp.Project = nil
+	}
 	// Saying none is not how an uploaded pack is removed, which takes its
 	// file too: it is what settings from before it was uploaded say.
 	if (rp == nil || rp.URL == "") && was != nil && was.Uploaded != nil {
@@ -866,6 +910,8 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
 	}
 	rp.Uploaded = was.Uploaded.DeepCopy()
+	// The panel's own file is no project's.
+	rp.Project = nil
 	return nil
 }
 
