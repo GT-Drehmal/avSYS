@@ -186,6 +186,11 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	if !said("resourcePack") {
 		spec.ResourcePack = recorded.ResourcePack
 	}
+	// What its mods listen on goes with them. The public ports given out
+	// to the original are its own, and the copy gets ports of its own.
+	if !said("ports") {
+		spec.Ports = recorded.Ports
+	}
 	spec.Properties = mergeProperties(recorded.Properties, given["properties"])
 	if !said("ops") {
 		spec.Ops = recorded.Ops
@@ -321,6 +326,9 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &avsysv1.MinecraftServer{}); err == nil {
 		return &Error{Status: http.StatusConflict, Code: "conflict", Message: fmt.Sprintf("There is already a server named %s.", name)}
 	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err := s.serviceNameIsFree(ctx, a.Namespace, name); err != nil {
 		return err
 	}
 	// The state asked for is only applied once the files are in, which is too

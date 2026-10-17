@@ -312,6 +312,44 @@ expect "the panel's own commands do not look in anyone's home" "$own" "restic is
 expect "python is there" "$own" "42"
 expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
 
+step "extra ports"
+# A port a mod listens on beside the game is opened to players: here a web
+# server in the workspace, which shares the game's pod, stands in for one.
+ported=$(call -X PATCH -d '{"spec":{"ports":[{"name":"web","port":8100,"protocol":"TCP"}]}}' "$SRV")
+expect "a server is given an extra port" "$(echo "$ported" | field "d['spec']['ports']")" "'name': 'web'"
+for _ in $(seq 1 60); do
+  PUBLIC=$(call "$SRV" | field "next((p.get('publicPort', 0) for p in d['status'].get('ports', [])), 0)")
+  [ "$PUBLIC" != 0 ] && break
+  sleep 2
+done
+[ "$PUBLIC" != 0 ] || fail "the extra port was not opened: $(call "$SRV" | field "d['status'].get('ports')")"
+echo "ok: it is opened on public port $PUBLIC"
+if [ -n "${AVSYS_E2E_PORT_RANGE:-}" ]; then
+  first=${AVSYS_E2E_PORT_RANGE%-*}; last=${AVSYS_E2E_PORT_RANGE#*-}
+  expect "from the range the install gives out" "$([ "$PUBLIC" -ge "$first" ] && [ "$PUBLIC" -le "$last" ] && echo yes)" yes
+  expect "and players are told where" "$(call "$SRV" | field "d['status']['ports'][0].get('address', '')")" ":$PUBLIC"
+fi
+expect "the game's own port cannot be one" "$(call -X PATCH -d '{"spec":{"ports":[{"name":"game","port":25565}]}}' "$SRV" | field "d['message']")" "the game's own"
+if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
+  # Served for as long as a session of its own lasts, which is ended once
+  # it has been reached, or after two minutes.
+  ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p "$SSH_PORT" "probe.$ORG@$ssh_host" \
+    'echo reached through its port > /tmp/port.txt; cd /tmp && exec timeout 120 python3 -m http.server 8100' >/dev/null 2>&1 &
+  serving=$!
+  reached=""
+  for _ in $(seq 1 30); do
+    # From where the install's players would be: beside the node, or on it
+    # when nothing else can reach its address.
+    reached=$(${AVSYS_E2E_ON_NODE:-} wget -q -T 3 -O - "http://$AVSYS_E2E_NODE_IP:$PUBLIC/port.txt" 2>/dev/null) && break
+    sleep 2
+  done
+  expect "something listening on it is reached from outside" "$reached" "reached through its port"
+  kill "$serving" 2>/dev/null || true
+else
+  echo "skip: reaching an extra port needs a node's address"
+fi
+expect "and the port is closed again" "$(call -X PATCH -d '{"spec":{"ports":[]}}' "$SRV" | field "d['spec'].get('ports') or []")" "[]"
+
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"

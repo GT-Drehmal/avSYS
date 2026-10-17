@@ -93,6 +93,7 @@ echo "ok: two nodes, both with the images"
 
 # offsite gives the panel an offsite copy that is a directory on its own
 # volume: nowhere a real one should be, and enough to run it through here.
+# It also gives it a range of public ports for servers' extra ports.
 offsite() {
   python3 -c '
 import secrets, sys
@@ -100,7 +101,7 @@ at = "              value: /backups\n"
 manifest = sys.stdin.read()
 assert manifest.count(at) == 1, "the manifest no longer sets the backup directory the way this expects"
 env = "            - name: %s\n              value: \"%s\"\n"
-print(manifest.replace(at, at + env % ("AVSYS_OFFSITE_REPOSITORY", "/data/offsite-e2e") + env % ("AVSYS_OFFSITE_PASSWORD", secrets.token_urlsafe(18))), end="")'
+print(manifest.replace(at, at + env % ("AVSYS_OFFSITE_REPOSITORY", "/data/offsite-e2e") + env % ("AVSYS_OFFSITE_PASSWORD", secrets.token_urlsafe(18)) + env % ("AVSYS_EXTRA_PORTS", "25600-25609")), end="")'
 }
 
 step "install"
@@ -139,4 +140,8 @@ EXITED_LOG="docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft --previ
 # What the image prints before the game's own log begins, such as which
 # launch flags it used, is only in the container's log too.
 GAME_LOG="docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft"
-AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG AVSYS_E2E_CONTAINER_LOG=$GAME_LOG ./hack/e2e.sh
+# Extra ports are reached at a node's own address, which is the
+# container's on Docker's network, from the node itself: the machine running
+# Docker may not reach that network.
+node_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$NAME")
+AVSYS_E2E_NODE_IP=$node_ip AVSYS_E2E_ON_NODE="docker exec -i $NAME" AVSYS_E2E_PORT_RANGE=25600-25609 AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG AVSYS_E2E_CONTAINER_LOG=$GAME_LOG ./hack/e2e.sh

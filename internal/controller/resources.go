@@ -530,8 +530,10 @@ func applyService(svc *corev1.Service, mc *avsysv1.MinecraftServer) {
 	svc.Spec.Selector = map[string]string{avsysv1.LabelServer: mc.Name}
 
 	port := corev1.ServicePort{Name: "minecraft", Port: MinecraftPort, TargetPort: intstr.FromString("minecraft"), Protocol: corev1.ProtocolTCP}
-	if len(svc.Spec.Ports) == 1 {
-		port.NodePort = svc.Spec.Ports[0].NodePort
+	for _, p := range svc.Spec.Ports {
+		if p.Name == "minecraft" || len(svc.Spec.Ports) == 1 {
+			port.NodePort = p.NodePort
+		}
 	}
 	svc.Spec.LoadBalancerIP = ""
 	switch mc.Spec.Expose.Type {
@@ -547,7 +549,7 @@ func applyService(svc *corev1.Service, mc *avsysv1.MinecraftServer) {
 		svc.Spec.Type = corev1.ServiceTypeClusterIP
 		port.NodePort = 0
 	}
-	svc.Spec.Ports = []corev1.ServicePort{port}
+	svc.Spec.Ports = append([]corev1.ServicePort{port}, extraServicePorts(mc, svc.Spec.Ports)...)
 }
 
 // addressFor is what a player types to join, or "" while it is not known yet.
