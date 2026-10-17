@@ -436,10 +436,12 @@ interface ContentListProps {
   gameJava?: number;
   /** Rendered between an entry's kind and its remove button, e.g. a version picker. */
   extra?: (mod: ContentRef, index: number) => ReactNode;
+  /** Said of an entry in place of where it comes from, where there is more to say. */
+  note?: (mod: ContentRef, index: number) => string | undefined;
   onRemove?: (index: number) => void;
 }
 
-export function ContentList({ mods, gameJava, extra, onRemove }: ContentListProps) {
+export function ContentList({ mods, gameJava, extra, note, onRemove }: ContentListProps) {
   return (
     <ul className="overflow-hidden rounded-lg border border-line bg-surface">
       {mods.map((m, i) => (
@@ -454,7 +456,7 @@ export function ContentList({ mods, gameJava, extra, onRemove }: ContentListProp
                 </a>
               )}
             </p>
-            <p className="truncate font-mono text-xs text-faint">{sourceLine(m)}</p>
+            <p className="truncate font-mono text-xs text-faint">{note?.(m, i) ?? sourceLine(m)}</p>
           </div>
           {!!gameJava && !!m.java && m.java > gameJava && (
             <Chip className="border-warn/40 text-warn" >needs Java {m.java}</Chip>

@@ -607,9 +607,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <ContentList
             // Files to upload are listed with the rest, by their names.
             mods={[...v.mods, ...v.uploads.map((u): ContentRef => ({ source: "upload", kind: u.kind, project: u.file.name, title: u.file.name }))]}
-            extra={(_, i) =>
-              i >= v.mods.length && <span className="shrink-0 text-xs text-faint">{bytes(v.uploads[i - v.mods.length].file.size)} · uploaded once the server is made</span>
-            }
+            note={(_, i) => (i >= v.mods.length ? `${bytes(v.uploads[i - v.mods.length].file.size)} · uploaded once the server is made` : undefined)}
             onRemove={(i) =>
               i < v.mods.length ? set("mods", v.mods.filter((_, j) => j !== i)) : set("uploads", v.uploads.filter((_, j) => j !== i - v.mods.length))
             }
