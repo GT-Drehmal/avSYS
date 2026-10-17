@@ -375,8 +375,10 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 	}
-	if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
-		return err
+	if raw.FromSnapshot == "" && raw.FromServer == "" {
+		if err := checkPackFormats(in.Spec.ResourcePack, nil); err != nil {
+			return err
+		}
 	}
 	if raw.FromSnapshot != "" && raw.FromServer != "" {
 		return errBadRequest("A server is made from a snapshot or from another server, not both.")
@@ -758,7 +760,7 @@ func (s *Server) finalSnapshot(ctx context.Context, org string, mc *avsysv1.Mine
 	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { spec.State = avsysv1.StateStopped }); err != nil {
 		return nil, false, err
 	}
-	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, 5*time.Minute); err != nil {
+	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, stopWait); err != nil {
 		return nil, false, fmt.Errorf("the server did not stop: %w", err)
 	}
 	snap, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerFinal, by)

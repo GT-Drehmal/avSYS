@@ -4,8 +4,12 @@ import type { Server } from "../lib/api";
 import { useServerAction } from "../lib/queries";
 import { Button } from "./ui";
 
-/** How long after a restart is asked for it is taken as under way, while the server still says Running. */
-const restartSettles = 15_000;
+/**
+ * How long after a restart is asked for it is taken as under way, while the
+ * server still says Running: a game saving a large world can take over a
+ * minute before it stops answering as ready.
+ */
+const restartSettles = 120_000;
 
 /**
  * Start/stop/restart for one server, showing whichever apply to its state.
