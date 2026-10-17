@@ -529,7 +529,9 @@ expect "a program put in ~/.local/bin is found by a login shell" "$own" "a tool 
 expect "the panel's own commands do not look in anyone's home" "$own" "restic is /usr/local/bin/restic"
 expect "python is there" "$own" "42"
 expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
-expect "and point to tools" "$own" "tools install <name>"
+told=$(ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'sudo true' 2>&1) || true
+expect "and point to tools" "$told" "tools install <name>"
 # A program installed into one's home without root, found by a login shell,
 # and taken out again with what was downloaded for it.
 installed=$(ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
