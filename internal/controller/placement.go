@@ -81,8 +81,20 @@ func pickNode(nodes []corev1.Node, reserved map[string]int64, need int64) string
 // nodeOfVolume returns the node a server's existing volume is tied to, if it
 // is tied to one, as node-local storage is.
 func (r *Reconciler) nodeOfVolume(ctx context.Context, mc *avsysv1.MinecraftServer) (string, error) {
+	return volumeNode(ctx, r.Client, r.Reader, mc)
+}
+
+// VolumeNode is nodeOfVolume for the panel: the node a move has to carry a
+// server's files from, or "" if they are not tied to one.
+func VolumeNode(ctx context.Context, reader client.Reader, mc *avsysv1.MinecraftServer) (string, error) {
+	return volumeNode(ctx, reader, reader, mc)
+}
+
+// volumeNode reads the claim through claims, which may be a cache, and the
+// volume and nodes through reader, which are not cached.
+func volumeNode(ctx context.Context, claims, reader client.Reader, mc *avsysv1.MinecraftServer) (string, error) {
 	pvc := &corev1.PersistentVolumeClaim{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: DataPVCName(mc.Name)}, pvc)
+	err := claims.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: DataPVCName(mc.Name)}, pvc)
 	if apierrors.IsNotFound(err) || (err == nil && pvc.Spec.VolumeName == "") {
 		return "", nil
 	}
@@ -90,7 +102,7 @@ func (r *Reconciler) nodeOfVolume(ctx context.Context, mc *avsysv1.MinecraftServ
 		return "", err
 	}
 	pv := &corev1.PersistentVolume{}
-	if err := r.Reader.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv); err != nil {
+	if err := reader.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv); err != nil {
 		return "", client.IgnoreNotFound(err)
 	}
 	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
@@ -99,7 +111,7 @@ func (r *Reconciler) nodeOfVolume(ctx context.Context, mc *avsysv1.MinecraftServ
 	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
 		for _, expr := range term.MatchExpressions {
 			if expr.Key == corev1.LabelHostname && expr.Operator == corev1.NodeSelectorOpIn && len(expr.Values) == 1 {
-				return r.nodeNamed(ctx, expr.Values[0])
+				return nodeNamed(ctx, reader, expr.Values[0])
 			}
 		}
 	}
@@ -134,9 +146,9 @@ func (r *Reconciler) renameRecordedNode(ctx context.Context, mc *avsysv1.Minecra
 
 // nodeNamed returns the name of the node whose hostname label is this, which
 // is usually but not always its name.
-func (r *Reconciler) nodeNamed(ctx context.Context, hostname string) (string, error) {
+func nodeNamed(ctx context.Context, reader client.Reader, hostname string) (string, error) {
 	var nodes corev1.NodeList
-	if err := r.Reader.List(ctx, &nodes, client.MatchingLabels{corev1.LabelHostname: hostname}); err != nil {
+	if err := reader.List(ctx, &nodes, client.MatchingLabels{corev1.LabelHostname: hostname}); err != nil {
 		return "", err
 	}
 	if len(nodes.Items) == 1 {
@@ -152,6 +164,11 @@ func (r *Reconciler) ensurePlacement(ctx context.Context, mc *avsysv1.MinecraftS
 		return nil
 	}
 	if recorded := mc.Annotations[avsysv1.AnnotationNode]; recorded != "" {
+		// Being moved, it is recorded on the node it is going to while its
+		// volume is still on the one it leaves.
+		if mc.Annotations[avsysv1.AnnotationMoving] != "" {
+			return nil
+		}
 		return r.renameRecordedNode(ctx, mc, recorded)
 	}
 
@@ -235,8 +252,22 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 		// workspace becoming the game.
 		// A pod of its name that another server owns is a deleted one's,
 		// on its way out, and not where this one runs.
+		// Being moved, it is held on the node it goes to, however long its
+		// pod on the one it leaves takes to go.
+		if target := mc.Annotations[avsysv1.AnnotationMoving]; target != "" {
+			reserved[target] += need
+			continue
+		}
+		placed := mc.Annotations[avsysv1.AnnotationNode]
 		if p := bound[client.ObjectKeyFromObject(mc)]; p != nil && !leftOf(p, mc) {
-			reserved[p.Spec.NodeName] += max(0, need-podMemory(p))
+			if placed != "" && placed != p.Spec.NodeName && len(mc.Spec.NodeSelector) == 0 {
+				// Placed on another node than its pod is still on, as when
+				// moved with its files on shared storage: held there from
+				// the moment it is placed, as the pod counts where it is.
+				reserved[placed] += need
+			} else {
+				reserved[p.Spec.NodeName] += max(0, need-podMemory(p))
+			}
 		} else if node := mc.Annotations[avsysv1.AnnotationNode]; node != "" && len(mc.Spec.NodeSelector) == 0 {
 			reserved[node] += need
 		}
@@ -251,6 +282,11 @@ func NodeUsage(ctx context.Context, reader client.Reader) ([]corev1.Node, map[st
 func holdsMemory(mc *avsysv1.MinecraftServer) bool {
 	if _, asleep := mc.Annotations[avsysv1.AnnotationAsleep]; asleep {
 		return false
+	}
+	// Being moved, it is held stopped while its files are put back on the
+	// node it goes to, and may be started there as soon as they are.
+	if mc.Annotations[avsysv1.AnnotationMoving] != "" {
+		return true
 	}
 	if mc.Annotations[avsysv1.AnnotationCreating] != "" {
 		// Until making it failed, which is recorded on it: it then waits
@@ -344,3 +380,77 @@ func NodeReady(n *corev1.Node) bool {
 
 // NodeScore is a node's measured single-core speed, 0 if unmeasured.
 func NodeScore(n *corev1.Node) float64 { return nodeScore(n) }
+
+// VolumeFits says whether a server's volume can be used on a node: whether
+// the node meets what its PersistentVolume requires of nodes, as a volume
+// of network storage limited to a zone does. One not yet bound, or with no
+// such requirement, fits anywhere.
+func VolumeFits(ctx context.Context, reader client.Reader, mc *avsysv1.MinecraftServer, nodeName string) (bool, error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := reader.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: DataPVCName(mc.Name)}, pvc)
+	if apierrors.IsNotFound(err) || (err == nil && pvc.Spec.VolumeName == "") {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	pv := &corev1.PersistentVolume{}
+	if err := reader.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+		return true, nil
+	}
+	node := &corev1.Node{}
+	if err := reader.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
+		return false, err
+	}
+	return nodeMatches(node, pv.Spec.NodeAffinity.Required), nil
+}
+
+// nodeMatches says whether a node meets a node selector: any of its terms,
+// each with all of its requirements.
+func nodeMatches(node *corev1.Node, sel *corev1.NodeSelector) bool {
+	for _, term := range sel.NodeSelectorTerms {
+		ok := len(term.MatchExpressions)+len(term.MatchFields) > 0
+		for _, req := range term.MatchExpressions {
+			v, has := node.Labels[req.Key]
+			ok = ok && requirementMet(req, v, has)
+		}
+		for _, req := range term.MatchFields {
+			ok = ok && req.Key == "metadata.name" && requirementMet(req, node.Name, true)
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+func requirementMet(req corev1.NodeSelectorRequirement, value string, has bool) bool {
+	in := false
+	for _, v := range req.Values {
+		in = in || v == value
+	}
+	switch req.Operator {
+	case corev1.NodeSelectorOpIn:
+		return has && in
+	case corev1.NodeSelectorOpNotIn:
+		return !has || !in
+	case corev1.NodeSelectorOpExists:
+		return has
+	case corev1.NodeSelectorOpDoesNotExist:
+		return !has
+	case corev1.NodeSelectorOpGt, corev1.NodeSelectorOpLt:
+		if !has || len(req.Values) != 1 {
+			return false
+		}
+		a, err1 := strconv.ParseInt(value, 10, 64)
+		b, err2 := strconv.ParseInt(req.Values[0], 10, 64)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		return (req.Operator == corev1.NodeSelectorOpGt && a > b) || (req.Operator == corev1.NodeSelectorOpLt && a < b)
+	}
+	return false
+}

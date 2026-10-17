@@ -11,6 +11,8 @@ import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
+import { PackUpload } from "../../components/PackUpload";
+import { NodeMove } from "../../components/NodeMove";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -329,20 +331,32 @@ export function Settings() {
         )}
       </Section>
 
-      <Section title="Resource pack" description="The URL must be reachable by players.">
-        <Field label="Pack URL">{(id) => <Input id={id} type="url" {...text("packURL")} placeholder="https://example.com/pack.zip" className="font-mono" />}</Field>
+      <Section title="Resource pack" description="Offered to players as they join. Upload one for the panel to serve, or give the address of one hosted elsewhere, which players must be able to reach.">
+        <PackUpload
+          server={server}
+          // A page with unsaved changes keeps them, and takes the pack as it
+          // is now, so that saving them does not put back the one before.
+          onChanged={(next) => setDraft((d) => ({ ...d, packURL: next.spec.resourcePack?.url ?? "", packSHA1: next.spec.resourcePack?.sha1 ?? "", packEnforce: !!next.spec.resourcePack?.enforce, packPrompt: next.spec.resourcePack?.prompt ?? "" }))}
+        />
+        {!server.spec.resourcePack?.uploaded && (
+          <>
+            <Field label="Or its URL">{(id) => <Input id={id} type="url" {...text("packURL")} placeholder="https://example.com/pack.zip" className="font-mono" />}</Field>
+            {draft.packURL && (
+              <Field label="SHA-1" hint="Optional.">
+                {(id) => (
+                  <div className="flex gap-2">
+                    <Input id={id} {...text("packSHA1")} className="font-mono" spellCheck={false} />
+                    <Button loading={hash.isPending} onClick={() => hash.mutate(undefined)}>
+                      Compute
+                    </Button>
+                  </div>
+                )}
+              </Field>
+            )}
+          </>
+        )}
         {draft.packURL && (
           <>
-            <Field label="SHA-1" hint="Optional.">
-              {(id) => (
-                <div className="flex gap-2">
-                  <Input id={id} {...text("packSHA1")} className="font-mono" spellCheck={false} />
-                  <Button loading={hash.isPending} onClick={() => hash.mutate(undefined)}>
-                    Compute
-                  </Button>
-                </div>
-              )}
-            </Field>
             <Toggle checked={draft.packEnforce} onChange={(v) => set("packEnforce", v)} label="Required" hint="Players who decline the pack are disconnected." />
             <Field label="Prompt">{(id) => <Input id={id} {...text("packPrompt")} placeholder="Shown when the game asks to download the pack" />}</Field>
           </>
@@ -355,6 +369,10 @@ export function Settings() {
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={toGigabytes(server.spec.storage.size) || 1} step={1} {...text("storage")} />}</Field>
         </div>
         <LaunchFlags aikar={draft.aikar} extra={draft.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} />
+      </Section>
+
+      <Section title="Node" description="Where it runs. Moving it stops it until it is up on the other node.">
+        <NodeMove server={server} />
       </Section>
 
       <Section title="Network">

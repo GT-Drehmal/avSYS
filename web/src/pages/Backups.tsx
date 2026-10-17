@@ -33,6 +33,7 @@ const reasons: [trigger: string, label: string][] = [
   ["pre-restore", "Before a restore"],
   ["final", "Before a delete"],
   ["copy", "For a copy"],
+  ["move", "For a move"],
 ];
 
 /** How many snapshots are shown of a server before "show all". */

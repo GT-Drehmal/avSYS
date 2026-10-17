@@ -37,9 +37,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Deleted only when a server is moved off a node its volume is tied to,
+  # its files then being in a snapshot.
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "create", "patch"]
+    verbs: ["get", "create", "patch", "delete"]
   # Choosing a node for a new server: node speed scores and free memory,
   # and which node an existing volume is tied to.
   - apiGroups: [""]

@@ -52,9 +52,10 @@ const (
 // files, so that nothing else may touch the server while it runs.
 //
 // A server on its way to being deleted counts: nothing is rewritten, but a
-// change made after its last snapshot would be lost with it.
+// change made after its last snapshot would be lost with it. So does one
+// being moved, whose files are put back on another node.
 func rewrites(kind string) bool {
-	return kind == kindRestore || kind == kindCreate || kind == kindDeleteServer
+	return kind == kindRestore || kind == kindCreate || kind == kindDeleteServer || kind == kindMove
 }
 
 // operations decides who may touch a server or a snapshot at a time. One
@@ -142,6 +143,38 @@ func (o *operations) change(namespace, server string, blockedBy ...string) (rele
 
 // remove admits the deletion of a snapshot, unless a restore is using it.
 // Until release is called no restore to that snapshot can start.
+// heldIn names a server whose files are to be put back from this snapshot,
+// as one whose restore or move was cut short says on itself, or "". Such a
+// snapshot is all there may be of them.
+func (s *Server) heldIn(ctx context.Context, namespace, snapshot string) (string, error) {
+	var list avsysv1.MinecraftServerList
+	// Not knowing is not taken as free: it may be the only copy of a
+	// server's files.
+	if err := s.Client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+		return "", &Error{Status: http.StatusServiceUnavailable, Code: "unavailable", Message: "Could not see whether a server is waiting for its files from this snapshot, so nothing was deleted. Try again."}
+	}
+	for _, mc := range list.Items {
+		if mc.Annotations[avsysv1.AnnotationRestoring] == snapshot {
+			return mc.Name, nil
+		}
+	}
+	return "", nil
+}
+
+// carry records the snapshot an operation is carrying a server's files in,
+// which may not be deleted until it is over. ok is false if it is being
+// deleted already.
+func (o *operations) carry(namespace string, op *operation, snapshot string) (ok bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.init()
+	if o.deleting[namespace+"/"+snapshot] {
+		return false
+	}
+	op.Snapshot = snapshot
+	return true
+}
+
 func (o *operations) remove(namespace, snapshot string) (release func(), ok bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -229,6 +262,7 @@ func snapshotError(err error) error {
 var (
 	errRestoring    = &Error{Status: http.StatusConflict, Code: "restoring", Message: "This server is being restored. Wait for that to finish."}
 	errDeleting     = &Error{Status: http.StatusConflict, Code: "deleting", Message: "This server is being deleted."}
+	errMoving       = &Error{Status: http.StatusConflict, Code: "moving", Message: "This server is being moved to another node. Wait for that to finish."}
 	errCreating     = &Error{Status: http.StatusConflict, Code: "creating", Message: "This server is still being made from a snapshot. Wait for that to finish."}
 	errSnapshotting = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot of this server is being taken. Try again when it has finished."}
 	// errRestoreIncomplete is returned to anything that would run the game
@@ -249,7 +283,22 @@ var (
 //
 // The caller must call release once its change has been made.
 func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
-	kinds := []string{kindRestore, kindCreate, kindDeleteServer}
+	release, err = s.admit(mc, alsoDuringSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	// A move cut short holds it as one under way does, until it is finished.
+	if err := halfMoved(mc); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+// admit is changing without holding off a server whose move did not
+// finish, for what such a server may still have done to it: deleting it.
+func (s *Server) admit(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
+	kinds := []string{kindRestore, kindCreate, kindDeleteServer, kindMove}
 	if alsoDuringSnapshot {
 		kinds = append(kinds, kindSnapshot)
 	}
@@ -269,6 +318,8 @@ func heldBy(kind string) error {
 		return errCreating
 	case kindDeleteServer:
 		return errDeleting
+	case kindMove:
+		return errMoving
 	}
 	return errSnapshotting
 }
@@ -534,6 +585,9 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 		// taken, and neither is a final one or one to copy from: the last
 		// one is as good.
 		SkipUnchanged: trigger == backup.TriggerScheduled || trigger == backup.TriggerFinal || trigger == backup.TriggerCopy,
+		// One that carries a server to another node is all there will be of
+		// its files, its workspace home among them, and is always taken.
+		Whole: trigger == backup.TriggerMove,
 	}
 	s.setOperation(mc.Namespace, op, "Copying files", 0)
 	last := time.Time{}
@@ -596,6 +650,9 @@ func (s *Server) markRestoring(ctx context.Context, key client.ObjectKey, snapsh
 	orig := mc.DeepCopy()
 	if snapshot == "" {
 		delete(mc.Annotations, avsysv1.AnnotationRestoring)
+		// A move left to be finished by a restore is finished by it.
+		delete(mc.Annotations, avsysv1.AnnotationMoving)
+		delete(mc.Annotations, avsysv1.AnnotationMoveWas)
 	} else {
 		if mc.Annotations == nil {
 			mc.Annotations = map[string]string{}
@@ -671,6 +728,15 @@ func (s *Server) resumeSaving(ctx context.Context) {
 				s.Log.Warn("found a restore that was interrupted", "server", mc.Name, "namespace", mc.Namespace)
 			}
 		}
+		// A move cut short before it let go of the server's files has not
+		// touched them: the server is put back as it was.
+		if was, ok := mc.Annotations[avsysv1.AnnotationMoveWas]; ok && mc.Annotations[avsysv1.AnnotationMoving] == "" && !restoreUnfinished(mc) {
+			if err := s.putBack(ctx, client.ObjectKeyFromObject(mc), was == string(avsysv1.StateRunning)); err != nil {
+				s.Log.Error("could not put back a server whose move was cut short; trying again in a minute", "server", mc.Name, "namespace", mc.Namespace, "error", err)
+			} else {
+				s.Log.Warn("put back a server whose move was cut short before its files were let go of", "server", mc.Name, "namespace", mc.Namespace, "state", was)
+			}
+		}
 		if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; !paused {
 			continue
 		}
@@ -704,6 +770,19 @@ func (s *Server) resumeSaving(ctx context.Context) {
 // the undo point, not the snapshot restored to.
 func (s *Server) finishOperation(ctx context.Context, namespace, server, kind string, subject, newest *backup.Snapshot, opErr error) {
 	s.finish(ctx, namespace, server, kind, subject, newest, opErr, false)
+}
+
+// finishUnsaved ends an operation that took no snapshot and restored none,
+// leaving what the server says of its snapshots as it is.
+func (s *Server) finishUnsaved(ctx context.Context, namespace, server, kind string, opErr error) {
+	org, _ := s.orgOfNamespace(namespace)
+	done := operationDone{Kind: kind, Org: org, Server: server}
+	if opErr != nil {
+		done.Error = opErr.Error()
+		s.Log.Error(kind+" failed", "namespace", namespace, "server", server, "error", opErr)
+	}
+	s.ops.end(namespace, server)
+	s.Events.Publish(Event{Type: "operation.done", Namespace: namespace, Data: done})
 }
 
 // finish is finishOperation, with scheduled set for a run of the daily
@@ -797,6 +876,11 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request, u *stor
 	if snap.Server != mc.Name {
 		return errBadRequest("That snapshot is of %s. A server can only be restored to its own snapshots.", snap.Server)
 	}
+	// A move that did not finish is finished by its own snapshot, which has
+	// the workspace home too: any other would leave that out.
+	if err := heldForMove(mc, snap.ID); err != nil {
+		return err
+	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindRestore, snap.ID)
 	if !ok {
 		return errBusy
@@ -824,6 +908,15 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request, u *stor
 	return nil
 }
 
+// finishesMove says whether restoring this snapshot finishes the move it was
+// taken for, which was cut short before the files were put back. Only then
+// does the workspace home go back too. Any other restore of it, as of any
+// snapshot, leaves the home as it is now: tools put there since are not
+// taken away.
+func finishesMove(mc *avsysv1.MinecraftServer, snap *backup.Snapshot) bool {
+	return snap.Trigger == backup.TriggerMove && mc.Annotations[avsysv1.AnnotationMoving] != "" && mc.Annotations[avsysv1.AnnotationRestoring] == snap.ID
+}
+
 // restore returns the snapshot it took of the state it replaced, once there
 // is one, whether or not the rest then succeeded.
 func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, by string) (undo *backup.Snapshot, err error) {
@@ -832,7 +925,13 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	if mc, err = s.fresh(ctx, mc); err != nil {
 		return nil, err
 	}
-	wasRunning := mc.Spec.State != avsysv1.StateStopped
+	// Checked again now that the claim is held: it may have changed.
+	if err := heldForMove(mc, snap.ID); err != nil {
+		return nil, err
+	}
+	whole := finishesMove(mc, snap)
+	// Finishing a move puts it back as it was before the move stopped it.
+	wasRunning := mc.Spec.State != avsysv1.StateStopped || (whole && mc.Annotations[avsysv1.AnnotationMoveWas] == string(avsysv1.StateRunning))
 
 	// What a snapshot holds of the server's settings is read before anything
 	// is touched, so that an unreadable snapshot stops here.
@@ -877,7 +976,11 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	}
 	s.setOperation(mc.Namespace, op, "Restoring files", 0)
 	last := time.Time{}
-	err = s.Backups.Restore(ctx, org, ws, snap.ID, func(p backup.Progress) {
+	put := s.Backups.Restore
+	if whole {
+		put = s.Backups.RestoreWhole
+	}
+	err = put(ctx, org, ws, snap.ID, func(p backup.Progress) {
 		if time.Since(last) < 500*time.Millisecond {
 			return
 		}
@@ -1045,6 +1148,11 @@ func (s *Server) deleteSnapshots(w http.ResponseWriter, r *http.Request, u *stor
 			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("A server is being restored to the snapshot of %s from %s. Nothing was deleted; wait for that to finish.", snap.Server, snap.Time.Format("2 Jan 15:04"))}
 		}
 		defer release()
+		if held, err := s.heldIn(r.Context(), a.Namespace, snap.ID); err != nil {
+			return err
+		} else if held != "" {
+			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s is waiting for its files to be put back from the snapshot of %s from %s. Nothing was deleted; restore it first.", held, snap.Server, snap.Time.Format("2 Jan 15:04"))}
+		}
 		ids[i] = snap.ID
 	}
 	if err := s.Backups.DeleteMany(context.WithoutCancel(r.Context()), a.Org.Slug, ids); err != nil {
@@ -1081,6 +1189,11 @@ func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store
 		return &Error{Status: http.StatusConflict, Code: "in_use", Message: "A server is being restored to this snapshot. Wait for that to finish."}
 	}
 	defer release()
+	if held, err := s.heldIn(r.Context(), a.Namespace, snap.ID); err != nil {
+		return err
+	} else if held != "" {
+		return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s is waiting for its files to be put back from this snapshot. Restore it first.", held)}
+	}
 	if err := s.Backups.Delete(context.WithoutCancel(r.Context()), a.Org.Slug, snap.ID); err != nil {
 		return snapshotError(err)
 	}

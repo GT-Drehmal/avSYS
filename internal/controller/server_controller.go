@@ -35,6 +35,9 @@ type Config struct {
 	// RouterPublicPort is the port players reach the router on, when not 25565.
 	RouterPublicPort int
 	CurseForgeAPIKey string
+	// PackURL is where the panel serves uploaded resource packs, at
+	// /packs/<sha1>.zip under it.
+	PackURL string
 }
 
 type Reconciler struct {
@@ -78,6 +81,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	if err := r.ensureRCONSecret(ctx, mc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("rcon secret: %w", err)
+	}
+	if target := mc.Annotations[avsysv1.AnnotationMoving]; target != "" {
+		waiting, err := r.moveVolume(ctx, mc, target)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("moving: %w", err)
+		}
+		if waiting {
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, r.waitForMove(ctx, mc, target)
+		}
 	}
 	if err := r.ensurePVC(ctx, mc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("volume: %w", err)
@@ -142,6 +154,68 @@ func (r *Reconciler) waitForLeftovers(ctx context.Context, mc *avsysv1.Minecraft
 		mc.Status.Phase = avsysv1.PhaseStarting
 	}
 	mc.Status.Message = fmt.Sprintf("Waiting for the %s of a deleted server of this name to be removed.", what)
+	mc.Status.Players = nil
+	if equality.Semantic.DeepEqual(orig.Status, mc.Status) {
+		return nil
+	}
+	return r.Status().Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// moveVolume takes a server's volume off the node it is leaving: the pod
+// that has it, then the volume, and nothing is made in their place until
+// the volume is gone. waiting is true until then.
+func (r *Reconciler) moveVolume(ctx context.Context, mc *avsysv1.MinecraftServer, target string) (waiting bool, err error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	err = r.Get(ctx, types.NamespacedName{Namespace: mc.Namespace, Name: DataPVCName(mc.Name)}, pvc)
+	if apierrors.IsNotFound(err) {
+		// Made again by ensurePVC, and tied to target when its pod, kept
+		// there, first uses it.
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	node, err := r.nodeOfVolume(ctx, mc)
+	if err != nil {
+		return false, err
+	}
+	// Not yet tied anywhere, as a new one is until its pod, kept to target,
+	// first uses it; or not node-local; or on target already.
+	if pvc.DeletionTimestamp.IsZero() && (pvc.Spec.VolumeName == "" || node == "" || node == target) {
+		return false, nil
+	}
+	// Nothing is deleted on a mark read from a cache, which a move given
+	// up a moment ago may have taken off: it is read again as it is now.
+	live := &avsysv1.MinecraftServer{}
+	if err := r.Reader.Get(ctx, client.ObjectKeyFromObject(mc), live); err != nil {
+		return true, client.IgnoreNotFound(err)
+	}
+	if live.Annotations[avsysv1.AnnotationMoving] != target {
+		return false, nil
+	}
+	pod := &corev1.Pod{}
+	switch err := r.Get(ctx, client.ObjectKeyFromObject(mc), pod); {
+	case err == nil && pod.DeletionTimestamp.IsZero():
+		if err := r.Delete(ctx, pod); client.IgnoreNotFound(err) != nil {
+			return true, err
+		}
+	case err != nil && !apierrors.IsNotFound(err):
+		return true, err
+	}
+	if pvc.DeletionTimestamp.IsZero() {
+		log.FromContext(ctx).Info("deleting the volume on the node moved from", "node", node, "to", target)
+		if err := r.Delete(ctx, pvc); client.IgnoreNotFound(err) != nil {
+			return true, err
+		}
+	}
+	return true, nil
+}
+
+// waitForMove says on the server what it is waiting for.
+func (r *Reconciler) waitForMove(ctx context.Context, mc *avsysv1.MinecraftServer, target string) error {
+	orig := mc.DeepCopy()
+	mc.Status.Phase = avsysv1.PhaseStopped
+	mc.Status.Message = fmt.Sprintf("Being moved to %s: its volume there is being made.", target)
 	mc.Status.Players = nil
 	if equality.Semantic.DeepEqual(orig.Status, mc.Status) {
 		return nil
@@ -274,6 +348,9 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 		switch {
 		case gameInPod:
 			return avsysv1.PhaseStopping, ""
+		// Before its stopped state, which a move sets too.
+		case mc.Annotations[avsysv1.AnnotationRestoring] != "" && mc.Annotations[avsysv1.AnnotationMoving] != "":
+			return avsysv1.PhaseStopped, fmt.Sprintf("Being moved to %s, and held stopped until its files are there.", mc.Annotations[avsysv1.AnnotationMoving])
 		case mc.Annotations[avsysv1.AnnotationCreating] != "":
 			return avsysv1.PhaseStopped, "Made from a snapshot, and held stopped until all of its files are in place."
 		case mc.Spec.State == avsysv1.StateStopped:

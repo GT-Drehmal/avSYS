@@ -36,6 +36,18 @@ const (
 	// it with nothing running never received all of its files. There is
 	// nothing in it worth keeping: it is deleted and made again.
 	AnnotationCreating = "avsys.dev/creating"
+	// AnnotationMoving is set, to a node's name, while a server is being
+	// moved there: a volume of it that is tied to another node is deleted,
+	// with its pod, and one is made on that node. The server's files are in
+	// a snapshot taken before it is set, and are put back from there; it is
+	// held stopped by AnnotationRestoring meanwhile. The panel removes it
+	// once they are; a volume already on that node is left alone.
+	AnnotationMoving = "avsys.dev/moving"
+	// AnnotationMoveWas is set, to the state it was in, from when a move
+	// stops a server until the move is over. A move cut short, by the panel
+	// restarting, before AnnotationMoving was set, has not touched its
+	// files: the panel then puts it back in that state.
+	AnnotationMoveWas = "avsys.dev/move-was"
 	// AnnotationAutoOps lists the players the panel has made operators on a
 	// server for their role in its organization, separated by commas. Only
 	// these are ever taken off again by it: operators made any other way
@@ -154,6 +166,18 @@ type ResourcePackSpec struct {
 	SHA1    string `json:"sha1,omitempty"`
 	Enforce bool   `json:"enforce,omitempty"`
 	Prompt  string `json:"prompt,omitempty"`
+	// Uploaded is set for a pack uploaded to the panel. It is kept in the
+	// server's files, where snapshots and copies take it along, and the
+	// panel serves it, at an address of its SHA1: URL is that address.
+	Uploaded *UploadedPack `json:"uploaded,omitempty"`
+}
+
+// UploadedPack is what is known of a resource pack uploaded to the panel.
+type UploadedPack struct {
+	// Name is the file's name as it was uploaded.
+	Name string      `json:"name,omitempty"`
+	Size int64       `json:"size"`
+	Time metav1.Time `json:"time"`
 }
 
 type ExposeType string
