@@ -98,6 +98,9 @@ export function useLiveServers() {
       qc.invalidateQueries({ queryKey: ["servers"] });
       qc.invalidateQueries({ queryKey: ["snapshots"] });
       qc.invalidateQueries({ queryKey: ["offsite"] });
+      // A move may have finished unheard.
+      qc.invalidateQueries({ queryKey: ["placement"] });
+      qc.invalidateQueries({ queryKey: ["nodes"] });
     };
     const source = new EventSource("/api/v1/events");
     let opened = false;
@@ -134,6 +137,11 @@ export function useLiveServers() {
       } else if (done.kind === "delete-server") {
         // Only ever sent with an error, which says the whole of it.
         if (done.error) toast.error(done.error);
+      } else if (done.kind === "move") {
+        qc.invalidateQueries({ queryKey: ["placement", done.org, done.server] });
+        qc.invalidateQueries({ queryKey: ["nodes"] });
+        if (done.error) toast.error(`Moving ${done.server} failed: ${done.error}`);
+        else toast.info(`${done.server} was moved`);
       } else if (done.error) toast.error(`${done.kind === "restore" ? "Restore" : "Snapshot"} of ${done.server} failed: ${done.error}`);
       else if (done.kind === "restore") toast.info(`${done.server} was restored`);
       else if (done.kind === "snapshot") toast.info(`Snapshot of ${done.server} taken`);

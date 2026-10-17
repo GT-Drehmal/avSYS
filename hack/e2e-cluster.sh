@@ -1,6 +1,6 @@
 #!/bin/sh
-# The end-to-end check from nothing. Starts an empty single-node k3s in a
-# container, builds both images, installs the panel from deploy/install.yaml
+# The end-to-end check from nothing. Starts an empty two-node k3s in
+# containers, builds both images, installs the panel from deploy/install.yaml
 # as a user would, creates the first account and runs hack/e2e.sh against it.
 # Needs only Docker, curl and python3; this is what CI runs.
 #
@@ -13,6 +13,8 @@ set -eu
 cd "$(dirname "$0")/.."
 
 NAME=${E2E_NAME:-avsys-e2e}
+# The second node, which servers are moved to and from.
+AGENT=$NAME-2
 K3S=${E2E_K3S_IMAGE:-rancher/k3s:v1.33.5-k3s1}
 HTTP_PORT=${E2E_HTTP_PORT:-18080}
 SSH_PORT=${E2E_SSH_PORT:-12222}
@@ -44,9 +46,9 @@ finish() {
     k get events -A --sort-by=.lastTimestamp 2>&1 | tail -25 || true
   fi
   if [ -n "${KEEP:-}" ]; then
-    printf '\nCluster left running: docker exec -it %s kubectl get pods -A; panel at %s\n' "$NAME" "$URL"
+    printf '\nCluster left running: docker exec -it %s kubectl get pods -A; panel at %s; remove %s and %s when done\n' "$NAME" "$URL" "$NAME" "$AGENT"
   else
-    docker rm -f -v "$NAME" >/dev/null 2>&1 || true
+    docker rm -f -v "$NAME" "$AGENT" >/dev/null 2>&1 || true
   fi
   exit $status
 }
@@ -60,7 +62,7 @@ fi
 echo "ok: $PANEL and $WORKSPACE"
 
 step "empty cluster"
-docker rm -f -v "$NAME" >/dev/null 2>&1 || true
+docker rm -f -v "$NAME" "$AGENT" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --privileged \
   -p "127.0.0.1:$HTTP_PORT:80" -p "127.0.0.1:$SSH_PORT:2222" -p "127.0.0.1:$ROUTER_PORT:25565" \
   "$K3S" server --disable traefik --disable metrics-server >/dev/null
@@ -74,6 +76,20 @@ k wait --for=condition=Ready node --all --timeout=120s >/dev/null || fail "the c
 # The panel runs the workspace image of its own version, so both are needed.
 docker save "$PANEL" "$WORKSPACE" | docker exec -i "$NAME" ctr images import - >/dev/null
 echo "ok: k3s is up with both images loaded"
+
+step "second node"
+# An agent beside it, joined through the server's address on Docker's
+# network, with the same images, as anything may be scheduled there.
+joining=$(docker exec "$NAME" cat /var/lib/rancher/k3s/server/node-token)
+address=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$NAME")
+docker run -d --name "$AGENT" --privileged -e K3S_URL="https://$address:6443" -e K3S_TOKEN="$joining" "$K3S" agent >/dev/null
+for _ in $(seq 1 60); do
+  [ "$(k get nodes --no-headers 2>/dev/null | grep -c ' Ready ')" = 2 ] && break
+  sleep 2
+done
+[ "$(k get nodes --no-headers 2>/dev/null | grep -c ' Ready ')" = 2 ] || fail "the second node did not join"
+docker save "$PANEL" "$WORKSPACE" | docker exec -i "$AGENT" ctr images import - >/dev/null
+echo "ok: two nodes, both with the images"
 
 # offsite gives the panel an offsite copy that is a directory on its own
 # volume: nowhere a real one should be, and enough to run it through here.

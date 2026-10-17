@@ -51,6 +51,17 @@ const (
 // cache) and download caches. Paths are relative to the server directory.
 var excluded = []string{"/.workspace", "/.cache"}
 
+// excludedFromWhole are left out of a whole snapshot, and of putting one
+// back: download caches, restic's own among them.
+var excludedFromWhole = []string{"/.workspace/.cache", "/.cache"}
+
+func exclusions(whole bool) []string {
+	if whole {
+		return excludedFromWhole
+	}
+	return excluded
+}
+
 // Triggers say why a snapshot was taken.
 const (
 	TriggerManual     = "manual"
@@ -60,6 +71,9 @@ const (
 	TriggerFinal = "final"
 	// TriggerCopy is the snapshot a copy of a server is made from.
 	TriggerCopy = "copy"
+	// TriggerMove is the snapshot that carries a server's files to the
+	// node it is moved to.
+	TriggerMove = "move"
 )
 
 var (
@@ -135,6 +149,10 @@ type Meta struct {
 	// SkipUnchanged takes no snapshot, and returns ErrUnchanged, when the
 	// files are as the server's newest snapshot has them.
 	SkipUnchanged bool
+	// Whole takes the workspace's home too, all but restic's own cache in
+	// it: for a snapshot that is all there will be of the server's files,
+	// as one that carries them to another node.
+	Whole bool
 }
 
 // Keep says how many scheduled snapshots of a server outlive their day: the
@@ -876,7 +894,7 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	for _, tag := range tags {
 		args = append(args, "--tag", tag)
 	}
-	for _, path := range excluded {
+	for _, path := range exclusions(meta.Whole) {
 		args = append(args, "--exclude", dataDir+path)
 	}
 	if meta.SkipUnchanged {
@@ -920,6 +938,16 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 // that are not in the snapshot are removed, except the workspace's own. The
 // game must not be running.
 func (m *Manager) Restore(ctx context.Context, org string, ws *ssh.Client, id string, progress func(Progress)) error {
+	return m.restore(ctx, org, ws, id, false, progress)
+}
+
+// RestoreWhole puts back a whole snapshot, the workspace's home with it, onto
+// a server's new, empty volume.
+func (m *Manager) RestoreWhole(ctx context.Context, org string, ws *ssh.Client, id string, progress func(Progress)) error {
+	return m.restore(ctx, org, ws, id, true, progress)
+}
+
+func (m *Manager) restore(ctx context.Context, org string, ws *ssh.Client, id string, whole bool, progress func(Progress)) error {
 	snap, err := m.Get(ctx, org, id)
 	if err != nil {
 		return err
@@ -942,7 +970,7 @@ func (m *Manager) Restore(ctx context.Context, org string, ws *ssh.Client, id st
 	// that directory. Restoring the whole snapshot onto / with --delete would
 	// remove everything outside the server directory as "not in the snapshot".
 	args := []string{"restore", snap.ID + ":" + dataDir, "--target", dataDir, "--delete", "--json"}
-	for _, path := range excluded {
+	for _, path := range exclusions(whole) {
 		args = append(args, "--exclude", path)
 	}
 	f := &follow{progress: progress}
