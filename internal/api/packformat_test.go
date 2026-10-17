@@ -3,6 +3,9 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -14,6 +17,7 @@ import (
 	"time"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
 func TestFormatsOfMeta(t *testing.T) {
@@ -222,5 +226,70 @@ func TestGameVersionPackFormatNeedsRanges(t *testing.T) {
 	p.fetch("/catalog/minecraft/pack-formats?versions=1.21.4", &got)
 	if got.Min != 46 {
 		t.Errorf("then %d, want 46", got.Min)
+	}
+}
+
+// Of several versions, one whose format cannot be found out gives way to the
+// next one in from its end, rather than leaving that end out.
+func TestPackFormatsSkipVersionsNotFoundOut(t *testing.T) {
+	p := newPanel(t)
+	up := newMojang(t, map[string][]byte{
+		// 26.3's jar is not there; 1.13.2 is older than any version.json.
+		"1.21.4": jarWith(t, map[string]string{"version.json": `{"pack_version":{"resource":46}}`}),
+		"1.20.1": jarWith(t, map[string]string{"version.json": `{"pack_version":{"resource":15}}`}),
+	})
+	p.srv.catalog.http.Transport = up
+	var got avsysv1.PackFormats
+	p.fetch("/catalog/minecraft/pack-formats?versions=26.3,1.21.4,1.20.1", &got)
+	if got.Min != 15 || got.Max != 46 {
+		t.Errorf("%d-%d, want 15-46", got.Min, got.Max)
+	}
+}
+
+// The copy of a pack kept to read its formats from is not what the hash
+// depends on: a copy that cannot be written leaves the hash as it was.
+func TestBestEffortKeepsGoing(t *testing.T) {
+	failing := &bestEffort{w: failAfter(3)}
+	n, err := failing.Write([]byte("hello"))
+	if n != 5 || err != nil || failing.err == nil {
+		t.Errorf("first write: %d %v, kept err %v", n, err, failing.err)
+	}
+	if n, err := failing.Write([]byte("more")); n != 4 || err != nil {
+		t.Errorf("after the failure: %d %v", n, err)
+	}
+}
+
+type failAfter int
+
+func (f failAfter) Write(p []byte) (int, error) {
+	if len(p) > int(f) {
+		return int(f), errors.New("disk full")
+	}
+	return len(p), nil
+}
+
+// A copy given another address for its pack, with the original's formats
+// still on it, does not keep them: they are not known to be the new pack's.
+// The original's own pack, kept, keeps its formats.
+func TestCopyPackFormats(t *testing.T) {
+	p := newPanel(t)
+	org, err := p.srv.Store.OrgBySlug(context.Background(), "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &access{Org: org, Role: store.RoleOwner, Namespace: "mc-alpha"}
+	formats := &avsysv1.PackFormats{Min: 15, Max: 15}
+	recorded := &avsysv1.MinecraftServerSpec{EULA: true, Version: "1.20.1", Loader: avsysv1.LoaderPaper,
+		ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://example.org/old.zip", SHA1: strings.Repeat("ab", 20), Formats: formats}}
+	given := map[string]json.RawMessage{"resourcePack": json.RawMessage(`{}`)}
+	for url, keep := range map[string]bool{"https://example.org/new.zip": false, "https://example.org/old.zip": true} {
+		requested := &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: url, Formats: formats.DeepCopy(), Enforce: true}}
+		spec, err := p.srv.specFromSnapshot(context.Background(), a, "copy", requested, recorded.DeepCopy(), given)
+		if err != nil {
+			t.Fatalf("%s: %v", url, err)
+		}
+		if got := spec.ResourcePack.Formats != nil; got != keep {
+			t.Errorf("%s: formats kept %v, want %v", url, got, keep)
+		}
 	}
 }

@@ -88,6 +88,10 @@ func TestCheckPack(t *testing.T) {
 		"a pack of a string":    {"pack.mcmeta": `{"pack":"x"}`},
 		"an empty pack":         {"pack.mcmeta": `{"pack":{}}`},
 		"no format":             {"pack.mcmeta": `{"pack":{"description":"x"}}`},
+		"min_format of null":    {"pack.mcmeta": `{"pack":{"description":"x","min_format":null}}`},
+		"min_format of a word":  {"pack.mcmeta": `{"pack":{"description":"x","min_format":"new"}}`},
+		"min_format empty":      {"pack.mcmeta": `{"pack":{"description":"x","min_format":[]}}`},
+		"a format past any":     {"pack.mcmeta": `{"pack":{"description":"x","min_format":999999}}`},
 	} {
 		f, size := zipWith(t, files)
 		if _, err := checkPack(f, size); err == nil || !strings.Contains(err.Error(), "not a pack's metadata") {

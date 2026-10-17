@@ -126,7 +126,9 @@ func checkMeta(e *zip.File) (*avsysv1.PackFormats, error) {
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
-	if d.Decode(&meta) != nil || meta.Pack == nil || len(meta.Pack.Description) == 0 || (meta.Pack.Format == "" && len(meta.Pack.MinFormat) == 0) {
+	// And the formats have to be ones it can read: min_format as null, a
+	// string or an empty list is not one.
+	if d.Decode(&meta) != nil || meta.Pack == nil || len(meta.Pack.Description) == 0 || (meta.Pack.Format == "" && len(meta.Pack.MinFormat) == 0) || formatsOfMeta(data) == nil {
 		return nil, bad
 	}
 	return formatsOfMeta(data), nil
