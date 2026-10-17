@@ -88,27 +88,31 @@ func TestCheckPack(t *testing.T) {
 		"a pack of a string":    {"pack.mcmeta": `{"pack":"x"}`},
 		"an empty pack":         {"pack.mcmeta": `{"pack":{}}`},
 		"no format":             {"pack.mcmeta": `{"pack":{"description":"x"}}`},
+		"min_format of null":    {"pack.mcmeta": `{"pack":{"description":"x","min_format":null}}`},
+		"min_format of a word":  {"pack.mcmeta": `{"pack":{"description":"x","min_format":"new"}}`},
+		"min_format empty":      {"pack.mcmeta": `{"pack":{"description":"x","min_format":[]}}`},
+		"a format past any":     {"pack.mcmeta": `{"pack":{"description":"x","min_format":999999}}`},
 	} {
 		f, size := zipWith(t, files)
-		if err := checkPack(f, size); err == nil || !strings.Contains(err.Error(), "not a pack's metadata") {
+		if _, err := checkPack(f, size); err == nil || !strings.Contains(err.Error(), "not a pack's metadata") {
 			t.Errorf("%s: %v", what, err)
 		}
 	}
 	// From 1.21.9 a pack may say min_format instead.
 	newer, size := zipWith(t, map[string]string{"pack.mcmeta": `{"pack":{"description":{"text":"x"},"min_format":[69,0],"max_format":70}}`})
-	if err := checkPack(newer, size); err != nil {
-		t.Errorf("a pack with min_format: %v", err)
+	if formats, err := checkPack(newer, size); err != nil || formats == nil || *formats != (avsysv1.PackFormats{Min: 69, Max: 70}) {
+		t.Errorf("a pack with min_format: %v, %v", formats, err)
 	}
 	ok, size := zipOf(t, "pack.mcmeta", "assets/minecraft/lang/en_us.json")
-	if err := checkPack(ok, size); err != nil {
-		t.Errorf("a pack with pack.mcmeta at its top: %v", err)
+	if formats, err := checkPack(ok, size); err != nil || formats == nil || *formats != (avsysv1.PackFormats{Min: 46, Max: 46}) {
+		t.Errorf("a pack with pack.mcmeta at its top: %v, %v", formats, err)
 	}
 	nested, size := zipOf(t, "MyPack/pack.mcmeta", "MyPack/assets/x.json")
-	if err := checkPack(nested, size); err == nil || !strings.Contains(err.Error(), "in a folder, MyPack") {
+	if _, err := checkPack(nested, size); err == nil || !strings.Contains(err.Error(), "in a folder, MyPack") {
 		t.Errorf("a pack a folder down: %v", err)
 	}
 	none, size := zipOf(t, "assets/x.json")
-	if err := checkPack(none, size); err == nil || !strings.Contains(err.Error(), "no pack.mcmeta") {
+	if _, err := checkPack(none, size); err == nil || !strings.Contains(err.Error(), "no pack.mcmeta") {
 		t.Errorf("a zip with no pack.mcmeta: %v", err)
 	}
 	plain, err := os.CreateTemp(t.TempDir(), "x")
@@ -117,7 +121,7 @@ func TestCheckPack(t *testing.T) {
 	}
 	defer plain.Close()
 	plain.WriteString("not a zip at all")
-	if err := checkPack(plain, 16); err == nil || !strings.Contains(err.Error(), "not a zip") {
+	if _, err := checkPack(plain, 16); err == nil || !strings.Contains(err.Error(), "not a zip") {
 		t.Errorf("not a zip: %v", err)
 	}
 }
@@ -214,6 +218,16 @@ func TestKeepUploadedPack(t *testing.T) {
 	spec.ResourcePack.Project = &avsysv1.PackProject{Source: "modrinth", ID: "faithful"}
 	if err := keepUploadedPack(spec, uploaded()); err != nil || spec.ResourcePack.Uploaded == nil || spec.ResourcePack.Project != nil {
 		t.Errorf("project on the upload: %v %+v", err, spec.ResourcePack)
+	}
+	// Its formats are what its file says, not what is said of it.
+	read := uploaded()
+	read.ResourcePack.Formats = &avsysv1.PackFormats{Min: 15, Max: 15}
+	for _, said := range []*avsysv1.PackFormats{nil, {Min: 97, Max: 97}} {
+		spec = uploaded()
+		spec.ResourcePack.Formats = said
+		if err := keepUploadedPack(spec, read); err != nil || spec.ResourcePack.Formats == nil || *spec.ResourcePack.Formats != *read.ResourcePack.Formats {
+			t.Errorf("formats said %v: %v %+v", said, err, spec.ResourcePack.Formats)
+		}
 	}
 }
 

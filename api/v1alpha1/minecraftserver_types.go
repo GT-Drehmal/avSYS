@@ -177,6 +177,11 @@ type ResourcePackSpec struct {
 	// Project is set for a pack picked from Modrinth: URL and SHA1 are of
 	// the file of the version picked.
 	Project *PackProject `json:"project,omitempty"`
+	// Formats are the pack formats it is made for, where known: read from
+	// its pack.mcmeta, or for one picked from Modrinth from the game
+	// versions it is listed for. Only for saying when it does not fit the
+	// server's game version.
+	Formats *PackFormats `json:"formats,omitempty"`
 }
 
 // PackProject is the project a resource pack was picked from, and which
@@ -190,6 +195,16 @@ type PackProject struct {
 	VersionName string `json:"versionName,omitempty"`
 	Title       string `json:"title,omitempty"`
 	IconURL     string `json:"iconUrl,omitempty"`
+}
+
+// PackFormats are the resource pack formats a pack says it is made for,
+// by their major number: a game version reads one format, and the pack
+// fits the versions whose format is in this range.
+type PackFormats struct {
+	// +kubebuilder:validation:Minimum=1
+	Min int32 `json:"min"`
+	// +kubebuilder:validation:Minimum=1
+	Max int32 `json:"max"`
 }
 
 // UploadedPack is what is known of a resource pack uploaded to the panel.

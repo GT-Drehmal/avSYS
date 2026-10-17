@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -371,14 +372,54 @@ func (s *Server) hashURL(w http.ResponseWriter, r *http.Request, _ *store.User) 
 	if resp.StatusCode != http.StatusOK {
 		return errBadRequest("That URL answered %s.", resp.Status)
 	}
+	// Kept a moment where the panel keeps packs, to read which formats it
+	// is made for: a zip is read from its end.
+	var keep *os.File
+	if s.Config.PackDir != "" {
+		if err := os.MkdirAll(s.Config.PackDir, 0o750); err == nil {
+			keep, _ = os.CreateTemp(s.Config.PackDir, "fetch-*")
+		}
+	}
 	h := sha1.New()
-	n, err := io.Copy(h, io.LimitReader(resp.Body, maxResourcePack+1))
+	to := io.Writer(h)
+	// The copy is only for reading the formats: one that cannot be written,
+	// as with the disk full, is given up, and the hash goes on.
+	var copied *bestEffort
+	if keep != nil {
+		defer os.Remove(keep.Name())
+		defer keep.Close()
+		copied = &bestEffort{w: keep}
+		to = io.MultiWriter(h, copied)
+	}
+	n, err := io.Copy(to, io.LimitReader(resp.Body, maxResourcePack+1))
 	if err != nil {
 		return errBadRequest("The download was interrupted.")
 	}
 	if n > maxResourcePack {
 		return errBadRequest("That file is larger than 512 MB.")
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sha1": hex.EncodeToString(h.Sum(nil)), "size": n})
+	out := map[string]any{"sha1": hex.EncodeToString(h.Sum(nil)), "size": n}
+	// Not being a pack is not refused here: the address may be one the
+	// game is given anyway.
+	if keep != nil && copied.err == nil {
+		if formats, err := checkPack(keep, n); err == nil && formats != nil {
+			out["formats"] = formats
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
+}
+
+// bestEffort writes to w until a write fails, and from then on takes what it
+// is given without writing it, remembering the failure.
+type bestEffort struct {
+	w   io.Writer
+	err error
+}
+
+func (b *bestEffort) Write(p []byte) (int, error) {
+	if b.err == nil {
+		_, b.err = b.w.Write(p)
+	}
+	return len(p), nil
 }
