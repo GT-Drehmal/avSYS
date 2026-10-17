@@ -1,6 +1,13 @@
 package api
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+)
 
 func TestDataPathStaysInsideServerDirectory(t *testing.T) {
 	for in, want := range map[string]string{
@@ -88,5 +95,32 @@ func TestConsoleTurnsArePerServer(t *testing.T) {
 	}
 	if s.consoleTurn("mc-alpha/other") == a {
 		t.Error("two servers share a console lock")
+	}
+}
+
+// While a snapshot holds the game's saves, the panel's console does not let
+// them be turned back on or written out under it. Anything else goes through.
+func TestConsoleKeepsSavesHeldForASnapshot(t *testing.T) {
+	p := newPanel(t)
+	const console = "/orgs/alpha/servers/world/console"
+	p.setPhase("alpha", "world", avsysv1.PhaseRunning)
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: "mc-alpha", Name: "world"}, mc); err != nil {
+		t.Fatal(err)
+	}
+	mc.Annotations = map[string]string{avsysv1.AnnotationSavingPaused: "now"}
+	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"save-on", "/save-off", "save-all flush", "minecraft:save-all", "SAVE-ON", "execute run save-on", "minecraft:execute as @a at @s run execute run minecraft:save-all flush"} {
+		if got, code := p.do("operator", "POST", console, `{"command":"`+command+`"}`); got != 409 || code != "snapshotting" {
+			t.Errorf("%s: got %d %q, want 409 snapshotting", command, got, code)
+		}
+	}
+	// Any other command goes through: only the game's own for saving.
+	for _, command := range []string{"list", "say save-on", "save-onwards", "op save-all", "execute run say save-all"} {
+		if savesCommand(command) {
+			t.Errorf("%s is taken for a command for saving", command)
+		}
 	}
 }
