@@ -370,9 +370,24 @@ func heldForMove(mc *avsysv1.MinecraftServer, snapshot string) error {
 	return &Error{Status: http.StatusConflict, Code: "move_unfinished", Message: fmt.Sprintf("Its move did not finish. Restore snapshot %s first, which finishes it; then any other can be restored.", shortID(mc.Annotations[avsysv1.AnnotationRestoring]))}
 }
 
-// stopAnew stops a server and has its pod made again, stamped, whether or
-// not it was running.
+// stopAnew stops a server for a move and has its pod made again, stamped,
+// whether or not it was running.
 func (s *Server) stopAnew(ctx context.Context, key client.ObjectKey, stamp string) error {
+	return s.stopReplacing(ctx, key, stamp, func(mc *avsysv1.MinecraftServer) {
+		// In the same change as the stop, so that a panel restarting before
+		// the move gets further finds it and puts the server back as it was.
+		mc.Annotations[avsysv1.AnnotationMoveWas] = string(mc.Spec.State)
+		if mc.Spec.State == "" {
+			mc.Annotations[avsysv1.AnnotationMoveWas] = string(avsysv1.StateRunning)
+		}
+	})
+}
+
+// stopReplacing stops a server and has its pod made again, stamped, whether
+// or not it was running: every session to its files, a shell or a file
+// transfer, ends with the pod it was to. mark, if given, changes the server
+// in the same change.
+func (s *Server) stopReplacing(ctx context.Context, key client.ObjectKey, stamp string, mark func(*avsysv1.MinecraftServer)) error {
 	mc := &avsysv1.MinecraftServer{}
 	if err := s.Client.Get(ctx, key, mc); err != nil {
 		return err
@@ -381,11 +396,8 @@ func (s *Server) stopAnew(ctx context.Context, key client.ObjectKey, stamp strin
 	if mc.Annotations == nil {
 		mc.Annotations = map[string]string{}
 	}
-	// In the same change as the stop, so that a panel restarting before the
-	// move gets further finds it and puts the server back as it was.
-	mc.Annotations[avsysv1.AnnotationMoveWas] = string(mc.Spec.State)
-	if mc.Spec.State == "" {
-		mc.Annotations[avsysv1.AnnotationMoveWas] = string(avsysv1.StateRunning)
+	if mark != nil {
+		mark(mc)
 	}
 	mc.Spec.State = avsysv1.StateStopped
 	mc.Annotations[avsysv1.AnnotationRestart] = stamp
