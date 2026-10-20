@@ -554,13 +554,13 @@ step "import"
 # An existing server's folder, packed on another host, is unpacked into a new
 # server made stopped: kept as it was but for what belonged to the old host.
 python3 - "$WORK" <<'PY'
-import io, sys, tarfile
+import gzip, io, sys, tarfile
 def add(t, name, data=b"x"):
     i = tarfile.TarInfo(name); i.size = len(data); t.addfile(i, io.BytesIO(data))
 with tarfile.open(sys.argv[1] + "/import.tar.gz", "w:gz") as t:
     add(t, "Old/server.properties", b"motd=From elsewhere\nlevel-name=Drehmal\nserver-port=25599\nserver-ip=10.0.0.5\nenable-rcon=true\n")
     add(t, "Old/Drehmal/level.dat"); add(t, "Old/Drehmal/session.lock"); add(t, "Old/Drehmal_nether/level.dat")
-    add(t, "Old/plugins/Foo.jar"); add(t, "Old/logs/latest.log"); add(t, "Old/start.sh")
+    add(t, "Old/plugins/Foo.jar"); add(t, "Old/logs/2026-01-02-1.log.gz", gzip.compress(b"[12:00:00] [Server thread/INFO]: Done (1.0s)!\n")); add(t, "Old/crash-reports/crash-2026-01-02_12.00.00-server.txt", b"---- Minecraft Crash Report ----\n"); add(t, "Old/start.sh")
 with tarfile.open(sys.argv[1] + "/escape.tar", "w") as t:
     add(t, "Old/server.properties"); add(t, "../../escaped.txt")
 PY
@@ -575,7 +575,10 @@ expect "a server's folder is imported" "$(echo "$imported" | field "d['name']")"
 listing=$(call "$IMPORTED/files?path=/" | field "sorted(f['name'] for f in d['entries'])")
 expect "its world is the one the game opens" "$listing" "'world', 'world_nether'"
 expect "its plugins come with it" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/plugins/Foo.jar")" 200
-case "$listing" in *logs*|*start.sh*|*Drehmal*|*.avsys/import*) fail "what belonged to the old host was kept: $listing" ;; esac
+oldlogs=$(call "$IMPORTED/logs" | field "sorted((l['name'], l['kind']) for l in d['logs'])")
+expect "its earlier logs and crash reports are read in the console" "$oldlogs" "[('crash-reports/crash-2026-01-02_12.00.00-server.txt', 'crash'), ('logs/2026-01-02-1.log.gz', 'log')]"
+expect "and read unpacked" "$(call "$IMPORTED/logs/file?name=logs/2026-01-02-1.log.gz" | field "d['lines'][0]['text']")" "Done (1.0s)!"
+case "$listing" in *start.sh*|*Drehmal*|*.avsys/import*) fail "what belonged to the old host was kept: $listing" ;; esac
 expect "a world left open there is not locked here" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/world/session.lock")" 404
 props=$(call "$IMPORTED/files/content?path=/server.properties")
 expect "its settings are kept" "$props" "motd=From elsewhere"
