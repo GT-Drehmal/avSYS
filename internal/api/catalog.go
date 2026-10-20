@@ -341,6 +341,9 @@ func (s *Server) modrinthFiles(w http.ResponseWriter, r *http.Request, _ *store.
 		Project     string `json:"project"`
 		Version     string `json:"version"`
 		VersionName string `json:"versionName"`
+		// URL is where Modrinth has the file: for a resource pack, which is
+		// given to players from there.
+		URL string `json:"url"`
 	}
 	out := []found{}
 	if len(in.Hashes) == 0 {
@@ -355,13 +358,23 @@ func (s *Server) modrinthFiles(w http.ResponseWriter, r *http.Request, _ *store.
 		ID            string `json:"id"`
 		ProjectID     string `json:"project_id"`
 		VersionNumber string `json:"version_number"`
+		Files         []struct {
+			URL    string            `json:"url"`
+			Hashes map[string]string `json:"hashes"`
+		} `json:"files"`
 	}
 	if err := json.Unmarshal(body, &versions); err != nil {
 		return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not read Modrinth's answer."}
 	}
 	for _, h := range in.Hashes {
 		if v, ok := versions[h]; ok && v.ProjectID != "" && v.ID != "" {
-			out = append(out, found{Hash: h, Project: v.ProjectID, Version: v.ID, VersionName: v.VersionNumber})
+			f := found{Hash: h, Project: v.ProjectID, Version: v.ID, VersionName: v.VersionNumber}
+			for _, file := range v.Files {
+				if file.Hashes["sha1"] == h {
+					f.URL = file.URL
+				}
+			}
+			out = append(out, f)
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
