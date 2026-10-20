@@ -132,6 +132,40 @@ for e in .[!.]* ..?* *; do
   mv -- "$e" ` + dataRoot + `/
 done`)
 
+// worldScript takes the folder as the server's world. The Nether and the End
+// are kept in it, as the game itself and single-player saves keep them, or
+// with "split" on the second line in folders of their own, as Paper and its
+// relatives do. They are found either way in the archive, and a folder of
+// one of them beside the world goes as a whole.
+var worldScript = unpacked(`w=` + dataRoot + `/world
+src="$s/$root"
+name=${src##*/}
+parent=${src%/*}
+mv -- "$src" "$w"
+mkdir -p "$s"
+for pair in nether:DIM-1 the_end:DIM1; do
+  suffix=${pair%%:*}
+  dim=${pair#*:}
+  beside="$parent/${name}_$suffix"
+  if [ "$root" != "" ] && [ -d "$beside" ]; then
+    if [ "$split" = split ] && [ ! -e "$w/$dim" ]; then
+      mv -- "$beside" "` + dataRoot + `/world_$suffix"
+    elif [ -d "$beside/$dim" ] && [ ! -e "$w/$dim" ]; then
+      mv -- "$beside/$dim" "$w/$dim"
+    fi
+  fi
+  if [ "$split" = split ] && [ -d "$w/$dim" ]; then
+    mkdir -p "` + dataRoot + `/world_$suffix"
+    if [ ! -e "` + dataRoot + `/world_$suffix/$dim" ]; then mv -- "$w/$dim" "` + dataRoot + `/world_$suffix/$dim"; fi
+  fi
+done`)
+
+// splitsDimensions reports whether a server's software keeps the Nether and
+// the End in folders of their own beside the world.
+func splitsDimensions(l avsysv1.Loader) bool {
+	return l == avsysv1.LoaderPaper || l == avsysv1.LoaderPurpur || l == avsysv1.LoaderFolia
+}
+
 // archiveRoot is the folder inside an archive that holds the server, as the
 // page found it: "" for the archive's top.
 func archiveRoot(p string) (string, error) {
@@ -146,8 +180,9 @@ func archiveRoot(p string) (string, error) {
 }
 
 // importFiles unpacks an archive of a server's folder into a server that is
-// stopped and has no files yet. With ?wait=true it is for a server made a
-// moment ago: its volume is waited for.
+// stopped and has no files yet. With ?world=true the folder is a world, and
+// becomes the server's. With ?wait=true it is for a server made a moment
+// ago: its volume is waited for.
 func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	wait := r.URL.Query().Get("wait") == "true"
 	a, mc, err := s.serverMaybeNew(r, u, wait)
@@ -278,16 +313,23 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		return err
 	}
 	defer session.Close()
+	script, split := serverScript, ""
+	if r.URL.Query().Get("world") == "true" {
+		script = worldScript
+		if splitsDimensions(mc.Spec.Loader) {
+			split = "split"
+		}
+	}
 	// Its mods, plugins and datapacks listed as the server's content are
 	// installed from that list, and their files are not kept besides.
 	listed := ""
 	if r.URL.Query().Get("content") == "listed" {
 		listed = "listed"
 	}
-	session.Stdin = strings.NewReader(root + "\n\n" + listed + "\n")
+	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
-	if err := session.Run(serverScript); err != nil {
+	if err := session.Run(script); err != nil {
 		var exit *ssh.ExitError
 		if errors.As(err, &exit) && exit.ExitStatus() == 127 {
 			return backup.ErrOldWorkspace

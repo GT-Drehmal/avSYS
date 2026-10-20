@@ -16,7 +16,7 @@ import { launchOf } from "../lib/launch";
 import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
 import { keys, useMe } from "../lib/queries";
-import { type Found, inspectServer } from "../lib/serverImport";
+import { type Found, type FoundWorld, inspectServer, inspectWorld } from "../lib/serverImport";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
 
@@ -154,6 +154,8 @@ interface Values {
   loaderVersion: string;
   /** The server to import, for kind "import". */
   archive: Archive | null;
+  /** A world of one's own for a new server, instead of a new one. */
+  myWorld: { file: File; found: FoundWorld } | null;
   modpack: Modpack | null;
   displayName: string;
   /** null while it follows the display name. */
@@ -206,6 +208,7 @@ const fresh: Values = {
   version: "LATEST",
   loaderVersion: "",
   archive: null,
+  myWorld: null,
   modpack: null,
   displayName: "",
   customName: null,
@@ -254,6 +257,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     version: spec.version,
     loaderVersion: "",
     archive: null,
+    myWorld: null,
     modpack: spec.modpack ?? null,
     displayName: (spec.displayName || source.name) + (copying ? " copy" : ""),
     customName: name,
@@ -348,7 +352,12 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [v, setValues] = useState(start);
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
-  const toUpload = v.uploads.length > 0 || !!v.packFile || !!found;
+  // A world of one's own goes with a new server of a game version.
+  const [usingMine, setUsingMine] = useState(false);
+  const mine = !source && v.kind === "game" && usingMine ? v.myWorld : null;
+  // What is sent to be unpacked into the server once it is made.
+  const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false, listed: listed(found) } : mine ? { file: mine.file, root: mine.found.root, world: true, listed: false } : null;
+  const toUpload = v.uploads.length > 0 || !!v.packFile || !!toImport;
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
   const [needsLoader, setNeedsLoader] = useState(false);
@@ -413,9 +422,20 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   // new server it is the game's or the modpack's own default.
   const unset = source || importing ? "Server default" : v.kind === "modpack" ? "Modpack default" : undefined;
   // A world that is there already was made with its own seed and type.
-  const worldMade = !!source || !!found?.world;
+  const worldMade = !!source || !!found?.world || !!mine;
   // An import unpacks next to the archive, so both need room at once.
-  const least = found && v.archive ? Math.max(1, Math.ceil((found.size + v.archive.file.size) / GiB)) : leastStorage;
+  const least = toImport ? Math.max(1, Math.ceil(((found?.size ?? mine?.found.size ?? 0) + toImport.file.size) / GiB)) : leastStorage;
+  // Every version, in the order they came out, to tell which is newer.
+  const allVersions = useGameVersions();
+  const newer = (a: string, b: string) => {
+    const order = allVersions.data?.ordered;
+    const i = order?.indexOf(a) ?? -1;
+    const j = order?.indexOf(b) ?? -1;
+    return i >= 0 && j >= 0 && i < j;
+  };
+  const worldTooNew = !!mine?.found.version && newer(mine.found.version, effective(v.version));
+  const [readingWorld, setReadingWorld] = useState(false);
+  const worldInput = useRef<HTMLInputElement>(null);
 
   // Picks were filtered to fit one kind of server, so they do not carry over
   // to another.
@@ -424,6 +444,32 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     const cleared = v.mods.length + v.uploads.length;
     if (cleared > 0) toast.info(`Removed ${cleared} item${cleared === 1 ? "" : "s"} that no longer fit`);
     setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "" }));
+  };
+
+  /** Reads an archive of a world, to start the server with. */
+  const pickWorld = async (file: File) => {
+    setError(null);
+    if (file.size > maxArchive) {
+      setError("Over 2 GB. Create the server, then copy the world in with scp or rsync.");
+      return;
+    }
+    setReadingWorld(true);
+    const read = ++reads.current;
+    try {
+      const w = await inspectWorld(file);
+      if (read !== reads.current) return;
+      setValues((was) => ({
+        ...was,
+        myWorld: { file, found: w },
+        // Opened in the version it was last opened in, where there is one.
+        version: w.version && versions.data?.all.has(w.version) ? w.version : was.version,
+        storage: String(Math.max(Number(was.storage) || 10, Math.ceil((w.size * 1.5 + file.size) / GiB))),
+      }));
+    } catch (err) {
+      if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
+    } finally {
+      if (read === reads.current) setReadingWorld(false);
+    }
   };
 
   /** Reads an archive of a server and fills the form in with what it says. */
@@ -560,7 +606,6 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     };
   };
 
-  /** Sends the archive to a server just made, to be unpacked into it. It says what went wrong if it did not go. */
   /**
    * Sends the archive to a server just made, to be unpacked into it. It says
    * what went wrong if it did not go, and whether that is known for sure: an
@@ -568,9 +613,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
    * connection is not, as the panel goes on with what it was sent.
    */
   const importArchive = async (server: string): Promise<{ message: string; sure: boolean } | null> => {
-    if (!v.archive) return null;
+    if (!toImport) return null;
     try {
-      await send<Server>(v.archive.file.name, `${serverPath(org, server)}/import?${qs({ root: v.archive.found.root, wait: "true", content: listed(v.archive.found) ? "listed" : "" })}`, v.archive.file);
+      await send<Server>(toImport.file.name, `${serverPath(org, server)}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), wait: "true" })}`, toImport.file);
       return null;
     } catch (err) {
       if (cancelled(err)) return { message: "The upload was stopped.", sure: alive.current };
@@ -625,6 +670,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     e.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
     if (!source && importing && !v.archive) return setError("Choose an archive.");
+    if (!source && v.kind === "game" && usingMine && !v.myWorld) return setError("Choose a world, or make a new one.");
     if (!source && v.kind !== "modpack" && !v.loader) {
       setNeedsLoader(true);
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -664,7 +710,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
       // A server made only to be imported into is no use without its files:
       // it is deleted again, and the form stays to try once more.
-      if (found) {
+      if (toImport) {
         const failed = await importArchive(server.name);
         // Left meanwhile: the server's page says how it went.
         if (failed && !alive.current) return;
@@ -731,7 +777,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           ? previewWarning
           : (source || found) && versionChanged
             ? "A world opened in a newer version cannot open in an older one."
-            : found?.version
+            : (found?.version || mine?.found.version) && effective(v.version) === (found?.version || mine?.found.version)
               ? "The version its world was last opened in."
               : undefined
       }
@@ -1033,6 +1079,71 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               : undefined
         }
       >
+        {!source && v.kind === "game" && (
+          <>
+            <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
+              <button
+                type="button"
+                className={segment(!usingMine)}
+                onClick={() => {
+                  // A world still being read is not used.
+                  reads.current++;
+                  setReadingWorld(false);
+                  setUsingMine(false);
+                  set("myWorld", null);
+                }}
+              >
+                New world
+              </button>
+              <button type="button" className={segment(usingMine)} onClick={() => setUsingMine(true)}>
+                Use a world I have
+              </button>
+            </div>
+            {usingMine && (
+              <>
+                <input
+                  ref={worldInput}
+                  type="file"
+                  accept=".zip,.tar,.tgz,.gz"
+                  className="hidden"
+                  aria-label="World archive"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void pickWorld(file);
+                  }}
+                />
+                {v.myWorld ? (
+                  <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                    <ArchiveIcon className="size-5 shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-medium">{v.myWorld.found.name}</p>
+                      <p className="truncate text-xs text-muted" data-testid="world-summary">
+                        {[v.myWorld.found.version && `Last opened in ${v.myWorld.found.version}`, bytes(v.myWorld.found.size), v.myWorld.file.name].filter(Boolean).join(" · ")}
+                      </p>
+                    </div>
+                    <Button size="sm" disabled={readingWorld} onClick={() => worldInput.current?.click()}>
+                      Change
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled={readingWorld} icon={<X className="size-4" />} aria-label="Remove the world" onClick={() => set("myWorld", null)} />
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">
+                    <Button icon={<ArchiveIcon className="size-4" />} loading={readingWorld} onClick={() => worldInput.current?.click()}>
+                      Choose a world
+                    </Button>
+                    <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz with the world's folder, the one with level.dat. A single-player save works.</p>
+                  </div>
+                )}
+                {worldTooNew && (
+                  <Notice tone="warn">
+                    This world was last opened in {mine?.found.version}, which is newer than {effective(v.version)}. Pick {mine?.found.version} or newer.
+                  </Notice>
+                )}
+              </>
+            )}
+          </>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <Field label="Game mode">
             {(id) => (

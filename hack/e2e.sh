@@ -563,6 +563,9 @@ with tarfile.open(sys.argv[1] + "/import.tar.gz", "w:gz") as t:
     add(t, "Old/plugins/Foo.jar"); add(t, "Old/logs/2026-01-02-1.log.gz", gzip.compress(b"[12:00:00] [Server thread/INFO]: Done (1.0s)!\n")); add(t, "Old/crash-reports/crash-2026-01-02_12.00.00-server.txt", b"---- Minecraft Crash Report ----\n"); add(t, "Old/start.sh")
 with tarfile.open(sys.argv[1] + "/escape.tar", "w") as t:
     add(t, "Old/server.properties"); add(t, "../../escaped.txt")
+with tarfile.open(sys.argv[1] + "/save.tar.gz", "w:gz") as t:
+    add(t, "saves/My World/level.dat"); add(t, "saves/My World/session.lock")
+    add(t, "saves/My World/region/r.0.0.mca"); add(t, "saves/My World/DIM-1/region/r.0.0.mca")
 PY
 IMPORTED=$API/orgs/$ORG/servers/imported
 call -d '{"name":"imported","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
@@ -586,6 +589,15 @@ case "$props" in *server-port*|*server-ip*|*enable-rcon*|*level-name*) fail "the
 expect "and it is let start" "$(call "$IMPORTED" | field "d['status'].get('message', '')")" ""
 expect "a server with files is not imported into" "$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old" | field "d['code']")" has_files
 call -X DELETE "$IMPORTED?snapshot=false" >/dev/null
+# A world of one's own, a single-player save here, becomes a new server's:
+# with its Nether beside it, where Paper keeps one.
+OWN=$API/orgs/$ORG/servers/own-world
+call -d '{"name":"own-world","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
+call -X PUT --data-binary "@$WORK/save.tar.gz" "$OWN/import?root=saves%2FMy%20World&world=true&wait=true" >/dev/null
+expect "a world of one's own is the server's" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat")" 200
+expect "with its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" 200
+expect "and not locked" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/session.lock")" 404
+call -X DELETE "$OWN?snapshot=false" >/dev/null
 
 step "extra ports"
 # A port a mod listens on beside the game is opened to players: here a web
