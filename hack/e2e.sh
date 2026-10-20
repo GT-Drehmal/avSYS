@@ -569,6 +569,7 @@ call -d '{"name":"imported","spec":{"eula":true,"loader":"paper","version":"1.21
 refused=$(call -X PUT --data-binary "@$WORK/escape.tar" "$IMPORTED/import?root=Old&wait=true")
 expect "an archive with a path out of its folder is refused" "$(echo "$refused" | field "d['message']")" "Could not unpack the archive"
 expect "and nothing of it is kept" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/server.properties")" 404
+expect "nor is the game started on what an import left" "$(call -X POST "$IMPORTED/start" | field "d['code']")" import_incomplete
 imported=$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old&wait=true")
 expect "a server's folder is imported" "$(echo "$imported" | field "d['name']")" imported
 listing=$(call "$IMPORTED/files?path=/" | field "sorted(f['name'] for f in d['entries'])")
@@ -579,7 +580,8 @@ expect "a world left open there is not locked here" "$(call -o /dev/null -w '%{h
 props=$(call "$IMPORTED/files/content?path=/server.properties")
 expect "its settings are kept" "$props" "motd=From elsewhere"
 case "$props" in *server-port*|*server-ip*|*enable-rcon*|*level-name*) fail "the old host's settings were kept: $props" ;; esac
-expect "a server with a world is not imported into" "$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old" | field "d['code']")" has_world
+expect "and it is let start" "$(call "$IMPORTED" | field "d['status'].get('message', '')")" ""
+expect "a server with files is not imported into" "$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old" | field "d['code']")" has_files
 call -X DELETE "$IMPORTED?snapshot=false" >/dev/null
 
 step "extra ports"

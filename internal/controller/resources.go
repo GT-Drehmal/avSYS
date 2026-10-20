@@ -64,6 +64,10 @@ func wantsMinecraft(mc *avsysv1.MinecraftServer) bool {
 	if _, restoring := mc.Annotations[avsysv1.AnnotationRestoring]; restoring {
 		return false
 	}
+	// Nor while an import puts its files in, or after one that did not finish.
+	if _, importing := mc.Annotations[avsysv1.AnnotationImporting]; importing {
+		return false
+	}
 	_, asleep := mc.Annotations[avsysv1.AnnotationAsleep]
 	return !asleep
 }

@@ -31,6 +31,11 @@ const (
 	// that is still there with no restore running was cut short, and the
 	// files may be a mix of two states: the game is not started on them.
 	AnnotationRestoring = "avsys.dev/restoring"
+	// AnnotationImporting is set while an archive is unpacked into a server,
+	// and removed when that has finished. One still there with no import
+	// running was cut short: the game is not started, and the server can be
+	// imported into again.
+	AnnotationImporting = "avsys.dev/importing"
 	// AnnotationCreating is set next to AnnotationRestoring on a server that
 	// is being made from a snapshot, and removed with it. One that still has
 	// it with nothing running never received all of its files. There is

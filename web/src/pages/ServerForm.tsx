@@ -288,6 +288,16 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
   const archiveInput = useRef<HTMLInputElement>(null);
+  // Whether the form is still open: what was cut off by leaving it is not known to have failed.
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+    },
+    [],
+  );
+  // The archive read last: one read earlier that ends later is not used.
+  const reads = useRef(0);
   // What a long wait on Create is for, while there is one.
   const [stage, setStage] = useState<string | null>(null);
   const { sending, send, cancel } = useUpload();
@@ -338,8 +348,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       return;
     }
     setReading(true);
+    const read = ++reads.current;
     try {
       const f = await inspectServer(file);
+      if (read !== reads.current) return;
       const p = f.properties;
       setValues((was) => ({
         ...was,
@@ -362,9 +374,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       }));
       setNeedsLoader(false);
     } catch (err) {
-      setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
+      if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
     } finally {
-      setReading(false);
+      if (read === reads.current) setReading(false);
     }
   };
 
@@ -450,14 +462,21 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   };
 
   /** Sends the archive to a server just made, to be unpacked into it. It says what went wrong if it did not go. */
-  const importArchive = async (server: string): Promise<string | null> => {
+  /**
+   * Sends the archive to a server just made, to be unpacked into it. It says
+   * what went wrong if it did not go, and whether that is known for sure: an
+   * answer from the panel, or stopped here before it was all sent. A lost
+   * connection is not, as the panel goes on with what it was sent.
+   */
+  const importArchive = async (server: string): Promise<{ message: string; sure: boolean } | null> => {
     if (!v.archive) return null;
     try {
       await send<Server>(v.archive.file.name, `${serverPath(org, server)}/import?${qs({ root: v.archive.found.root, wait: "true" })}`, v.archive.file);
       return null;
     } catch (err) {
-      if (cancelled(err)) return "The upload was stopped.";
-      return err instanceof Error ? err.message : "The upload failed.";
+      if (cancelled(err)) return { message: "The upload was stopped.", sure: alive.current };
+      if (err instanceof ApiError && err.status >= 400 && err.code !== "error") return { message: err.message, sure: true };
+      return { message: err instanceof Error ? err.message : "The upload failed.", sure: false };
     }
   };
 
@@ -548,10 +567,18 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       // it is deleted again, and the form stays to try once more.
       if (found) {
         const failed = await importArchive(server.name);
+        // Left meanwhile: the server's page says how it went.
+        if (failed && !alive.current) return;
+        if (failed && !failed.sure) {
+          // It may have gone through: the server's page says how it is.
+          toast.error(`Lost touch with the panel while importing ${v.displayName || server.name}. Check its files before starting it.`);
+          navigate(`/o/${org}/s/${server.name}`);
+          return;
+        }
         if (failed) {
           await api.del(`${serverPath(org, server.name)}?snapshot=false`).catch(() => undefined);
           await qc.invalidateQueries({ queryKey: keys.servers(org) });
-          setError(`Could not import it. ${failed}`);
+          setError(`Could not import it. ${failed.message}`);
           setBusy(false);
           return;
         }
@@ -673,10 +700,28 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ) : (
         <Section title="Software">
           <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
-            <button type="button" className={segment(v.kind === "game")} onClick={() => v.kind !== "game" && changeSoftware({ kind: "game" })}>
+            <button
+              type="button"
+              className={segment(v.kind === "game")}
+              onClick={() => {
+                if (v.kind === "game") return;
+                reads.current++;
+                setReading(false);
+                changeSoftware({ kind: "game" });
+              }}
+            >
               Game version
             </button>
-            <button type="button" className={segment(v.kind === "modpack")} onClick={() => v.kind !== "modpack" && changeSoftware({ kind: "modpack" })}>
+            <button
+              type="button"
+              className={segment(v.kind === "modpack")}
+              onClick={() => {
+                if (v.kind === "modpack") return;
+                reads.current++;
+                setReading(false);
+                changeSoftware({ kind: "modpack" });
+              }}
+            >
               Modpack
             </button>
             <button type="button" className={segment(importing)} onClick={() => !importing && changeSoftware({ kind: "import" })}>

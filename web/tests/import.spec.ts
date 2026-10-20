@@ -205,3 +205,36 @@ test("what is not an archive is turned down before anything is sent", async ({ p
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page.getByText("Choose an archive.")).toBeVisible();
 });
+
+test("a connection lost during an import keeps the server, which may have it", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  // Packed with ./ in front of every name, as some tools do.
+  await page.getByLabel("Server archive").setInputFiles({ name: "dotted.zip", mimeType: "application/zip", buffer: zip({ "./server.properties": "", "./world/level.dat": levelDat("1.21.4"), "./server.jar": "jar" }) });
+  await expect(page.getByTestId("archive-summary")).toContainText('world "world"');
+  let root: string | null = "unset";
+  await page.route(`**/api/v1/orgs/${slug}/servers/dotted/import?*`, (route) => {
+    root = new URL(route.request().url()).searchParams.get("root");
+    return route.abort("connectionreset");
+  });
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/dotted$`));
+  await expect(page.getByText(/Lost touch with the panel while importing dotted/)).toBeVisible();
+  expect(root ?? "").toBe("");
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/dotted`);
+  // Not started: whether its files are in is not known here.
+  expect(spec.state).toBe("Stopped");
+});
+
+test("a .tar cut short is turned down", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  const whole = tar({ "server.properties": "motd=x\n", "world/level.dat": levelDat("1.21.4") });
+  await page.getByLabel("Server archive").setInputFiles({ name: "cut.tar", mimeType: "application/x-tar", buffer: whole.subarray(0, 700) });
+  await expect(page.getByText("This archive is cut short.")).toBeVisible();
+});

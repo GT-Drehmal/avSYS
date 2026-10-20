@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io/fs"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -25,25 +26,50 @@ import (
 // to fill in the new server's settings; the panel makes the server stopped,
 // and the archive is sent here to be unpacked into it. It is unpacked inside
 // the server's workspace, by bsdtar, which refuses absolute paths, paths
-// with ".." and writing through links.
+// with ".." and writing through links; links that come out of it are
+// dropped.
+//
+// An import goes into a server with no files yet. Like a restore, it has the
+// server's pod made again first, which ends any shell open to its files,
+// and marks the server while the files are put in: the game is not started
+// on a server whose import did not finish, which can be imported into again.
 
 // kindImport is a server's files being unpacked from an archive.
 const kindImport = "import"
 
-var errImporting = &Error{Status: http.StatusConflict, Code: "importing", Message: "This server's files are being imported. Wait for that to finish."}
+var (
+	errImporting = &Error{Status: http.StatusConflict, Code: "importing", Message: "This server's files are being imported. Wait for that to finish."}
+	// errImportIncomplete is returned to anything that would run the game on
+	// files an import started on and did not finish.
+	errImportIncomplete = &Error{Status: http.StatusConflict, Code: "import_incomplete", Message: "An import did not finish, so files may be missing. Import again, or delete the server."}
+	errHasFiles         = &Error{Status: http.StatusConflict, Code: "has_files", Message: "This server has files already. Import into a new server."}
+)
+
+// importUnfinished reports whether an import started on this server's files
+// and never completed.
+func importUnfinished(mc *avsysv1.MinecraftServer) bool {
+	_, marked := mc.Annotations[avsysv1.AnnotationImporting]
+	return marked
+}
 
 const (
 	importArchive = dataRoot + "/.avsys/import.archive"
 	importStaging = dataRoot + "/.avsys/import"
 )
 
-// unpackScript unpacks the archive, takes the folder named on stdin as the
-// server's, leaves out what only made sense on the old host, and moves the
-// rest into the server directory. A world under another level-name is
-// renamed to world, which is the one the game is told to open.
-const unpackScript = `set -eu
+// kept are what an import leaves in the server directory: the panel's own
+// files, the workspace's home and the volume's own folder.
+var kept = []string{".avsys", ".workspace", "lost+found"}
+
+// unpacked unpacks the archive into a staging folder, drops any links that
+// came out of it, checks that the folder named on the first line of stdin is
+// there, and empties the server directory but for what is kept. Then rest
+// runs, and the staging folder is removed.
+func unpacked(rest string) string {
+	return `set -eu
 command -v bsdtar >/dev/null || exit 127
 IFS= read -r root || true
+IFS= read -r split || true
 a=` + importArchive + `
 s=` + importStaging + `
 rm -rf "$s" "$s.err"
@@ -54,23 +80,43 @@ if ! bsdtar -xf "$a" -C "$s" 2>"$s.err"; then
   exit 4
 fi
 rm -f "$a" "$s.err"
+find "$s" -type l -delete
+find "$s" -name session.lock -type f -delete
 if [ ! -d "$s/$root" ]; then
   rm -rf "$s"
   echo "The archive has no folder $root." >&2
   exit 5
 fi
-cd "$s/$root"
-rm -rf logs crash-reports debug .avsys .workspace .cache
+find ` + dataRoot + ` -mindepth 1 -maxdepth 1 ! -name .avsys ! -name .workspace ! -name lost+found -exec rm -rf {} +
+` + rest + `
+cd /
+rm -rf "$s"
+`
+}
+
+// serverScript takes the folder as the server's, leaves out what only made
+// sense on the old host, and moves the rest into the server directory. A
+// world under another level-name is renamed to world, which is the one the
+// game is told to open; a world folder that was there under that name is
+// put aside.
+var serverScript = unpacked(`cd "$s/$root"
+rm -rf logs crash-reports debug .avsys .workspace .cache lost+found
 rm -f ./*.sh ./*.bat ./*.cmd ./*.command ./*.ps1 ./*.pid
-find . -name session.lock -type f -delete
+aside() {
+  n=1
+  while [ -e "$1.unused$n" ]; do n=$((n + 1)); done
+  mv -- "$1" "$1.unused$n"
+}
 level=$(sed -n 's/^level-name=//p' server.properties 2>/dev/null | tail -n 1 | tr -d '\r')
 case $level in
   ''|world|*/*|.*) ;;
   *)
-    if [ -d "$level" ] && [ ! -e world ]; then
-      mv -- "$level" world
-      for dim in nether the_end; do
-        if [ -d "${level}_$dim" ] && [ ! -e "world_$dim" ]; then mv -- "${level}_$dim" "world_$dim"; fi
+    if [ -d "$level" ]; then
+      for dim in '' _nether _the_end; do
+        if [ -d "$level$dim" ]; then
+          if [ -e "world$dim" ]; then aside "world$dim"; fi
+          mv -- "$level$dim" "world$dim"
+        fi
       done
     fi
     ;;
@@ -79,18 +125,9 @@ if [ -f server.properties ]; then
   sed -i -E '/^(server-ip|server-port|query\.port|enable-query|enable-rcon|rcon\.port|rcon\.password|level-name)=/d' server.properties
 fi
 for e in .[!.]* ..?* *; do
-  [ -e "$e" ] || [ -L "$e" ] || continue
-  if [ -d "$e" ] && [ ! -L "$e" ] && [ -d "` + dataRoot + `/$e" ]; then
-    cp -a "$e/." "` + dataRoot + `/$e/"
-    rm -rf "$e"
-  else
-    rm -rf "` + dataRoot + `/$e"
-    mv -- "$e" ` + dataRoot + `/
-  fi
-done
-cd /
-rm -rf "$s"
-`
+  [ -e "$e" ] || continue
+  mv -- "$e" ` + dataRoot + `/
+done`)
 
 // archiveRoot is the folder inside an archive that holds the server, as the
 // page found it: "" for the archive's top.
@@ -106,7 +143,7 @@ func archiveRoot(p string) (string, error) {
 }
 
 // importFiles unpacks an archive of a server's folder into a server that is
-// stopped and has no world yet. With ?wait=true it is for a server made a
+// stopped and has no files yet. With ?wait=true it is for a server made a
 // moment ago: its volume is waited for.
 func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	wait := r.URL.Query().Get("wait") == "true"
@@ -124,6 +161,10 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err := halfMoved(mc); err != nil {
 		return err
 	}
+	// What only an import can mend is let through.
+	if err := unfinished(mc); err != nil && !importUnfinished(mc) {
+		return err
+	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindImport, "")
 	if !ok {
 		if running := s.ops.current(a.Namespace, mc.Name); running != nil {
@@ -132,12 +173,13 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		return errBusy
 	}
 	err = s.importInto(r, w, mc, root, op)
-	s.finishUnsaved(r.Context(), a.Namespace, mc.Name, kindImport, err)
+	ctx := context.WithoutCancel(r.Context())
+	s.finishUnsaved(ctx, a.Namespace, mc.Name, kindImport, err)
 	if err != nil {
 		return err
 	}
-	s.audit(r.Context(), u, a.Org, "server.import", mc.Name, "")
-	fresh, err := s.fresh(r.Context(), mc)
+	s.audit(ctx, u, a.Org, "server.import", mc.Name, "")
+	fresh, err := s.fresh(ctx, mc)
 	if err != nil {
 		return err
 	}
@@ -147,14 +189,46 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 
 func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation) error {
 	ctx := r.Context()
-	s.setOperation(mc.Namespace, op, "Uploading", 0)
-	ws, err := s.importWorkspace(ctx, mc, r.URL.Query().Get("wait") == "true")
+	key := client.ObjectKeyFromObject(mc)
+	wasMarked := importUnfinished(mc)
+	if r.URL.Query().Get("wait") == "true" {
+		waitCtx, cancel := context.WithTimeout(ctx, newServerIconWait)
+		err := s.ownPod(waitCtx, mc)
+		cancel()
+		if err != nil {
+			return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. Try again."}
+		}
+	}
+	// Its pod is made again, so that a shell already open to its files ends,
+	// and it is marked: from here the game is not started.
+	s.setOperation(mc.Namespace, op, "Getting ready", 0)
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	mark := func(m *avsysv1.MinecraftServer) { m.Annotations[avsysv1.AnnotationImporting] = "true" }
+	if err := s.stopReplacing(ctx, key, stamp, mark); err != nil {
+		return err
+	}
+	// Until the files are touched, an import that goes no further leaves the
+	// server as it was.
+	touched := false
+	defer func() {
+		if !touched && !wasMarked {
+			if err := s.markImporting(context.WithoutCancel(ctx), key, false); err != nil {
+				s.Log.Warn("could not take the import mark off a server", "server", mc.Name, "error", err)
+			}
+		}
+	}()
+	if err := s.waitRestarted(ctx, key, stamp, stopWait); err != nil {
+		return err
+	}
+	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, 5*time.Minute)
 	if err != nil {
 		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
 		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. Try again."}
 	}
 	defer ws.Close()
-	if gameIn(ctx, s.Client, mc) {
+	if running, err := gameIn(ctx, s.nodeReader(), mc); err != nil {
+		return err
+	} else if running {
 		return &Error{Status: http.StatusConflict, Code: "running", Message: "Stop the server first."}
 	}
 	sc, err := sftp.NewClient(ws)
@@ -162,12 +236,16 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		return err
 	}
 	defer sc.Close()
-	if world, err := hasWorld(sc); err != nil {
-		return fileError(err)
-	} else if world != "" {
-		return &Error{Status: http.StatusConflict, Code: "has_world", Message: "This server already has a world."}
+	// Over a server whose import did not finish, what it left is replaced.
+	if !wasMarked {
+		if has, err := hasFiles(sc); err != nil {
+			return fileError(err)
+		} else if has {
+			return errHasFiles
+		}
 	}
 
+	s.setOperation(mc.Namespace, op, "Uploading", 0)
 	if err := sc.MkdirAll(path.Dir(importArchive)); err != nil {
 		return fileError(err)
 	}
@@ -189,16 +267,18 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	}
 
 	// From here it is seen through even if whoever sent it has gone.
+	ctx = context.WithoutCancel(ctx)
+	touched = true
 	s.setOperation(mc.Namespace, op, "Unpacking", 0)
 	session, err := backup.CommandSession(ws)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	session.Stdin = strings.NewReader(root + "\n")
+	session.Stdin = strings.NewReader(root + "\n\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
-	if err := session.Run(unpackScript); err != nil {
+	if err := session.Run(serverScript); err != nil {
 		var exit *ssh.ExitError
 		if errors.As(err, &exit) && exit.ExitStatus() == 127 {
 			return backup.ErrOldWorkspace
@@ -209,53 +289,54 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 		return errBadRequest("Could not unpack the archive: %s", strings.TrimPrefix(why, "bsdtar: "))
 	}
-	return nil
+	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
+	return s.markImporting(ctx, key, false)
 }
 
-// importWorkspace reaches a server's workspace: with wait, one made a moment
-// ago, once its volume is there.
-func (s *Server) importWorkspace(ctx context.Context, mc *avsysv1.MinecraftServer, wait bool) (*ssh.Client, error) {
-	if !wait {
-		return s.Gateway.DialWorkspace(ctx, mc.Namespace, mc.Name)
+// markImporting sets or clears the mark of an import on a server.
+func (s *Server) markImporting(ctx context.Context, key client.ObjectKey, on bool) error {
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, mc); err != nil {
+		return err
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, newServerIconWait)
-	defer cancel()
-	if err := s.ownPod(waitCtx, mc); err != nil {
-		return nil, err
+	orig := mc.DeepCopy()
+	if on {
+		if mc.Annotations == nil {
+			mc.Annotations = map[string]string{}
+		}
+		mc.Annotations[avsysv1.AnnotationImporting] = "true"
+	} else {
+		delete(mc.Annotations, avsysv1.AnnotationImporting)
 	}
-	return s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, newServerIconWait)
+	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }
 
-// gameIn reports whether a server's pod has its game in it.
-func gameIn(ctx context.Context, c client.Reader, mc *avsysv1.MinecraftServer) bool {
+// gameIn reports whether a server's pod has its game in it. Not being able to
+// tell is an error, not a no.
+func gameIn(ctx context.Context, c client.Reader, mc *avsysv1.MinecraftServer) (bool, error) {
 	pod := &corev1.Pod{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(mc), pod); err != nil {
-		return false
+		return false, err
 	}
 	for _, ct := range pod.Spec.Containers {
 		if ct.Name == controller.MinecraftContainer {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-// hasWorld is the first folder in the server directory that holds a world,
-// or "".
-func hasWorld(sc *sftp.Client) (string, error) {
+// hasFiles reports whether the server directory has anything in it but what
+// an import keeps.
+func hasFiles(sc *sftp.Client) (bool, error) {
 	entries, err := sc.ReadDir(dataRoot)
 	if err != nil {
-		return "", err
+		return false, err
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := sc.Stat(path.Join(dataRoot, e.Name(), "level.dat")); err == nil {
-			return e.Name(), nil
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return "", err
+		if !slices.Contains(kept, e.Name()) {
+			return true, nil
 		}
 	}
-	return "", nil
+	return false, nil
 }
