@@ -761,6 +761,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
                   <Button size="sm" disabled={reading} onClick={() => archiveInput.current?.click()}>
                     Change
                   </Button>
+                  <Button size="sm" variant="ghost" disabled={reading} icon={<X className="size-4" />} aria-label="Remove the archive" onClick={() => set("archive", null)} />
                 </div>
               ) : (
                 <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">

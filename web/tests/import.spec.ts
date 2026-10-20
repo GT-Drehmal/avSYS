@@ -206,6 +206,21 @@ test("what is not an archive is turned down before anything is sent", async ({ p
   await expect(page.getByText("Choose an archive.")).toBeVisible();
 });
 
+test("an archive picked can be taken away again", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByLabel("Server archive").setInputFiles({ name: "mine.zip", mimeType: "application/zip", buffer: zip({ "server.properties": "", "world/level.dat": levelDat("1.21.4"), "server.jar": "jar" }) });
+  await expect(page.getByTestId("archive-summary")).toBeVisible();
+  await page.getByRole("button", { name: "Remove the archive" }).click();
+  await expect(page.getByTestId("archive-summary")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Choose an archive" })).toBeVisible();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page.getByText("Choose an archive.")).toBeVisible();
+});
+
 test("a connection lost during an import keeps the server, which may have it", async ({ page, as, org, api }) => {
   const slug = await org([]);
   await as("owner");
