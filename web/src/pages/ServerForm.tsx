@@ -81,37 +81,65 @@ function packOf(p: Record<string, string>): ResourcePack | null {
   return { url, ...(/^[0-9a-f]{40}$/i.test(sha1) ? { sha1 } : {}), enforce: p["require-resource-pack"] === "true", ...(prompt ? { prompt } : {}) };
 }
 
-/** Whether an archive's mods and plugins are listed as its content, rather than kept only as files. */
+/** Whether an archive's mods, plugins and datapacks are listed as its content, rather than kept only as files. */
 const listed = (f: Found) => f.jars.length > 0 && f.unread === 0;
 
+type Upload = { file: File; kind: ContentKind };
+
+/** What an archive has as content: its mods, plugins and datapacks, and a resource pack file. */
+interface ArchiveContent {
+  mods: ContentRef[];
+  uploads: Upload[];
+  /** Those of them the world did not load before, by project or file name. */
+  unused: string[];
+  pack: ResourcePack | null;
+  packFile: File | null;
+}
+
 /**
- * An archive's mods and plugins as content: those Modrinth has, as its
+ * An archive's content as the form lists it: what Modrinth has, as its
  * projects, to be kept up to date from here; the rest, to upload. Not
  * reaching Modrinth makes them all uploads.
  */
-async function contentOf(f: Found): Promise<{ mods: ContentRef[]; uploads: { file: File; kind: ContentKind }[] }> {
-  if (!listed(f)) return { mods: [], uploads: [] };
-  const hits = await api.post<{ hash: string; project: string; version: string; versionName: string }[]>("/catalog/modrinth/files", { hashes: f.jars.map((j) => j.sha1) }).catch(() => []);
+async function contentOf(f: Found): Promise<ArchiveContent> {
+  const jars = listed(f) ? f.jars : [];
+  const all = f.pack ? [...jars, f.pack] : jars;
+  const out: ArchiveContent = { mods: [], uploads: [], unused: [], pack: null, packFile: null };
+  if (all.length === 0) return out;
+  const hits = await api
+    .post<{ hash: string; project: string; version: string; versionName: string; url: string }[]>("/catalog/modrinth/files", { hashes: all.map((j) => j.sha1) })
+    .catch(() => []);
   const ids = [...new Set(hits.map((h) => h.project))];
   const projects = new Map<string, { title: string; icon_url: string | null }>();
   for (let i = 0; i < ids.length; i += 50) {
     const some = await api.get<{ id: string; title: string; icon_url: string | null }[]>(`/catalog/modrinth/projects?${qs({ ids: ids.slice(i, i + 50).join(",") })}`).catch(() => []);
     for (const p of some) projects.set(p.id, p);
   }
-  const mods: ContentRef[] = [];
-  const uploads: { file: File; kind: ContentKind }[] = [];
   const seen = new Set<string>();
-  for (const jar of f.jars) {
+  for (const jar of jars) {
+    if (jar.kind === "resourcepack") continue;
     const hit = hits.find((h) => h.hash === jar.sha1);
     if (hit && !seen.has(hit.project)) {
       seen.add(hit.project);
       const p = projects.get(hit.project);
-      mods.push({ source: "modrinth", kind: jar.kind, project: hit.project, version: hit.version, versionName: hit.versionName, title: p?.title ?? jar.name, ...(p?.icon_url ? { iconUrl: p.icon_url } : {}) });
+      out.mods.push({ source: "modrinth", kind: jar.kind, project: hit.project, version: hit.version, versionName: hit.versionName, title: p?.title ?? jar.name, ...(p?.icon_url ? { iconUrl: p.icon_url } : {}) });
+      if (jar.unused) out.unused.push(hit.project);
     } else if (!hit) {
-      uploads.push({ file: new File([jar.data.slice()], jar.name, { type: jar.kind === "datapack" ? "application/zip" : "application/java-archive" }), kind: jar.kind });
+      out.uploads.push({ file: new File([jar.data.slice()], jar.name, { type: jar.kind === "datapack" ? "application/zip" : "application/java-archive" }), kind: jar.kind });
+      if (jar.unused) out.unused.push(jar.name);
     }
   }
-  return { mods, uploads };
+  if (f.pack) {
+    const hit = hits.find((h) => h.hash === f.pack?.sha1);
+    const p = hit && projects.get(hit.project);
+    if (hit?.url) {
+      out.pack = { url: hit.url, sha1: hit.hash, project: { source: "modrinth", id: hit.project, version: hit.version, versionName: hit.versionName, ...(p ? { title: p.title } : {}), ...(p?.icon_url ? { iconUrl: p.icon_url } : {}) } };
+    } else {
+      out.packFile = new File([f.pack.data.slice()], f.pack.name, { type: "application/zip" });
+      out.pack = { url: "", sha1: "", uploaded: { name: f.pack.name, size: f.pack.data.length, time: new Date().toISOString() }, project: null };
+    }
+  }
+  return out;
 }
 
 /** When it is snapshotted: as its organization, as the server it is a copy of, or not. */
@@ -138,7 +166,9 @@ interface Values {
   /** The resource pack offered to players, with whether it is required and its prompt. */
   pack: ResourcePack | null;
   /** Files from this computer for a server not made yet, uploaded once it is, before it first starts. */
-  uploads: { file: File; kind: ContentKind }[];
+  uploads: Upload[];
+  /** Content from an imported archive that its world did not load before. */
+  unused: string[];
   /** The resource pack's file, likewise; pack then stands for it, with no address yet. */
   packFile: File | null;
   gamemode: string;
@@ -184,6 +214,7 @@ const fresh: Values = {
   mods: [],
   pack: null,
   uploads: [],
+  unused: [],
   packFile: null,
   gamemode: "",
   difficulty: "",
@@ -230,6 +261,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     mods: spec.mods ?? [],
     pack: spec.resourcePack?.url ? spec.resourcePack : null,
     uploads: [],
+    unused: [],
     packFile: null,
     gamemode: p["gamemode"] ?? "",
     difficulty: p["difficulty"] ?? "",
@@ -456,6 +488,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         loaderVersion: f.loaderVersion,
         mods: content.mods,
         uploads: content.uploads,
+        unused: content.unused,
         displayName: was.displayName || (f.root.split("/").pop() || file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, "")),
         motd: p.motd ?? was.motd,
         gamemode: named(p.gamemode, gameModes),
@@ -466,8 +499,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         join: p["white-list"] === "true" ? "list" : "anyone",
         // As much memory as it had, with the room beside Java the panel keeps.
         memory: f.heap > 0 ? String(Math.ceil(((f.heap + 768) / 0.9 / 1024) * 2) / 2) : was.memory,
-        pack: packOf(p),
-        packFile: null,
+        // The one server.properties gives players, or else a pack file it has.
+        ...(packOf(p) ? { pack: packOf(p), packFile: null } : { pack: content.pack && { ...content.pack, enforce: p["require-resource-pack"] === "true" }, packFile: content.packFile }),
         storage: String(Math.max(10, Math.ceil((f.size * 1.5 + file.size) / GiB))),
       }));
       setNeedsLoader(false);
@@ -864,7 +897,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
                   <Button size="sm" disabled={reading} onClick={() => archiveInput.current?.click()}>
                     Change
                   </Button>
-                  <Button size="sm" variant="ghost" disabled={reading} icon={<X className="size-4" />} aria-label="Remove the archive" onClick={() => setValues((was) => ({ ...was, archive: null, mods: [], uploads: [] }))} />
+                  <Button size="sm" variant="ghost" disabled={reading} icon={<X className="size-4" />} aria-label="Remove the archive" onClick={() => setValues((was) => ({ ...was, archive: null, mods: [], uploads: [], unused: [], pack: null, packFile: null }))} />
                 </div>
               ) : (
                 <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">
@@ -959,7 +992,11 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <ContentList
             // Files to upload are listed with the rest, by their names.
             mods={[...v.mods, ...v.uploads.map((u): ContentRef => ({ source: "upload", kind: u.kind, project: u.file.name, title: u.file.name }))]}
-            note={(_, i) => (i >= v.mods.length ? `${bytes(v.uploads[i - v.mods.length].file.size)} · uploaded when created` : undefined)}
+            note={(_, i) => {
+              const upload = i >= v.mods.length ? v.uploads[i - v.mods.length] : null;
+              const off = v.unused.includes(upload ? upload.file.name : v.mods[i].project) && "not on in its world before";
+              return [upload && `${bytes(upload.file.size)} · uploaded when created`, off].filter(Boolean).join(" · ") || undefined;
+            }}
             onRemove={(i) =>
               i < v.mods.length ? set("mods", v.mods.filter((_, j) => j !== i)) : set("uploads", v.uploads.filter((_, j) => j !== i - v.mods.length))
             }

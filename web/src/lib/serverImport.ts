@@ -26,19 +26,24 @@ export interface Found {
   jars: Jar[];
   /** How many of them were too large to read: then none are listed. */
   unread: number;
+  /** A resource pack file it has, the world's or in resourcepacks/. */
+  pack: Jar | null;
 }
 
 export interface Jar {
   name: string;
-  kind: ContentKind;
+  kind: ContentKind | "resourcepack";
   sha1: string;
   data: Uint8Array;
+  /** A datapack the world did not load: it was beside it, not in it. */
+  unused?: boolean;
 }
 
 /** As large a file as can be added as content. */
 const maxJar = 256 << 20;
-// A mod or a plugin, a .jar right in one of those folders, or a datapack.
-const jarIn = /(^|\/)((mods|plugins)\/[^/]+\.jar|datapacks\/[^/]+\.zip)$/i;
+// A mod or a plugin, a .jar right in one of those folders, a datapack or a
+// resource pack.
+const jarIn = /(^|\/)((mods|plugins)\/[^/]+\.jar|(datapacks|resourcepacks)\/[^/]+\.zip|resources\.zip)$/i;
 
 const interesting = new Set(["server.properties", "level.dat", "version_history.json", "ops.json", "whitelist.json"]);
 // What started it, which says how much memory it was given.
@@ -103,25 +108,39 @@ async function examine({ entries, files }: Contents): Promise<Found> {
   };
 }
 
-/** The mods and plugins right in mods/ and plugins/, and the datapacks of the world, with their SHA-1. */
-async function jarsOf(inside: Entry[], at: (rel: string) => Uint8Array | undefined, world: string): Promise<{ jars: Jar[]; unread: number }> {
+/**
+ * The mods and plugins right in mods/ and plugins/, the datapacks of the
+ * world and any beside it, and a resource pack, with their SHA-1.
+ */
+async function jarsOf(inside: Entry[], at: (rel: string) => Uint8Array | undefined, world: string): Promise<{ jars: Jar[]; unread: number; pack: Jar | null }> {
   const jars: Jar[] = [];
+  const packs: Jar[] = [];
   let unread = 0;
-  const kindOf = (p: string): ContentKind | null =>
-    /^mods\/[^/]+\.jar$/.test(p) ? "mod" : /^plugins\/[^/]+\.jar$/.test(p) ? "plugin" : p.startsWith(`${world}/datapacks/`) && /^[^/]+\.zip$/.test(p.slice(world.length + 11)) ? "datapack" : null;
+  const kindOf = (p: string): Pick<Jar, "kind" | "unused"> | null => {
+    if (/^mods\/[^/]+\.jar$/.test(p)) return { kind: "mod" };
+    if (/^plugins\/[^/]+\.jar$/.test(p)) return { kind: "plugin" };
+    if (p.startsWith(`${world}/datapacks/`) && /^[^/]+\.zip$/.test(p.slice(world.length + 11))) return { kind: "datapack" };
+    if (/^datapacks\/[^/]+\.zip$/.test(p)) return { kind: "datapack", unused: true };
+    if (p === `${world}/resources.zip` || p === "resources.zip" || /^resourcepacks\/[^/]+\.zip$/.test(p)) return { kind: "resourcepack" };
+    return null;
+  };
   for (const e of inside) {
-    const kind = e.dir ? null : kindOf(e.path);
-    if (!kind) continue;
+    const found = e.dir ? null : kindOf(e.path);
+    if (!found) continue;
     const data = at(e.path);
     if (!data) {
-      unread++;
+      if (found.kind !== "resourcepack") unread++;
       continue;
     }
     const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", data.slice()));
     const sha1 = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
-    jars.push({ name: base(e.path), kind, sha1, data });
+    (found.kind === "resourcepack" ? packs : jars).push({ name: base(e.path), sha1, data, ...found });
   }
-  return { jars, unread };
+  // A datapack beside the world that is in it too is the same one.
+  const inWorld = jars.filter((j) => j.kind === "datapack" && !j.unused);
+  const once = jars.filter((j) => !j.unused || !inWorld.some((w) => w.name === j.name || w.sha1 === j.sha1));
+  // The world's own pack first.
+  return { jars: once, unread, pack: packs.find((p) => p.name === "resources.zip") ?? packs[0] ?? null };
 }
 
 /** The largest -Xmx in a start script, in MiB; 0 if it has none. Lines made comments do not count. */

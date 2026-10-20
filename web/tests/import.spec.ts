@@ -176,14 +176,21 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
     "fabric-server-mc.1.21.4-loader.0.16.5-launcher.1.0.1.jar": "jar",
     "mods/sodium.jar": "jar",
     "world/level.dat": levelDat("1.21.4"),
-    // The world's datapacks are content too; one elsewhere is only a file.
+    // Its datapacks are content too: the world's, and one beside it that
+    // the world did not load, and is said to be off. One that is in both
+    // places is one.
     "world/datapacks/terrain.zip": "datapack",
-    "datapacks/unused.zip": "datapack",
+    "datapacks/terrain.zip": "datapack",
+    "datapacks/unused.zip": "unused datapack",
+    // A pack file is its resource pack.
+    "world/resources.zip": "pack",
   });
   await page.getByLabel("Server archive").setInputFiles({ name: "fabric.zip", mimeType: "application/zip", buffer: archive });
   await expect(page.getByTestId("archive-summary")).toContainText("1 mod");
-  await expect(page.getByText("terrain.zip", { exact: true })).toBeVisible();
-  await expect(page.getByText("unused.zip", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("terrain.zip", { exact: true })).toHaveCount(1);
+  await expect(page.getByText("unused.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText(/15 B · uploaded when created · not on in its world before/)).toBeVisible();
+  await expect(page.getByText("resources.zip", { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
   // Named after the file, as it is not in a folder.
@@ -197,9 +204,9 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
     await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/fabric`) });
   });
   const uploaded: string[] = [];
-  await page.route(`**/api/v1/orgs/${slug}/servers/fabric/content?*`, async (route) => {
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/servers/fabric/(content|resource-pack)\\?`), async (route) => {
     const url = new URL(route.request().url());
-    uploaded.push(`${url.searchParams.get("kind")} ${url.searchParams.get("name")}`);
+    uploaded.push(`${url.searchParams.get("kind") ?? "resource-pack"} ${url.searchParams.get("name")}`);
     await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/fabric`) });
   });
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
@@ -208,7 +215,7 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   // The top of the archive: nothing to name.
   expect(root ?? "").toBe("");
   // Modrinth does not have them: they are uploaded as they are.
-  expect(uploaded).toEqual(["mod sodium.jar", "datapack terrain.zip"]);
+  expect(uploaded).toEqual(["mod sodium.jar", "datapack terrain.zip", "datapack unused.zip", "resource-pack resources.zip"]);
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/fabric`);
   expect(spec).toMatchObject({ loader: "fabric", version: "1.21.4", loaderVersion: "0.16.5" });
   expect(spec).not.toHaveProperty("autoWhitelist");
