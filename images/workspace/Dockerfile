@@ -32,7 +32,7 @@ RUN apt-get update \
  && chmod +x /usr/local/bin/micromamba \
  # Same uid/gid the game runs as, so files are editable from both containers.
  && groupadd -g 1000 mc \
- && useradd -u 1000 -g 1000 -d /data/.workspace -s /bin/bash mc
+ && useradd -u 1000 -g 1000 -d /data/.workspace -s /usr/local/bin/avsys-shell mc
 
 COPY --from=restic /usr/bin/restic /usr/local/bin/restic
 COPY images/workspace/sshd_config /etc/avsys/sshd_config
@@ -41,6 +41,7 @@ COPY images/workspace/bashrc /etc/bash.bashrc
 COPY images/workspace/entrypoint.sh /usr/local/bin/avsys-workspace
 COPY images/workspace/mc /usr/local/bin/mc
 COPY images/workspace/tools /usr/local/bin/tools
+COPY images/workspace/shell /usr/local/bin/avsys-shell
 # Found before the real ones, to say why they will not do and what will.
 COPY images/workspace/no-root /usr/local/bin/sudo
 RUN for name in su doas apt apt-get; do ln -s sudo /usr/local/bin/$name; done

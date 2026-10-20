@@ -4,10 +4,7 @@
 if [ "$PWD" = "$HOME" ] && [ -d /data ]; then cd /data; fi
 [ -z "${PS1:-}" ] && return
 # From here on it is a person at a prompt. What they have put in their home
-# is found before what the image has. Not above this line: the panel runs
-# its own commands here too (restic, for snapshots), through shells that
-# read this file, and those must find the image's programs and nobody's
-# stand-in for them.
+# is found before what the image has.
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
 export PATH
 shopt -s checkwinsize histappend
