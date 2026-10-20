@@ -254,9 +254,10 @@ test("a world from a newer game than the one picked is warned of", async ({ page
   await expect(page.getByText(/newer than/)).toHaveCount(0);
   await page.getByLabel("Game version").selectOption("1.21.4");
   await expect(page.getByText("This world was last opened in 26.3, which is newer than 1.21.4. Pick 26.3 or newer.")).toBeVisible();
-  // Without one picked, it says so.
-  await page.getByRole("button", { name: "New world" }).click();
-  await page.getByRole("button", { name: "Use a world I have" }).click();
+  // Removed, it is no longer used, and without one it says so.
+  await page.getByRole("button", { name: "Remove the world" }).click();
+  await expect(page.getByTestId("world-summary")).toHaveCount(0);
+  await expect(page.getByText(/newer than/)).toHaveCount(0);
   await page.getByLabel("Display name").fill("Later");
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
@@ -271,6 +272,21 @@ test("an archive with no world in it says so", async ({ page, as, org }) => {
   await page.getByRole("button", { name: "Use a world I have" }).click();
   await page.getByLabel("World archive").setInputFiles({ name: "pics.zip", mimeType: "application/zip", buffer: zip({ "a.png": "png" }) });
   await expect(page.getByText("No world in this archive: it has no level.dat.")).toBeVisible();
+});
+
+test("an archive picked can be taken away again", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByLabel("Server archive").setInputFiles({ name: "mine.zip", mimeType: "application/zip", buffer: zip({ "server.properties": "", "world/level.dat": levelDat("1.21.4"), "server.jar": "jar" }) });
+  await expect(page.getByTestId("archive-summary")).toBeVisible();
+  await page.getByRole("button", { name: "Remove the archive" }).click();
+  await expect(page.getByTestId("archive-summary")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Choose an archive" })).toBeVisible();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page.getByText("Choose an archive.")).toBeVisible();
 });
 
 test("a connection lost during an import keeps the server, which may have it", async ({ page, as, org, api }) => {
