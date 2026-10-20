@@ -1,8 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Gauge } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router";
-import { cx, Empty, Loading, Notice, PageHeader } from "../components/ui";
-import { api, ApiError, type NodeInfo } from "../lib/api";
+import { Button, cx, Empty, Loading, Notice, PageHeader, Toggle } from "../components/ui";
+import { api, ApiError, type NodeList } from "../lib/api";
+import { ago } from "../lib/format";
 import { useMe } from "../lib/queries";
+import { toast } from "../lib/toast";
 
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 
@@ -12,13 +16,62 @@ const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
  */
 export function Nodes() {
   const me = useMe().data;
-  const nodes = useQuery({ queryKey: ["nodes", "all"], queryFn: () => api.get<{ nodes: NodeInfo[] }>("/nodes"), refetchInterval: 15_000 });
+  const qc = useQueryClient();
+  const [asked, setAsked] = useState(false);
+  const nodes = useQuery({
+    queryKey: ["nodes", "all"],
+    queryFn: () => api.get<NodeList>("/nodes"),
+    // Looked at more often while it measures, to say when that is done.
+    refetchInterval: (q) => (q.state.data?.measuring ? 3_000 : 15_000),
+  });
   if (me && !me.user.isAdmin) return <Empty title="Admins only">Only the panel's administrator can see nodes.</Empty>;
   if (nodes.isPending) return <Loading />;
   if (!nodes.data) return <Notice tone="danger">{nodes.error instanceof ApiError ? nodes.error.message : "Could not load nodes."}</Notice>;
+  const { measuring, measured } = nodes.data;
+
+  const measure = async () => {
+    setAsked(true);
+    try {
+      await api.post("/nodes/measure");
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not start measuring.");
+    } finally {
+      setAsked(false);
+    }
+  };
+  const setAutomatic = async (name: string, automatic: boolean) => {
+    try {
+      await api.patch(`/nodes/${name}`, { automatic });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not change the node.");
+    }
+    await qc.invalidateQueries({ queryKey: ["nodes"] });
+  };
+
   return (
     <>
-      <PageHeader title="Nodes" description="New servers go to the fastest node with room." />
+      <PageHeader
+        title="Nodes"
+        description="New servers go to the fastest node with room."
+        actions={
+          <Button icon={<Gauge className="size-4" />} loading={asked || measuring} onClick={measure}>
+            {measuring ? "Measuring…" : "Measure speed"}
+          </Button>
+        }
+      />
+      {measuring ? (
+        <p className="mb-4 text-xs text-muted" role="status">
+          Measuring every node. This takes a few minutes.
+        </p>
+      ) : (
+        measured && (
+          <p className="mb-4 text-xs text-muted" role="status">
+            {measured.error ? `Could not measure: ${measured.error}` : `Measured ${ago(measured.at)}.`}
+            {(measured.failed?.length ?? 0) > 0 && ` Could not measure ${measured.failed?.join(", ")}.`}
+          </p>
+        )
+      )}
       <ul className="flex flex-col gap-3">
         {nodes.data.nodes.map((n) => {
           const used = n.memory > 0 ? Math.min(1, (n.memory - n.free) / n.memory) : 0;
@@ -28,10 +81,10 @@ export function Nodes() {
                 <div className="flex items-center gap-2.5">
                   <span className={cx("inline-block size-2 shrink-0 rounded-full", n.ready ? "bg-accent" : "bg-danger")} />
                   <span className="font-mono text-[13px] font-medium">{n.name}</span>
-                  <span className="text-xs text-muted">{n.ready ? (n.automatic ? "takes new servers" : "only when chosen") : "down"}</span>
+                  {!n.ready && <span className="text-xs text-muted">down</span>}
                 </div>
                 <div className="flex items-center gap-4 text-xs text-muted">
-                  <span>{n.score > 0 ? `speed ${n.score.toFixed(2)}` : "speed not measured"}</span>
+                  <span>{n.score > 0 ? `speed ${n.score}` : "speed not measured"}</span>
                   <span className="font-mono tabular-nums">
                     {gb(n.free)} free of {gb(n.memory)}
                   </span>
@@ -39,6 +92,14 @@ export function Nodes() {
               </div>
               <div className="mt-2 h-1 overflow-hidden rounded-full bg-raised" role="meter" aria-label={`Memory promised on ${n.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)}>
                 <div className="h-full bg-accent" style={{ width: `${used * 100}%` }} />
+              </div>
+              <div className="mt-3">
+                <Toggle
+                  checked={n.hosts}
+                  onChange={(on) => setAutomatic(n.name, on)}
+                  label={`New servers on ${n.name}`}
+                  hint={n.hosts ? "Picked when it is the fastest with room." : "Only when picked by hand."}
+                />
               </div>
               {(n.servers?.length ?? 0) > 0 ? (
                 <ul className="mt-3 flex flex-wrap gap-2">
@@ -58,9 +119,6 @@ export function Nodes() {
           );
         })}
       </ul>
-      <p className="mt-6 text-xs leading-relaxed text-muted">
-        To keep new servers off a node unless picked by hand, run <span className="font-mono">kubectl label node NAME avsys.dev/game-servers=false</span>. Measure speed with <span className="font-mono">hack/rank-nodes.sh</span>.
-      </p>
     </>
   );
 }

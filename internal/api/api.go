@@ -109,6 +109,8 @@ type Server struct {
 	snapshotIcons snapshotIcons
 	// consoles holds one lock per server, taken to type at its console.
 	consoles sync.Map
+	// bench is the measuring of nodes' speed.
+	bench nodeBench
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
 	// to check that no route is left without a decision on who may call it.
 	routes []string
@@ -311,6 +313,8 @@ func (s *Server) Handler() http.Handler {
 
 	api("GET /me", s.authed(s.getMe))
 	api("GET /nodes", s.authed(s.listNodes))
+	api("PATCH /nodes/{node}", s.authed(s.setNode))
+	api("POST /nodes/measure", s.authed(s.measureNodes))
 	api("PATCH /me", s.authed(s.updateMe))
 	api("POST /me/password", s.authed(s.setPassword))
 	api("PUT /me/minecraft", s.authed(s.setMinecraftAccount))
