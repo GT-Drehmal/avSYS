@@ -75,12 +75,17 @@ test("a server open to anyone has no whitelist, and one that is not routed does 
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
   await page.getByLabel("Display name").fill("Open");
   await page.getByLabel("Who can join").selectOption("anyone");
+  await expect(page.getByText(/Bots look for open servers/)).toBeVisible();
   await page.getByRole("button", { name: /How it is reached, and sleep/ }).click();
   await page.getByRole("switch", { name: /Sleep when empty/ }).click();
   await page.getByLabel("How it is reached").selectOption("NodePort");
   await expect(page.getByRole("switch", { name: /Sleep when empty/ })).toBeDisabled();
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
+  // Opening it to anyone is warned of, and asked about.
+  const asked = page.getByRole("dialog");
+  await expect(asked.getByText(/Anyone who finds its address can join/)).toBeVisible();
+  await asked.getByRole("button", { name: "Create without a whitelist" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/open$`));
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/open`);
   expect(spec.expose.type).toBe("NodePort");
@@ -824,4 +829,84 @@ test("a new server is given players by name, beside those let in by role", async
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/named$`));
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/named`);
   expect(spec).toMatchObject({ autoWhitelist: "viewer", whitelist: ["jeb_", "Notch"], ops: ["jeb_"] });
+});
+
+test("opening a new server to anyone can be thought better of", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Display name").fill("Careful");
+  await page.getByLabel("Who can join").selectOption("anyone");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  // Nothing was made: the form is as it was.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByLabel("Display name")).toHaveValue("Careful");
+  expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
+  // Members only, and it is made without asking.
+  await page.getByLabel("Who can join").selectOption("viewer");
+  await expect(page.getByText(/Bots look for open servers/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/careful$`));
+});
+
+test("a server's whitelist is turned off only once that is confirmed", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await api("owner").post(`/orgs/${slug}/servers`, {
+    name: "walled",
+    spec: { eula: true, loader: "paper", version: "1.21.4", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" }, properties: { "white-list": "TRUE" } },
+  });
+  await as("owner");
+  await page.goto(`/o/${slug}/s/walled/settings`);
+  // TRUE is on, as the game reads it.
+  await expect(page.getByLabel("Whitelist", { exact: true })).toHaveValue("true");
+  await page.getByLabel("Whitelist", { exact: true }).selectOption("false");
+  await page.getByRole("button", { name: /^Save/ }).click();
+  const asked = page.getByRole("dialog");
+  await expect(asked.getByText(/Anyone who finds its address can join/)).toBeVisible();
+  await asked.getByRole("button", { name: "Cancel" }).click();
+  expect((await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("TRUE");
+  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Save without a whitelist" }).click();
+  await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("false");
+  // Other changes to a server open already are not asked about.
+  await page.getByLabel("Message of the day").fill("Still open");
+  await page.getByRole("button", { name: /^Save/ }).click();
+  await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties.motd).toBe("Still open");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("a copy of an open server is warned of but not asked about; one brought back from a snapshot is asked about", async ({ page, as }) => {
+  await as("owner");
+  const sent: unknown[] = [];
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+  });
+  // survival has no whitelist.
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByText(/Bots look for open servers/)).toBeVisible();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  const id = "abcd5678";
+  await page.route(`**/api/v1/orgs/friends/snapshots/${id}`, (route) =>
+    route.fulfill({
+      json: {
+        id, time: new Date(Date.now() - 3600_000).toISOString(), server: "survival", trigger: "manual", size: 1 << 20, added: 1024, files: 10,
+        spec: { displayName: "Survival", version: "1.21.4", loader: "paper", eula: true, resources: { memory: "4Gi" }, storage: { size: "10Gi" }, mods: [] },
+        retention: { scheduled: true },
+      },
+    }),
+  );
+  await page.goto(`/o/friends/new?from=snapshot:${id}`);
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page.getByRole("dialog").getByText(/Anyone who finds its address can join/)).toBeVisible();
+  expect(sent.length).toBe(1);
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
+  await expect.poll(() => sent.length).toBe(2);
 });

@@ -154,6 +154,7 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   });
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/myserver$`));
 
   // Unpacked from the folder it is in, into a server made stopped and
@@ -258,6 +259,7 @@ test("an import that fails takes its server away again, and says why", async ({ 
   );
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
   await expect(page.getByText("Could not import it. Could not unpack the archive: Truncated input file.")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/new$`));
   expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
@@ -374,6 +376,7 @@ test("a connection lost during an import keeps the server, which may have it", a
   });
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/dotted$`));
   await expect(page.getByText(/Lost touch with the panel while importing dotted/)).toBeVisible();
   expect(root ?? "").toBe("");

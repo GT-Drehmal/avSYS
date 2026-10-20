@@ -5,8 +5,8 @@ import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, contentList, kindsFor, kindsPhrase, PackCard, PackFit, type PickKind, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, type Join } from "../components/ServerFields";
-import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
+import { Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
@@ -280,7 +280,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
       .filter(([k]) => !shown.has(k))
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
-    join: p["white-list"] !== "true" ? "anyone" : (byRole ?? "list"),
+    join: p["white-list"]?.toLowerCase() !== "true" ? "anyone" : (byRole ?? "list"),
     // Not set is the same as "operator".
     autoOp: spec.autoOp || "operator",
     whitelist: (spec.whitelist ?? []).join("\n"),
@@ -405,6 +405,14 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ? `A deleted server used this name. Choose another${source ? "" : ", or bring it back from Backups"}.`
       : "It cannot be changed later.";
   const routed = v.exposeType === "Router";
+  // Reachable with no whitelist: anyone who finds it can join. Said while
+  // it is picked, and asked about when this form opens it: not for a copy
+  // of a server that is open already, but for one brought back from a
+  // snapshot, which is reachable again only now.
+  const isOpen = (x: Pick<Values, "join" | "exposeType">) => x.join === "anyone" && x.exposeType !== "None";
+  const open = isOpen(v);
+  const ask = open && !(source?.origin.kind === "server" && isOpen(start));
+  const [askOpen, setAskOpen] = useState(false);
   // What content fits. Until a pack is picked, what it will accept is still
   // that of a modpack, whose own loader is the one that counts.
   const software: Software | null =
@@ -503,7 +511,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         hardcore: p.hardcore === "true",
         maxPlayers: p["max-players"] ?? "",
         pvp: p.pvp ?? "",
-        join: p["white-list"] === "true" ? "list" : "anyone",
+        join: p["white-list"]?.toLowerCase() === "true" ? "list" : "anyone",
         // Its own lists, to see and change here.
         whitelist: f.whitelist.join("\n"),
         ops: f.ops.join("\n"),
@@ -666,8 +674,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     }
   };
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (e?: React.FormEvent, sure = false) => {
+    e?.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
     if (!source && importing && !v.archive) return setError("Choose an archive.");
     if (!source && v.kind === "game" && usingMine && !v.myWorld) return setError("Choose a world, or make a new one.");
@@ -676,6 +684,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
+    if (ask && !sure) return setAskOpen(true);
+    setAskOpen(false);
     setBusy(true);
     setError(null);
     try {
@@ -817,6 +827,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const networkChanged = (v.exposeType !== start.exposeType ? 1 : 0) + ((v.sleep && routed) !== start.sleep || (v.sleep && routed && v.idleMinutes !== start.idleMinutes) ? 1 : 0);
 
   return (
+    <>
     <form onSubmit={submit}>
       <Link to={`/o/${org}`} className="mb-3 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
         <ChevronLeft className="size-3.5" />
@@ -1225,6 +1236,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             {(id) => <Textarea id={id} rows={3} value={v.ops} onChange={(e) => set("ops", e.target.value)} className="font-mono" spellCheck={false} />}
           </Field>
         </div>
+        {open && <Notice>{openWarning}</Notice>}
         {v.join !== "anyone" && v.join !== "list" && me && !me.minecraft && (
           <p className="text-xs leading-relaxed text-muted">
             To join it yourself,{" "}
@@ -1363,5 +1375,14 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         </div>
       </Section>
     </form>
+      <Confirm
+        open={askOpen}
+        onOpenChange={setAskOpen}
+        title="Open it to anyone?"
+        description={openWarning}
+        action="Create without a whitelist"
+        onConfirm={() => void submit(undefined, true)}
+      />
+    </>
   );
 }

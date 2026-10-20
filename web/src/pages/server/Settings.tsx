@@ -11,7 +11,7 @@ import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
 import { PackFit } from "../../components/Content";
-import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
+import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { useServerContext } from "./ServerPage";
@@ -56,6 +56,9 @@ const picksOf = (p: ServerSpec["opMembers"]): Picks => ({ also: p?.also ?? [], e
 // None picked is sent as null, which takes the field away.
 const picksFor = (p: Picks) => (p.also.length || p.except.length ? p : null);
 
+/** Whether anyone who finds its address can join: reachable, with no whitelist. */
+const isOpen = (d: Draft) => d.exposeType !== "None" && d.whitelistOn !== "true";
+
 function toDraft(spec: ServerSpec): Draft {
   const p = spec.properties ?? {};
   const launch = launchOf(spec);
@@ -78,7 +81,8 @@ function toDraft(spec: ServerSpec): Draft {
     maxPlayers: p["max-players"] ?? "",
     pvp: p["pvp"] ?? "",
     onlineMode: p["online-mode"] ?? "",
-    whitelistOn: p["white-list"] ?? "",
+    // The game takes TRUE as well as true.
+    whitelistOn: (p["white-list"] ?? "").toLowerCase(),
     otherProperties: Object.entries(p)
       .filter(([k]) => !typed.has(k))
       .map(([k, v]) => `${k}=${v}`)
@@ -172,8 +176,12 @@ export function Settings() {
   const keeps = !!meta.data?.snapshots && finalSnapshot;
   const remove = useAction(() => api.del(serverPath(server.org, server.name) + (keeps ? "" : "?snapshot=false")));
 
-  const save = (e: React.FormEvent) => {
-    e.preventDefault();
+  const [opening, setOpening] = useState(false);
+  const save = (e?: React.FormEvent, sure = false) => {
+    e?.preventDefault();
+    // Opened to anyone by this change: asked first.
+    if (!sure && isOpen(draft) && !isOpen(saved)) return setOpening(true);
+    setOpening(false);
     update.mutate(toPatch(draft, server.spec), {
       onSuccess: (next) => {
         setDraft(toDraft(next.spec));
@@ -400,6 +408,15 @@ export function Settings() {
       )}
 
     </form>
+      <Confirm
+        open={opening}
+        onOpenChange={setOpening}
+        title="Open it to anyone?"
+        description={openWarning}
+        action="Save without a whitelist"
+        loading={update.isPending}
+        onConfirm={() => save(undefined, true)}
+      />
       <Confirm
         open={deleting}
         onOpenChange={setDeleting}
