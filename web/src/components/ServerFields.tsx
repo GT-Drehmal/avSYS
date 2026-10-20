@@ -126,6 +126,9 @@ export const lines = (text: string) =>
 export type Join = "anyone" | "viewer" | "operator" | "admin" | "owner" | "list";
 
 /** What "who can join" says under its control. */
+/** What is said before a server is opened to anyone. */
+export const openWarning = "Anyone who finds its address can join, with no whitelist. Bots look for open servers to grief.";
+
 export const joinHint = (join: Join) =>
   join === "anyone" ? "No whitelist." : join === "list" ? undefined : "Members need a linked Minecraft account. Whitelisted players can join too.";
 
