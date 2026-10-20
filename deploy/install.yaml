@@ -47,6 +47,11 @@ rules:
   - apiGroups: [""]
     resources: ["nodes", "persistentvolumes"]
     verbs: ["get", "list"]
+  # Setting a node's speed score, and whether it takes new servers, from
+  # the Nodes page. Only labels are changed.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch"]
   # RCON passwords and the workspace key. Read one at a time, never listed.
   - apiGroups: [""]
     resources: ["secrets"]

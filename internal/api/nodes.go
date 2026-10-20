@@ -33,10 +33,12 @@ type nodeView struct {
 	// Ready is whether it is up and takes pods.
 	Ready bool `json:"ready"`
 	// Automatic is whether new servers may be placed on it without asking.
-	Automatic bool    `json:"automatic"`
-	Score     float64 `json:"score"`
-	Memory    int64   `json:"memory"`
-	Free      int64   `json:"free"`
+	Automatic bool `json:"automatic"`
+	// Hosts is whether it is set to take new servers, up or not.
+	Hosts  bool    `json:"hosts"`
+	Score  float64 `json:"score"`
+	Memory int64   `json:"memory"`
+	Free   int64   `json:"free"`
 	// Servers are those it runs, shown to the panel's administrator.
 	Servers []nodeServer `json:"servers,omitempty"`
 }
@@ -70,6 +72,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 			Name:      n.Name,
 			Ready:     controller.NodeReady(n),
 			Automatic: controller.NodeUsable(n),
+			Hosts:     n.Labels[avsysv1.LabelNodeHosts] != "false",
 			Score:     controller.NodeScore(n),
 			Memory:    total,
 			Free:      max(0, total-reserved[n.Name]),
@@ -90,6 +93,13 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 		return out[i].Name < out[j].Name
 	})
 	answer := map[string]any{"nodes": out}
+	if u.IsAdmin {
+		running, last := s.bench.state()
+		answer["measuring"] = running
+		if last != nil {
+			answer["measured"] = last
+		}
+	}
 	// Which node automatic placement would choose now, for the memory asked
 	// about, so that "Automatic" can say where that is.
 	if m := r.URL.Query().Get("memory"); m != "" {
