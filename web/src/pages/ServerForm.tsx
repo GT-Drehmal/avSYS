@@ -280,7 +280,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
       .filter(([k]) => !shown.has(k))
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
-    join: p["white-list"] !== "true" ? "anyone" : (byRole ?? "list"),
+    join: p["white-list"]?.toLowerCase() !== "true" ? "anyone" : (byRole ?? "list"),
     // Not set is the same as "operator".
     autoOp: spec.autoOp || "operator",
     whitelist: (spec.whitelist ?? []).join("\n"),
@@ -405,10 +405,13 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ? `A deleted server used this name. Choose another${source ? "" : ", or bring it back from Backups"}.`
       : "It cannot be changed later.";
   const routed = v.exposeType === "Router";
-  // Reachable with no whitelist: anyone who finds it can join. Asked about
-  // when this form opens it; a copy of a server open already is not.
+  // Reachable with no whitelist: anyone who finds it can join. Said while
+  // it is picked, and asked about when this form opens it: not for a copy
+  // of a server that is open already, but for one brought back from a
+  // snapshot, which is reachable again only now.
   const isOpen = (x: Pick<Values, "join" | "exposeType">) => x.join === "anyone" && x.exposeType !== "None";
-  const open = isOpen(v) && !(source && isOpen(start));
+  const open = isOpen(v);
+  const ask = open && !(source?.origin.kind === "server" && isOpen(start));
   const [askOpen, setAskOpen] = useState(false);
   // What content fits. Until a pack is picked, what it will accept is still
   // that of a modpack, whose own loader is the one that counts.
@@ -508,7 +511,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         hardcore: p.hardcore === "true",
         maxPlayers: p["max-players"] ?? "",
         pvp: p.pvp ?? "",
-        join: p["white-list"] === "true" ? "list" : "anyone",
+        join: p["white-list"]?.toLowerCase() === "true" ? "list" : "anyone",
         // Its own lists, to see and change here.
         whitelist: f.whitelist.join("\n"),
         ops: f.ops.join("\n"),
@@ -681,7 +684,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    if (open && !sure) return setAskOpen(true);
+    if (ask && !sure) return setAskOpen(true);
     setAskOpen(false);
     setBusy(true);
     setError(null);

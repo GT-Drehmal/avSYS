@@ -81,7 +81,8 @@ function toDraft(spec: ServerSpec): Draft {
     maxPlayers: p["max-players"] ?? "",
     pvp: p["pvp"] ?? "",
     onlineMode: p["online-mode"] ?? "",
-    whitelistOn: p["white-list"] ?? "",
+    // The game takes TRUE as well as true.
+    whitelistOn: (p["white-list"] ?? "").toLowerCase(),
     otherProperties: Object.entries(p)
       .filter(([k]) => !typed.has(k))
       .map(([k, v]) => `${k}=${v}`)

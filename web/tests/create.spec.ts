@@ -856,16 +856,18 @@ test("a server's whitelist is turned off only once that is confirmed", async ({ 
   const slug = await org([]);
   await api("owner").post(`/orgs/${slug}/servers`, {
     name: "walled",
-    spec: { eula: true, loader: "paper", version: "1.21.4", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" }, properties: { "white-list": "true" } },
+    spec: { eula: true, loader: "paper", version: "1.21.4", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" }, properties: { "white-list": "TRUE" } },
   });
   await as("owner");
   await page.goto(`/o/${slug}/s/walled/settings`);
+  // TRUE is on, as the game reads it.
+  await expect(page.getByLabel("Whitelist", { exact: true })).toHaveValue("true");
   await page.getByLabel("Whitelist", { exact: true }).selectOption("false");
   await page.getByRole("button", { name: /^Save/ }).click();
   const asked = page.getByRole("dialog");
   await expect(asked.getByText(/Anyone who finds its address can join/)).toBeVisible();
   await asked.getByRole("button", { name: "Cancel" }).click();
-  expect((await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("true");
+  expect((await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("TRUE");
   await page.getByRole("button", { name: /^Save/ }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Save without a whitelist" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("false");
@@ -874,4 +876,37 @@ test("a server's whitelist is turned off only once that is confirmed", async ({ 
   await page.getByRole("button", { name: /^Save/ }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties.motd).toBe("Still open");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("a copy of an open server is warned of but not asked about; one brought back from a snapshot is asked about", async ({ page, as }) => {
+  await as("owner");
+  const sent: unknown[] = [];
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+  });
+  // survival has no whitelist.
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByText(/Bots look for open servers/)).toBeVisible();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  const id = "abcd5678";
+  await page.route(`**/api/v1/orgs/friends/snapshots/${id}`, (route) =>
+    route.fulfill({
+      json: {
+        id, time: new Date(Date.now() - 3600_000).toISOString(), server: "survival", trigger: "manual", size: 1 << 20, added: 1024, files: 10,
+        spec: { displayName: "Survival", version: "1.21.4", loader: "paper", eula: true, resources: { memory: "4Gi" }, storage: { size: "10Gi" }, mods: [] },
+        retention: { scheduled: true },
+      },
+    }),
+  );
+  await page.goto(`/o/friends/new?from=snapshot:${id}`);
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page.getByRole("dialog").getByText(/Anyone who finds its address can join/)).toBeVisible();
+  expect(sent.length).toBe(1);
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
+  await expect.poll(() => sent.length).toBe(2);
 });
