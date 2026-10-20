@@ -67,6 +67,20 @@ const named = (value: string | undefined, names: readonly (readonly [string, str
   return Number.isInteger(n) && value.trim() !== "" ? (names[n]?.[0] ?? "") : value;
 };
 
+const count = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"}`;
+
+/** A value in server.properties as written there, where ":" and "=" are escaped. */
+const unescaped = (value: string | undefined) => (value ?? "").replace(/\\(.)/g, "$1").trim();
+
+/** The resource pack a server.properties names, as the form has one. */
+function packOf(p: Record<string, string>): ResourcePack | null {
+  const url = unescaped(p["resource-pack"]);
+  if (!/^https?:\/\//.test(url)) return null;
+  const sha1 = unescaped(p["resource-pack-sha1"]);
+  const prompt = unescaped(p["resource-pack-prompt"]);
+  return { url, ...(/^[0-9a-f]{40}$/i.test(sha1) ? { sha1 } : {}), enforce: p["require-resource-pack"] === "true", ...(prompt ? { prompt } : {}) };
+}
+
 /** When it is snapshotted: as its organization, as the server it is a copy of, or not. */
 type Schedule = "org" | "own" | "off";
 
@@ -370,6 +384,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         maxPlayers: p["max-players"] ?? "",
         pvp: p.pvp ?? "",
         join: p["white-list"] === "true" ? "list" : "anyone",
+        // As much memory as it had, with the room beside Java the panel keeps.
+        memory: f.heap > 0 ? String(Math.ceil(((f.heap + 768) / 0.9 / 1024) * 2) / 2) : was.memory,
+        pack: packOf(p),
+        packFile: null,
         storage: String(Math.max(10, Math.ceil((f.size * 1.5 + file.size) / GiB))),
       }));
       setNeedsLoader(false);
@@ -398,6 +416,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       // Members from this role up who have linked a Minecraft account are let in.
       ...(v.join !== "anyone" && v.join !== "list" ? { autoWhitelist: v.join } : {}),
       ...(v.autoOp !== "operator" ? { autoOp: v.autoOp as ServerSpec["autoOp"] } : {}),
+      // An imported server's own operators and whitelist are listed with it.
+      ...(found?.ops.length ? { ops: found.ops } : {}),
+      ...(found?.whitelist.length ? { whitelist: found.whitelist } : {}),
       ...(v.sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(v.idleMinutes) || 15 } } : {}),
       ...(v.schedule === "off" ? { backups: { enabled: false } } : {}),
       jvm: { aikarFlags: v.aikar, extraFlags: v.extraFlags },
@@ -751,8 +772,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
                       {[
                         `${bytes(v.archive.found.size)} unpacked`,
                         v.archive.found.world ? `world "${v.archive.found.world}"` : "no world",
-                        v.archive.found.plugins > 0 && `${v.archive.found.plugins} plugins`,
-                        v.archive.found.mods > 0 && `${v.archive.found.mods} mods`,
+                        v.archive.found.plugins > 0 && count(v.archive.found.plugins, "plugin"),
+                        v.archive.found.mods > 0 && count(v.archive.found.mods, "mod"),
+                        v.archive.found.ops.length > 0 && count(v.archive.found.ops.length, "operator"),
+                        v.archive.found.whitelist.length > 0 && `${v.archive.found.whitelist.length} whitelisted`,
                       ]
                         .filter(Boolean)
                         .join(" · ")}

@@ -17,16 +17,23 @@ export interface Found {
   properties: Record<string, string>;
   plugins: number;
   mods: number;
+  /** The players its ops.json and whitelist.json name. */
+  ops: string[];
+  whitelist: string[];
+  /** The most memory its start scripts gave Java (-Xmx), in MiB; 0 if none say. */
+  heap: number;
 }
 
-const interesting = new Set(["server.properties", "level.dat", "version_history.json"]);
+const interesting = new Set(["server.properties", "level.dat", "version_history.json", "ops.json", "whitelist.json"]);
+// What started it, which says how much memory it was given.
+const starts = /(\.(sh|bat|cmd|command|ps1)|^user_jvm_args\.txt|^start)$/i;
 const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const dirname = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const depth = (p: string) => p.split("/").length;
 
 /** Reads an archive of a server's folder and makes out what it can. */
 export async function inspectServer(file: File): Promise<Found> {
-  const contents = await readArchive(file, (path, size) => interesting.has(base(path)) && size < 8 << 20 && depth(path) <= 5 && !path.startsWith("__MACOSX/"));
+  const contents = await readArchive(file, (path, size) => (interesting.has(base(path)) || (starts.test(base(path)) && size < 64 << 10)) && size < 8 << 20 && depth(path) <= 5 && !path.startsWith("__MACOSX/"));
   return await examine(contents);
 }
 
@@ -67,7 +74,36 @@ async function examine({ entries, files }: Contents): Promise<Found> {
     properties,
     plugins: inside.filter((e) => !e.dir && depth(e.path) === 2 && e.path.startsWith("plugins/") && e.path.endsWith(".jar")).length,
     mods: inside.filter((e) => !e.dir && depth(e.path) === 2 && e.path.startsWith("mods/") && e.path.endsWith(".jar")).length,
+    ops: players(text("ops.json")),
+    whitelist: players(text("whitelist.json")),
+    heap: Math.max(0, ...inside.filter((e) => !e.dir && depth(e.path) === 1 && starts.test(e.path)).map((e) => maxHeap(text(e.path)))),
   };
+}
+
+/** The largest -Xmx in a start script, in MiB; 0 if it has none. Lines made comments do not count. */
+export function maxHeap(script: string): number {
+  let most = 0;
+  const live = script
+    .split("\n")
+    .filter((line) => !/^\s*(#|::|rem\b)/i.test(line))
+    .join("\n");
+  for (const [, n, unit] of live.matchAll(/-Xmx(\d+)([kKmMgG]?)\b/g)) {
+    const mib = { k: Number(n) / 1024, m: Number(n), g: Number(n) * 1024, "": Number(n) / 1024 ** 2 }[unit.toLowerCase() as "k" | "m" | "g" | ""];
+    most = Math.max(most, mib);
+  }
+  return Math.round(most);
+}
+
+/** The names in one of the game's lists of players; none if it is not one. */
+function players(json: string): string[] {
+  try {
+    const list: unknown = JSON.parse(json);
+    if (!Array.isArray(list)) return [];
+    const names = list.map((p) => (p && typeof p === "object" && "name" in p ? String(p.name) : "")).filter((n) => /^[A-Za-z0-9_]{2,16}$/.test(n));
+    return [...new Set(names)];
+  } catch {
+    return [];
+  }
 }
 
 /**
