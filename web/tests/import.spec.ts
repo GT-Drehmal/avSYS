@@ -23,6 +23,10 @@ function levelDat(version: string) {
     tag(1, "hardcore", Buffer.from([0])),
     tag(9, "ServerBrands", Buffer.concat([Buffer.from([8]), int(1), str("Paper")])),
     tag(3, "DataVersion", int(3839)),
+    // Arrays before the version, as 1.21.9 and later write the spawn point.
+    tag(10, "spawn", Buffer.concat([tag(11, "pos", Buffer.concat([int(3), int(0), int(64), int(0)])), tag(8, "dimension", str("minecraft:overworld")), end])),
+    tag(7, "bytes", Buffer.concat([int(2), Buffer.from([1, 2])])),
+    tag(12, "longs", Buffer.concat([int(1), Buffer.alloc(8)])),
     tag(10, "Version", Buffer.concat([tag(3, "Id", int(3839)), tag(8, "Name", str(version)), end])),
     end,
   ]);
@@ -219,6 +223,23 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   expect(spec).toMatchObject({ loader: "fabric", version: "1.21.4", loaderVersion: "0.16.5" });
   expect(spec).not.toHaveProperty("autoWhitelist");
   expect(spec.properties).toMatchObject({ "white-list": "true" });
+});
+
+test("a server run by Fabric's launcher is known by the game jar it keeps", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  const archive = zip({
+    "srv/server.properties": "motd=Launched\n",
+    "srv/fabric-server-launch.jar": "jar",
+    "srv/libraries/net/fabricmc/fabric-loader/0.16.5/fabric-loader-0.16.5.jar": "jar",
+    "srv/versions/1.21.4/server-1.21.4.jar": "jar",
+  });
+  await page.getByLabel("Server archive").setInputFiles({ name: "launched.zip", mimeType: "application/zip", buffer: archive });
+  await expect(page.getByTestId("archive-summary")).toContainText("no world");
+  await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
 });
 
 test("an import that fails takes its server away again, and says why", async ({ page, as, org, api }) => {
