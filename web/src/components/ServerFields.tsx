@@ -116,6 +116,13 @@ export const exposeOptions = (
 );
 
 /** Who may join: anyone, the organization's members from a role up, or only who is on the whitelist. */
+/** Names typed one a line. */
+export const lines = (text: string) =>
+  text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
 export type Join = "anyone" | "viewer" | "operator" | "admin" | "owner" | "list";
 
 /** What "who can join" says under its control. */

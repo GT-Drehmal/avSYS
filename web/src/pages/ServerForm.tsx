@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, contentList, kindsFor, kindsPhrase, PackCard, PackFit, type PickKind, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, NodeChoice, type Join } from "../components/ServerFields";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, type Join } from "../components/ServerFields";
 import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
@@ -180,6 +180,9 @@ interface Values {
   otherProperties: string;
   join: Join;
   autoOp: string;
+  /** Players named by hand, one a line: on the whitelist, and operators. */
+  whitelist: string;
+  ops: string;
   memory: string;
   storage: string;
   /** The node to put it on; empty for the panel to choose. */
@@ -225,6 +228,8 @@ const fresh: Values = {
   // Who may join. A new server is its organization's own unless said otherwise.
   join: "viewer",
   autoOp: "operator",
+  whitelist: "",
+  ops: "",
   memory: "4",
   storage: "10",
   node: "",
@@ -274,6 +279,8 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     join: p["white-list"] !== "true" ? "anyone" : (byRole ?? "list"),
     // Not set is the same as "operator".
     autoOp: spec.autoOp || "operator",
+    whitelist: (spec.whitelist ?? []).join("\n"),
+    ops: (spec.ops ?? []).join("\n"),
     memory: toGigabytes(spec.resources.memory) || "4",
     storage: String(Math.max(Number(toGigabytes(spec.storage.size)) || 10, leastStorage)),
     // The panel chooses for a copy too, unless asked: the original's node
@@ -451,6 +458,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         maxPlayers: p["max-players"] ?? "",
         pvp: p.pvp ?? "",
         join: p["white-list"] === "true" ? "list" : "anyone",
+        // Its own lists, to see and change here.
+        whitelist: f.whitelist.join("\n"),
+        ops: f.ops.join("\n"),
         // As much memory as it had, with the room beside Java the panel keeps.
         memory: f.heap > 0 ? String(Math.ceil(((f.heap + 768) / 0.9 / 1024) * 2) / 2) : was.memory,
         // The one server.properties gives players, or else a pack file it has.
@@ -483,9 +493,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       // Members from this role up who have linked a Minecraft account are let in.
       ...(v.join !== "anyone" && v.join !== "list" ? { autoWhitelist: v.join } : {}),
       ...(v.autoOp !== "operator" ? { autoOp: v.autoOp as ServerSpec["autoOp"] } : {}),
-      // An imported server's own operators and whitelist are listed with it.
-      ...(found?.ops.length ? { ops: found.ops } : {}),
-      ...(found?.whitelist.length ? { whitelist: found.whitelist } : {}),
+      ...(lines(v.whitelist).length > 0 ? { whitelist: lines(v.whitelist) } : {}),
+      ...(lines(v.ops).length > 0 ? { ops: lines(v.ops) } : {}),
       ...(v.sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(v.idleMinutes) || 15 } } : {}),
       ...(v.schedule === "off" ? { backups: { enabled: false } } : {}),
       jvm: { aikarFlags: v.aikar, extraFlags: v.extraFlags },
@@ -516,6 +525,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     if (Object.keys(properties).length > 0) changes.properties = properties as Record<string, string>;
     if (v.join !== start.join && v.join !== "anyone") changes.autoWhitelist = v.join === "list" ? "off" : v.join;
     if (v.autoOp !== start.autoOp) changes.autoOp = v.autoOp as ServerSpec["autoOp"];
+    if (v.whitelist !== start.whitelist) changes.whitelist = lines(v.whitelist);
+    if (v.ops !== start.ops) changes.ops = lines(v.ops);
     const sleeps = v.sleep && routed;
     if (sleeps !== start.sleep || (sleeps && v.idleMinutes !== start.idleMinutes)) changes.sleep = { enabled: sleeps, idleMinutes: Number(v.idleMinutes) || 15 };
     if (v.schedule !== start.schedule) changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : null;
@@ -1095,6 +1106,12 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
                 {autoOpOptions}
               </Select>
             )}
+          </Field>
+          <Field label="Whitelisted players" hint={v.join === "anyone" ? "Only used with a whitelist." : "One name per line."}>
+            {(id) => <Textarea id={id} rows={3} value={v.whitelist} onChange={(e) => set("whitelist", e.target.value)} className="font-mono" spellCheck={false} />}
+          </Field>
+          <Field label="Operators" hint="One name per line.">
+            {(id) => <Textarea id={id} rows={3} value={v.ops} onChange={(e) => set("ops", e.target.value)} className="font-mono" spellCheck={false} />}
           </Field>
         </div>
         {v.join !== "anyone" && v.join !== "list" && me && !me.minecraft && (

@@ -128,6 +128,9 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   await expect(page.getByText("WorldEdit", { exact: true })).toBeVisible();
   await expect(page.getByText("Essentials.jar", { exact: true })).toBeVisible();
   await expect(page.getByText(/14 B · uploaded when created/)).toBeVisible();
+  // Its own lists, to see and change before it is made.
+  await expect(page.getByLabel("Whitelisted players")).toHaveValue("jeb_\nNotch");
+  await expect(page.getByLabel("Operators", { exact: true })).toHaveValue("jeb_");
   // It had no whitelist, so it stays open.
   await expect(page.getByLabel("Who can join")).toHaveValue("anyone");
   // As much memory as its start script gave Java, and room beside it.
