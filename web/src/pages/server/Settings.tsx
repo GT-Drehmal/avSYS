@@ -11,7 +11,7 @@ import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
 import { PackFit } from "../../components/Content";
-import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
+import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, type Picks, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { useServerContext } from "./ServerPage";
@@ -55,8 +55,6 @@ interface Draft {
 const picksOf = (p: ServerSpec["opMembers"]): Picks => ({ also: p?.also ?? [], except: p?.except ?? [] });
 // None picked is sent as null, which takes the field away.
 const picksFor = (p: Picks) => (p.also.length || p.except.length ? p : null);
-
-const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
 
 function toDraft(spec: ServerSpec): Draft {
   const p = spec.properties ?? {};
