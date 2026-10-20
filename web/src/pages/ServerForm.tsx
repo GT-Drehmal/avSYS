@@ -81,6 +81,39 @@ function packOf(p: Record<string, string>): ResourcePack | null {
   return { url, ...(/^[0-9a-f]{40}$/i.test(sha1) ? { sha1 } : {}), enforce: p["require-resource-pack"] === "true", ...(prompt ? { prompt } : {}) };
 }
 
+/** Whether an archive's mods and plugins are listed as its content, rather than kept only as files. */
+const listed = (f: Found) => f.jars.length > 0 && f.unread === 0;
+
+/**
+ * An archive's mods and plugins as content: those Modrinth has, as its
+ * projects, to be kept up to date from here; the rest, to upload. Not
+ * reaching Modrinth makes them all uploads.
+ */
+async function contentOf(f: Found): Promise<{ mods: ContentRef[]; uploads: { file: File; kind: ContentKind }[] }> {
+  if (!listed(f)) return { mods: [], uploads: [] };
+  const hits = await api.post<{ hash: string; project: string; version: string; versionName: string }[]>("/catalog/modrinth/files", { hashes: f.jars.map((j) => j.sha1) }).catch(() => []);
+  const ids = [...new Set(hits.map((h) => h.project))];
+  const projects = new Map<string, { title: string; icon_url: string | null }>();
+  for (let i = 0; i < ids.length; i += 50) {
+    const some = await api.get<{ id: string; title: string; icon_url: string | null }[]>(`/catalog/modrinth/projects?${qs({ ids: ids.slice(i, i + 50).join(",") })}`).catch(() => []);
+    for (const p of some) projects.set(p.id, p);
+  }
+  const mods: ContentRef[] = [];
+  const uploads: { file: File; kind: ContentKind }[] = [];
+  const seen = new Set<string>();
+  for (const jar of f.jars) {
+    const hit = hits.find((h) => h.hash === jar.sha1);
+    if (hit && !seen.has(hit.project)) {
+      seen.add(hit.project);
+      const p = projects.get(hit.project);
+      mods.push({ source: "modrinth", kind: jar.kind, project: hit.project, version: hit.version, versionName: hit.versionName, title: p?.title ?? jar.name, ...(p?.icon_url ? { iconUrl: p.icon_url } : {}) });
+    } else if (!hit) {
+      uploads.push({ file: new File([jar.data.slice()], jar.name, { type: jar.kind === "datapack" ? "application/zip" : "application/java-archive" }), kind: jar.kind });
+    }
+  }
+  return { mods, uploads };
+}
+
 /** When it is snapshotted: as its organization, as the server it is a copy of, or not. */
 type Schedule = "org" | "own" | "off";
 
@@ -284,7 +317,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [usingMine, setUsingMine] = useState(false);
   const mine = !source && v.kind === "game" && usingMine ? v.myWorld : null;
   // What is sent to be unpacked into the server once it is made.
-  const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false } : mine ? { file: mine.file, root: mine.found.root, world: true } : null;
+  const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false, listed: listed(found) } : mine ? { file: mine.file, root: mine.found.root, world: true, listed: false } : null;
   const toUpload = v.uploads.length > 0 || !!v.packFile || !!toImport;
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
@@ -411,6 +444,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     const read = ++reads.current;
     try {
       const f = await inspectServer(file);
+      const content = await contentOf(f);
       if (read !== reads.current) return;
       const p = f.properties;
       setValues((was) => ({
@@ -420,8 +454,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         loader: f.loader,
         version: f.version || "LATEST",
         loaderVersion: f.loaderVersion,
-        mods: [],
-        uploads: [],
+        mods: content.mods,
+        uploads: content.uploads,
         displayName: was.displayName || (f.root.split("/").pop() || file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, "")),
         motd: p.motd ?? was.motd,
         gamemode: named(p.gamemode, gameModes),
@@ -537,7 +571,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const importArchive = async (server: string): Promise<{ message: string; sure: boolean } | null> => {
     if (!toImport) return null;
     try {
-      await send<Server>(toImport.file.name, `${serverPath(org, server)}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), wait: "true" })}`, toImport.file);
+      await send<Server>(toImport.file.name, `${serverPath(org, server)}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), wait: "true" })}`, toImport.file);
       return null;
     } catch (err) {
       if (cancelled(err)) return { message: "The upload was stopped.", sure: alive.current };
@@ -830,7 +864,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
                   <Button size="sm" disabled={reading} onClick={() => archiveInput.current?.click()}>
                     Change
                   </Button>
-                  <Button size="sm" variant="ghost" disabled={reading} icon={<X className="size-4" />} aria-label="Remove the archive" onClick={() => set("archive", null)} />
+                  <Button size="sm" variant="ghost" disabled={reading} icon={<X className="size-4" />} aria-label="Remove the archive" onClick={() => setValues((was) => ({ ...was, archive: null, mods: [], uploads: [] }))} />
                 </div>
               ) : (
                 <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">

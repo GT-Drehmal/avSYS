@@ -403,6 +403,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /catalog/modrinth/projects", s.authed(s.modrinthProjects))
 	api("GET /catalog/modrinth/projects/{id}/versions", s.authed(s.modrinthVersions))
 	api("POST /catalog/sha1", s.authed(s.hashURL))
+	api("POST /catalog/modrinth/files", s.authed(s.modrinthFiles))
 
 	// Uploaded resource packs, fetched by players' games with no session.
 	mux.Handle("/packs/", s.PackHandler())

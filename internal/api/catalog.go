@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -87,6 +88,29 @@ func (c *catalog) get(ctx context.Context, u string, ttl time.Duration) ([]byte,
 	c.entries[u] = cacheEntry{body: body, expires: time.Now().Add(ttl)}
 	c.mu.Unlock()
 	return body, nil
+}
+
+// post sends JSON to a URL and reads the JSON answer. It is not cached.
+func (c *catalog) post(ctx context.Context, u string, in any) ([]byte, error) {
+	body, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not reach " + req.URL.Host + "."}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: fmt.Sprintf("%s answered %s.", req.URL.Host, resp.Status)}
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
 func writeRawJSON(w http.ResponseWriter, body []byte, maxAge time.Duration) {
@@ -290,6 +314,57 @@ func (s *Server) modrinthProjects(w http.ResponseWriter, r *http.Request, _ *sto
 	}
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	writeJSON(w, http.StatusOK, projects)
+	return nil
+}
+
+// modrinthFiles says which Modrinth versions files are, by their SHA-1: for
+// the mods and plugins of a server being imported, which can then be kept
+// up to date like any added from the panel. Files Modrinth does not have are
+// left out of the answer.
+func (s *Server) modrinthFiles(w http.ResponseWriter, r *http.Request, _ *store.User) error {
+	var in struct {
+		Hashes []string `json:"hashes"`
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	if len(in.Hashes) > 1000 {
+		return errBadRequest("At most 1000 files at a time.")
+	}
+	for _, h := range in.Hashes {
+		if !sha1Pattern.MatchString(h) {
+			return errBadRequest("%q is not a SHA-1.", h)
+		}
+	}
+	type found struct {
+		Hash        string `json:"hash"`
+		Project     string `json:"project"`
+		Version     string `json:"version"`
+		VersionName string `json:"versionName"`
+	}
+	out := []found{}
+	if len(in.Hashes) == 0 {
+		writeJSON(w, http.StatusOK, out)
+		return nil
+	}
+	body, err := s.catalog.post(r.Context(), "https://api.modrinth.com/v2/version_files", map[string]any{"hashes": in.Hashes, "algorithm": "sha1"})
+	if err != nil {
+		return err
+	}
+	var versions map[string]struct {
+		ID            string `json:"id"`
+		ProjectID     string `json:"project_id"`
+		VersionNumber string `json:"version_number"`
+	}
+	if err := json.Unmarshal(body, &versions); err != nil {
+		return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not read Modrinth's answer."}
+	}
+	for _, h := range in.Hashes {
+		if v, ok := versions[h]; ok && v.ProjectID != "" && v.ID != "" {
+			out = append(out, found{Hash: h, Project: v.ProjectID, Version: v.ID, VersionName: v.VersionNumber})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 

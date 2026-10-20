@@ -102,8 +102,9 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
       "MyServer/server.properties": "#Minecraft server properties\nmotd=The old one\ngamemode=1\ndifficulty=hard\nmax-players=40\nlevel-name=Drehmal\nserver-port=25599\nresource-pack=https\\://example.com/pack.zip\nrequire-resource-pack=true\nresource-pack-prompt={\"text\"\\:\"Our pack\"}\n",
       "MyServer/Drehmal/level.dat": levelDat("1.21.4"),
       "MyServer/paper-1.21.4-151.jar": "jar",
-      "MyServer/plugins/WorldEdit.jar": "jar",
-      "MyServer/plugins/Essentials.jar": "jar",
+      // One Modrinth has, and one it does not.
+      "MyServer/plugins/WorldEdit.jar": "worldedit jar",
+      "MyServer/plugins/Essentials.jar": "essentials jar",
       "MyServer/start.sh": "#!/bin/sh\n# java -Xmx16G -jar paper.jar\njava -Xms1G -Xmx4G -jar paper.jar nogui\n",
       "MyServer/ops.json": JSON.stringify([{ uuid: "853c80ef-3c37-49fd-aa49-938b674adae6", name: "jeb_", level: 4, bypassesPlayerLimit: false }]),
       "MyServer/whitelist.json": JSON.stringify([{ uuid: "853c80ef-3c37-49fd-aa49-938b674adae6", name: "jeb_" }, { uuid: "069a79f4-44e9-4726-a5be-fca90e38aaf5", name: "Notch" }]),
@@ -119,6 +120,11 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   await expect(page.getByLabel("Message of the day")).toHaveValue("The old one");
   await expect(page.getByLabel("Game mode")).toHaveValue("creative");
   await expect(page.getByLabel("Difficulty")).toHaveValue("hard");
+  // Its plugins are its content: one from Modrinth, to keep up to date
+  // here, and one uploaded as it is.
+  await expect(page.getByText("WorldEdit", { exact: true })).toBeVisible();
+  await expect(page.getByText("Essentials.jar", { exact: true })).toBeVisible();
+  await expect(page.getByText(/14 B · uploaded when created/)).toBeVisible();
   // It had no whitelist, so it stays open.
   await expect(page.getByLabel("Who can join")).toHaveValue("anyone");
   // As much memory as its start script gave Java, and room beside it.
@@ -133,6 +139,12 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
     const server = await api("owner").get(`/orgs/${slug}/servers/myserver`);
     await route.fulfill({ json: server });
   });
+  const uploaded: string[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers/myserver/content?*`, async (route) => {
+    const url = new URL(route.request().url());
+    uploaded.push(`${url.searchParams.get("kind")} ${url.searchParams.get("name")}`);
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/myserver`) });
+  });
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/myserver$`));
@@ -140,6 +152,9 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   // Unpacked from the folder it is in, into a server made stopped and
   // started once its files were in.
   expect(new URL(sent).searchParams.get("root")).toBe("MyServer");
+  // Its jars are installed from the list, not kept besides.
+  expect(new URL(sent).searchParams.get("content")).toBe("listed");
+  expect(uploaded).toEqual(["plugin Essentials.jar"]);
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/myserver`);
   expect(spec).toMatchObject({ loader: "paper", version: "1.21.4", state: "Running" });
   expect(spec.properties).toMatchObject({ motd: "The old one", gamemode: "creative", difficulty: "hard", "max-players": "40" });
@@ -147,6 +162,7 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   // Its operators and whitelist are listed with it, to change from the panel.
   expect(spec).toMatchObject({ ops: ["jeb_"], whitelist: ["jeb_", "Notch"] });
   expect(spec.resources.memory).toBe("5632Mi");
+  expect(spec.mods).toMatchObject([{ source: "modrinth", kind: "plugin", project: "P0000042", version: "V0000042", title: "WorldEdit" }]);
   expect(spec.resourcePack).toMatchObject({ url: "https://example.com/pack.zip", enforce: true, prompt: '{"text":"Our pack"}' });
 });
 
@@ -160,9 +176,14 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
     "fabric-server-mc.1.21.4-loader.0.16.5-launcher.1.0.1.jar": "jar",
     "mods/sodium.jar": "jar",
     "world/level.dat": levelDat("1.21.4"),
+    // The world's datapacks are content too; one elsewhere is only a file.
+    "world/datapacks/terrain.zip": "datapack",
+    "datapacks/unused.zip": "datapack",
   });
   await page.getByLabel("Server archive").setInputFiles({ name: "fabric.zip", mimeType: "application/zip", buffer: archive });
   await expect(page.getByTestId("archive-summary")).toContainText("1 mod");
+  await expect(page.getByText("terrain.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("unused.zip", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
   // Named after the file, as it is not in a folder.
@@ -175,11 +196,19 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
     root = new URL(route.request().url()).searchParams.get("root");
     await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/fabric`) });
   });
+  const uploaded: string[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers/fabric/content?*`, async (route) => {
+    const url = new URL(route.request().url());
+    uploaded.push(`${url.searchParams.get("kind")} ${url.searchParams.get("name")}`);
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/fabric`) });
+  });
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/fabric$`));
   // The top of the archive: nothing to name.
   expect(root ?? "").toBe("");
+  // Modrinth does not have them: they are uploaded as they are.
+  expect(uploaded).toEqual(["mod sodium.jar", "datapack terrain.zip"]);
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/fabric`);
   expect(spec).toMatchObject({ loader: "fabric", version: "1.21.4", loaderVersion: "0.16.5" });
   expect(spec).not.toHaveProperty("autoWhitelist");
