@@ -680,7 +680,7 @@ const savingPausedMark = "/tmp/avsys/saving-paused"
 
 // runIn runs a fixed command in a workspace and waits for it.
 func runIn(ws *ssh.Client, command string) error {
-	session, err := ws.NewSession()
+	session, err := backup.CommandSession(ws)
 	if err != nil {
 		return err
 	}

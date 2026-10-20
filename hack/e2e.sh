@@ -660,9 +660,17 @@ expect "a server is given an icon" "$(call -o /dev/null -w '%{http_code}' -X PUT
 expect "which is written where the game looks for it" "$(call "$SRV/files/content?path=/server-icon.png" | python3 -c 'import struct, sys; d = sys.stdin.buffer.read(); print(d[1:4].decode(), struct.unpack(">II", d[16:24]))')" "PNG (64, 64)"
 shown=$(call "$SRV/icon" | python3 -c 'import hashlib, sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')
 expect "and shown in the server list though the server is off" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT" | field "d.get('icon')")" "$shown"
+# A ~/.bashrc of someone's own is read by their commands, never the panel's.
+echo 'echo read >> ~/bashrc-read' | call -X PUT --data-binary @- "$SRV/files/content?path=/.workspace/.bashrc" >/dev/null
 stopped=$(call -X POST "$SRV/snapshots?wait=true")
 LAST=$(echo "$stopped" | field "d['id']") || fail "no snapshot was taken of the stopped server: $stopped"
 expect "a stopped server is snapshotted" "$(echo "$stopped" | field "d['trigger']")" manual
+expect "the panel's own commands do not read anyone's ~/.bashrc" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.workspace/bashrc-read")" 404
+ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" true >/dev/null 2>&1 || true
+expect "a person's commands over ssh do" "$(call "$SRV/files/content?path=/.workspace/bashrc-read")" read
+ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'rm -f ~/.bashrc ~/bashrc-read' >/dev/null 2>&1 || true
 
 step "scheduled snapshots"
 RUN="$POLICY/run?wait=true"

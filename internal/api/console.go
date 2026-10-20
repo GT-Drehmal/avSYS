@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/kube"
 	"github.com/GT-Drehmal/avSYS/internal/store"
@@ -205,7 +206,7 @@ func (s *Server) typeAtConsole(ctx context.Context, mc *avsysv1.MinecraftServer,
 	// time is up is what ends a session that has stopped answering.
 	stop := context.AfterFunc(ctx, func() { ws.Close() })
 	defer stop()
-	session, err := ws.NewSession()
+	session, err := backup.CommandSession(ws)
 	if err != nil {
 		return false, err
 	}

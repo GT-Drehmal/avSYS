@@ -16,7 +16,9 @@ AllowTcpForwarding yes
 X11Forwarding no
 PrintMotd no
 PrintLastLog no
-AcceptEnv AVSYS_USER LANG LC_* COLORTERM
+AcceptEnv AVSYS_USER AVSYS_PANEL LANG LC_* COLORTERM
+# Nothing in the home directory runs before a session.
+PermitUserRC no
 # sftp, and so scp, start in the server directory.
 Subsystem sftp internal-sftp -d /data
 ClientAliveInterval 30

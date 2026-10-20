@@ -1,0 +1,11 @@
+#!/bin/sh
+# The mc user's login shell. People get bash, as before. The panel's own
+# commands (snapshots, restores, the console) get a plain sh, which reads no
+# startup files, so nothing in the home directory can change what they run.
+if [ "${AVSYS_PANEL:-}" = 1 ] && [ "${1:-}" = -c ]; then
+  exec /bin/sh -c "$2"
+fi
+if [ $# -eq 0 ]; then
+  exec /bin/bash -l
+fi
+exec /bin/bash "$@"

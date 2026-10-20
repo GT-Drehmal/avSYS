@@ -852,6 +852,20 @@ func run(ws *ssh.Client, command string, stdin io.Reader, onLine func([]byte)) (
 	return runCtx(context.Background(), ws, command, stdin, onLine)
 }
 
+// CommandSession opens a session for one of the panel's own commands in a
+// workspace. It is marked as the panel's, so the workspace runs it in a
+// plain sh that reads nothing from the home directory.
+func CommandSession(ws *ssh.Client) (*ssh.Session, error) {
+	session, err := ws.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	// A workspace from before the mark refuses it, and runs the command as
+	// it always has.
+	_ = session.Setenv("AVSYS_PANEL", "1")
+	return session, nil
+}
+
 // resticIn builds the command line for restic inside a workspace. The
 // password arrives on stdin so that it is in no argument list or file.
 func resticIn(socket string, args ...string) string {
@@ -1119,7 +1133,7 @@ func runCtx(ctx context.Context, ws *ssh.Client, command string, stdin io.Reader
 		err    error
 	}
 	done := make(chan result, 1)
-	session, err := ws.NewSession()
+	session, err := CommandSession(ws)
 	if err != nil {
 		return "", err
 	}
