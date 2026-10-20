@@ -630,6 +630,9 @@ expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" stat
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"
 
 step "nodes"
+# Measuring every node's speed goes on while the rest of this step runs.
+expect "the nodes' speed is measured from the panel" "$(call -o /dev/null -w '%{http_code}' -X POST "$API/nodes/measure")" 202
+expect "one measuring at a time" "$(call -X POST "$API/nodes/measure" | field "d['code']")" busy
 # The node the panel would choose, which is a ready one with room.
 NODE=$(call "$API/nodes?memory=1Gi" | field "d['automatic']") || fail "no node would be chosen"
 expect "the cluster's nodes are listed, with where a server would go" "$(call "$API/nodes?memory=1Gi" | field "[(n['ready'], n['free'] > 0) for n in d['nodes'] if n['name'] == d['automatic']]")" "[(True, True)]"
@@ -668,6 +671,19 @@ else
   echo "skip: moving a server needs a second node"
 fi
 call -X DELETE "$API/orgs/$ORG/servers/placed?snapshot=false" >/dev/null
+# A node is kept out of automatic placement, and let back in.
+expect "a node can be kept from taking new servers" "$(call -o /dev/null -w '%{http_code}' -X PATCH -d '{"automatic":false}' "$API/nodes/$NODE")" 204
+expect "and says so" "$(call "$API/nodes" | field "[n['automatic'] for n in d['nodes'] if n['name'] == '$NODE']")" "[False]"
+call -X PATCH -d '{"automatic":true}' "$API/nodes/$NODE" >/dev/null
+expect "and let take them again" "$(call "$API/nodes" | field "[n['automatic'] for n in d['nodes'] if n['name'] == '$NODE']")" "[True]"
+# As long as the panel lets a measuring take, and a little more.
+for _ in $(seq 1 220); do
+  [ "$(call "$API/nodes" | field "d['measuring']")" = False ] && break
+  sleep 3
+done
+measured=$(call "$API/nodes")
+expect "every node that is up is measured" "$(echo "$measured" | field "(d['measuring'], d.get('measured', {}).get('failed', []), d.get('measured', {}).get('error', ''))")" "(False, [], '')"
+expect "and has a speed" "$(echo "$measured" | field "all(n['score'] > 0 for n in d['nodes'] if n['ready'])")" True
 
 step "domains"
 # The organization claims its domain; another cannot use a name under it.

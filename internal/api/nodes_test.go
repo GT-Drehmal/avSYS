@@ -74,3 +74,73 @@ func TestChoosingANode(t *testing.T) {
 		}
 	}
 }
+
+// The panel's administrator keeps a node out of automatic placement, and
+// lets it back in; nobody else can.
+func TestSwitchingANodesPlacement(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	if err := p.srv.Client.Create(ctx, node("pi", "4Gi", "1900")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := p.do("owner", "PATCH", "/nodes/pi", `{"automatic":false}`); code != 403 {
+		t.Errorf("an organization's owner switched a node: %d, want 403", code)
+	}
+	if code, msg := p.do("root", "PATCH", "/nodes/missing", `{"automatic":false}`); code != 404 {
+		t.Errorf("a node that is not there: %d %s, want 404", code, msg)
+	}
+	automatic := func() any {
+		_, got := p.get("root", "GET", "/nodes", "")
+		return got["nodes"].([]any)[0].(map[string]any)["automatic"]
+	}
+	if code, msg := p.do("root", "PATCH", "/nodes/pi", `{"automatic":false}`); code != 204 {
+		t.Fatalf("switching it off: %d %s", code, msg)
+	}
+	if automatic() != false {
+		t.Error("still takes new servers")
+	}
+	n := &corev1.Node{}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Name: "pi"}, n); err != nil || n.Labels[avsysv1.LabelNodeHosts] != "false" || n.Labels[avsysv1.LabelNodeScore] != "1900" {
+		t.Errorf("labels: %v %v", n.Labels, err)
+	}
+	if code, msg := p.do("root", "PATCH", "/nodes/pi", `{"automatic":true}`); code != 204 || automatic() != true {
+		t.Errorf("switching it back on: %d %s", code, msg)
+	}
+	if code, _ := p.do("owner", "POST", "/nodes/measure", ""); code != 403 {
+		t.Errorf("an organization's owner measured nodes: %d, want 403", code)
+	}
+}
+
+func TestBestRun(t *testing.T) {
+	for out, want := range map[string]int{"4120\n4262\n": 4262, "5500\n": 5500, "\n4100\n": 4100} {
+		if got, ok := bestRun(out); !ok || got != want {
+			t.Errorf("bestRun(%q) = %d, %v; want %d", out, got, ok, want)
+		}
+	}
+	for _, out := range []string{"", "ERROR: no space\n", "0\n"} {
+		if got, ok := bestRun(out); ok {
+			t.Errorf("bestRun(%q) = %d, want none", out, got)
+		}
+	}
+}
+
+// What a measuring cut short by a restart left behind is removed, and
+// nothing else.
+func TestReapingMeasurings(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	left := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "avsys-bench-abc123", Labels: map[string]string{benchLabel: "true"}}}
+	other := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "mc-alpha-other"}}
+	for _, ns := range []*corev1.Namespace{left, other} {
+		if err := p.srv.Client.Create(ctx, ns); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.srv.ReapBench(ctx)
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Name: left.Name}, &corev1.Namespace{}); err == nil {
+		t.Error("the namespace a measuring left is still there")
+	}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Name: other.Name}, &corev1.Namespace{}); err != nil {
+		t.Errorf("another namespace was removed: %v", err)
+	}
+}

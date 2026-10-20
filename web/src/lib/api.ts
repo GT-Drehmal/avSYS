@@ -521,10 +521,21 @@ export interface NodeInfo {
   ready: boolean;
   /** New servers may be placed on it without asking. */
   automatic: boolean;
+  /** It is set to take new servers, whether or not it is up. */
+  hosts: boolean;
   /** Measured single-core speed; 0 when not measured. */
   score: number;
   memory: number;
   free: number;
   /** What runs on it, for the panel's administrator. */
   servers?: { org: string; name: string; memory: string; phase?: string }[];
+}
+
+/** The cluster's nodes, and for the panel's administrator how measuring their speed went. */
+export interface NodeList {
+  nodes: NodeInfo[];
+  /** The node automatic placement would choose for the memory asked about. */
+  automatic?: string;
+  measuring?: boolean;
+  measured?: { at: string; failed?: string[]; error?: string };
 }

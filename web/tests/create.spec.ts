@@ -542,8 +542,8 @@ test("a copy of a server with its launch flags only in its environment keeps bot
 const twoNodes = {
   automatic: "fast",
   nodes: [
-    { name: "fast", ready: true, automatic: true, score: 2, memory: 16 * 1024 ** 3, free: 12 * 1024 ** 3, servers: [{ org: "friends", name: "survival", memory: "4Gi", phase: "Running" }] },
-    { name: "pi", ready: true, automatic: false, score: 0.4, memory: 3 * 1024 ** 3, free: 2.5 * 1024 ** 3, servers: [] },
+    { name: "fast", ready: true, automatic: true, hosts: true, score: 2, memory: 16 * 1024 ** 3, free: 12 * 1024 ** 3, servers: [{ org: "friends", name: "survival", memory: "4Gi", phase: "Running" }] },
+    { name: "pi", ready: true, automatic: false, hosts: false, score: 0.4, memory: 3 * 1024 ** 3, free: 2.5 * 1024 ** 3, servers: [] },
   ],
 };
 
@@ -642,7 +642,7 @@ test("the panel's administrator sees the nodes and what runs on each; nobody els
   await expect(page).toHaveURL(/\/nodes$/);
   await expect(page.getByRole("heading", { name: "Nodes" })).toBeVisible();
   await expect(page.getByRole("link", { name: /friends\/survival/ })).toBeVisible();
-  await expect(page.getByText("only when chosen")).toBeVisible();
+  await expect(page.getByText("Only when picked by hand.")).toBeVisible();
 
   await as("admin");
   await page.goto("/o/friends");
