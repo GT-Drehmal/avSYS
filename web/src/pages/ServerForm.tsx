@@ -415,7 +415,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         hardcore: p.hardcore === "true",
         maxPlayers: p["max-players"] ?? "",
         pvp: p.pvp ?? "",
-        join: p["white-list"] === "true" ? (was.join === "anyone" ? "viewer" : was.join) : "anyone",
+        join: p["white-list"] === "true" ? "list" : "anyone",
         storage: String(Math.max(10, Math.ceil((f.size * 1.5 + file.size) / GiB))),
       }));
       setNeedsLoader(false);

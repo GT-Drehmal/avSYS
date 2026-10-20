@@ -100,7 +100,7 @@ rm -rf "$s"
 // game is told to open; a world folder that was there under that name is
 // put aside.
 var serverScript = unpacked(`cd "$s/$root"
-rm -rf logs crash-reports debug .avsys .workspace .cache lost+found
+rm -rf debug .avsys .workspace .cache lost+found
 rm -f ./*.sh ./*.bat ./*.cmd ./*.command ./*.ps1 ./*.pid
 aside() {
   n=1

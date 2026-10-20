@@ -159,8 +159,8 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
   // Named after the file, as it is not in a folder.
   await expect(page.getByLabel("Display name")).toHaveValue("fabric");
-  // It had a whitelist: who may join is left to choose.
-  await expect(page.getByLabel("Who can join")).toHaveValue("viewer");
+  // It had a whitelist: only that one lets players in, as before.
+  await expect(page.getByLabel("Who can join")).toHaveValue("list");
 
   let root: string | null = "unset";
   await page.route(`**/api/v1/orgs/${slug}/servers/fabric/import?*`, async (route) => {
@@ -174,6 +174,8 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   expect(root ?? "").toBe("");
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/fabric`);
   expect(spec).toMatchObject({ loader: "fabric", version: "1.21.4", loaderVersion: "0.16.5" });
+  expect(spec).not.toHaveProperty("autoWhitelist");
+  expect(spec.properties).toMatchObject({ "white-list": "true" });
 });
 
 test("an import that fails takes its server away again, and says why", async ({ page, as, org, api }) => {
