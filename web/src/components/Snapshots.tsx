@@ -31,10 +31,11 @@ const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   create: ["Copying a snapshot into", "Creation"],
   "delete-server": ["Deleting", "Deletion"],
   move: ["Moving", "Move"],
+  import: ["Importing files into", "Import"],
 };
 
 /** Whether an operation holds its server stopped, and is shown on all of its pages rather than with its snapshots. */
-export const holdsTheServer = (op: Operation) => op.kind === "create" || op.kind === "restore" || op.kind === "move";
+export const holdsTheServer = (op: Operation) => op.kind === "create" || op.kind === "restore" || op.kind === "move" || op.kind === "import";
 
 /** A snapshot or restore that is running, with how far along it is. */
 export function OperationRow({ op }: { op: Operation }) {

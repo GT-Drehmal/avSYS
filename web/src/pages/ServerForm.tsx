@@ -1,20 +1,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, Plus, X } from "lucide-react";
+import { Archive as ArchiveIcon, ChevronLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, contentList, kindsFor, kindsPhrase, PackCard, PackFit, type PickKind, type Software } from "../components/Content";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, More, NodeChoice, type Join } from "../components/ServerFields";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, type Join } from "../components/ServerFields";
 import { Button, Chip, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
+import { ArchiveError } from "../lib/archive";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
 import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
 import { keys, useMe } from "../lib/queries";
+import { type Found, inspectServer } from "../lib/serverImport";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
 
@@ -49,14 +51,109 @@ export interface Source {
   live?: Server;
 }
 
+/** An archive of an existing server's folder, and what it says about the server. */
+interface Archive {
+  file: File;
+  found: Found;
+}
+
+/** The most an archive sent from here may be. */
+const maxArchive = 2 * GiB;
+
+/** A setting in server.properties as the form has it: some are numbers in older files. */
+const named = (value: string | undefined, names: readonly (readonly [string, string])[]) => {
+  if (value === undefined) return "";
+  const n = Number(value);
+  return Number.isInteger(n) && value.trim() !== "" ? (names[n]?.[0] ?? "") : value;
+};
+
+const count = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"}`;
+
+/** A value in server.properties as written there, where ":" and "=" are escaped. */
+const unescaped = (value: string | undefined) => (value ?? "").replace(/\\(.)/g, "$1").trim();
+
+/** The resource pack a server.properties names, as the form has one. */
+function packOf(p: Record<string, string>): ResourcePack | null {
+  const url = unescaped(p["resource-pack"]);
+  if (!/^https?:\/\//.test(url)) return null;
+  const sha1 = unescaped(p["resource-pack-sha1"]);
+  const prompt = unescaped(p["resource-pack-prompt"]);
+  return { url, ...(/^[0-9a-f]{40}$/i.test(sha1) ? { sha1 } : {}), enforce: p["require-resource-pack"] === "true", ...(prompt ? { prompt } : {}) };
+}
+
+/** Whether an archive's mods, plugins and datapacks are listed as its content, rather than kept only as files. */
+const listed = (f: Found) => f.jars.length > 0 && f.unread === 0;
+
+type Upload = { file: File; kind: ContentKind };
+
+/** What an archive has as content: its mods, plugins and datapacks, and a resource pack file. */
+interface ArchiveContent {
+  mods: ContentRef[];
+  uploads: Upload[];
+  /** Those of them the world did not load before, by project or file name. */
+  unused: string[];
+  pack: ResourcePack | null;
+  packFile: File | null;
+}
+
+/**
+ * An archive's content as the form lists it: what Modrinth has, as its
+ * projects, to be kept up to date from here; the rest, to upload. Not
+ * reaching Modrinth makes them all uploads.
+ */
+async function contentOf(f: Found): Promise<ArchiveContent> {
+  const jars = listed(f) ? f.jars : [];
+  const all = f.pack ? [...jars, f.pack] : jars;
+  const out: ArchiveContent = { mods: [], uploads: [], unused: [], pack: null, packFile: null };
+  if (all.length === 0) return out;
+  const hits = await api
+    .post<{ hash: string; project: string; version: string; versionName: string; url: string }[]>("/catalog/modrinth/files", { hashes: all.map((j) => j.sha1) })
+    .catch(() => []);
+  const ids = [...new Set(hits.map((h) => h.project))];
+  const projects = new Map<string, { title: string; icon_url: string | null }>();
+  for (let i = 0; i < ids.length; i += 50) {
+    const some = await api.get<{ id: string; title: string; icon_url: string | null }[]>(`/catalog/modrinth/projects?${qs({ ids: ids.slice(i, i + 50).join(",") })}`).catch(() => []);
+    for (const p of some) projects.set(p.id, p);
+  }
+  const seen = new Set<string>();
+  for (const jar of jars) {
+    if (jar.kind === "resourcepack") continue;
+    const hit = hits.find((h) => h.hash === jar.sha1);
+    if (hit && !seen.has(hit.project)) {
+      seen.add(hit.project);
+      const p = projects.get(hit.project);
+      out.mods.push({ source: "modrinth", kind: jar.kind, project: hit.project, version: hit.version, versionName: hit.versionName, title: p?.title ?? jar.name, ...(p?.icon_url ? { iconUrl: p.icon_url } : {}) });
+      if (jar.unused) out.unused.push(hit.project);
+    } else if (!hit) {
+      out.uploads.push({ file: new File([jar.data.slice()], jar.name, { type: jar.kind === "datapack" ? "application/zip" : "application/java-archive" }), kind: jar.kind });
+      if (jar.unused) out.unused.push(jar.name);
+    }
+  }
+  if (f.pack) {
+    const hit = hits.find((h) => h.hash === f.pack?.sha1);
+    const p = hit && projects.get(hit.project);
+    if (hit?.url) {
+      out.pack = { url: hit.url, sha1: hit.hash, project: { source: "modrinth", id: hit.project, version: hit.version, versionName: hit.versionName, ...(p ? { title: p.title } : {}), ...(p?.icon_url ? { iconUrl: p.icon_url } : {}) } };
+    } else {
+      out.packFile = new File([f.pack.data.slice()], f.pack.name, { type: "application/zip" });
+      out.pack = { url: "", sha1: "", uploaded: { name: f.pack.name, size: f.pack.data.length, time: new Date().toISOString() }, project: null };
+    }
+  }
+  return out;
+}
+
 /** When it is snapshotted: as its organization, as the server it is a copy of, or not. */
 type Schedule = "org" | "own" | "off";
 
 /** Everything the form holds. A new server starts from defaults; one made from another, from what that one has. */
 interface Values {
-  kind: "game" | "modpack";
+  kind: "game" | "modpack" | "import";
   loader: Loader | null;
   version: string;
+  /** The loader's own version, as an imported server had it; empty for the newest. */
+  loaderVersion: string;
+  /** The server to import, for kind "import". */
+  archive: Archive | null;
   modpack: Modpack | null;
   displayName: string;
   /** null while it follows the display name. */
@@ -67,7 +164,9 @@ interface Values {
   /** The resource pack offered to players, with whether it is required and its prompt. */
   pack: ResourcePack | null;
   /** Files from this computer for a server not made yet, uploaded once it is, before it first starts. */
-  uploads: { file: File; kind: ContentKind }[];
+  uploads: Upload[];
+  /** Content from an imported archive that its world did not load before. */
+  unused: string[];
   /** The resource pack's file, likewise; pack then stands for it, with no address yet. */
   packFile: File | null;
   gamemode: string;
@@ -81,6 +180,9 @@ interface Values {
   otherProperties: string;
   join: Join;
   autoOp: string;
+  /** Players named by hand, one a line: on the whitelist, and operators. */
+  whitelist: string;
+  ops: string;
   memory: string;
   storage: string;
   /** The node to put it on; empty for the panel to choose. */
@@ -102,6 +204,8 @@ const fresh: Values = {
   // Nothing is picked for you: the type decides what the server can run.
   loader: null,
   version: "LATEST",
+  loaderVersion: "",
+  archive: null,
   modpack: null,
   displayName: "",
   customName: null,
@@ -110,6 +214,7 @@ const fresh: Values = {
   mods: [],
   pack: null,
   uploads: [],
+  unused: [],
   packFile: null,
   gamemode: "",
   difficulty: "",
@@ -123,6 +228,8 @@ const fresh: Values = {
   // Who may join. A new server is its organization's own unless said otherwise.
   join: "viewer",
   autoOp: "operator",
+  whitelist: "",
+  ops: "",
   memory: "4",
   storage: "10",
   node: "",
@@ -145,6 +252,8 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     kind: spec.modpack ? "modpack" : "game",
     loader: spec.loader,
     version: spec.version,
+    loaderVersion: "",
+    archive: null,
     modpack: spec.modpack ?? null,
     displayName: (spec.displayName || source.name) + (copying ? " copy" : ""),
     customName: name,
@@ -153,6 +262,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     mods: spec.mods ?? [],
     pack: spec.resourcePack?.url ? spec.resourcePack : null,
     uploads: [],
+    unused: [],
     packFile: null,
     gamemode: p["gamemode"] ?? "",
     difficulty: p["difficulty"] ?? "",
@@ -169,6 +279,8 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     join: p["white-list"] !== "true" ? "anyone" : (byRole ?? "list"),
     // Not set is the same as "operator".
     autoOp: spec.autoOp || "operator",
+    whitelist: (spec.whitelist ?? []).join("\n"),
+    ops: (spec.ops ?? []).join("\n"),
     memory: toGigabytes(spec.resources.memory) || "4",
     storage: String(Math.max(Number(toGigabytes(spec.storage.size)) || 10, leastStorage)),
     // The panel chooses for a copy too, unless asked: the original's node
@@ -234,19 +346,22 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const startingName = source ? (copying ? freeName(`${source.name}-copy`, new Set([...taken, ...history])) : source.name) : "";
   const [start] = useState(() => (source ? valuesOf(source, startingName, copying, leastStorage) : fresh));
   const [v, setValues] = useState(start);
-  const toUpload = v.uploads.length > 0 || !!v.packFile;
+  const importing = v.kind === "import";
+  const found = importing ? (v.archive?.found ?? null) : null;
+  const toUpload = v.uploads.length > 0 || !!v.packFile || !!found;
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
   const [needsLoader, setNeedsLoader] = useState(false);
   const softwareRef = useRef<HTMLDivElement>(null);
-  const versions = useGameVersions(v.kind === "game" ? v.loader : null);
+  const versions = useGameVersions(v.kind !== "modpack" ? v.loader : null);
   const [previews, setPreviews] = useState(false);
   // A version picked for one kind of server may have no build for the next.
   useEffect(() => {
-    if (source || v.version === "LATEST" || !versions.data || versions.isPlaceholderData || versions.data.all.has(v.version)) return;
+    // An imported server keeps the version it ran, listed or not.
+    if (source || importing || v.version === "LATEST" || !versions.data || versions.isPlaceholderData || versions.data.all.has(v.version)) return;
     toast.info(`${loaders.find((l) => l.id === v.loader)?.name ?? "This software"} has no build for ${v.version} yet`);
     setValues((was) => ({ ...was, version: "LATEST" }));
-  }, [source, v.version, versions.data, versions.isPlaceholderData, v.loader]);
+  }, [source, importing, v.version, versions.data, versions.isPlaceholderData, v.loader]);
   const [addingMods, setAddingMods] = useState<PickKind | null>(null);
   const [moreWorld, setMoreWorld] = useState(false);
   const [moreNetwork, setMoreNetwork] = useState(false);
@@ -257,6 +372,18 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [keepCustom, setKeepCustom] = useState(custom);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reading, setReading] = useState(false);
+  const archiveInput = useRef<HTMLInputElement>(null);
+  // Whether the form is still open: what was cut off by leaving it is not known to have failed.
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+    },
+    [],
+  );
+  // The archive read last: one read earlier that ends later is not used.
+  const reads = useRef(0);
   // What a long wait on Create is for, while there is one.
   const [stage, setStage] = useState<string | null>(null);
   const { sending, send, cancel } = useUpload();
@@ -278,13 +405,17 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   // "Latest release" is whichever version that is now: picked for a copy of
   // a server already on it, nothing changes.
   const effective = (version: string) => (version === "LATEST" ? (versions.data?.latest ?? version) : version);
-  const versionChanged = effective(v.version) !== effective(start.version);
+  const versionChanged = found ? !!found.version && effective(v.version) !== found.version : effective(v.version) !== effective(start.version);
   // The picture made from it will have: the original's as it is now for a
   // copy of it as it is now, or the one a snapshot holds.
   const brought = source ? (source.origin.kind === "snapshot" ? `/api/v1/orgs/${org}/snapshots/${source.origin.id}/icon` : source.live ? serverIcon(source.live) : undefined) : undefined;
   // "Server default" for a copy leaves its server.properties as it is; for a
   // new server it is the game's or the modpack's own default.
-  const unset = source ? "Server default" : v.kind === "modpack" ? "Modpack default" : undefined;
+  const unset = source || importing ? "Server default" : v.kind === "modpack" ? "Modpack default" : undefined;
+  // A world that is there already was made with its own seed and type.
+  const worldMade = !!source || !!found?.world;
+  // An import unpacks next to the archive, so both need room at once.
+  const least = found && v.archive ? Math.max(1, Math.ceil((found.size + v.archive.file.size) / GiB)) : leastStorage;
 
   // Picks were filtered to fit one kind of server, so they do not carry over
   // to another.
@@ -292,7 +423,56 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     // Files to upload were picked for it too: a mod is not a plugin.
     const cleared = v.mods.length + v.uploads.length;
     if (cleared > 0) toast.info(`Removed ${cleared} item${cleared === 1 ? "" : "s"} that no longer fit`);
-    setValues((was) => ({ ...was, ...change, mods: [], uploads: [] }));
+    setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "" }));
+  };
+
+  /** Reads an archive of a server and fills the form in with what it says. */
+  const pickArchive = async (file: File) => {
+    setError(null);
+    if (file.size > maxArchive) {
+      setError("Over 2 GB. Create the server, then copy its files in with scp or rsync.");
+      return;
+    }
+    setReading(true);
+    const read = ++reads.current;
+    try {
+      const f = await inspectServer(file);
+      const content = await contentOf(f);
+      if (read !== reads.current) return;
+      const p = f.properties;
+      setValues((was) => ({
+        ...was,
+        kind: "import",
+        archive: { file, found: f },
+        loader: f.loader,
+        version: f.version || "LATEST",
+        loaderVersion: f.loaderVersion,
+        mods: content.mods,
+        uploads: content.uploads,
+        unused: content.unused,
+        displayName: was.displayName || (f.root.split("/").pop() || file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, "")),
+        motd: p.motd ?? was.motd,
+        gamemode: named(p.gamemode, gameModes),
+        difficulty: named(p.difficulty, difficulties),
+        hardcore: p.hardcore === "true",
+        maxPlayers: p["max-players"] ?? "",
+        pvp: p.pvp ?? "",
+        join: p["white-list"] === "true" ? "list" : "anyone",
+        // Its own lists, to see and change here.
+        whitelist: f.whitelist.join("\n"),
+        ops: f.ops.join("\n"),
+        // As much memory as it had, with the room beside Java the panel keeps.
+        memory: f.heap > 0 ? String(Math.ceil(((f.heap + 768) / 0.9 / 1024) * 2) / 2) : was.memory,
+        // The one server.properties gives players, or else a pack file it has.
+        ...(packOf(p) ? { pack: packOf(p), packFile: null } : { pack: content.pack && { ...content.pack, enforce: p["require-resource-pack"] === "true" }, packFile: content.packFile }),
+        storage: String(Math.max(10, Math.ceil((f.size * 1.5 + file.size) / GiB))),
+      }));
+      setNeedsLoader(false);
+    } catch (err) {
+      if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
+    } finally {
+      if (read === reads.current) setReading(false);
+    }
   };
 
   /** A new server's request: everything chosen, and nothing else. */
@@ -313,13 +493,15 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       // Members from this role up who have linked a Minecraft account are let in.
       ...(v.join !== "anyone" && v.join !== "list" ? { autoWhitelist: v.join } : {}),
       ...(v.autoOp !== "operator" ? { autoOp: v.autoOp as ServerSpec["autoOp"] } : {}),
+      ...(lines(v.whitelist).length > 0 ? { whitelist: lines(v.whitelist) } : {}),
+      ...(lines(v.ops).length > 0 ? { ops: lines(v.ops) } : {}),
       ...(v.sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(v.idleMinutes) || 15 } } : {}),
       ...(v.schedule === "off" ? { backups: { enabled: false } } : {}),
       jvm: { aikarFlags: v.aikar, extraFlags: v.extraFlags },
       // The game looks for its picture and its files when it starts, so a
       // server given any is made stopped and started once they are there.
       ...(v.picture.kind === "file" || toUpload ? { state: "Stopped" as const } : {}),
-      ...(v.kind === "modpack" ? { modpack: v.modpack ?? undefined } : { loader: v.loader ?? undefined, version: v.version }),
+      ...(v.kind === "modpack" ? { modpack: v.modpack ?? undefined } : { loader: v.loader ?? undefined, version: v.version, ...(v.loaderVersion ? { loaderVersion: v.loaderVersion } : {}) }),
     };
   };
 
@@ -343,6 +525,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     if (Object.keys(properties).length > 0) changes.properties = properties as Record<string, string>;
     if (v.join !== start.join && v.join !== "anyone") changes.autoWhitelist = v.join === "list" ? "off" : v.join;
     if (v.autoOp !== start.autoOp) changes.autoOp = v.autoOp as ServerSpec["autoOp"];
+    if (v.whitelist !== start.whitelist) changes.whitelist = lines(v.whitelist);
+    if (v.ops !== start.ops) changes.ops = lines(v.ops);
     const sleeps = v.sleep && routed;
     if (sleeps !== start.sleep || (sleeps && v.idleMinutes !== start.idleMinutes)) changes.sleep = { enabled: sleeps, idleMinutes: Number(v.idleMinutes) || 15 };
     if (v.schedule !== start.schedule) changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : null;
@@ -374,6 +558,25 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ...(keepCustom ? { image: spec?.image, env: spec?.env } : {}),
       ...changes,
     };
+  };
+
+  /** Sends the archive to a server just made, to be unpacked into it. It says what went wrong if it did not go. */
+  /**
+   * Sends the archive to a server just made, to be unpacked into it. It says
+   * what went wrong if it did not go, and whether that is known for sure: an
+   * answer from the panel, or stopped here before it was all sent. A lost
+   * connection is not, as the panel goes on with what it was sent.
+   */
+  const importArchive = async (server: string): Promise<{ message: string; sure: boolean } | null> => {
+    if (!v.archive) return null;
+    try {
+      await send<Server>(v.archive.file.name, `${serverPath(org, server)}/import?${qs({ root: v.archive.found.root, wait: "true", content: listed(v.archive.found) ? "listed" : "" })}`, v.archive.file);
+      return null;
+    } catch (err) {
+      if (cancelled(err)) return { message: "The upload was stopped.", sure: alive.current };
+      if (err instanceof ApiError && err.status >= 400 && err.code !== "error") return { message: err.message, sure: true };
+      return { message: err instanceof Error ? err.message : "The upload failed.", sure: false };
+    }
   };
 
   /**
@@ -421,7 +624,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
-    if (!source && v.kind === "game" && !v.loader) {
+    if (!source && importing && !v.archive) return setError("Choose an archive.");
+    if (!source && v.kind !== "modpack" && !v.loader) {
       setNeedsLoader(true);
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
@@ -458,6 +662,26 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       }
       const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...(v.node ? { node: v.node } : {}), spec: newRequest() });
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
+      // A server made only to be imported into is no use without its files:
+      // it is deleted again, and the form stays to try once more.
+      if (found) {
+        const failed = await importArchive(server.name);
+        // Left meanwhile: the server's page says how it went.
+        if (failed && !alive.current) return;
+        if (failed && !failed.sure) {
+          // It may have gone through: the server's page says how it is.
+          toast.error(`Lost touch with the panel while importing ${v.displayName || server.name}. Check its files before starting it.`);
+          navigate(`/o/${org}/s/${server.name}`);
+          return;
+        }
+        if (failed) {
+          await api.del(`${serverPath(org, server.name)}?snapshot=false`).catch(() => undefined);
+          await qc.invalidateQueries({ queryKey: keys.servers(org) });
+          setError(`Could not import it. ${failed.message}`);
+          setBusy(false);
+          return;
+        }
+      }
       // Its files go up first, from here: made stopped, it is started once
       // they are all in. One that did not get them is left stopped, to be
       // given them on its Content page, and says so.
@@ -502,16 +726,32 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const versionField = (
     <Field
       label="Game version"
-      hint={onPreview(versions.data, v.version) ? previewWarning : source && versionChanged ? "A world opened in a newer version cannot open in an older one." : undefined}
+      hint={
+        onPreview(versions.data, v.version)
+          ? previewWarning
+          : (source || found) && versionChanged
+            ? "A world opened in a newer version cannot open in an older one."
+            : found?.version
+              ? "The version its world was last opened in."
+              : undefined
+      }
     >
       {(id) => (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <Select id={id} value={v.version} onChange={(e) => set("version", e.target.value)} className="w-64">
+          <Select
+            id={id}
+            value={v.version}
+            onChange={(e) => {
+              const version = e.target.value;
+              setValues((was) => ({ ...was, version, loaderVersion: found && version === found.version && was.loader === found.loader ? found.loaderVersion : "" }));
+            }}
+            className="w-64"
+          >
             {/* Keeps the version it has selectable when the list could not be loaded, or does not have it. */}
             <VersionOptions
               versions={versions.data}
               previews={previews || onPreview(versions.data, v.version)}
-              keep={source && start.version !== "LATEST" ? { value: start.version, label: start.version } : undefined}
+              keep={found?.version ? { value: found.version, label: found.version } : source && start.version !== "LATEST" ? { value: start.version, label: start.version } : undefined}
             />
           </Select>
           <PreviewsToggle versions={versions.data} previews={previews} onChange={setPreviews} selected={v.version} />
@@ -559,14 +799,83 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ) : (
         <Section title="Software">
           <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
-            <button type="button" className={segment(v.kind === "game")} onClick={() => v.kind !== "game" && changeSoftware({ kind: "game" })}>
+            <button
+              type="button"
+              className={segment(v.kind === "game")}
+              onClick={() => {
+                if (v.kind === "game") return;
+                reads.current++;
+                setReading(false);
+                changeSoftware({ kind: "game" });
+              }}
+            >
               Game version
             </button>
-            <button type="button" className={segment(v.kind === "modpack")} onClick={() => v.kind !== "modpack" && changeSoftware({ kind: "modpack" })}>
+            <button
+              type="button"
+              className={segment(v.kind === "modpack")}
+              onClick={() => {
+                if (v.kind === "modpack") return;
+                reads.current++;
+                setReading(false);
+                changeSoftware({ kind: "modpack" });
+              }}
+            >
               Modpack
             </button>
+            <button type="button" className={segment(importing)} onClick={() => !importing && changeSoftware({ kind: "import" })}>
+              Import
+            </button>
           </div>
-          {v.kind === "game" ? (
+          {importing && (
+            <>
+              <input
+                ref={archiveInput}
+                type="file"
+                accept=".zip,.tar,.tgz,.gz"
+                className="hidden"
+                aria-label="Server archive"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void pickArchive(file);
+                }}
+              />
+              {v.archive ? (
+                <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                  <ArchiveIcon className="size-5 shrink-0 text-muted" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium">{v.archive.file.name}</p>
+                    <p className="truncate text-xs text-muted" data-testid="archive-summary">
+                      {[
+                        `${bytes(v.archive.found.size)} unpacked`,
+                        v.archive.found.world ? `world "${v.archive.found.world}"` : "no world",
+                        v.archive.found.plugins > 0 && count(v.archive.found.plugins, "plugin"),
+                        v.archive.found.mods > 0 && count(v.archive.found.mods, "mod"),
+                        v.archive.found.ops.length > 0 && count(v.archive.found.ops.length, "operator"),
+                        v.archive.found.whitelist.length > 0 && `${v.archive.found.whitelist.length} whitelisted`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                  </div>
+                  <Button size="sm" disabled={reading} onClick={() => archiveInput.current?.click()}>
+                    Change
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={reading} icon={<X className="size-4" />} aria-label="Remove the archive" onClick={() => setValues((was) => ({ ...was, archive: null, mods: [], uploads: [], unused: [], pack: null, packFile: null }))} />
+                </div>
+              ) : (
+                <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">
+                  <Button icon={<ArchiveIcon className="size-4" />} loading={reading} onClick={() => archiveInput.current?.click()}>
+                    Choose an archive
+                  </Button>
+                  <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz of the server's folder, up to 2 GB. Larger? Create the server, then copy its files in with scp or rsync.</p>
+                </div>
+              )}
+              {found && !found.version && <p className="text-xs text-muted">Could not tell the game version. Pick the one it ran.</p>}
+            </>
+          )}
+          {v.kind === "game" || found ? (
             <>
               <div ref={softwareRef} className="flex flex-col gap-2">
                 <div role="group" aria-label="Server type" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -594,7 +903,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               </div>
               {versionField}
             </>
-          ) : v.modpack ? (
+          ) : importing ? null : v.modpack ? (
             <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
               <ProjectIcon url={v.modpack.iconUrl} />
               <div className="min-w-0 flex-1">
@@ -635,18 +944,24 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       <Section
         title="Content"
         description={
-          !source
-            ? `${contentList(software)}. Optional.`
-            : v.modpack
-              ? `${contentList(software)} on top of the modpack.`
-              : `${contentList(software)}. Copied from the original.`
+          found
+            ? `What it has comes with it. ${contentList(software)}. Optional.`
+            : !source
+              ? `${contentList(software)}. Optional.`
+              : v.modpack
+                ? `${contentList(software)} on top of the modpack.`
+                : `${contentList(software)}. Copied from the original.`
         }
       >
         {v.mods.length + v.uploads.length > 0 ? (
           <ContentList
             // Files to upload are listed with the rest, by their names.
             mods={[...v.mods, ...v.uploads.map((u): ContentRef => ({ source: "upload", kind: u.kind, project: u.file.name, title: u.file.name }))]}
-            note={(_, i) => (i >= v.mods.length ? `${bytes(v.uploads[i - v.mods.length].file.size)} · uploaded when created` : undefined)}
+            note={(_, i) => {
+              const upload = i >= v.mods.length ? v.uploads[i - v.mods.length] : null;
+              const off = v.unused.includes(upload ? upload.file.name : v.mods[i].project) && "not on in its world before";
+              return [upload && `${bytes(upload.file.size)} · uploaded when created`, off].filter(Boolean).join(" · ") || undefined;
+            }}
             onRemove={(i) =>
               i < v.mods.length ? set("mods", v.mods.filter((_, j) => j !== i)) : set("uploads", v.uploads.filter((_, j) => j !== i - v.mods.length))
             }
@@ -739,8 +1054,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         <More label={source ? "Player limit, PvP and more" : "World options and more"} changed={worldChanged} open={moreWorld} onToggle={() => setMoreWorld(!moreWorld)} />
         {moreWorld && (
           <>
-            <fieldset disabled={!!source} className="flex flex-col gap-4 rounded-md border border-line p-4 disabled:opacity-60">
-              <p className="text-xs text-muted">{source ? "Set when its world was created." : "Cannot be changed after the world is created."}</p>
+            <fieldset disabled={worldMade} className="flex flex-col gap-4 rounded-md border border-line p-4 disabled:opacity-60">
+              <p className="text-xs text-muted">{worldMade ? "Set when its world was created." : "Cannot be changed after the world is created."}</p>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="World type">
                   {(id) => (
@@ -752,8 +1067,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
                 </Field>
                 <Field label="Seed">{(id) => <Input id={id} value={v.seed} onChange={(e) => set("seed", e.target.value)} placeholder="Random" className="font-mono" spellCheck={false} />}</Field>
               </div>
-              <Toggle checked={v.structures} disabled={!!source} onChange={(on) => set("structures", on)} label="Generate structures" />
-              <Toggle checked={v.hardcore} disabled={!!source} onChange={(on) => set("hardcore", on)} label="Hardcore" hint="Hard difficulty. Players who die become spectators." />
+              <Toggle checked={v.structures} disabled={worldMade} onChange={(on) => set("structures", on)} label="Generate structures" />
+              <Toggle checked={v.hardcore} disabled={worldMade} onChange={(on) => set("hardcore", on)} label="Hardcore" hint="Hard difficulty. Players who die become spectators." />
             </fieldset>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Player limit">{(id) => <Input id={id} type="number" min={1} value={v.maxPlayers} onChange={(e) => set("maxPlayers", e.target.value)} placeholder="20" />}</Field>
@@ -792,6 +1107,12 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               </Select>
             )}
           </Field>
+          <Field label="Whitelisted players" hint={v.join === "anyone" ? "Only used with a whitelist." : "One name per line."}>
+            {(id) => <Textarea id={id} rows={3} value={v.whitelist} onChange={(e) => set("whitelist", e.target.value)} className="font-mono" spellCheck={false} />}
+          </Field>
+          <Field label="Operators" hint="One name per line.">
+            {(id) => <Textarea id={id} rows={3} value={v.ops} onChange={(e) => set("ops", e.target.value)} className="font-mono" spellCheck={false} />}
+          </Field>
         </div>
         {v.join !== "anyone" && v.join !== "list" && me && !me.minecraft && (
           <p className="text-xs leading-relaxed text-muted">
@@ -806,11 +1127,21 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
 
       <Section
         title="Resources"
-        description={source ? (source.size > 0 ? `Its files use ${(source.size / GiB).toFixed(1)} GB.` : undefined) : v.kind === "modpack" ? "Large modpacks need 6 GB or more." : "4 GB suits a small server."}
+        description={
+          found
+            ? `Its files use ${(found.size / GiB).toFixed(1)} GB.`
+            : source
+              ? source.size > 0
+                ? `Its files use ${(source.size / GiB).toFixed(1)} GB.`
+                : undefined
+              : v.kind === "modpack"
+                ? "Large modpacks need 6 GB or more."
+                : "4 GB suits a small server."
+        }
       >
         <div className="grid grid-cols-2 gap-4">
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={v.memory} onChange={(e) => set("memory", e.target.value)} />}</Field>
-          <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={leastStorage} step={1} value={v.storage} onChange={(e) => set("storage", e.target.value)} />}</Field>
+          <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={least} step={1} value={v.storage} onChange={(e) => set("storage", e.target.value)} />}</Field>
         </div>
         <NodeChoice memory={v.memory} value={v.node} kept={source?.origin.kind === "server" ? source.live?.spec.nodeSelector : undefined} onChange={(node) => set("node", node)} />
         <More label="Launch flags" changed={(v.aikar !== start.aikar ? 1 : 0) + (v.extraFlags !== start.extraFlags ? 1 : 0)} open={moreLaunch} onToggle={() => setMoreLaunch(!moreLaunch)} />

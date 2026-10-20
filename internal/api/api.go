@@ -370,6 +370,7 @@ func (s *Server) Handler() http.Handler {
 	api("DELETE /orgs/{org}/servers/{server}", s.authed(s.deleteServer))
 	api("POST /orgs/{org}/servers/{server}/{action}", s.authed(s.serverAction))
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
+	api("PUT /orgs/{org}/servers/{server}/import", s.authed(s.importFiles))
 	api("GET /orgs/{org}/servers/{server}/console", s.authed(s.streamConsole))
 	api("POST /orgs/{org}/servers/{server}/console", s.authed(s.runCommand))
 	api("GET /orgs/{org}/servers/{server}/logs", s.authed(s.listLogs))
@@ -402,6 +403,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /catalog/modrinth/projects", s.authed(s.modrinthProjects))
 	api("GET /catalog/modrinth/projects/{id}/versions", s.authed(s.modrinthVersions))
 	api("POST /catalog/sha1", s.authed(s.hashURL))
+	api("POST /catalog/modrinth/files", s.authed(s.modrinthFiles))
 
 	// Uploaded resource packs, fetched by players' games with no session.
 	mux.Handle("/packs/", s.PackHandler())

@@ -809,3 +809,19 @@ test("a new server whose files went up but that could not be started goes on to 
   await expect(page.getByText("Up was created but could not start (The panel is busy).")).toBeVisible();
   expect(asked).toEqual(["create Stopped", "PUT /content mine.jar true", "POST /start"]);
 });
+
+test("a new server is given players by name, beside those let in by role", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Display name").fill("Named");
+  await page.getByLabel("Who can join").selectOption("viewer");
+  await page.getByLabel("Whitelisted players").fill("jeb_\n  Notch  \n\n");
+  await page.getByLabel("Operators", { exact: true }).fill("jeb_");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/named$`));
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/named`);
+  expect(spec).toMatchObject({ autoWhitelist: "viewer", whitelist: ["jeb_", "Notch"], ops: ["jeb_"] });
+});

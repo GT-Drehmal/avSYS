@@ -422,6 +422,8 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 			return avsysv1.PhaseStopped, fmt.Sprintf("Moving to %s.", mc.Annotations[avsysv1.AnnotationMoving])
 		case mc.Annotations[avsysv1.AnnotationCreating] != "":
 			return avsysv1.PhaseStopped, "Copying files from a snapshot."
+		case mc.Annotations[avsysv1.AnnotationImporting] != "":
+			return avsysv1.PhaseStopped, "Importing files."
 		case mc.Spec.State == avsysv1.StateStopped:
 			return avsysv1.PhaseStopped, ""
 		case mc.Annotations[avsysv1.AnnotationRestoring] != "":

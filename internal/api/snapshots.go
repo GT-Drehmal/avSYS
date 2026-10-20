@@ -55,7 +55,7 @@ const (
 // change made after its last snapshot would be lost with it. So does one
 // being moved, whose files are put back on another node.
 func rewrites(kind string) bool {
-	return kind == kindRestore || kind == kindCreate || kind == kindDeleteServer || kind == kindMove
+	return kind == kindRestore || kind == kindCreate || kind == kindDeleteServer || kind == kindMove || kind == kindImport
 }
 
 // operations decides who may touch a server or a snapshot at a time. One
@@ -298,7 +298,7 @@ func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) 
 // admit is changing without holding off a server whose move did not
 // finish, for what such a server may still have done to it: deleting it.
 func (s *Server) admit(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
-	kinds := []string{kindRestore, kindCreate, kindDeleteServer, kindMove}
+	kinds := []string{kindRestore, kindCreate, kindDeleteServer, kindMove, kindImport}
 	if alsoDuringSnapshot {
 		kinds = append(kinds, kindSnapshot)
 	}
@@ -320,6 +320,8 @@ func heldBy(kind string) error {
 		return errDeleting
 	case kindMove:
 		return errMoving
+	case kindImport:
+		return errImporting
 	}
 	return errSnapshotting
 }
@@ -346,6 +348,8 @@ func unfinished(mc *avsysv1.MinecraftServer) error {
 		return errCreateIncomplete
 	case restoreUnfinished(mc):
 		return errRestoreIncomplete
+	case importUnfinished(mc):
+		return errImportIncomplete
 	}
 	return nil
 }

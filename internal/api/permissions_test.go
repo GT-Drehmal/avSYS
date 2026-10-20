@@ -264,6 +264,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"DELETE " + server + "/resource-pack", "", "", store.RoleAdmin, 200},
 		{"GET " + server + "/terminal", "", "", store.RoleOperator, 0},
 		{"PUT " + server + "/content", "", "x", store.RoleAdmin, 0},
+		// 409: allowed, and then refused because the server is running.
+		{"PUT " + server + "/import", "", "x", store.RoleAdmin, 409},
 		{"GET " + server + "/files", "", "", store.RoleOperator, 0},
 		{"DELETE " + server + "/files", "", "", store.RoleOperator, 0},
 		{"GET " + server + "/files/content", "", "", store.RoleOperator, 0},
