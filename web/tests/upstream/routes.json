@@ -30,6 +30,16 @@
   "file": "categories.json"
  },
  {
+  "url": "https://api.modrinth.com/v2/version_files",
+  "has": "",
+  "file": "version-files.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/projects?",
+  "has": "P0000042",
+  "file": "projects-imported.json"
+ },
+ {
   "url": "https://api.modrinth.com/v2/projects?",
   "has": "",
   "file": "projects.json"

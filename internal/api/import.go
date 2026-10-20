@@ -64,12 +64,14 @@ var kept = []string{".avsys", ".workspace", "lost+found"}
 // unpacked unpacks the archive into a staging folder, drops any links that
 // came out of it, checks that the folder named on the first line of stdin is
 // there, and empties the server directory but for what is kept. Then rest
-// runs, and the staging folder is removed.
+// runs, and the staging folder is removed. The next lines of stdin say how:
+// "split" and "listed", or nothing.
 func unpacked(rest string) string {
 	return `set -eu
 command -v bsdtar >/dev/null || exit 127
 IFS= read -r root || true
 IFS= read -r split || true
+IFS= read -r listed || true
 a=` + importArchive + `
 s=` + importStaging + `
 rm -rf "$s" "$s.err"
@@ -121,6 +123,7 @@ case $level in
     fi
     ;;
 esac
+if [ "$listed" = listed ]; then rm -f mods/*.jar plugins/*.jar world/datapacks/*.zip; fi
 if [ -f server.properties ]; then
   sed -i -E '/^(server-ip|server-port|query\.port|enable-query|enable-rcon|rcon\.port|rcon\.password|level-name)=/d' server.properties
 fi
@@ -275,7 +278,13 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		return err
 	}
 	defer session.Close()
-	session.Stdin = strings.NewReader(root + "\n\n")
+	// Its mods, plugins and datapacks listed as the server's content are
+	// installed from that list, and their files are not kept besides.
+	listed := ""
+	if r.URL.Query().Get("content") == "listed" {
+		listed = "listed"
+	}
+	session.Stdin = strings.NewReader(root + "\n\n" + listed + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 	if err := session.Run(serverScript); err != nil {

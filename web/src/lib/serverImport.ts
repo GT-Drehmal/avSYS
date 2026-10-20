@@ -1,4 +1,4 @@
-import type { Loader } from "./api";
+import type { ContentKind, Loader } from "./api";
 import { type Contents, type Entry, gunzip, readArchive } from "./archive";
 import { parseProperties } from "./properties";
 
@@ -22,7 +22,23 @@ export interface Found {
   whitelist: string[];
   /** The most memory its start scripts gave Java (-Xmx), in MiB; 0 if none say. */
   heap: number;
+  /** Its mods, plugins and its world's datapacks, read to be listed as its content. */
+  jars: Jar[];
+  /** How many of them were too large to read: then none are listed. */
+  unread: number;
 }
+
+export interface Jar {
+  name: string;
+  kind: ContentKind;
+  sha1: string;
+  data: Uint8Array;
+}
+
+/** As large a file as can be added as content. */
+const maxJar = 256 << 20;
+// A mod or a plugin, a .jar right in one of those folders, or a datapack.
+const jarIn = /(^|\/)((mods|plugins)\/[^/]+\.jar|datapacks\/[^/]+\.zip)$/i;
 
 const interesting = new Set(["server.properties", "level.dat", "version_history.json", "ops.json", "whitelist.json"]);
 // What started it, which says how much memory it was given.
@@ -33,7 +49,11 @@ const depth = (p: string) => p.split("/").length;
 
 /** Reads an archive of a server's folder and makes out what it can. */
 export async function inspectServer(file: File): Promise<Found> {
-  const contents = await readArchive(file, (path, size) => (interesting.has(base(path)) || (starts.test(base(path)) && size < 64 << 10)) && size < 8 << 20 && depth(path) <= 5 && !path.startsWith("__MACOSX/"));
+  const contents = await readArchive(file, (path, size) =>
+      !path.startsWith("__MACOSX/") &&
+      depth(path) <= 5 &&
+      ((interesting.has(base(path)) && size < 8 << 20) || (starts.test(base(path)) && size < 64 << 10) || (jarIn.test(path) && size <= maxJar)),
+  );
   return await examine(contents);
 }
 
@@ -76,8 +96,32 @@ async function examine({ entries, files }: Contents): Promise<Found> {
     mods: inside.filter((e) => !e.dir && depth(e.path) === 2 && e.path.startsWith("mods/") && e.path.endsWith(".jar")).length,
     ops: players(text("ops.json")),
     whitelist: players(text("whitelist.json")),
+    // The world the game opens there: the one level-name names, which is
+    // made world, or world.
+    ...(await jarsOf(inside, at, worlds.includes(properties["level-name"] ?? "") ? properties["level-name"] : "world")),
     heap: Math.max(0, ...inside.filter((e) => !e.dir && depth(e.path) === 1 && starts.test(e.path)).map((e) => maxHeap(text(e.path)))),
   };
+}
+
+/** The mods and plugins right in mods/ and plugins/, and the datapacks of the world, with their SHA-1. */
+async function jarsOf(inside: Entry[], at: (rel: string) => Uint8Array | undefined, world: string): Promise<{ jars: Jar[]; unread: number }> {
+  const jars: Jar[] = [];
+  let unread = 0;
+  const kindOf = (p: string): ContentKind | null =>
+    /^mods\/[^/]+\.jar$/.test(p) ? "mod" : /^plugins\/[^/]+\.jar$/.test(p) ? "plugin" : p.startsWith(`${world}/datapacks/`) && /^[^/]+\.zip$/.test(p.slice(world.length + 11)) ? "datapack" : null;
+  for (const e of inside) {
+    const kind = e.dir ? null : kindOf(e.path);
+    if (!kind) continue;
+    const data = at(e.path);
+    if (!data) {
+      unread++;
+      continue;
+    }
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", data.slice()));
+    const sha1 = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+    jars.push({ name: base(e.path), kind, sha1, data });
+  }
+  return { jars, unread };
 }
 
 /** The largest -Xmx in a start script, in MiB; 0 if it has none. Lines made comments do not count. */
