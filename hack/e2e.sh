@@ -550,6 +550,38 @@ for _ in 1 2 3 4 5; do
 done
 echo "ok: a command's errors come through, every time"
 
+step "import"
+# An existing server's folder, packed on another host, is unpacked into a new
+# server made stopped: kept as it was but for what belonged to the old host.
+python3 - "$WORK" <<'PY'
+import io, sys, tarfile
+def add(t, name, data=b"x"):
+    i = tarfile.TarInfo(name); i.size = len(data); t.addfile(i, io.BytesIO(data))
+with tarfile.open(sys.argv[1] + "/import.tar.gz", "w:gz") as t:
+    add(t, "Old/server.properties", b"motd=From elsewhere\nlevel-name=Drehmal\nserver-port=25599\nserver-ip=10.0.0.5\nenable-rcon=true\n")
+    add(t, "Old/Drehmal/level.dat"); add(t, "Old/Drehmal/session.lock"); add(t, "Old/Drehmal_nether/level.dat")
+    add(t, "Old/plugins/Foo.jar"); add(t, "Old/logs/latest.log"); add(t, "Old/start.sh")
+with tarfile.open(sys.argv[1] + "/escape.tar", "w") as t:
+    add(t, "Old/server.properties"); add(t, "../../escaped.txt")
+PY
+IMPORTED=$API/orgs/$ORG/servers/imported
+call -d '{"name":"imported","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
+refused=$(call -X PUT --data-binary "@$WORK/escape.tar" "$IMPORTED/import?root=Old&wait=true")
+expect "an archive with a path out of its folder is refused" "$(echo "$refused" | field "d['message']")" "Could not unpack the archive"
+expect "and nothing of it is kept" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/server.properties")" 404
+imported=$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old&wait=true")
+expect "a server's folder is imported" "$(echo "$imported" | field "d['name']")" imported
+listing=$(call "$IMPORTED/files?path=/" | field "sorted(f['name'] for f in d['entries'])")
+expect "its world is the one the game opens" "$listing" "'world', 'world_nether'"
+expect "its plugins come with it" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/plugins/Foo.jar")" 200
+case "$listing" in *logs*|*start.sh*|*Drehmal*|*.avsys/import*) fail "what belonged to the old host was kept: $listing" ;; esac
+expect "a world left open there is not locked here" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/world/session.lock")" 404
+props=$(call "$IMPORTED/files/content?path=/server.properties")
+expect "its settings are kept" "$props" "motd=From elsewhere"
+case "$props" in *server-port*|*server-ip*|*enable-rcon*|*level-name*) fail "the old host's settings were kept: $props" ;; esac
+expect "a server with a world is not imported into" "$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old" | field "d['code']")" has_world
+call -X DELETE "$IMPORTED?snapshot=false" >/dev/null
+
 step "extra ports"
 # A port a mod listens on beside the game is opened to players: here a web
 # server in the workspace, which shares the game's pod, stands in for one.

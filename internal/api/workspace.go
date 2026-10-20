@@ -51,6 +51,8 @@ func (s *Server) AuthorizeWorkspace(ctx context.Context, u *store.User, orgSlug,
 			doing = "made from a snapshot"
 		case kindDeleteServer:
 			doing = "deleted"
+		case kindImport:
+			doing = "imported"
 		}
 		return "", errors.New(server + "." + orgSlug + " is being " + doing + ". Try again when that has finished.")
 	}

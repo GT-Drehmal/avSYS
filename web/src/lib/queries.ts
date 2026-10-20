@@ -137,6 +137,8 @@ export function useLiveServers() {
       } else if (done.kind === "delete-server") {
         // Only ever sent with an error, which says the whole of it.
         if (done.error) toast.error(done.error);
+      } else if (done.kind === "import") {
+        // The page that sent it says how it went.
       } else if (done.kind === "move") {
         qc.invalidateQueries({ queryKey: ["placement", done.org, done.server] });
         qc.invalidateQueries({ queryKey: ["nodes"] });

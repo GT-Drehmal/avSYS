@@ -21,7 +21,7 @@ ARG MICROMAMBA_VERSION=2.3.2-0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       openssh-server ca-certificates tini \
-      bash-completion curl wget git rsync tar gzip unzip zip \
+      bash-completion curl wget git rsync tar gzip unzip zip libarchive-tools \
       nano vim-tiny less htop jq procps tmux file tree \
       python3 python3-venv \
  && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \

@@ -1,0 +1,245 @@
+import type { Loader } from "./api";
+import { type Contents, type Entry, gunzip, readArchive } from "./archive";
+import { parseProperties } from "./properties";
+
+/** What an archive of a server's folder says about the server. */
+export interface Found {
+  /** The folder in the archive that is the server's, "" for its top. */
+  root: string;
+  /** How large the server's files are, unpacked. */
+  size: number;
+  loader: Loader | null;
+  /** The game version, "" when it could not be told. */
+  version: string;
+  loaderVersion: string;
+  /** The world's folder, "" when there is none. */
+  world: string;
+  properties: Record<string, string>;
+  plugins: number;
+  mods: number;
+}
+
+const interesting = new Set(["server.properties", "level.dat", "version_history.json"]);
+const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+const dirname = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+const depth = (p: string) => p.split("/").length;
+
+/** Reads an archive of a server's folder and makes out what it can. */
+export async function inspectServer(file: File): Promise<Found> {
+  const contents = await readArchive(file, (path, size) => interesting.has(base(path)) && size < 8 << 20 && depth(path) <= 5 && !path.startsWith("__MACOSX/"));
+  return await examine(contents);
+}
+
+async function examine({ entries, files }: Contents): Promise<Found> {
+  const real = entries.filter((e) => !e.path.startsWith("__MACOSX/"));
+  const root = findRoot(real);
+  const under = (p: string) => (root === "" ? p : p.startsWith(`${root}/`) ? p.slice(root.length + 1) : null);
+  const inside: Entry[] = [];
+  for (const e of real) {
+    const rel = under(e.path);
+    if (rel) inside.push({ ...e, path: rel });
+  }
+  const at = (rel: string) => files.get(root === "" ? rel : `${root}/${rel}`);
+  const text = (rel: string) => {
+    const data = at(rel);
+    return data ? new TextDecoder().decode(data) : "";
+  };
+  const properties = parseProperties(text("server.properties"));
+
+  // The world: the folder level-name names, or else the first that holds a
+  // level.dat.
+  const worlds = inside.filter((e) => !e.dir && depth(e.path) === 2 && base(e.path) === "level.dat").map((e) => dirname(e.path));
+  const world = worlds.find((w) => w === properties["level-name"]) ?? worlds.find((w) => w === "world") ?? worlds[0] ?? "";
+  let version = "";
+  const level = world ? at(`${world}/level.dat`) : undefined;
+  if (level) version = await worldVersion(level).catch(() => "");
+
+  const software = softwareOf(inside, text("version_history.json"));
+  return {
+    root,
+    size: inside.reduce((sum, e) => sum + e.size, 0),
+    loader: software.loader,
+    // The world says which version last opened it, which is what it must
+    // be opened with now.
+    version: version || software.version,
+    loaderVersion: software.loaderVersion,
+    world,
+    properties,
+    plugins: inside.filter((e) => !e.dir && depth(e.path) === 2 && e.path.startsWith("plugins/") && e.path.endsWith(".jar")).length,
+    mods: inside.filter((e) => !e.dir && depth(e.path) === 2 && e.path.startsWith("mods/") && e.path.endsWith(".jar")).length,
+  };
+}
+
+/**
+ * The folder the server is in: the one with its server.properties, or the
+ * one holding its world, or a single folder everything is in.
+ */
+function findRoot(entries: Entry[]): string {
+  const shallowest = (name: string) =>
+    entries
+      .filter((e) => !e.dir && base(e.path) === name)
+      .map((e) => dirname(e.path))
+      .sort((a, b) => depth(a) - depth(b) || a.length - b.length)[0];
+  const props = shallowest("server.properties");
+  if (props !== undefined) return props;
+  const level = shallowest("level.dat");
+  if (level !== undefined) return dirname(level);
+  const tops = new Set(entries.map((e) => e.path.split("/")[0]));
+  if (tops.size === 1) {
+    const [only] = tops;
+    if (entries.some((e) => e.path.startsWith(`${only}/`))) return only;
+  }
+  return "";
+}
+
+/** The server's software, from its jar's name, its libraries and its own files. */
+function softwareOf(entries: Entry[], history: string): { loader: Loader | null; version: string; loaderVersion: string } {
+  const paths = entries.map((e) => e.path);
+  const tops = new Set(paths.filter((p) => !p.includes("/")).map((p) => p.toLowerCase()));
+  const has = (prefix: string) => paths.some((p) => p === prefix || p.startsWith(`${prefix}/`));
+  const match = (re: RegExp) => {
+    for (const p of paths) {
+      const m = re.exec(p);
+      if (m) return m;
+    }
+    return null;
+  };
+  const jar = (re: RegExp) => {
+    for (const t of tops) {
+      const m = re.exec(t);
+      if (m) return m;
+    }
+    return null;
+  };
+
+  let m = match(/^libraries\/net\/neoforged\/neoforge\/([^/]+)\//);
+  if (m) return { loader: "neoforge", version: neoForgeGame(m[1]), loaderVersion: m[1] };
+  m = match(/^libraries\/net\/minecraftforge\/forge\/([^/-]+)-([^/]+)\//);
+  if (m) return { loader: "forge", version: m[1], loaderVersion: m[2] };
+  m = jar(/^fabric-server-mc\.(.+)-loader\.(.+)-launcher\..+\.jar$/);
+  if (m) return { loader: "fabric", version: m[1], loaderVersion: m[2] };
+  if (has(".fabric") || tops.has("fabric-server-launch.jar") || has("libraries/net/fabricmc")) {
+    return { loader: "fabric", version: "", loaderVersion: match(/^libraries\/net\/fabricmc\/fabric-loader\/([^/]+)\//)?.[1] ?? "" };
+  }
+  if (tops.has("quilt-server-launch.jar") || has("libraries/org/quiltmc")) {
+    return { loader: "quilt", version: "", loaderVersion: match(/^libraries\/org\/quiltmc\/quilt-loader\/([^/]+)\//)?.[1] ?? "" };
+  }
+  const game = /\(MC: ([^)]+)\)/.exec(history)?.[1] ?? "";
+  m = jar(/^folia-(\d[^-]*)-.+\.jar$/);
+  if (m || /Folia/i.test(history)) return { loader: "folia", version: m?.[1] ?? game, loaderVersion: "" };
+  m = jar(/^purpur-(\d[^-]*)-.+\.jar$/);
+  if (m || tops.has("purpur.yml") || /Purpur/i.test(history)) return { loader: "purpur", version: m?.[1] ?? game, loaderVersion: "" };
+  m = jar(/^paper-(\d[^-]*)-.+\.jar$/);
+  // Spigot's and Bukkit's plugins run on Paper.
+  if (m || game || has("config/paper-global.yml") || tops.has("paper.yml") || tops.has("spigot.yml") || tops.has("bukkit.yml") || has("plugins")) {
+    return { loader: "paper", version: m?.[1] ?? game, loaderVersion: "" };
+  }
+  m = jar(/^minecraft_server\.(.+)\.jar$/);
+  if (m) return { loader: "vanilla", version: m[1], loaderVersion: "" };
+  // Mods with nothing to say which loader they are for.
+  if (has("mods")) return { loader: null, version: "", loaderVersion: "" };
+  if (tops.has("server.jar")) return { loader: "vanilla", version: "", loaderVersion: "" };
+  return { loader: null, version: "", loaderVersion: "" };
+}
+
+/** The game version a NeoForge version is for: 21.1.77 is for 1.21.1, 21.0.x for 1.21. */
+function neoForgeGame(v: string) {
+  const [major, minor] = v.split(".");
+  if (!major || minor === undefined || Number(major) < 20) return "";
+  return minor === "0" ? `1.${major}` : `1.${major}.${minor}`;
+}
+
+/** The version that last opened a world, from its level.dat: Data.Version.Name. */
+export async function worldVersion(levelDat: Uint8Array): Promise<string> {
+  const data = levelDat[0] === 0x1f && levelDat[1] === 0x8b ? await gunzip(levelDat) : levelDat;
+  const nbt = new Nbt(data);
+  if (nbt.u8() !== 10) return "";
+  nbt.string();
+  return nbt.find(["Data", "Version", "Name"]) ?? "";
+}
+
+/** Just enough of NBT to find one string in a compound, passing over the rest. */
+class Nbt {
+  private p = 0;
+  private view: DataView;
+  constructor(private b: Uint8Array) {
+    this.view = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  }
+  u8() {
+    return this.b[this.p++];
+  }
+  private i32() {
+    const v = this.view.getInt32(this.p);
+    this.p += 4;
+    return v;
+  }
+  string() {
+    const len = this.view.getUint16(this.p);
+    this.p += 2;
+    const s = new TextDecoder().decode(this.b.subarray(this.p, this.p + len));
+    this.p += len;
+    return s;
+  }
+
+  /** Inside a compound, follows names down to a string. */
+  find(path: string[]): string | null {
+    for (;;) {
+      if (this.p >= this.b.length) return null;
+      const type = this.u8();
+      if (type === 0) return null;
+      const name = this.string();
+      if (name === path[0]) {
+        if (path.length === 1) return type === 8 ? this.string() : null;
+        if (type !== 10) return null;
+        return this.find(path.slice(1));
+      }
+      this.skip(type);
+    }
+  }
+
+  private skip(type: number) {
+    switch (type) {
+      case 1:
+        this.p += 1;
+        return;
+      case 2:
+        this.p += 2;
+        return;
+      case 3:
+      case 5:
+        this.p += 4;
+        return;
+      case 4:
+      case 6:
+        this.p += 8;
+        return;
+      case 7:
+        this.p += this.i32();
+        return;
+      case 8:
+        this.string();
+        return;
+      case 9: {
+        const inner = this.u8();
+        const n = this.i32();
+        for (let i = 0; i < n; i++) this.skip(inner);
+        return;
+      }
+      case 10:
+        for (;;) {
+          const t = this.u8();
+          if (t === 0 || this.p >= this.b.length) return;
+          this.string();
+          this.skip(t);
+        }
+      case 11:
+        this.p += 4 * this.i32();
+        return;
+      case 12:
+        this.p += 8 * this.i32();
+        return;
+      default:
+        throw new Error("bad NBT");
+    }
+  }
+}
