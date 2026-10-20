@@ -1,5 +1,5 @@
 import type { Loader } from "./api";
-import { type Contents, type Entry, gunzip, readArchive } from "./archive";
+import { ArchiveError, type Contents, type Entry, gunzip, readArchive } from "./archive";
 import { parseProperties } from "./properties";
 
 /** What an archive of a server's folder says about the server. */
@@ -149,13 +149,49 @@ function neoForgeGame(v: string) {
   return minor === "0" ? `1.${major}` : `1.${major}.${minor}`;
 }
 
+/** A world in an archive. */
+export interface FoundWorld {
+  /** The folder in the archive that holds its level.dat, "" for the top. */
+  root: string;
+  /** Its name in the game. */
+  name: string;
+  /** The game version that last opened it, "" when it could not be told. */
+  version: string;
+  /** How large it is unpacked, the Nether and the End beside it included. */
+  size: number;
+}
+
+/** Finds the world in an archive, wherever it is in it. */
+export async function inspectWorld(file: File): Promise<FoundWorld> {
+  const { entries, files } = await readArchive(file, (path, size) => base(path) === "level.dat" && size < 8 << 20 && !path.startsWith("__MACOSX/"));
+  const levels = entries.filter((e) => !e.dir && base(e.path) === "level.dat" && !e.path.startsWith("__MACOSX/"));
+  // The shallowest: the Nether's folder in Paper's way has one of its own.
+  const level = levels.sort((a, b) => depth(a.path) - depth(b.path) || a.path.length - b.path.length)[0];
+  if (!level) throw new ArchiveError("No world in this archive: it has no level.dat.");
+  const root = dirname(level.path);
+  const data = files.get(level.path);
+  const read = data ? await levelInfo(data).catch(() => ({ name: "", version: "" })) : { name: "", version: "" };
+  // Paper keeps the Nether and the End beside the world, as world_nether and world_the_end.
+  const beside = root ? [`${root}_nether/`, `${root}_the_end/`] : [];
+  const size = entries.filter((e) => (root === "" || e.path.startsWith(`${root}/`) || beside.some((b) => e.path.startsWith(b))) && !e.path.startsWith("__MACOSX/")).reduce((sum, e) => sum + e.size, 0);
+  return { root, name: read.name || base(root) || file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, ""), version: read.version, size };
+}
+
+/** A world's name and the version that last opened it, from its level.dat. */
+async function levelInfo(levelDat: Uint8Array) {
+  const data = levelDat[0] === 0x1f && levelDat[1] === 0x8b ? await gunzip(levelDat) : levelDat;
+  const at = (path: string[]) => {
+    const nbt = new Nbt(data);
+    if (nbt.u8() !== 10) return "";
+    nbt.string();
+    return nbt.find(path) ?? "";
+  };
+  return { name: at(["Data", "LevelName"]), version: at(["Data", "Version", "Name"]) };
+}
+
 /** The version that last opened a world, from its level.dat: Data.Version.Name. */
 export async function worldVersion(levelDat: Uint8Array): Promise<string> {
-  const data = levelDat[0] === 0x1f && levelDat[1] === 0x8b ? await gunzip(levelDat) : levelDat;
-  const nbt = new Nbt(data);
-  if (nbt.u8() !== 10) return "";
-  nbt.string();
-  return nbt.find(["Data", "Version", "Name"]) ?? "";
+  return (await levelInfo(levelDat)).version;
 }
 
 /** Just enough of NBT to find one string in a compound, passing over the rest. */

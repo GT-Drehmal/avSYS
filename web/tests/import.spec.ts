@@ -5,7 +5,7 @@ import { expect, test } from "./panel";
 // on another host: the page reads them itself, before anything is sent.
 
 /** A level.dat: gzipped NBT with Data.Version.Name. */
-function levelDat(version: string) {
+function levelDat(version: string, name = "world") {
   const str = (s: string) => {
     const b = Buffer.from(s);
     const len = Buffer.alloc(2);
@@ -23,6 +23,7 @@ function levelDat(version: string) {
     tag(1, "hardcore", Buffer.from([0])),
     tag(9, "ServerBrands", Buffer.concat([Buffer.from([8]), int(1), str("Paper")])),
     tag(3, "DataVersion", int(3839)),
+    tag(8, "LevelName", str(name)),
     tag(10, "Version", Buffer.concat([tag(3, "Id", int(3839)), tag(8, "Name", str(version)), end])),
     end,
   ]);
@@ -204,4 +205,70 @@ test("what is not an archive is turned down before anything is sent", async ({ p
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page.getByText("Choose an archive.")).toBeVisible();
+});
+
+test("a new server starts from a world of one's own", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Display name").fill("Island");
+  await page.getByRole("button", { name: "Use a world I have" }).click();
+  // A single-player save, with the Nether and the End inside it.
+  const save = zip({
+    "saves/Island Save/level.dat": levelDat("1.21.4", "Island"),
+    "saves/Island Save/region/r.0.0.mca": "region",
+    "saves/Island Save/DIM-1/region/r.0.0.mca": "nether",
+  });
+  await page.getByLabel("World archive").setInputFiles({ name: "island.zip", mimeType: "application/zip", buffer: save });
+  await expect(page.getByTestId("world-summary")).toContainText("Last opened in 1.21.4");
+  await expect(page.getByText("Island", { exact: true })).toBeVisible();
+  // Opened in the version it was last opened in, and made already.
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  await page.getByRole("button", { name: /World options and more/ }).click();
+  await expect(page.getByLabel("Seed")).toBeDisabled();
+
+  let sent: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/island`) });
+  });
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  expect(sent?.get("root")).toBe("saves/Island Save");
+  expect(sent?.get("world")).toBe("true");
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/island`);
+  expect(spec).toMatchObject({ loader: "paper", version: "1.21.4", state: "Running" });
+  expect(spec.properties).not.toHaveProperty("level-seed");
+});
+
+test("a world from a newer game than the one picked is warned of", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByRole("button", { name: "Use a world I have" }).click();
+  await page.getByLabel("World archive").setInputFiles({ name: "new.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("26.3") }) });
+  await expect(page.getByLabel("Game version")).toHaveValue("26.3");
+  await expect(page.getByText(/newer than/)).toHaveCount(0);
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await expect(page.getByText("This world was last opened in 26.3, which is newer than 1.21.4. Pick 26.3 or newer.")).toBeVisible();
+  // Without one picked, it says so.
+  await page.getByRole("button", { name: "New world" }).click();
+  await page.getByRole("button", { name: "Use a world I have" }).click();
+  await page.getByLabel("Display name").fill("Later");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page.getByText("Choose a world, or make a new one.")).toBeVisible();
+});
+
+test("an archive with no world in it says so", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
+  await page.getByRole("button", { name: "Use a world I have" }).click();
+  await page.getByLabel("World archive").setInputFiles({ name: "pics.zip", mimeType: "application/zip", buffer: zip({ "a.png": "png" }) });
+  await expect(page.getByText("No world in this archive: it has no level.dat.")).toBeVisible();
 });

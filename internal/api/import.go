@@ -37,13 +37,13 @@ const (
 	importStaging = dataRoot + "/.avsys/import"
 )
 
-// unpackScript unpacks the archive, takes the folder named on stdin as the
-// server's, leaves out what only made sense on the old host, and moves the
-// rest into the server directory. A world under another level-name is
-// renamed to world, which is the one the game is told to open.
-const unpackScript = `set -eu
+// unpacked unpacks the archive into a staging folder and checks that the
+// folder named on the first line of stdin is in it. Then rest runs there.
+func unpacked(rest string) string {
+	return `set -eu
 command -v bsdtar >/dev/null || exit 127
 IFS= read -r root || true
+IFS= read -r split || true
 a=` + importArchive + `
 s=` + importStaging + `
 rm -rf "$s" "$s.err"
@@ -59,7 +59,17 @@ if [ ! -d "$s/$root" ]; then
   echo "The archive has no folder $root." >&2
   exit 5
 fi
-cd "$s/$root"
+` + rest + `
+cd /
+rm -rf "$s"
+`
+}
+
+// serverScript takes the folder as the server's, leaves out what only made
+// sense on the old host, and moves the rest into the server directory. A
+// world under another level-name is renamed to world, which is the one the
+// game is told to open.
+var serverScript = unpacked(`cd "$s/$root"
 rm -rf logs crash-reports debug .avsys .workspace .cache
 rm -f ./*.sh ./*.bat ./*.cmd ./*.command ./*.ps1 ./*.pid
 find . -name session.lock -type f -delete
@@ -87,10 +97,41 @@ for e in .[!.]* ..?* *; do
     rm -rf "` + dataRoot + `/$e"
     mv -- "$e" ` + dataRoot + `/
   fi
-done
-cd /
-rm -rf "$s"
-`
+done`)
+
+// worldScript takes the folder as the server's world. The Nether and the End
+// are kept in it, as the game itself and single-player saves keep them, or
+// with "split" on the second line in folders of their own, as Paper and its
+// relatives do. They are found either way in the archive.
+var worldScript = unpacked(`w=` + dataRoot + `/world
+src="$s/$root"
+find "$src" -name session.lock -type f -delete
+name=${src##*/}
+parent=${src%/*}
+# What is in world already (datapacks added with the server) goes along.
+if [ -d "$w" ]; then
+  cp -a "$w/." "$src/"
+  rm -rf "$w"
+fi
+mv -- "$src" "$w"
+mkdir -p "$s"
+for pair in nether:DIM-1 the_end:DIM1; do
+  suffix=${pair%%:*}
+  dim=${pair#*:}
+  if [ "$root" != "" ] && [ -d "$parent/${name}_$suffix/$dim" ] && [ ! -e "$w/$dim" ]; then
+    mv -- "$parent/${name}_$suffix/$dim" "$w/$dim"
+  fi
+  if [ "$split" = split ] && [ -d "$w/$dim" ]; then
+    mkdir -p "` + dataRoot + `/world_$suffix"
+    mv -- "$w/$dim" "` + dataRoot + `/world_$suffix/$dim"
+  fi
+done`)
+
+// splitsDimensions reports whether a server's software keeps the Nether and
+// the End in folders of their own beside the world.
+func splitsDimensions(l avsysv1.Loader) bool {
+	return l == avsysv1.LoaderPaper || l == avsysv1.LoaderPurpur || l == avsysv1.LoaderFolia
+}
 
 // archiveRoot is the folder inside an archive that holds the server, as the
 // page found it: "" for the archive's top.
@@ -106,8 +147,9 @@ func archiveRoot(p string) (string, error) {
 }
 
 // importFiles unpacks an archive of a server's folder into a server that is
-// stopped and has no world yet. With ?wait=true it is for a server made a
-// moment ago: its volume is waited for.
+// stopped and has no world yet. With ?world=true the folder is a world, and
+// becomes the server's. With ?wait=true it is for a server made a moment
+// ago: its volume is waited for.
 func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	wait := r.URL.Query().Get("wait") == "true"
 	a, mc, err := s.serverMaybeNew(r, u, wait)
@@ -131,7 +173,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 		return errBusy
 	}
-	err = s.importInto(r, w, mc, root, op)
+	err = s.importInto(r, w, mc, root, r.URL.Query().Get("world") == "true", op)
 	s.finishUnsaved(r.Context(), a.Namespace, mc.Name, kindImport, err)
 	if err != nil {
 		return err
@@ -145,7 +187,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	return nil
 }
 
-func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation) error {
+func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, world bool, op *operation) error {
 	ctx := r.Context()
 	s.setOperation(mc.Namespace, op, "Uploading", 0)
 	ws, err := s.importWorkspace(ctx, mc, r.URL.Query().Get("wait") == "true")
@@ -195,10 +237,17 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		return err
 	}
 	defer session.Close()
-	session.Stdin = strings.NewReader(root + "\n")
+	script, split := serverScript, ""
+	if world {
+		script = worldScript
+		if splitsDimensions(mc.Spec.Loader) {
+			split = "split"
+		}
+	}
+	session.Stdin = strings.NewReader(root + "\n" + split + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
-	if err := session.Run(unpackScript); err != nil {
+	if err := session.Run(script); err != nil {
 		var exit *ssh.ExitError
 		if errors.As(err, &exit) && exit.ExitStatus() == 127 {
 			return backup.ErrOldWorkspace
