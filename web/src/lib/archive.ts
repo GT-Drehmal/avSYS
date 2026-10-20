@@ -106,7 +106,8 @@ async function readZip(file: File, want: (path: string, size: number) => boolean
     }
     p = extraEnd + commentLen;
     const isDir = path.endsWith("/");
-    const clean = isDir ? path.slice(0, -1) : path;
+    const clean = path.replace(/^(\.\/)+/, "").replace(/\/+$/, "");
+    if (!clean || clean === ".") continue;
     entries.push({ path: clean, size, dir: isDir });
     if (!isDir && want(clean, size)) wanted.push({ path: clean, method, packed, at });
   }
@@ -140,6 +141,13 @@ class Reader {
     }
   }
 
+  /** The next n bytes; at the end, an error unless there were none left. */
+  async exactly(n: number): Promise<Uint8Array> {
+    const got = await this.read(n);
+    if (got.length !== n) throw new ArchiveError("This archive is cut short.");
+    return got;
+  }
+
   /** The next n bytes, or fewer at the end. */
   async read(n: number): Promise<Uint8Array> {
     await this.fill(n);
@@ -157,12 +165,12 @@ class Reader {
     return out;
   }
 
-  /** Passes over n bytes without keeping them. */
+  /** Passes over n bytes without keeping them; at the end, an error. */
   async skip(n: number) {
     while (n > 0) {
       if (this.held === 0) {
         await this.fill(1);
-        if (this.held === 0) return;
+        if (this.held === 0) throw new ArchiveError("This archive is cut short.");
       }
       const c = this.chunks[0];
       const take = Math.min(c.length, n);
@@ -216,11 +224,13 @@ async function readTar(stream: ReadableStream<Uint8Array>, want: (path: string, 
   try {
     for (;;) {
       const h = await r.read(512);
-      if (h.length < 512 || h.every((b) => b === 0)) break;
+      // The end: two empty blocks, or for some tools none at all.
+      if (h.length === 0 || (h.length === 512 && h.every((b) => b === 0))) break;
+      if (h.length < 512) throw new ArchiveError("This archive is cut short.");
       const type = String.fromCharCode(h[156] || 0x30);
       let size = tarSize(h);
       if (type === "L" || type === "x" || type === "g") {
-        const data = await r.read(size);
+        const data = await r.exactly(size);
         await r.skip(Math.ceil(size / 512) * 512 - size);
         if (type === "L") longName = field(data, 0, data.length);
         else if (type === "x") extended = pax(data);
@@ -236,14 +246,14 @@ async function readTar(stream: ReadableStream<Uint8Array>, want: (path: string, 
       if (path && path !== ".") entries.push({ path, size: isDir ? 0 : size, dir: isDir });
       const dataLen = Math.ceil(size / 512) * 512;
       if ((type === "0" || type === "7") && path && want(path, size)) {
-        files.set(path, await r.read(size));
+        files.set(path, await r.exactly(size));
         await r.skip(dataLen - size);
       } else {
         await r.skip(dataLen);
       }
     }
-  } catch {
-    throw new ArchiveError("This archive is damaged or cut short.");
+  } catch (err) {
+    throw err instanceof ArchiveError ? err : new ArchiveError("This archive is damaged or cut short.");
   }
   return { entries, files };
 }

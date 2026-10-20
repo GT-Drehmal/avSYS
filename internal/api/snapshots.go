@@ -348,6 +348,8 @@ func unfinished(mc *avsysv1.MinecraftServer) error {
 		return errCreateIncomplete
 	case restoreUnfinished(mc):
 		return errRestoreIncomplete
+	case importUnfinished(mc):
+		return errImportIncomplete
 	}
 	return nil
 }

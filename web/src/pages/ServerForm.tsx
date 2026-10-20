@@ -267,7 +267,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
   // A world of one's own goes with a new server of a game version.
-  const mine = !source && v.kind === "game" ? v.myWorld : null;
+  const [usingMine, setUsingMine] = useState(false);
+  const mine = !source && v.kind === "game" && usingMine ? v.myWorld : null;
   // What is sent to be unpacked into the server once it is made.
   const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false } : mine ? { file: mine.file, root: mine.found.root, world: true } : null;
   const toUpload = v.uploads.length > 0 || !!v.packFile || !!toImport;
@@ -296,6 +297,16 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
   const archiveInput = useRef<HTMLInputElement>(null);
+  // Whether the form is still open: what was cut off by leaving it is not known to have failed.
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+    },
+    [],
+  );
+  // The archive read last: one read earlier that ends later is not used.
+  const reads = useRef(0);
   // What a long wait on Create is for, while there is one.
   const [stage, setStage] = useState<string | null>(null);
   const { sending, send, cancel } = useUpload();
@@ -337,7 +348,6 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     return i >= 0 && j >= 0 && i < j;
   };
   const worldTooNew = !!mine?.found.version && newer(mine.found.version, effective(v.version));
-  const [usingMine, setUsingMine] = useState(false);
   const [readingWorld, setReadingWorld] = useState(false);
   const worldInput = useRef<HTMLInputElement>(null);
 
@@ -358,8 +368,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       return;
     }
     setReadingWorld(true);
+    const read = ++reads.current;
     try {
       const w = await inspectWorld(file);
+      if (read !== reads.current) return;
       setValues((was) => ({
         ...was,
         myWorld: { file, found: w },
@@ -368,9 +380,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         storage: String(Math.max(Number(was.storage) || 10, Math.ceil((w.size * 1.5 + file.size) / GiB))),
       }));
     } catch (err) {
-      setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
+      if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
     } finally {
-      setReadingWorld(false);
+      if (read === reads.current) setReadingWorld(false);
     }
   };
 
@@ -382,8 +394,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       return;
     }
     setReading(true);
+    const read = ++reads.current;
     try {
       const f = await inspectServer(file);
+      if (read !== reads.current) return;
       const p = f.properties;
       setValues((was) => ({
         ...was,
@@ -406,9 +420,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       }));
       setNeedsLoader(false);
     } catch (err) {
-      setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
+      if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
     } finally {
-      setReading(false);
+      if (read === reads.current) setReading(false);
     }
   };
 
@@ -493,15 +507,21 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     };
   };
 
-  /** Sends the archive to a server just made, to be unpacked into it. It says what went wrong if it did not go. */
-  const importArchive = async (server: string): Promise<string | null> => {
+  /**
+   * Sends the archive to a server just made, to be unpacked into it. It says
+   * what went wrong if it did not go, and whether that is known for sure: an
+   * answer from the panel, or stopped here before it was all sent. A lost
+   * connection is not, as the panel goes on with what it was sent.
+   */
+  const importArchive = async (server: string): Promise<{ message: string; sure: boolean } | null> => {
     if (!toImport) return null;
     try {
       await send<Server>(toImport.file.name, `${serverPath(org, server)}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), wait: "true" })}`, toImport.file);
       return null;
     } catch (err) {
-      if (cancelled(err)) return "The upload was stopped.";
-      return err instanceof Error ? err.message : "The upload failed.";
+      if (cancelled(err)) return { message: "The upload was stopped.", sure: alive.current };
+      if (err instanceof ApiError && err.status >= 400 && err.code !== "error") return { message: err.message, sure: true };
+      return { message: err instanceof Error ? err.message : "The upload failed.", sure: false };
     }
   };
 
@@ -593,10 +613,18 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       // it is deleted again, and the form stays to try once more.
       if (toImport) {
         const failed = await importArchive(server.name);
+        // Left meanwhile: the server's page says how it went.
+        if (failed && !alive.current) return;
+        if (failed && !failed.sure) {
+          // It may have gone through: the server's page says how it is.
+          toast.error(`Lost touch with the panel while importing ${v.displayName || server.name}. Check its files before starting it.`);
+          navigate(`/o/${org}/s/${server.name}`);
+          return;
+        }
         if (failed) {
           await api.del(`${serverPath(org, server.name)}?snapshot=false`).catch(() => undefined);
           await qc.invalidateQueries({ queryKey: keys.servers(org) });
-          setError(`Could not import it. ${failed}`);
+          setError(`Could not import it. ${failed.message}`);
           setBusy(false);
           return;
         }
@@ -718,10 +746,28 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       ) : (
         <Section title="Software">
           <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
-            <button type="button" className={segment(v.kind === "game")} onClick={() => v.kind !== "game" && changeSoftware({ kind: "game" })}>
+            <button
+              type="button"
+              className={segment(v.kind === "game")}
+              onClick={() => {
+                if (v.kind === "game") return;
+                reads.current++;
+                setReading(false);
+                changeSoftware({ kind: "game" });
+              }}
+            >
               Game version
             </button>
-            <button type="button" className={segment(v.kind === "modpack")} onClick={() => v.kind !== "modpack" && changeSoftware({ kind: "modpack" })}>
+            <button
+              type="button"
+              className={segment(v.kind === "modpack")}
+              onClick={() => {
+                if (v.kind === "modpack") return;
+                reads.current++;
+                setReading(false);
+                changeSoftware({ kind: "modpack" });
+              }}
+            >
               Modpack
             </button>
             <button type="button" className={segment(importing)} onClick={() => !importing && changeSoftware({ kind: "import" })}>
@@ -930,10 +976,17 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         {!source && v.kind === "game" && (
           <>
             <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
-              <button type="button" className={segment(!usingMine)} onClick={() => {
+              <button
+                type="button"
+                className={segment(!usingMine)}
+                onClick={() => {
+                  // A world still being read is not used.
+                  reads.current++;
+                  setReadingWorld(false);
                   setUsingMine(false);
                   set("myWorld", null);
-                }}>
+                }}
+              >
                 New world
               </button>
               <button type="button" className={segment(usingMine)} onClick={() => setUsingMine(true)}>
