@@ -99,16 +99,18 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
 
   const archive = gzipSync(
     tar({
-      "MyServer/server.properties": "#Minecraft server properties\nmotd=The old one\ngamemode=1\ndifficulty=hard\nmax-players=40\nlevel-name=Drehmal\nserver-port=25599\n",
+      "MyServer/server.properties": "#Minecraft server properties\nmotd=The old one\ngamemode=1\ndifficulty=hard\nmax-players=40\nlevel-name=Drehmal\nserver-port=25599\nresource-pack=https\\://example.com/pack.zip\nrequire-resource-pack=true\nresource-pack-prompt={\"text\"\\:\"Our pack\"}\n",
       "MyServer/Drehmal/level.dat": levelDat("1.21.4"),
       "MyServer/paper-1.21.4-151.jar": "jar",
       "MyServer/plugins/WorldEdit.jar": "jar",
       "MyServer/plugins/Essentials.jar": "jar",
-      "MyServer/start.sh": "java -jar paper.jar",
+      "MyServer/start.sh": "#!/bin/sh\n# java -Xmx16G -jar paper.jar\njava -Xms1G -Xmx4G -jar paper.jar nogui\n",
+      "MyServer/ops.json": JSON.stringify([{ uuid: "853c80ef-3c37-49fd-aa49-938b674adae6", name: "jeb_", level: 4, bypassesPlayerLimit: false }]),
+      "MyServer/whitelist.json": JSON.stringify([{ uuid: "853c80ef-3c37-49fd-aa49-938b674adae6", name: "jeb_" }, { uuid: "069a79f4-44e9-4726-a5be-fca90e38aaf5", name: "Notch" }]),
     }),
   );
   await page.getByLabel("Server archive").setInputFiles({ name: "myserver.tar.gz", mimeType: "application/gzip", buffer: archive });
-  await expect(page.getByTestId("archive-summary")).toContainText('world "Drehmal" · 2 plugins');
+  await expect(page.getByTestId("archive-summary")).toContainText('world "Drehmal" · 2 plugins · 1 operator · 2 whitelisted');
 
   // What it ran, and how it was set up.
   await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ })).toHaveAttribute("aria-pressed", "true");
@@ -119,6 +121,8 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   await expect(page.getByLabel("Difficulty")).toHaveValue("hard");
   // It had no whitelist, so it stays open.
   await expect(page.getByLabel("Who can join")).toHaveValue("anyone");
+  // As much memory as its start script gave Java, and room beside it.
+  await expect(page.getByLabel("Memory (GB)")).toHaveValue("5.5");
   // Its world is there already: how one is made does not apply.
   await page.getByRole("button", { name: /World options and more/ }).click();
   await expect(page.getByLabel("Seed")).toBeDisabled();
@@ -140,6 +144,10 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   expect(spec).toMatchObject({ loader: "paper", version: "1.21.4", state: "Running" });
   expect(spec.properties).toMatchObject({ motd: "The old one", gamemode: "creative", difficulty: "hard", "max-players": "40" });
   expect(spec).not.toHaveProperty("autoWhitelist");
+  // Its operators and whitelist are listed with it, to change from the panel.
+  expect(spec).toMatchObject({ ops: ["jeb_"], whitelist: ["jeb_", "Notch"] });
+  expect(spec.resources.memory).toBe("5632Mi");
+  expect(spec.resourcePack).toMatchObject({ url: "https://example.com/pack.zip", enforce: true, prompt: '{"text":"Our pack"}' });
 });
 
 test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, org, api }) => {
@@ -154,7 +162,7 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
     "world/level.dat": levelDat("1.21.4"),
   });
   await page.getByLabel("Server archive").setInputFiles({ name: "fabric.zip", mimeType: "application/zip", buffer: archive });
-  await expect(page.getByTestId("archive-summary")).toContainText("1 mods");
+  await expect(page.getByTestId("archive-summary")).toContainText("1 mod");
   await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
   // Named after the file, as it is not in a folder.
