@@ -537,5 +537,5 @@ export interface NodeList {
   /** The node automatic placement would choose for the memory asked about. */
   automatic?: string;
   measuring?: boolean;
-  measured?: { at: string; failed?: string[] };
+  measured?: { at: string; failed?: string[]; error?: string };
 }

@@ -639,12 +639,13 @@ expect "a node can be kept from taking new servers" "$(call -o /dev/null -w '%{h
 expect "and says so" "$(call "$API/nodes" | field "[n['automatic'] for n in d['nodes'] if n['name'] == '$NODE']")" "[False]"
 call -X PATCH -d '{"automatic":true}' "$API/nodes/$NODE" >/dev/null
 expect "and let take them again" "$(call "$API/nodes" | field "[n['automatic'] for n in d['nodes'] if n['name'] == '$NODE']")" "[True]"
-for _ in $(seq 1 100); do
+# As long as the panel lets a measuring take, and a little more.
+for _ in $(seq 1 220); do
   [ "$(call "$API/nodes" | field "d['measuring']")" = False ] && break
   sleep 3
 done
 measured=$(call "$API/nodes")
-expect "every node that is up is measured" "$(echo "$measured" | field "(d['measuring'], d.get('measured', {}).get('failed', []))")" "(False, [])"
+expect "every node that is up is measured" "$(echo "$measured" | field "(d['measuring'], d.get('measured', {}).get('failed', []), d.get('measured', {}).get('error', ''))")" "(False, [], '')"
 expect "and has a speed" "$(echo "$measured" | field "all(n['score'] > 0 for n in d['nodes'] if n['ready'])")" True
 
 step "domains"

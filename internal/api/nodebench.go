@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,6 +42,8 @@ type nodeBench struct {
 
 type benchResult struct {
 	At time.Time `json:"at"`
+	// Error says why nothing could be measured.
+	Error string `json:"error,omitempty"`
 	// Failed are the nodes that could not be measured, which keep the score
 	// they had.
 	Failed []string `json:"failed,omitempty"`
@@ -67,8 +70,10 @@ func (s *Server) setNode(w http.ResponseWriter, r *http.Request, u *store.User) 
 		return errBadRequest("Say whether it takes new servers.")
 	}
 	node := &corev1.Node{}
-	if err := s.nodeReader().Get(r.Context(), client.ObjectKey{Name: r.PathValue("node")}, node); err != nil {
+	if err := s.nodeReader().Get(r.Context(), client.ObjectKey{Name: r.PathValue("node")}, node); apierrors.IsNotFound(err) {
 		return errNotFound
+	} else if err != nil {
+		return err
 	}
 	orig := node.DeepCopy()
 	if *in.Automatic {
@@ -105,12 +110,14 @@ func (s *Server) measureNodes(w http.ResponseWriter, r *http.Request, u *store.U
 		ctx, cancel := context.WithTimeout(context.Background(), benchTimeout+time.Minute)
 		defer cancel()
 		failed, err := s.benchNodes(ctx)
+		result := &benchResult{At: time.Now().UTC(), Failed: failed}
 		if err != nil {
 			s.Log.Warn("could not measure nodes", "error", err)
+			result.Error = err.Error()
 		}
 		s.bench.mu.Lock()
 		s.bench.running = false
-		s.bench.last = &benchResult{At: time.Now().UTC(), Failed: failed}
+		s.bench.last = result
 		s.bench.mu.Unlock()
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]any{"measuring": true})
@@ -131,9 +138,11 @@ func (s *Server) benchNodes(ctx context.Context) (failed []string, err error) {
 			nodes = append(nodes, n)
 		}
 	}
+	// What a measuring cut short by a restart left is removed first.
+	s.ReapBench(ctx)
 	id := make([]byte, 3)
 	_, _ = rand.Read(id)
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "avsys-bench-" + hex.EncodeToString(id)}}
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "avsys-bench-" + hex.EncodeToString(id), Labels: map[string]string{benchLabel: "true"}}}
 	if err := s.Client.Create(ctx, ns); err != nil {
 		return names(nodes), err
 	}
@@ -146,7 +155,7 @@ func (s *Server) benchNodes(ctx context.Context) (failed []string, err error) {
 	pods := map[string]string{}
 	for i, n := range nodes {
 		pod := benchPod(ns.Name, "bench-"+strconv.Itoa(i), n.Name)
-		if err := s.Client.Create(ctx, pod); err != nil {
+		if err := s.createBenchPod(ctx, pod); err != nil {
 			s.Log.Warn("could not start measuring a node", "node", n.Name, "error", err)
 			failed = append(failed, n.Name)
 			continue
@@ -186,6 +195,44 @@ func (s *Server) benchNodes(ctx context.Context) (failed []string, err error) {
 		}
 	}
 	return append(failed, nodeNames(left)...), nil
+}
+
+// benchLabel marks the namespaces nodes are measured in.
+const benchLabel = "avsys.dev/bench"
+
+// ReapBench removes the namespaces of measurings that are not running: ones
+// a panel that was stopped meanwhile left behind.
+func (s *Server) ReapBench(ctx context.Context) {
+	var list corev1.NamespaceList
+	if err := s.Client.List(ctx, &list, client.MatchingLabels{benchLabel: "true"}); err != nil {
+		s.Log.Warn("could not look for namespaces left from measuring nodes", "error", err)
+		return
+	}
+	for i := range list.Items {
+		if ns := &list.Items[i]; ns.DeletionTimestamp.IsZero() {
+			if err := s.Client.Delete(ctx, ns); err != nil && !apierrors.IsNotFound(err) {
+				s.Log.Warn("could not remove a namespace left from measuring nodes", "namespace", ns.Name, "error", err)
+			}
+		}
+	}
+}
+
+// createBenchPod creates a pod in a namespace made a moment ago, whose
+// default service account the cluster may not have made yet: it is tried
+// again for a little while.
+func (s *Server) createBenchPod(ctx context.Context, pod *corev1.Pod) error {
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		err := s.Client.Create(ctx, pod)
+		if err == nil || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func benchPod(namespace, name, node string) *corev1.Pod {

@@ -67,7 +67,8 @@ export function Nodes() {
       ) : (
         measured && (
           <p className="mb-4 text-xs text-muted" role="status">
-            Measured {ago(measured.at)}.{(measured.failed?.length ?? 0) > 0 && ` Could not measure ${measured.failed?.join(", ")}.`}
+            {measured.error ? `Could not measure: ${measured.error}` : `Measured ${ago(measured.at)}.`}
+            {(measured.failed?.length ?? 0) > 0 && ` Could not measure ${measured.failed?.join(", ")}.`}
           </p>
         )
       )}

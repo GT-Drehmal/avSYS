@@ -123,3 +123,24 @@ func TestBestRun(t *testing.T) {
 		}
 	}
 }
+
+// What a measuring cut short by a restart left behind is removed, and
+// nothing else.
+func TestReapingMeasurings(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	left := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "avsys-bench-abc123", Labels: map[string]string{benchLabel: "true"}}}
+	other := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "mc-alpha-other"}}
+	for _, ns := range []*corev1.Namespace{left, other} {
+		if err := p.srv.Client.Create(ctx, ns); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.srv.ReapBench(ctx)
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Name: left.Name}, &corev1.Namespace{}); err == nil {
+		t.Error("the namespace a measuring left is still there")
+	}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Name: other.Name}, &corev1.Namespace{}); err != nil {
+		t.Errorf("another namespace was removed: %v", err)
+	}
+}
