@@ -218,7 +218,8 @@ function softwareOf(entries: Entry[], history: string): { loader: Loader | null;
   m = jar(/^fabric-server-mc\.(.+)-loader\.(.+)-launcher\..+\.jar$/);
   if (m) return { loader: "fabric", version: m[1], loaderVersion: m[2] };
   if (has(".fabric") || tops.has("fabric-server-launch.jar") || has("libraries/net/fabricmc")) {
-    return { loader: "fabric", version: "", loaderVersion: match(/^libraries\/net\/fabricmc\/fabric-loader\/([^/]+)\//)?.[1] ?? "" };
+    // The game's own jar, which Fabric's launcher keeps by its version.
+    return { loader: "fabric", version: match(/^versions\/([^/]+)\/server-\1\.jar$/)?.[1] ?? "", loaderVersion: match(/^libraries\/net\/fabricmc\/fabric-loader\/([^/]+)\//)?.[1] ?? "" };
   }
   if (tops.has("quilt-server-launch.jar") || has("libraries/org/quiltmc")) {
     return { loader: "quilt", version: "", loaderVersion: match(/^libraries\/org\/quiltmc\/quilt-loader\/([^/]+)\//)?.[1] ?? "" };
@@ -348,9 +349,13 @@ class Nbt {
       case 6:
         this.p += 8;
         return;
-      case 7:
-        this.p += this.i32();
+      // The length is read before it is added: "this.p += this.i32()"
+      // would add it to where p was before the length.
+      case 7: {
+        const n = this.i32();
+        this.p += n;
         return;
+      }
       case 8:
         this.string();
         return;
@@ -367,12 +372,16 @@ class Nbt {
           this.string();
           this.skip(t);
         }
-      case 11:
-        this.p += 4 * this.i32();
+      case 11: {
+        const n = this.i32();
+        this.p += 4 * n;
         return;
-      case 12:
-        this.p += 8 * this.i32();
+      }
+      case 12: {
+        const n = this.i32();
+        this.p += 8 * n;
         return;
+      }
       default:
         throw new Error("bad NBT");
     }
