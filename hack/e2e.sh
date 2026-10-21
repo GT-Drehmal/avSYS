@@ -309,6 +309,14 @@ call -X DELETE "$API/me/minecraft-accounts/$ALT" >/dev/null
 for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" || break; sleep 1; done
 case "$(whitelisted)" in *jeb_*) fail "an alt unlinked stays on the whitelist" ;; *) echo "ok: an alt unlinked is taken off" ;; esac
 set_spec '{"spec":{"autoWhitelist":"off","whitelistMembers":null}}'
+# One typed in its settings is put on at once, and taken off when it is
+# taken out: the image only ever adds to the list.
+set_spec '{"spec":{"whitelist":["Dinnerbone"]}}'
+for _ in $(seq 1 20); do whitelisted | grep -qi "Dinnerbone" && break; sleep 1; done
+expect "a player typed in the settings is put on the whitelist" "$(whitelisted)" "Dinnerbone"
+set_spec '{"spec":{"whitelist":null}}'
+for _ in $(seq 1 20); do whitelisted | grep -qi "Dinnerbone" || break; sleep 1; done
+case "$(whitelisted)" in *Dinnerbone*) fail "a player taken out of the settings stays on the whitelist" ;; *) echo "ok: and taken off when taken out" ;; esac
 if [ -n "$linked_here" ]; then call -X DELETE "$API/me/minecraft" >/dev/null; fi
 
 step "files"
@@ -561,6 +569,7 @@ with tarfile.open(sys.argv[1] + "/import.tar.gz", "w:gz") as t:
     add(t, "Old/server.properties", b"motd=From elsewhere\nlevel-name=Drehmal\nserver-port=25599\nserver-ip=10.0.0.5\nenable-rcon=true\n")
     add(t, "Old/Drehmal/level.dat"); add(t, "Old/Drehmal/session.lock"); add(t, "Old/Drehmal_nether/level.dat")
     add(t, "Old/plugins/Foo.jar"); add(t, "Old/logs/2026-01-02-1.log.gz", gzip.compress(b"[12:00:00] [Server thread/INFO]: Done (1.0s)!\n")); add(t, "Old/crash-reports/crash-2026-01-02_12.00.00-server.txt", b"---- Minecraft Crash Report ----\n"); add(t, "Old/start.sh")
+    add(t, "Old/ops.json", b'[{"uuid":"853c80ef-3c37-49fd-aa49-938b674adae6","name":"jeb_","level":4}]'); add(t, "Old/whitelist.json", b"[]")
 with tarfile.open(sys.argv[1] + "/escape.tar", "w") as t:
     add(t, "Old/server.properties"); add(t, "../../escaped.txt")
 with tarfile.open(sys.argv[1] + "/save.tar.gz", "w:gz") as t:
@@ -573,7 +582,7 @@ refused=$(call -X PUT --data-binary "@$WORK/escape.tar" "$IMPORTED/import?root=O
 expect "an archive with a path out of its folder is refused" "$(echo "$refused" | field "d['message']")" "Could not unpack the archive"
 expect "and nothing of it is kept" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/server.properties")" 404
 expect "nor is the game started on what an import left" "$(call -X POST "$IMPORTED/start" | field "d['code']")" import_incomplete
-imported=$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old&wait=true")
+imported=$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old&players=listed&wait=true")
 expect "a server's folder is imported" "$(echo "$imported" | field "d['name']")" imported
 listing=$(call "$IMPORTED/files?path=/" | field "sorted(f['name'] for f in d['entries'])")
 expect "its world is the one the game opens" "$listing" "'world', 'world_nether'"
@@ -582,6 +591,9 @@ oldlogs=$(call "$IMPORTED/logs" | field "sorted((l['name'], l['kind']) for l in 
 expect "its earlier logs and crash reports are read in the console" "$oldlogs" "[('crash-reports/crash-2026-01-02_12.00.00-server.txt', 'crash'), ('logs/2026-01-02-1.log.gz', 'log')]"
 expect "and read unpacked" "$(call "$IMPORTED/logs/file?name=logs/2026-01-02-1.log.gz" | field "d['lines'][0]['text']")" "Done (1.0s)!"
 case "$listing" in *start.sh*|*Drehmal*|*.avsys/import*) fail "what belonged to the old host was kept: $listing" ;; esac
+# Its operators and whitelist were read into its settings, which put them
+# back: one taken out there is not left in the files.
+expect "its lists of players are left to its settings" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/ops.json") $(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/whitelist.json")" "404 404"
 expect "a world left open there is not locked here" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/world/session.lock")" 404
 props=$(call "$IMPORTED/files/content?path=/server.properties")
 expect "its settings are kept" "$props" "motd=From elsewhere"

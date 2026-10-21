@@ -65,13 +65,14 @@ var kept = []string{".avsys", ".workspace", "lost+found"}
 // came out of it, checks that the folder named on the first line of stdin is
 // there, and empties the server directory but for what is kept. Then rest
 // runs, and the staging folder is removed. The next lines of stdin say how:
-// "split" and "listed", or nothing.
+// "split", "listed" and "players", or nothing.
 func unpacked(rest string) string {
 	return `set -eu
 command -v bsdtar >/dev/null || exit 127
 IFS= read -r root || true
 IFS= read -r split || true
 IFS= read -r listed || true
+IFS= read -r players || true
 a=` + importArchive + `
 s=` + importStaging + `
 rm -rf "$s" "$s.err"
@@ -124,6 +125,7 @@ case $level in
     ;;
 esac
 if [ "$listed" = listed ]; then rm -f mods/*.jar plugins/*.jar world/datapacks/*.zip datapacks/*.zip; fi
+if [ "$players" = players ]; then rm -f ops.json whitelist.json; fi
 if [ -f server.properties ]; then
   sed -i -E '/^(server-ip|server-port|query\.port|enable-query|enable-rcon|rcon\.port|rcon\.password|level-name)=/d' server.properties
 fi
@@ -326,7 +328,14 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	if r.URL.Query().Get("content") == "listed" {
 		listed = "listed"
 	}
-	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n")
+	// Its operators and whitelist are in the server's settings, which put
+	// them back when it starts: a player taken out there is not left in
+	// the files.
+	players := ""
+	if r.URL.Query().Get("players") == "listed" {
+		players = "players"
+	}
+	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + players + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 	if err := session.Run(script); err != nil {

@@ -623,7 +623,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const importArchive = async (server: string): Promise<{ message: string; sure: boolean } | null> => {
     if (!toImport) return null;
     try {
-      await send<Server>(toImport.file.name, `${serverPath(org, server)}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), wait: "true" })}`, toImport.file);
+      await send<Server>(toImport.file.name, `${serverPath(org, server)}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), wait: "true" })}`, toImport.file);
       return null;
     } catch (err) {
       if (cancelled(err)) return { message: "The upload was stopped.", sure: alive.current };

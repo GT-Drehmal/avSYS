@@ -22,6 +22,9 @@ import (
 // accounts have two.
 var minecraftNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{2,16}$`)
 
+// A player's UUID, which the image also takes in place of a name.
+var playerUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$`)
+
 // minecraftProfile asks Mojang which account a name belongs to now.
 func (s *Server) minecraftProfile(ctx context.Context, name string) (*store.MinecraftAccount, error) {
 	if !minecraftNamePattern.MatchString(name) {
@@ -147,8 +150,7 @@ type roleList struct {
 	from func(*avsysv1.MinecraftServerSpec) store.Role
 	// picks are members put on it, or left off it, one by one.
 	picks func(*avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks
-	// kept is who is on it by the server's own settings, whom the panel
-	// never takes off.
+	// kept is who is on it by the server's own settings.
 	kept func(*avsysv1.MinecraftServerSpec) []string
 }
 
@@ -265,25 +267,42 @@ func splitNames(s string) []string {
 	return out
 }
 
-// opChanges is what to do to get from the operators the panel has made on a
-// server to the ones it should have. kept are operators set by hand in the
-// server's settings, which are never taken off here.
-func opChanges(made, wanted, kept []string) (add, remove []string) {
-	has := func(list []string, name string) bool {
-		for _, n := range list {
-			if strings.EqualFold(n, name) {
-				return true
-			}
+// withKept is wanted with the names set by hand in a server's settings
+// added. The image puts those on its lists when the server starts, and never
+// takes one off: the panel notes them as its own, so that one taken out of
+// the settings is taken off in game too. Anything there that is not a
+// player's name, such as a UUID, is left to the image.
+func withKept(wanted, kept []string) []string {
+	out := append([]string{}, wanted...)
+	for _, name := range kept {
+		if minecraftNamePattern.MatchString(name) && !hasName(out, name) {
+			out = append(out, name)
 		}
-		return false
 	}
+	sort.Strings(out)
+	return out
+}
+
+// hasName is whether a list has a player, whose names go regardless of case.
+func hasName(list []string, name string) bool {
+	for _, n := range list {
+		if strings.EqualFold(n, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// opChanges is what to do to get from the players the panel has put on a
+// list on a server to the ones it should have.
+func opChanges(made, wanted []string) (add, remove []string) {
 	for _, name := range wanted {
-		if !has(made, name) {
+		if !hasName(made, name) {
 			add = append(add, name)
 		}
 	}
 	for _, name := range made {
-		if !has(wanted, name) && !has(kept, name) {
+		if !hasName(wanted, name) {
 			remove = append(remove, name)
 		}
 	}
@@ -336,8 +355,8 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	var failed error
 	for _, list := range roleLists {
 		made := splitNames(fresh.Annotations[list.note])
-		wanted := wantedFrom(list.from(&fresh.Spec), list.picks(&fresh.Spec), members)
-		add, remove := opChanges(made, wanted, list.kept(&fresh.Spec))
+		wanted := withKept(wantedFrom(list.from(&fresh.Spec), list.picks(&fresh.Spec), members), list.kept(&fresh.Spec))
+		add, remove := opChanges(made, wanted)
 		if len(add) == 0 && len(remove) == 0 {
 			continue
 		}
