@@ -569,7 +569,8 @@ with tarfile.open(sys.argv[1] + "/import.tar.gz", "w:gz") as t:
     add(t, "Old/server.properties", b"motd=From elsewhere\nlevel-name=Drehmal\nserver-port=25599\nserver-ip=10.0.0.5\nenable-rcon=true\n")
     add(t, "Old/Drehmal/level.dat"); add(t, "Old/Drehmal/session.lock"); add(t, "Old/Drehmal_nether/level.dat")
     add(t, "Old/plugins/Foo.jar"); add(t, "Old/logs/2026-01-02-1.log.gz", gzip.compress(b"[12:00:00] [Server thread/INFO]: Done (1.0s)!\n")); add(t, "Old/crash-reports/crash-2026-01-02_12.00.00-server.txt", b"---- Minecraft Crash Report ----\n"); add(t, "Old/start.sh")
-    add(t, "Old/ops.json", b'[{"uuid":"853c80ef-3c37-49fd-aa49-938b674adae6","name":"jeb_","level":4}]'); add(t, "Old/whitelist.json", b"[]")
+    add(t, "Old/ops.json", b'[{"uuid":"853c80ef-3c37-49fd-aa49-938b674adae6","name":"jeb_","level":2,"bypassesPlayerLimit":false}]')
+    add(t, "Old/whitelist.json", b'[{"uuid":"069a79f4-44e9-4726-a5be-fca90e38aaf5","name":"Notch"}]')
 with tarfile.open(sys.argv[1] + "/escape.tar", "w") as t:
     add(t, "Old/server.properties"); add(t, "../../escaped.txt")
 with tarfile.open(sys.argv[1] + "/save.tar.gz", "w:gz") as t:
@@ -577,7 +578,7 @@ with tarfile.open(sys.argv[1] + "/save.tar.gz", "w:gz") as t:
     add(t, "saves/My World/region/r.0.0.mca"); add(t, "saves/My World/DIM-1/region/r.0.0.mca")
 PY
 IMPORTED=$API/orgs/$ORG/servers/imported
-call -d '{"name":"imported","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
+call -d '{"name":"imported","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","ops":["jeb_"],"resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
 refused=$(call -X PUT --data-binary "@$WORK/escape.tar" "$IMPORTED/import?root=Old&wait=true")
 expect "an archive with a path out of its folder is refused" "$(echo "$refused" | field "d['message']")" "Could not unpack the archive"
 expect "and nothing of it is kept" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/server.properties")" 404
@@ -591,9 +592,10 @@ oldlogs=$(call "$IMPORTED/logs" | field "sorted((l['name'], l['kind']) for l in 
 expect "its earlier logs and crash reports are read in the console" "$oldlogs" "[('crash-reports/crash-2026-01-02_12.00.00-server.txt', 'crash'), ('logs/2026-01-02-1.log.gz', 'log')]"
 expect "and read unpacked" "$(call "$IMPORTED/logs/file?name=logs/2026-01-02-1.log.gz" | field "d['lines'][0]['text']")" "Done (1.0s)!"
 case "$listing" in *start.sh*|*Drehmal*|*.avsys/import*) fail "what belonged to the old host was kept: $listing" ;; esac
-# Its operators and whitelist were read into its settings, which put them
-# back: one taken out there is not left in the files.
-expect "its lists of players are left to its settings" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/ops.json") $(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/whitelist.json")" "404 404"
+# Its operators and whitelist were read into its settings, and changed
+# there: one kept keeps their level, one taken out is gone from the files.
+expect "an operator kept keeps their level" "$(call "$IMPORTED/files/content?path=/ops.json" | tr -d ' \n')" '"level":2'
+case "$(call "$IMPORTED/files/content?path=/whitelist.json")" in *Notch*) fail "a player taken out of the whitelist was kept in its file" ;; *) echo "ok: a player taken out is gone from its file" ;; esac
 expect "a world left open there is not locked here" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/world/session.lock")" 404
 props=$(call "$IMPORTED/files/content?path=/server.properties")
 expect "its settings are kept" "$props" "motd=From elsewhere"

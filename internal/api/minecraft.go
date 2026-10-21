@@ -22,6 +22,12 @@ import (
 // accounts have two.
 var minecraftNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{2,16}$`)
 
+// listedNamePattern is a player's name as a server's lists take it: a Java
+// account's, or a Bedrock one's as Floodgate shows it, behind a prefix such as
+// ".". It is safe to put in a command: no spaces, and no "@", which would make
+// it a selector such as @a.
+var listedNamePattern = regexp.MustCompile(`^[.*!~+-]?[A-Za-z0-9_]{2,16}$`)
+
 // A player's UUID, which the image also takes in place of a name.
 var playerUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$`)
 
@@ -260,7 +266,7 @@ func wantedOps(spec *avsysv1.MinecraftServerSpec, members []store.Member) []stri
 func splitNames(s string) []string {
 	var out []string
 	for _, name := range strings.Split(s, ",") {
-		if name = strings.TrimSpace(name); minecraftNamePattern.MatchString(name) {
+		if name = strings.TrimSpace(name); listedNamePattern.MatchString(name) {
 			out = append(out, name)
 		}
 	}
@@ -275,7 +281,7 @@ func splitNames(s string) []string {
 func withKept(wanted, kept []string) []string {
 	out := append([]string{}, wanted...)
 	for _, name := range kept {
-		if minecraftNamePattern.MatchString(name) && !hasName(out, name) {
+		if listedNamePattern.MatchString(name) && !hasName(out, name) {
 			out = append(out, name)
 		}
 	}

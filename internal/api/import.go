@@ -3,8 +3,11 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
 	"path"
 	"slices"
 	"strings"
@@ -65,14 +68,13 @@ var kept = []string{".avsys", ".workspace", "lost+found"}
 // came out of it, checks that the folder named on the first line of stdin is
 // there, and empties the server directory but for what is kept. Then rest
 // runs, and the staging folder is removed. The next lines of stdin say how:
-// "split", "listed" and "players", or nothing.
+// "split" and "listed", or nothing.
 func unpacked(rest string) string {
 	return `set -eu
 command -v bsdtar >/dev/null || exit 127
 IFS= read -r root || true
 IFS= read -r split || true
 IFS= read -r listed || true
-IFS= read -r players || true
 a=` + importArchive + `
 s=` + importStaging + `
 rm -rf "$s" "$s.err"
@@ -125,7 +127,6 @@ case $level in
     ;;
 esac
 if [ "$listed" = listed ]; then rm -f mods/*.jar plugins/*.jar world/datapacks/*.zip datapacks/*.zip; fi
-if [ "$players" = players ]; then rm -f ops.json whitelist.json; fi
 if [ -f server.properties ]; then
   sed -i -E '/^(server-ip|server-port|query\.port|enable-query|enable-rcon|rcon\.port|rcon\.password|level-name)=/d' server.properties
 fi
@@ -328,14 +329,7 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	if r.URL.Query().Get("content") == "listed" {
 		listed = "listed"
 	}
-	// Its operators and whitelist are in the server's settings, which put
-	// them back when it starts: a player taken out there is not left in
-	// the files.
-	players := ""
-	if r.URL.Query().Get("players") == "listed" {
-		players = "players"
-	}
-	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + players + "\n")
+	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 	if err := session.Run(script); err != nil {
@@ -349,8 +343,74 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 		return errBadRequest("Could not unpack the archive: %s", strings.TrimPrefix(why, "bsdtar: "))
 	}
+	// Its operators and whitelist were read into the server's settings, and
+	// may have been changed there before it was made: a player taken out is
+	// taken out of its files too, and those kept keep what the files say of
+	// them, such as an operator's level.
+	if r.URL.Query().Get("players") == "listed" {
+		for file, names := range map[string][]string{"ops.json": mc.Spec.Ops, "whitelist.json": mc.Spec.Whitelist} {
+			if err := keepListed(sc, path.Join(dataRoot, file), names); err != nil {
+				return fileError(err)
+			}
+		}
+	}
 	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
 	return s.markImporting(ctx, key, false)
+}
+
+// keepListed leaves in a list of players the game keeps, such as ops.json,
+// only the players named, by name or UUID. Each keeps its entry as it was.
+// A file that cannot be read as such a list goes: the names put it back.
+func keepListed(sc *sftp.Client, file string, names []string) error {
+	f, err := sc.Open(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 4<<20))
+	f.Close()
+	if err != nil {
+		return err
+	}
+	var entries []map[string]any
+	if json.Unmarshal(data, &entries) != nil {
+		return sc.Remove(file)
+	}
+	named := func(e map[string]any) bool {
+		name, _ := e["name"].(string)
+		uuid, _ := e["uuid"].(string)
+		for _, n := range names {
+			if (name != "" && strings.EqualFold(n, name)) || (uuid != "" && strings.EqualFold(strings.ReplaceAll(n, "-", ""), strings.ReplaceAll(uuid, "-", ""))) {
+				return true
+			}
+		}
+		return false
+	}
+	kept := slices.DeleteFunc(slices.Clone(entries), func(e map[string]any) bool { return !named(e) })
+	if len(kept) == len(entries) {
+		return nil
+	}
+	out, err := json.MarshalIndent(kept, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := file + ".avsys-tmp"
+	w, err := sc.Create(tmp)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(out)
+	if cerr := w.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = sc.PosixRename(tmp, file)
+	}
+	if err != nil {
+		_ = sc.Remove(tmp)
+	}
+	return err
 }
 
 // markImporting sets or clears the mark of an import on a server.

@@ -314,7 +314,9 @@ func TestWhitelistByRole(t *testing.T) {
 func TestPlayerListNames(t *testing.T) {
 	p := newPanel(t)
 	for list, want := range map[string]int{
-		`["Steve","jeb_"]`:                         200,
+		`[".BedrockGuy","*Steve"]`: 200,
+		`["@a"]`:                   400,
+		`["Steve","jeb_"]`:         200,
 		`["069a79f4-44e9-4726-a5be-fca90e38aaf5"]`: 200,
 		`["069a79f444e94726a5befca90e38aaf5"]`:     200,
 		`["Steve\nstop"]`:                          400,

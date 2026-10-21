@@ -247,7 +247,7 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 			return errBadRequest("A list of players can have at most 1000.")
 		}
 		for _, name := range list {
-			if !minecraftNamePattern.MatchString(name) && !playerUUIDPattern.MatchString(name) {
+			if !listedNamePattern.MatchString(name) && !playerUUIDPattern.MatchString(name) {
 				return errBadRequest("%q is not a player's name.", name)
 			}
 		}
