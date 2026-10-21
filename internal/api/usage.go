@@ -25,15 +25,17 @@ const (
 	usageKept  = 6 * time.Hour
 )
 
-// usageSample is what a server's game was using at one moment.
+// usageSample is what a server's game was using at one moment. CPU and
+// memory are nil where the cluster does not say: players are known all
+// the same.
 type usageSample struct {
 	At time.Time `json:"t"`
 	// CPU is in thousandths of a core.
-	CPU int64 `json:"cpu"`
+	CPU *int64 `json:"cpu,omitempty"`
 	// Memory is in bytes: what the game holds, not counting what the
 	// system could take back from it.
-	Memory  int64 `json:"memory"`
-	Players int32 `json:"players"`
+	Memory  *int64 `json:"memory,omitempty"`
+	Players int32  `json:"players"`
 }
 
 // usage keeps the samples of each server, by namespace/name.
@@ -164,17 +166,44 @@ func (s *Server) RunUsage(ctx context.Context) {
 }
 
 func (s *Server) usageTick(ctx context.Context, now time.Time) {
-	if s.Kube == nil {
+	var servers avsysv1.MinecraftServerList
+	if err := s.Client.List(ctx, &servers); err != nil {
 		return
+	}
+	raw := s.podMetrics(ctx, now)
+	if err := s.noteUsage(raw, servers.Items, now); err != nil {
+		s.Log.Warn("could not read what servers are using", "error", err)
+		s.usage.setNodes(nil)
+		return
+	}
+	// What nodes use is shown only as it is now: not known, it is not
+	// shown, rather than an old figure.
+	if raw == nil {
+		s.usage.setNodes(nil)
+		return
+	}
+	s.usage.setAvailable(true, now)
+	nodes, err := s.nodeMetrics(ctx)
+	if err != nil {
+		s.Log.Warn("could not read what nodes are using", "error", err)
+	}
+	s.usage.setNodes(nodes)
+}
+
+// podMetrics asks the metrics API what the panel's own pods are using: nil
+// where the cluster does not say.
+func (s *Server) podMetrics(ctx context.Context, now time.Time) []byte {
+	if s.Kube == nil {
+		return nil
 	}
 	// A cluster that had no metrics API is asked again every few minutes,
 	// for one installed meanwhile.
 	if available, checked := s.usage.state(); !available && !checked.IsZero() && now.Sub(checked) < 5*time.Minute {
-		return
+		return nil
 	}
 	rest := s.Kube.Discovery().RESTClient()
 	if rest == nil {
-		return
+		return nil
 	}
 	// The panel's own pods only, not every pod in the cluster.
 	raw, err := rest.Get().AbsPath("/apis/metrics.k8s.io/v1beta1/pods").Param("labelSelector", "app.kubernetes.io/managed-by=avsys").Do(ctx).Raw()
@@ -190,33 +219,18 @@ func (s *Server) usageTick(ctx context.Context, now time.Time) {
 		} else {
 			s.Log.Warn("could not read what servers are using", "error", err)
 		}
-		s.usage.setNodes(nil)
-		return
+		return nil
 	}
-	var servers avsysv1.MinecraftServerList
-	if err := s.Client.List(ctx, &servers); err != nil {
-		return
-	}
-	if err := s.noteUsage(raw, servers.Items, now); err != nil {
-		s.Log.Warn("could not read what servers are using", "error", err)
-		return
-	}
-	s.usage.setAvailable(true, now)
-	// What nodes use is shown only as it is now: not known, it is not
-	// shown, rather than an old figure.
-	raw, err = rest.Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").Do(ctx).Raw()
+	return raw
+}
+
+// nodeMetrics asks the metrics API what each node is using in all.
+func (s *Server) nodeMetrics(ctx context.Context) (map[string]nodeInUse, error) {
+	raw, err := s.Kube.Discovery().RESTClient().Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").Do(ctx).Raw()
 	if err != nil {
-		s.Log.Warn("could not read what nodes are using", "error", err)
-		s.usage.setNodes(nil)
-		return
+		return nil, err
 	}
-	nodes, err := nodesInUse(raw)
-	if err != nil {
-		s.Log.Warn("could not read what nodes are using", "error", err)
-		s.usage.setNodes(nil)
-		return
-	}
-	s.usage.setNodes(nodes)
+	return nodesInUse(raw)
 }
 
 // nodesInUse reads the metrics API's list of nodes.
@@ -240,44 +254,54 @@ func nodesInUse(raw []byte) (map[string]nodeInUse, error) {
 	return nodes, nil
 }
 
-// noteUsage notes, from the metrics API's list of pods, what each of these
-// servers' games is using, and lets go of what was noted of servers that
-// are gone.
+// noteUsage notes what each of these servers' games is using, from the
+// metrics API's list of pods where there is one, and how many players are
+// on each that runs. It lets go of what was noted of servers that are gone.
 func (s *Server) noteUsage(raw []byte, servers []avsysv1.MinecraftServer, now time.Time) error {
-	var list podMetrics
-	if err := json.Unmarshal(raw, &list); err != nil {
-		return err
+	type use struct {
+		at          time.Time
+		cpu, memory int64
 	}
-	known := map[string]*avsysv1.MinecraftServer{}
-	for i := range servers {
-		mc := &servers[i]
-		known[mc.Namespace+"/"+mc.Name] = mc
-	}
-	for _, pod := range list.Items {
-		key := pod.Metadata.Namespace + "/" + pod.Metadata.Name
-		mc := known[key]
-		if mc == nil || !strings.HasPrefix(pod.Metadata.Namespace, s.Config.NamespacePrefix) {
-			continue
+	used := map[string]use{}
+	if raw != nil {
+		var list podMetrics
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return err
 		}
-		for _, c := range pod.Containers {
-			// The game's own: the workspace beside it is the panel's.
-			if c.Name != controller.MinecraftContainer {
+		for _, pod := range list.Items {
+			if !strings.HasPrefix(pod.Metadata.Namespace, s.Config.NamespacePrefix) {
 				continue
 			}
-			cpu, memory := quantityOf(c.Usage["cpu"]), quantityOf(c.Usage["memory"])
-			sample := usageSample{At: pod.Timestamp, CPU: cpu.MilliValue(), Memory: memory.Value()}
-			if sample.At.IsZero() {
-				sample.At = now
+			for _, c := range pod.Containers {
+				// The game's own: the workspace beside it is the panel's.
+				if c.Name != controller.MinecraftContainer {
+					continue
+				}
+				cpu, memory := quantityOf(c.Usage["cpu"]), quantityOf(c.Usage["memory"])
+				used[pod.Metadata.Namespace+"/"+pod.Metadata.Name] = use{at: pod.Timestamp, cpu: cpu.MilliValue(), memory: memory.Value()}
 			}
-			if p := mc.Status.Players; p != nil {
-				sample.Players = p.Online
-			}
-			s.usage.add(key, mc.UID, sample)
 		}
 	}
 	keep := map[string]types.UID{}
-	for key, mc := range known {
+	for i := range servers {
+		mc := &servers[i]
+		key := mc.Namespace + "/" + mc.Name
 		keep[key] = mc.UID
+		u, measured := used[key]
+		if !measured && mc.Status.Phase != avsysv1.PhaseRunning {
+			continue
+		}
+		sample := usageSample{At: now}
+		if measured {
+			sample.CPU, sample.Memory = &u.cpu, &u.memory
+			if !u.at.IsZero() {
+				sample.At = u.at
+			}
+		}
+		if p := mc.Status.Players; p != nil {
+			sample.Players = p.Online
+		}
+		s.usage.add(key, mc.UID, sample)
 	}
 	s.usage.keep(keep, now)
 	return nil
@@ -293,8 +317,8 @@ func quantityOf(s string) resource.Quantity {
 
 // usageView is what a server's page draws its use of memory and CPU from.
 type usageView struct {
-	// Available is false where the cluster has no metrics API: nothing is
-	// known of what servers use.
+	// Available is false where the cluster has no metrics API: the
+	// samples have players alone.
 	Available bool `json:"available"`
 	// Limit is the memory the game may use, in bytes.
 	Limit   int64         `json:"limit"`

@@ -26,15 +26,34 @@ test("memory, CPU and players are drawn over the last hours, memory against what
   await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toHaveAttribute("aria-label", "Players: 3 now, 3 at most");
 });
 
-test("a cluster that does not report usage, or a server that has not run, says so", async ({ page }) => {
-  await usage(page, { available: false, limit: 4 * gib, every: 30, samples: [] });
-  await page.goto("/o/friends/s/survival/usage");
-  await expect(page.getByText("This cluster does not report what servers use.")).toBeVisible();
-  await page.unrouteAll({ behavior: "wait" });
+test("a server that has not run says so", async ({ page }) => {
   await usage(page, { available: true, limit: 4 * gib, every: 30, samples: [] });
-  await page.reload();
+  await page.goto("/o/friends/s/survival/usage");
   await expect(page.getByText("Usage shows here while the server runs.")).toBeVisible();
   await expect(page.getByRole("img")).toHaveCount(0);
+});
+
+test("a cluster that does not report memory and CPU still shows players", async ({ page }) => {
+  const start = Date.now() - 3600_000;
+  const samples = Array.from({ length: 120 }, (_, i) => ({ t: new Date(start + i * 30_000).toISOString(), players: i < 60 ? 2 : 5 }));
+  await usage(page, { available: false, limit: 4 * gib, every: 30, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  await expect(page.getByText("This cluster does not report memory and CPU.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toHaveAttribute("aria-label", "Players: 5 now, 5 at most");
+  await expect(page.getByRole("region", { name: "Memory" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "CPU" })).toHaveCount(0);
+});
+
+test("memory and CPU start where the cluster began to report them, on the same hours as players", async ({ page }) => {
+  const start = Date.now() - 3600_000;
+  // The first half hour before metrics were there: players alone.
+  const samples = Array.from({ length: 120 }, (_, i) => ({ t: new Date(start + i * 30_000).toISOString(), players: 1, ...(i >= 60 && { cpu: 500, memory: 2 * gib }) }));
+  await usage(page, { available: true, limit: 4 * gib, every: 30, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  await expect(page.getByRole("region", { name: "CPU" }).getByRole("img")).toHaveAttribute("aria-label", "CPU: 0.50 cores now, 0.50 cores at most");
+  // Drawn from halfway across, not stretched over the whole chart.
+  const line = page.getByRole("region", { name: "CPU" }).locator("path").nth(1);
+  await expect.poll(async () => Number(((await line.getAttribute("d")) ?? "").match(/^M([\d.]+),/)?.[1])).toBeGreaterThan(290);
 });
 
 test("a time the server was not running is left as a gap", async ({ page }) => {
