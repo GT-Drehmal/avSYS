@@ -35,7 +35,8 @@ export function Usage() {
     );
   }
   if (usage.isError) return <Empty title="Could not load usage">{usage.error.message}</Empty>;
-  const { available, limit, every, samples } = usage.data;
+  const { available, limit, every } = usage.data;
+  const samples = usage.data.samples ?? [];
   if (!available) return <Empty title="Usage is not known">This cluster does not report what servers use.</Empty>;
   if (samples.length < 2) return <Empty title="Nothing yet">Usage shows here while the server runs.</Empty>;
   const cores = (m: number) => `${(m / 1000).toFixed(m < 10_000 ? 2 : 1)} cores`;
@@ -75,6 +76,8 @@ interface ChartProps {
 function Chart({ title, samples, every, value, format, limit, whole }: ChartProps) {
   const values = samples.map(value);
   const now = values[values.length - 1];
+  // Not running now: its last figure is from when it last ran.
+  const when = Date.now() - new Date(samples[samples.length - 1].t).getTime() > every * 3000 ? "when it last ran" : "now";
   const peak = Math.max(...values);
   const top = Math.max(limit ?? 0, peak, whole ? 1 : 0) * 1.1 || 1;
   const start = new Date(samples[0].t).getTime();
@@ -97,11 +100,11 @@ function Chart({ title, samples, every, value, format, limit, whole }: ChartProp
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="text-[13px] font-medium">{title}</h2>
         <p className="text-xs text-muted">
-          <span className="text-fg">{format(now)}</span> now · {format(peak)} at most
+          <span className="text-fg">{format(now)}</span> {when} · {format(peak)} at most
           {limit ? ` · ${format(limit)} allowed` : ""}
         </p>
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-28 w-full rounded-md border border-line bg-surface" role="img" aria-label={`${title}: ${format(now)} now, ${format(peak)} at most`}>
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-28 w-full rounded-md border border-line bg-surface" role="img" aria-label={`${title}: ${format(now)} ${when}, ${format(peak)} at most`}>
         <path d={area} className="fill-accent/10" />
         <path d={line} className="fill-none stroke-accent" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
         {!!limit && <line x1={0} x2={width} y1={y(limit)} y2={y(limit)} className="stroke-warn" strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />}
