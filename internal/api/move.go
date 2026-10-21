@@ -186,17 +186,17 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	}
 	if err := s.waitRestarted(ctx, key, stamp, stopWait); err != nil {
 		restart()
-		return nil, fmt.Errorf("the server did not stop, so it was not moved: %w", err)
+		return nil, failed(err, "the server did not stop, so it was not moved")
 	}
 	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, stopWait); err != nil {
 		restart()
-		return nil, fmt.Errorf("the server did not stop, so it was not moved: %w", err)
+		return nil, failed(err, "the server did not stop, so it was not moved")
 	}
 	s.setOperation(mc.Namespace, op, "Saving its files", 0)
 	snap, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerMove, by)
 	if err != nil {
 		restart()
-		return nil, fmt.Errorf("its files could not be saved, so it was not moved: %w", err)
+		return nil, failed(err, "its files could not be saved, so it was not moved")
 	}
 	// The snapshot is all there is of its files once the old volume goes:
 	// it is not to be deleted until the move is over.
@@ -227,7 +227,7 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 					time.Sleep(5 * time.Second)
 					if !s.claimGoing(live, key) {
 						restart()
-						return snap, fmt.Errorf("its volume on %s was not ready, so it was put back on %s as it was: %w", target, from, err)
+						return snap, failed(err, "its volume on %s was not ready, so it was put back on %s as it was", target, from)
 					}
 					// Going after all: held again, to be moved on, so
 					// that the game never starts on an empty volume.
@@ -235,11 +235,11 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 				}
 			}
 		}
-		return snap, fmt.Errorf("its volume on %s was not ready, so it was left stopped; its files are in snapshot %s: %w", target, shortID(snap.ID), err)
+		return snap, failed(err, "its volume on %s was not ready, so it was left stopped; its files are in snapshot %s", target, shortID(snap.ID))
 	}
 	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, 5*time.Minute)
 	if err != nil {
-		return snap, fmt.Errorf("its files on %s could not be reached, so it was left stopped; they are in snapshot %s: %w", target, shortID(snap.ID), err)
+		return snap, failed(err, "its files on %s could not be reached, so it was left stopped; they are in snapshot %s", target, shortID(snap.ID))
 	}
 	defer ws.Close()
 	s.setOperation(mc.Namespace, op, "Putting its files back", 0)
@@ -253,7 +253,7 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	})
 	s.serverIcons.forget(key.Namespace + "/" + key.Name)
 	if err != nil {
-		return snap, fmt.Errorf("putting its files back on %s failed, so it was left stopped; restore snapshot %s to finish: %w", target, shortID(snap.ID), err)
+		return snap, failed(err, "putting its files back on %s failed, so it was left stopped; restore snapshot %s to finish", target, shortID(snap.ID))
 	}
 
 	// The marks come off and the state goes back on in one change.

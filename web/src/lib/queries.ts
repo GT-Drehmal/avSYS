@@ -130,7 +130,9 @@ export function useLiveServers() {
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
       // And it is new to the offsite copy, or still to be removed there.
       qc.invalidateQueries({ queryKey: keys.offsite(done.org) });
-      if (done.calledOff || (done.scheduled && !done.error)) return;
+      // A scheduled run is not something anyone just did. How it went shows
+      // on the server, and a failed one is tried again each hour.
+      if (done.calledOff || done.scheduled) return;
       if (done.kind === "create") {
         if (done.error) toast.error(`${done.server}: ${done.error}`);
         else toast.info(`${done.server} is ready`);

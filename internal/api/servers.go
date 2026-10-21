@@ -784,7 +784,7 @@ func (s *Server) finalSnapshot(ctx context.Context, org string, mc *avsysv1.Mine
 		return nil, false, err
 	}
 	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, stopWait); err != nil {
-		return nil, false, fmt.Errorf("the server did not stop: %w", err)
+		return nil, false, failed(err, "the server did not stop")
 	}
 	snap, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerFinal, by)
 	if errors.Is(err, backup.ErrUnchanged) {

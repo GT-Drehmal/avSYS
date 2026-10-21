@@ -449,7 +449,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		defer cancel()
 		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, &record.Spec, picture)
 		if err != nil {
-			err = fmt.Errorf("making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again: %w", err)
+			err = failed(err, "making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again")
 		}
 		s.finishOperation(ctx, a.Namespace, name, kindCreate, snap, nil, err)
 		return err
@@ -606,11 +606,11 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 	waiting, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	if err := s.ownPod(waiting, created); err != nil {
-		return fmt.Errorf("the new server's storage was not ready within 10 minutes: %w", err)
+		return failed(err, "the new server's storage was not ready within 10 minutes")
 	}
 	ws, err := s.dialWorkspaceWithin(waiting, key.Namespace, key.Name, 10*time.Minute)
 	if err != nil {
-		return fmt.Errorf("the new server's storage was not ready within 10 minutes: %w", err)
+		return failed(err, "the new server's storage was not ready within 10 minutes")
 	}
 	defer ws.Close()
 
