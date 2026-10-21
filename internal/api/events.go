@@ -110,6 +110,11 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, u *store.U
 	ch := s.Events.subscribe()
 	defer s.Events.unsubscribe(ch)
 	send := sse(w)
+	// Whether the cluster can be reached, first: a browser that connected
+	// again may have missed its change.
+	if err := send("cluster", s.reach.view()); err != nil {
+		return nil
+	}
 	heartbeat := time.NewTicker(20 * time.Second)
 	defer heartbeat.Stop()
 	membership := time.NewTicker(time.Minute)

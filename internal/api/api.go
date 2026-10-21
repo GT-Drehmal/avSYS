@@ -113,6 +113,8 @@ type Server struct {
 	bench nodeBench
 	// usage is what each running server's game has been using lately.
 	usage usage
+	// reach is whether the cluster can be reached.
+	reach reach
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
 	// to check that no route is left without a decision on who may call it.
 	routes []string

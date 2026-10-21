@@ -90,6 +90,12 @@ export const qs = (params: Record<string, string | number | undefined>) => {
   return p.toString();
 };
 
+/** Whether the panel can reach the cluster; since when not, if not. */
+export interface Cluster {
+  reachable: boolean;
+  since?: string;
+}
+
 export interface Meta {
   version: string;
   setupRequired: boolean;
