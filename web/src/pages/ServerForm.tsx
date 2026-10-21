@@ -623,7 +623,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const importArchive = async (server: string): Promise<{ message: string; sure: boolean } | null> => {
     if (!toImport) return null;
     try {
-      await send<Server>(toImport.file.name, `${serverPath(org, server)}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), wait: "true" })}`, toImport.file);
+      await send<Server>(toImport.file.name, `${serverPath(org, server)}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), wait: "true" })}`, toImport.file);
       return null;
     } catch (err) {
       if (cancelled(err)) return { message: "The upload was stopped.", sure: alive.current };
@@ -962,7 +962,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             </>
           ) : importing ? null : v.modpack ? (
             <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-              <ProjectIcon url={v.modpack.iconUrl} />
+              <ProjectIcon url={v.modpack.iconUrl} kind="modpack" name={v.modpack.title} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium">{v.modpack.title}</p>
                 <p className="truncate font-mono text-xs text-muted">modrinth:{v.modpack.project}</p>

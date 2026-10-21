@@ -3,9 +3,12 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"path"
 	"slices"
 	"strings"
@@ -395,8 +398,74 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 		return undo, errBadRequest("Could not unpack the archive: %s", strings.TrimPrefix(why, "bsdtar: "))
 	}
+	// Its operators and whitelist were read into the server's settings, and
+	// may have been changed there before it was made: a player taken out is
+	// taken out of its files too, and those kept keep what the files say of
+	// them, such as an operator's level.
+	if r.URL.Query().Get("players") == "listed" {
+		for file, names := range map[string][]string{"ops.json": mc.Spec.Ops, "whitelist.json": mc.Spec.Whitelist} {
+			if err := keepListed(sc, path.Join(dataRoot, file), names); err != nil {
+				return undo, fileError(err)
+			}
+		}
+	}
 	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
 	return undo, s.markImporting(ctx, key, false)
+}
+
+// keepListed leaves in a list of players the game keeps, such as ops.json,
+// only the players named, by name or UUID. Each keeps its entry as it was.
+// A file that cannot be read as such a list goes: the names put it back.
+func keepListed(sc *sftp.Client, file string, names []string) error {
+	f, err := sc.Open(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 4<<20))
+	f.Close()
+	if err != nil {
+		return err
+	}
+	var entries []map[string]any
+	if json.Unmarshal(data, &entries) != nil {
+		return sc.Remove(file)
+	}
+	named := func(e map[string]any) bool {
+		name, _ := e["name"].(string)
+		uuid, _ := e["uuid"].(string)
+		for _, n := range names {
+			if (name != "" && strings.EqualFold(n, name)) || (uuid != "" && strings.EqualFold(strings.ReplaceAll(n, "-", ""), strings.ReplaceAll(uuid, "-", ""))) {
+				return true
+			}
+		}
+		return false
+	}
+	kept := slices.DeleteFunc(slices.Clone(entries), func(e map[string]any) bool { return !named(e) })
+	if len(kept) == len(entries) {
+		return nil
+	}
+	out, err := json.MarshalIndent(kept, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := file + ".avsys-tmp"
+	w, err := sc.Create(tmp)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(out)
+	if cerr := w.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = sc.PosixRename(tmp, file)
+	}
+	if err != nil {
+		_ = sc.Remove(tmp)
+	}
+	return err
 }
 
 // markImporting sets or clears the mark of an import on a server.

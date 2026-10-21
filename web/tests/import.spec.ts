@@ -162,6 +162,8 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   expect(new URL(sent).searchParams.get("root")).toBe("MyServer");
   // Its jars are installed from the list, not kept besides.
   expect(new URL(sent).searchParams.get("content")).toBe("listed");
+  // And its lists of players from its settings, not its old files.
+  expect(new URL(sent).searchParams.get("players")).toBe("listed");
   expect(uploaded).toEqual(["plugin Essentials.jar"]);
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/myserver`);
   expect(spec).toMatchObject({ loader: "paper", version: "1.21.4", state: "Running" });
@@ -310,6 +312,8 @@ test("a new server starts from a world of one's own", async ({ page, as, org, ap
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
   expect(sent?.get("root")).toBe("saves/Island Save");
   expect(sent?.get("world")).toBe("true");
+  // A world has no lists of players of its own to leave out.
+  expect(sent?.get("players")).toBeNull();
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/island`);
   expect(spec).toMatchObject({ loader: "paper", version: "1.21.4", state: "Running" });
   expect(spec.properties).not.toHaveProperty("level-seed");

@@ -1,5 +1,5 @@
 import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Check, ChevronLeft, Download, ExternalLink, Heart, Info, Search, SlidersHorizontal } from "lucide-react";
+import { Box, Braces, Check, ChevronLeft, Coffee, Download, ExternalLink, Heart, Image, Info, type LucideIcon, Package, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, qs, type ModrinthHit, type ModrinthProject, type ModrinthResults, type ModrinthVersion } from "../lib/api";
 import { ago, compact } from "../lib/format";
@@ -14,10 +14,34 @@ export function useDebounced<T>(value: T, ms: number): T {
   return debounced;
 }
 
-export function ProjectIcon({ url, size = 36 }: { url?: string | null; size?: number }) {
+const kindMarks: Record<string, LucideIcon> = { mod: Coffee, plugin: Coffee, datapack: Braces, resourcepack: Image, modpack: Package };
+
+/** A hue for a name, the same each time: two of a kind told apart at a glance. */
+function hueOf(name: string) {
+  let h = 0;
+  for (const c of name.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return [170, 210, 250, 290, 330, 30, 50, 130][h % 8];
+}
+
+/** A project's icon, or for one without, a mark of its kind tinted by its name. */
+export function ProjectIcon({ url, size = 36, kind, name = "" }: { url?: string | null; size?: number; kind?: string; name?: string }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [url]);
   const style = { width: size, height: size };
-  if (!url) return <span className="shrink-0 rounded-md border border-line bg-raised" style={style} />;
-  return <img src={url} alt="" loading="lazy" className="shrink-0 rounded-md bg-raised object-cover" style={style} />;
+  if (url && !broken) {
+    return <img src={url} alt="" loading="lazy" onError={() => setBroken(true)} className="shrink-0 rounded-md bg-raised object-cover" style={style} />;
+  }
+  const Mark = kindMarks[kind ?? ""] ?? Box;
+  const hue = hueOf(name || kind || "");
+  return (
+    <span
+      data-mark={kind ?? "other"}
+      className="grid shrink-0 place-items-center rounded-md"
+      style={{ ...style, background: `hsl(${hue} 30% 16%)`, color: `hsl(${hue} 55% 68%)` }}
+    >
+      <Mark style={{ width: size / 2, height: size / 2 }} strokeWidth={1.75} />
+    </span>
+  );
 }
 
 type Kind = "mod" | "plugin" | "datapack" | "modpack" | "resourcepack";
@@ -212,7 +236,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
                 onClick={() => onPick(hit)}
                 className={cx("flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2 text-left", chosen ? "opacity-60" : "hover:bg-raised")}
               >
-                <ProjectIcon url={hit.icon_url} />
+                <ProjectIcon url={hit.icon_url} kind={hit.project_type} name={hit.title} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
                     <span className="truncate text-[13px] font-medium">{hit.title}</span>
@@ -298,7 +322,7 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
       </button>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
         <div className="flex items-start gap-3">
-          <ProjectIcon url={hit.icon_url} size={56} />
+          <ProjectIcon url={hit.icon_url} size={56} kind={hit.project_type} name={hit.title} />
           <div className="min-w-0 flex-1">
             <p className="text-[15px] font-semibold">{hit.title}</p>
             <p className="text-xs text-faint">by {hit.author}</p>
@@ -354,7 +378,7 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
             <ul className="flex flex-col gap-1.5">
               {needs.data?.map((p) => (
                 <li key={p.id} className="flex items-center gap-2 text-[13px]">
-                  <ProjectIcon url={p.icon_url} size={20} />
+                  <ProjectIcon url={p.icon_url} size={20} kind={p.project_type} name={p.title} />
                   {p.title}
                   {has(p) && (
                     <span className="flex items-center gap-1 text-xs text-muted">

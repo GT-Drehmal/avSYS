@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -238,6 +239,17 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
 		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
 			return errBadRequest("A resource pack picked from a project names it: source modrinth, and its id.")
+		}
+	}
+	// These end up in the game's commands, one per name.
+	for _, list := range [][]string{spec.Ops, spec.Whitelist} {
+		if len(list) > 1000 {
+			return errBadRequest("A list of players can have at most 1000.")
+		}
+		for _, name := range list {
+			if !listedNamePattern.MatchString(name) && !playerUUIDPattern.MatchString(name) {
+				return errBadRequest("%q is not a player's name.", name)
+			}
 		}
 	}
 	switch spec.AutoOp {
@@ -593,10 +605,10 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.removeDroppedPack(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
-	// From which role members are operators in game, acted on now and not
-	// with the next look.
+	// Who is on its lists in game, acted on now and not with the next look.
 	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist ||
-		!equality.Semantic.DeepEqual(previous.OpMembers, mc.Spec.OpMembers) || !equality.Semantic.DeepEqual(previous.WhitelistMembers, mc.Spec.WhitelistMembers) {
+		!equality.Semantic.DeepEqual(previous.OpMembers, mc.Spec.OpMembers) || !equality.Semantic.DeepEqual(previous.WhitelistMembers, mc.Spec.WhitelistMembers) ||
+		!slices.Equal(previous.Ops, mc.Spec.Ops) || !slices.Equal(previous.Whitelist, mc.Spec.Whitelist) {
 		s.syncOpsFor(a.Org, mc)
 	}
 	writeJSON(w, http.StatusOK, s.view(mc))
