@@ -87,6 +87,8 @@ interface AddContentProps {
   pack?: PackPicker;
   /** The kind it opens on. */
   start?: PickKind;
+  /** Only that kind can be picked, as from a section of its own. */
+  only?: boolean;
   onClose: () => void;
 }
 
@@ -102,8 +104,8 @@ export interface PackPicker {
 }
 
 /** A dialog for picking mods, plugins, datapacks or the resource pack, from Modrinth, a URL or this computer. */
-export function AddContentDialog({ software, mods, onAdd, busy, onUpload, uploadNote, description, pack, start, onClose }: AddContentProps) {
-  const kinds: PickKind[] = [...kindsFor(software), ...(pack ? (["resourcepack"] as const) : [])];
+export function AddContentDialog({ software, mods, onAdd, busy, onUpload, uploadNote, description, pack, start, only, onClose }: AddContentProps) {
+  const kinds: PickKind[] = only && start ? [start] : [...kindsFor(software), ...(pack ? (["resourcepack"] as const) : [])];
   const [kind, setKind] = useState<PickKind>(start && kinds.includes(start) ? start : kinds[0]);
   const [tab, setTab] = useState<"modrinth" | "url" | "upload">("modrinth");
   const [uploading, setUploading] = useState<string | null>(null);
@@ -138,16 +140,20 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
   const canUpload = kind === "resourcepack" ? !!(pack?.upload || pack?.keep) : !!onUpload;
   const sourceTab = tab === "upload" && !canUpload ? "modrinth" : tab;
   return (
-    <Modal open onOpenChange={onClose} size="lg" title="Add content" description={kind === "resourcepack" ? "Offered to players when they join." : description}>
+    <Modal open onOpenChange={onClose} size="lg" title={kinds.length === 1 ? `Add ${kindNames[kinds[0]].toLowerCase()}` : "Add content"} description={kind === "resourcepack" ? "Offered to players when they join." : description}>
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex gap-1 rounded-md border border-line bg-bg p-0.5">
-            {kinds.map((k) => (
-              <button key={k} type="button" className={tabClass(kind === k)} onClick={() => setKind(k)}>
-                {kindNames[k]}
-              </button>
-            ))}
-          </div>
+          {kinds.length > 1 ? (
+            <div className="flex gap-1 rounded-md border border-line bg-bg p-0.5">
+              {kinds.map((k) => (
+                <button key={k} type="button" className={tabClass(kind === k)} onClick={() => setKind(k)}>
+                  {kindNames[k]}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span />
+          )}
           <div className="flex gap-1 rounded-md border border-line bg-bg p-0.5">
             <button type="button" className={tabClass(tab === "modrinth")} onClick={() => setTab("modrinth")}>
               Modrinth
@@ -267,7 +273,10 @@ export function fileOf(url: string) {
   }
 }
 
-export const packTitle = (p: ResourcePack) => p.project?.title || p.project?.id || p.uploaded?.name || fileOf(p.url);
+export const packTitle = (p: ResourcePack) => p.project?.title || p.project?.id || (p.uploaded?.name && withoutExtension(p.uploaded.name)) || fileOf(p.url);
+
+/** A file's name as shown: "Better Leaves", not "Better Leaves.zip". */
+const withoutExtension = (name: string) => name.replace(/\.(jar|zip)$/i, "");
 
 /** The resource pack's three ways in, in the picker. One replaces the one there was. */
 function PackPane({
@@ -400,7 +409,7 @@ function PackPane({
 }
 
 /** A server's resource pack, as content: what it is and where it comes from, with room for actions. */
-export function PackCard({ pack, children }: { pack: ResourcePack; children?: ReactNode }) {
+export function PackCard({ pack, showKind = true, children }: { pack: ResourcePack; showKind?: boolean; children?: ReactNode }) {
   const p = pack.project;
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5">
@@ -414,17 +423,17 @@ export function PackCard({ pack, children }: { pack: ResourcePack; children?: Re
             </a>
           )}
         </p>
-        <p className="truncate font-mono text-xs text-faint">
-          {pack.uploaded && !pack.url
-            ? `${bytes(pack.uploaded.size)} · uploaded when created`
-            : pack.uploaded
-              ? `${bytes(pack.uploaded.size)} · uploaded ${ago(pack.uploaded.time)}`
-              : p
-                ? `modrinth:${p.id}`
+        {(pack.uploaded || !p) && (
+          <p className="truncate font-mono text-xs text-faint">
+            {pack.uploaded && !pack.url
+              ? `${bytes(pack.uploaded.size)} · uploaded when created`
+              : pack.uploaded
+                ? `${bytes(pack.uploaded.size)} · uploaded ${ago(pack.uploaded.time)}`
                 : pack.url}
-        </p>
+          </p>
+        )}
       </div>
-      <Chip>resource pack</Chip>
+      {showKind && <Chip>resource pack</Chip>}
       {children}
     </div>
   );
@@ -453,7 +462,10 @@ export function PackFit({ pack, version }: { pack: ResourcePack; version?: strin
   );
 }
 
-const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? "uploaded file" : `${m.source}:${m.project}`);
+// One from Modrinth links there, which says it all.
+const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? "uploaded file" : undefined);
+
+const titleOf = (m: ContentRef) => (m.source === "upload" ? withoutExtension(m.title || m.project) : m.title || m.project);
 
 interface ContentListProps {
   mods: ContentRef[];
@@ -464,31 +476,33 @@ interface ContentListProps {
   /** Said of an entry in place of where it comes from, where there is more to say. */
   note?: (mod: ContentRef, index: number) => string | undefined;
   onRemove?: (index: number) => void;
+  /** Says of each entry what kind it is, where the list has more than one. */
+  showKind?: boolean;
 }
 
-export function ContentList({ mods, gameJava, extra, note, onRemove }: ContentListProps) {
+export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true }: ContentListProps) {
   return (
     <ul className="overflow-hidden rounded-lg border border-line bg-surface">
       {mods.map((m, i) => (
         <li key={`${m.source}/${m.project}`} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
-          <ProjectIcon url={m.iconUrl} size={32} kind={m.kind ?? "mod"} name={m.title || m.project} />
+          <ProjectIcon url={m.iconUrl} size={32} kind={m.kind ?? "mod"} name={titleOf(m)} />
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 truncate text-[13px] font-medium">
-              {m.title || m.project}
+              {titleOf(m)}
               {m.source === "modrinth" && (
                 <a href={`https://modrinth.com/project/${m.project}`} target="_blank" rel="noreferrer" className="text-faint hover:text-accent" aria-label="Open on Modrinth">
                   <ExternalLink className="size-3" />
                 </a>
               )}
             </p>
-            <p className="truncate font-mono text-xs text-faint">{note?.(m, i) ?? sourceLine(m)}</p>
+            {(note?.(m, i) ?? sourceLine(m)) && <p className="truncate font-mono text-xs text-faint">{note?.(m, i) ?? sourceLine(m)}</p>}
           </div>
           {!!gameJava && !!m.java && m.java > gameJava && (
             <Chip className="border-warn/40 text-warn" >needs Java {m.java}</Chip>
           )}
-          <Chip>{m.kind ?? "mod"}</Chip>
+          {showKind && <Chip>{m.kind ?? "mod"}</Chip>}
           {extra?.(m, i)}
-          {onRemove && <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${m.title || m.project}`} onClick={() => onRemove(i)} />}
+          {onRemove && <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${titleOf(m)}`} onClick={() => onRemove(i)} />}
         </li>
       ))}
     </ul>

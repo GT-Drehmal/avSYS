@@ -54,13 +54,6 @@ const places: { name: string; open: (page: Page, slug: string) => Promise<void> 
       await page.getByRole("button", { name: "Add content" }).click();
     },
   },
-  {
-    name: "a server's Content tab",
-    open: async (page) => {
-      await page.goto("/o/friends/s/survival/content");
-      await page.getByRole("button", { name: "Add", exact: true }).click();
-    },
-  },
 ];
 
 for (const place of places) {
@@ -80,3 +73,23 @@ for (const place of places) {
     await expect(dialog.getByRole("button", { name: "Mods", exact: true })).toHaveCount(0);
   });
 }
+
+test("a server's Content tab has a section for plugins, datapacks and the resource pack, each added from Modrinth, a URL or this computer", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/s/survival/content");
+  for (const kind of ["Plugins", "Datapacks", "Resource pack"]) {
+    const section = page.getByRole("region", { name: kind, exact: true });
+    await section.getByRole("button", { name: `Add ${kind.toLowerCase()}` }).click();
+    // The picker is for that kind alone.
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: `Add ${kind.toLowerCase()}` })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: kind, exact: true })).toHaveCount(0);
+    for (const source of ["Modrinth", "From URL", "Upload"]) {
+      await expect(dialog.getByRole("button", { name: source, exact: true }), `${kind} from ${source}`).toBeVisible();
+    }
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
+  // Nothing a Paper server cannot run.
+  await expect(page.getByRole("region", { name: "Mods", exact: true })).toHaveCount(0);
+});

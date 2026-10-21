@@ -12,10 +12,9 @@ test.beforeEach(async ({ as }) => {
   await as("owner");
 });
 
-/** Opens the content picker on its resource pack, as Add and then that kind. */
+/** Opens the picker for the resource pack, from its section. */
 async function choosePack(page: Page) {
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Resource pack", exact: true }).click();
+  await page.getByRole("region", { name: "Resource pack" }).getByRole("button", { name: /^(Add resource pack|Replace)$/ }).click();
 }
 
 /** A JSON merge patch, as the panel applies one. */
@@ -58,7 +57,7 @@ async function survival(page: Page, pack: object | null) {
 test("one picked from Modrinth is its newest release that fits, and another version can be chosen", async ({ page }) => {
   const state = await survival(page, null);
   await page.goto("/o/friends/s/survival/content");
-  await expect(page.getByText(/^None\. One added from Modrinth/)).toBeVisible();
+  await expect(page.getByText(/^None\. A pack added here/)).toBeVisible();
   await choosePack(page);
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByPlaceholder("Search resource packs on Modrinth")).toBeVisible();
@@ -68,7 +67,8 @@ test("one picked from Modrinth is its newest release that fits, and another vers
   // The newest release, not the beta above it, with its own file and hash.
   expect(state.sent).toEqual([{ resourcePack: { ...picked, uploaded: null, enforce: false, prompt: "", formats: null } }]);
   await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
-  await expect(page.getByText("modrinth:faithful-32x")).toBeVisible();
+  // Where it comes from is the link, not an ID.
+  await expect(page.getByText("modrinth:faithful-32x")).toHaveCount(0);
   await expect(page.locator("section").filter({ hasText: "Resource pack" }).getByRole("link", { name: "Open on Modrinth" })).toHaveAttribute("href", "https://modrinth.com/resourcepack/faithful-32x");
 
   await page.getByRole("button", { name: "1.21.4-a" }).click();
@@ -232,12 +232,12 @@ test("one uploaded in the picker is kept and served by the panel, and removing i
   await dialog.getByLabel("Resource pack file").setInputFiles({ name: "faithful.zip", mimeType: "application/zip", buffer: Buffer.from("PK") });
   await expect(dialog).toHaveCount(0);
   expect(state.asked).toEqual(["PUT ?name=faithful.zip"]);
-  await expect(page.getByText("faithful.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("faithful", { exact: true })).toBeVisible();
   await expect(page.getByText(/3\.0 MB · uploaded /)).toBeVisible();
 
   await page.getByRole("button", { name: "Remove the resource pack" }).click();
   await expect.poll(() => state.asked).toEqual(["PUT ?name=faithful.zip", "DELETE "]);
-  await expect(page.getByText(/^None\. One added from Modrinth/)).toBeVisible();
+  await expect(page.getByText(/^None\. A pack added here/)).toBeVisible();
 });
 
 test("an upload says how far it is and can be stopped, and says why the panel refused one", async ({ page }) => {
@@ -335,7 +335,7 @@ test("a copy keeps the original's uploaded pack, made required, and can be given
     return route.fulfill({ status: 503, json: { code: "test", message: "Not sent by the test." } });
   });
   await page.goto("/o/friends/new?from=server:survival");
-  await expect(page.getByText("faithful.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("faithful", { exact: true })).toBeVisible();
   // Left as it is, it is not sent: the copy's files bring it.
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect.poll(() => sent.length).toBe(1);
@@ -348,7 +348,7 @@ test("a copy keeps the original's uploaded pack, made required, and can be given
   expect(sent[1].spec.resourcePack).toEqual({ url: uploaded.url, sha1: sha, uploaded: null, enforce: true });
 
   await page.getByRole("button", { name: "Remove the resource pack" }).click();
-  await expect(page.getByText("faithful.zip", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("faithful", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect.poll(() => sent.length).toBe(3);
   expect(sent[2].spec.resourcePack).toBeNull();
@@ -420,7 +420,7 @@ test("a pack whose formats are not known, or a version whose format is not, says
   const asked = await packFormats(page, {});
   await survival(page, uploaded);
   await page.goto("/o/friends/s/survival/content");
-  await expect(page.getByText("faithful.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("faithful", { exact: true })).toBeVisible();
   await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
   // Nothing to compare it with: not even asked.
   expect(asked).toEqual([]);

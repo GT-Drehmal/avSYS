@@ -127,7 +127,7 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   // Its plugins are its content: one from Modrinth, to keep up to date
   // here, and one uploaded as it is.
   await expect(page.getByText("WorldEdit", { exact: true })).toBeVisible();
-  await expect(page.getByText("Essentials.jar", { exact: true })).toBeVisible();
+  await expect(page.getByText("Essentials", { exact: true })).toBeVisible();
   await expect(page.getByText(/14 B · uploaded when created/)).toBeVisible();
   // Its own lists, to see and change before it is made.
   await expect(page.getByLabel("Whitelisted players")).toHaveValue("jeb_\nNotch");
@@ -197,10 +197,10 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   });
   await page.getByLabel("Server archive").setInputFiles({ name: "fabric.zip", mimeType: "application/zip", buffer: archive });
   await expect(page.getByTestId("archive-summary")).toContainText("1 mod");
-  await expect(page.getByText("terrain.zip", { exact: true })).toHaveCount(1);
-  await expect(page.getByText("unused.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("terrain", { exact: true })).toHaveCount(1);
+  await expect(page.getByText("unused", { exact: true })).toBeVisible();
   await expect(page.getByText(/15 B · uploaded when created · not on in its world before/)).toBeVisible();
-  await expect(page.getByText("resources.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("resources", { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
   // Named after the file, as it is not in a folder.
