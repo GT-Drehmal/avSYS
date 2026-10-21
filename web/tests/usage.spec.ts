@@ -47,3 +47,11 @@ test("a time the server was not running is left as a gap", async ({ page }) => {
   const line = page.getByRole("region", { name: "CPU" }).locator("path").nth(1);
   await expect.poll(async () => ((await line.getAttribute("d")) ?? "").match(/M/g)?.length).toBe(2);
 });
+
+test("a server that is not running now says what it used when it last ran", async ({ page }) => {
+  const start = Date.now() - 4 * 3600_000;
+  const samples = Array.from({ length: 60 }, (_, i) => ({ t: new Date(start + i * 30_000).toISOString(), cpu: 700, memory: 2 * gib, players: 2 }));
+  await usage(page, { available: true, limit: 4 * gib, every: 30, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toHaveAttribute("aria-label", "Players: 2 when it last ran, 2 at most");
+});

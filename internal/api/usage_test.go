@@ -36,11 +36,12 @@ func TestUsage(t *testing.T) {
 	}
 	servers := []avsysv1.MinecraftServer{*world}
 	for i := range 3 {
-		if err := p.srv.noteUsage(metrics(at.Add(time.Duration(i)*4*time.Hour)), servers, at); err != nil {
+		when := at.Add(time.Duration(i) * 4 * time.Hour)
+		if err := p.srv.noteUsage(metrics(when), servers, when); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got := p.srv.usage.of("mc-alpha/world")
+	got := p.srv.usage.of("mc-alpha/world", world.UID)
 	// The first, eight hours before the last, is no longer kept.
 	if len(got) != 2 || !got[0].At.Equal(at.Add(4*time.Hour)) {
 		t.Fatalf("kept %d samples, from %v; want the last two", len(got), got)
@@ -49,7 +50,7 @@ func TestUsage(t *testing.T) {
 	if got[1] != want {
 		t.Errorf("noted %+v, want %+v", got[1], want)
 	}
-	if other := p.srv.usage.of("kube-system/coredns"); len(other) != 0 {
+	if other := p.srv.usage.of("kube-system/coredns", ""); len(other) != 0 {
 		t.Errorf("a pod that is not a server's was noted: %+v", other)
 	}
 
@@ -70,11 +71,32 @@ func TestUsage(t *testing.T) {
 		t.Errorf("answered %+v", view)
 	}
 
+	// Stopped, so not in the list of pods: what was noted is let go of as it
+	// grows old all the same.
+	if err := p.srv.noteUsage([]byte(`{"items":[]}`), servers, at.Add(14*time.Hour+time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if left := p.srv.usage.of("mc-alpha/world", world.UID); len(left) != 0 {
+		t.Errorf("samples older than six hours were kept for a stopped server: %+v", left)
+	}
+	// A server made under the name of one deleted does not take on its history.
+	if err := p.srv.noteUsage(metrics(at), servers, at); err != nil {
+		t.Fatal(err)
+	}
+	again := *world
+	again.UID = "another"
+	if err := p.srv.noteUsage([]byte(`{"items":[]}`), []avsysv1.MinecraftServer{again}, at); err != nil {
+		t.Fatal(err)
+	}
+	if left := p.srv.usage.of("mc-alpha/world", "another"); left == nil || len(left) != 0 {
+		t.Errorf("a new server of the same name was given %+v, want none, as an empty list", left)
+	}
+
 	// Gone from the list of servers: what was noted of it is let go of.
 	if err := p.srv.noteUsage(metrics(at.Add(9*time.Hour)), nil, at); err != nil {
 		t.Fatal(err)
 	}
-	if left := p.srv.usage.of("mc-alpha/world"); len(left) != 0 {
+	if left := p.srv.usage.of("mc-alpha/world", world.UID); len(left) != 0 {
 		t.Errorf("a deleted server's use was kept: %+v", left)
 	}
 }

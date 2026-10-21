@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
@@ -37,41 +39,64 @@ type usageSample struct {
 // usage keeps the samples of each server, by namespace/name.
 type usage struct {
 	mu      sync.Mutex
-	samples map[string][]usageSample
+	samples map[string]*history
 	// available is whether the cluster could last be asked, and checked
 	// when; a cluster without a metrics API is asked again now and then.
 	available bool
 	checked   time.Time
 }
 
-func (u *usage) add(key string, sample usageSample) {
+// history is one server's samples, oldest first. uid is the server's: one
+// made under the name of one deleted does not take on its history.
+type history struct {
+	uid     types.UID
+	samples []usageSample
+}
+
+func (u *usage) add(key string, uid types.UID, sample usageSample) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.samples == nil {
-		u.samples = map[string][]usageSample{}
+		u.samples = map[string]*history{}
 	}
-	list := append(u.samples[key], sample)
-	cut := 0
-	for cut < len(list) && sample.At.Sub(list[cut].At) > usageKept {
-		cut++
+	h := u.samples[key]
+	if h == nil || h.uid != uid {
+		h = &history{uid: uid}
+		u.samples[key] = h
 	}
-	u.samples[key] = list[cut:]
+	h.samples = append(h.samples, sample)
 }
 
 // of returns a copy of a server's samples, oldest first.
-func (u *usage) of(key string) []usageSample {
+func (u *usage) of(key string, uid types.UID) []usageSample {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return append([]usageSample(nil), u.samples[key]...)
+	out := []usageSample{}
+	if h := u.samples[key]; h != nil && h.uid == uid {
+		out = append(out, h.samples...)
+	}
+	return out
 }
 
-// forget lets go of the samples of servers that are not in keep.
-func (u *usage) forget(keep map[string]bool) {
+// keep lets go of the samples of servers that are not in servers, by
+// namespace/name and uid, and of any older than usageKept before now,
+// also of servers that have not run since.
+func (u *usage) keep(servers map[string]types.UID, now time.Time) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	for key := range u.samples {
-		if !keep[key] {
+	for key, h := range u.samples {
+		if uid, ok := servers[key]; !ok || uid != h.uid {
 			delete(u.samples, key)
+			continue
+		}
+		cut := 0
+		for cut < len(h.samples) && now.Sub(h.samples[cut].At) > usageKept {
+			cut++
+		}
+		if cut == len(h.samples) {
+			delete(u.samples, key)
+		} else {
+			h.samples = h.samples[cut:]
 		}
 	}
 }
@@ -128,12 +153,20 @@ func (s *Server) usageTick(ctx context.Context, now time.Time) {
 	if rest == nil {
 		return
 	}
-	raw, err := rest.Get().AbsPath("/apis/metrics.k8s.io/v1beta1/pods").Do(ctx).Raw()
+	// The panel's own pods only, not every pod in the cluster.
+	raw, err := rest.Get().AbsPath("/apis/metrics.k8s.io/v1beta1/pods").Param("labelSelector", "app.kubernetes.io/managed-by=avsys").Do(ctx).Raw()
 	if err != nil {
-		if available, _ := s.usage.state(); available {
+		// No metrics API, or none the panel may read: asked again in a few
+		// minutes. Anything else is asked again at the next sample, and
+		// what is known meanwhile is still shown.
+		if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
+			if available, _ := s.usage.state(); available {
+				s.Log.Warn("the cluster no longer says what servers are using", "error", err)
+			}
+			s.usage.setAvailable(false, now)
+		} else {
 			s.Log.Warn("could not read what servers are using", "error", err)
 		}
-		s.usage.setAvailable(false, now)
 		return
 	}
 	var servers avsysv1.MinecraftServerList
@@ -179,14 +212,14 @@ func (s *Server) noteUsage(raw []byte, servers []avsysv1.MinecraftServer, now ti
 			if p := mc.Status.Players; p != nil {
 				sample.Players = p.Online
 			}
-			s.usage.add(key, sample)
+			s.usage.add(key, mc.UID, sample)
 		}
 	}
-	keep := map[string]bool{}
-	for key := range known {
-		keep[key] = true
+	keep := map[string]types.UID{}
+	for key, mc := range known {
+		keep[key] = mc.UID
 	}
-	s.usage.forget(keep)
+	s.usage.keep(keep, now)
 	return nil
 }
 
@@ -219,7 +252,7 @@ func (s *Server) getUsage(w http.ResponseWriter, r *http.Request, u *store.User)
 		Available: available,
 		Limit:     mc.Spec.Resources.Memory.Value(),
 		Every:     int(usageEvery / time.Second),
-		Samples:   s.usage.of(a.Namespace + "/" + mc.Name),
+		Samples:   s.usage.of(a.Namespace+"/"+mc.Name, mc.UID),
 	})
 	return nil
 }
