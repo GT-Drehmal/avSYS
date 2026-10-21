@@ -55,6 +55,27 @@ for (const [how, close] of [
   });
 }
 
+test("one with no icon, or one that does not load, shows the mark of its kind", async ({ page }) => {
+  const dialog = page.getByRole("dialog");
+  // A 1x1 image, so that nothing is fetched from elsewhere.
+  const dot = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  await page.route("**/api/v1/catalog/modrinth/search?*", async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    body.hits[0].icon_url = "/no-such-icon.png";
+    body.hits[1].icon_url = dot;
+    body.hits[2].icon_url = null;
+    await route.fulfill({ response: res, json: body });
+  });
+  await page.route("**/no-such-icon.png", (route) => route.fulfill({ status: 404, body: "" }));
+  await dialog.getByPlaceholder(/Search mods/).fill("fast");
+  const hits = dialog.getByRole("listitem");
+  await expect(hits.nth(0).locator('[data-mark="mod"]')).toBeVisible();
+  await expect(hits.nth(1).locator("img")).toBeVisible();
+  await expect(hits.nth(1).locator("[data-mark]")).toHaveCount(0);
+  await expect(hits.nth(2).locator('[data-mark="mod"]')).toBeVisible();
+});
+
 test("picking one adds it to the server", async ({ page, org, api, as }) => {
   // On a server of its own, so that nothing else sees the change.
   const slug = await org(["modded"]);
