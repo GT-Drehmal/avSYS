@@ -235,7 +235,7 @@ func TestSnapshotAndRestoreThroughAWorkspace(t *testing.T) {
 	state := sh(t, ws, `cat /data/world/level.dat; cat /data/mods/a.jar;
 		test -e /data/world/stray.txt && echo STRAY; test -e /data/new && echo NEWDIR;
 		wc -l < /data/.workspace/.bash_history; cat /data/.cache/x; cat /tmp/outside.txt; test -x /bin/sh && echo shell;
-		test -e /data/.avsys/import.archive && echo IMPORT; test -e /data/.avsys/import && echo STAGING`)
+		test -e /data/.avsys/import.archive && echo IMPORT; test -e /data/.avsys/import && echo STAGING; true`)
 	// An import's archive and staging are not saved, and a restore takes
 	// them away: they are of an import the restore undoes.
 	want := "one\njar\n2\ncached\noutside\nshell"
