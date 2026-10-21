@@ -405,6 +405,11 @@ test("a .tar cut short is turned down", async ({ page, as, org }) => {
 
 test("a stopped server's world can be replaced with one of one's own, saying what it is first", async ({ page, as }) => {
   await as("owner");
+  // Answered once the archive is in; the panel says later how it went.
+  let ended = "";
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
+  );
   // Not while it runs.
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByRole("button", { name: "Replace the world" })).toBeDisabled();
@@ -427,14 +432,44 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
   let sent: URL | null = null;
   await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
     sent = new URL(route.request().url());
-    await route.fulfill({ json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+    await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
   });
   await replace.click();
-  await expect(page.getByText("Replaced the world of Creative")).toBeVisible();
   await expect(dialog).toHaveCount(0);
+  await expect(page.getByText(/Replaced the world/)).toHaveCount(0);
   expect(sent).not.toBeNull();
   const params = (sent as unknown as URL).searchParams;
-  expect([params.get("root"), params.get("world"), params.get("replace")]).toEqual(["Map", "true", "true"]);
+  expect([params.get("root"), params.get("world"), params.get("replace"), params.get("wait")]).toEqual(["Map", "true", "true", null]);
+  ended = JSON.stringify({ kind: "import", org: "friends", server: "creative" });
+  await expect(page.getByText("Replaced the world of Creative")).toBeVisible({ timeout: 15_000 });
+});
+
+test("a world that could not be put in place after it was sent says so when the panel is done", async ({ page, as }) => {
+  await as("owner");
+  let ended = "";
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
+  );
+  await page.goto("/o/friends/s/creative/settings");
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("1.21"), "region/r.0.0.mca": "x" }) });
+  await expect(dialog.getByTestId("world-summary")).toBeVisible();
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) =>
+    route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() }),
+  );
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  await expect(dialog).toHaveCount(0);
+  // Another tab, or a page that did not send it, says nothing of it.
+  const other = await page.context().newPage();
+  await other.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
+  );
+  await other.goto("/o/friends/s/creative");
+  ended = JSON.stringify({ kind: "import", org: "friends", server: "creative", error: "the current world could not be saved first, so nothing was changed: the server's files are not reachable" });
+  await expect(page.getByText("Replacing the world of Creative failed: the current world could not be saved first, so nothing was changed: the server's files are not reachable")).toBeVisible({ timeout: 15_000 });
+  await other.waitForTimeout(4_000);
+  await expect(other.getByText(/Replacing the world/)).toHaveCount(0);
 });
 
 test("a world the panel would not take in place of a server's says why, and nothing is changed", async ({ page, as }) => {

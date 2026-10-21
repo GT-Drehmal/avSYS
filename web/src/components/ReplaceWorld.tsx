@@ -3,10 +3,9 @@ import { useRef, useState } from "react";
 import { ApiError, qs, serverPath, type Server } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { bytes } from "../lib/format";
-import { keys } from "../lib/queries";
+import { keys, tellWhenReplaced } from "../lib/queries";
 import { useGameVersions } from "../lib/software";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
-import { toast } from "../lib/toast";
 import { Button, Modal, Notice } from "./ui";
 import { cancelled, UploadProgress, useUpload } from "./Uploading";
 
@@ -56,8 +55,10 @@ export function ReplaceWorld({ server }: { server: Server }) {
     setBusy(true);
     setError(null);
     try {
+      // Answered once the archive is in. The panel does the rest, which the
+      // server's page shows, and this tab says how it went.
       await send<Server>(file.name, `${serverPath(server.org, server.name)}/import?${qs({ root: world.root, world: "true", replace: "true" })}`, file);
-      toast.info(`Replaced the world of ${server.spec.displayName || server.name}`);
+      tellWhenReplaced(server.org, server.name, server.spec.displayName || server.name);
       setBusy(false);
       close(false);
     } catch (err) {

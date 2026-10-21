@@ -140,7 +140,9 @@ export function useLiveServers() {
         // Only ever sent with an error, which says the whole of it.
         if (done.error) toast.error(done.error);
       } else if (done.kind === "import") {
-        // The page that sent it says how it went.
+        // The page that sent it says how it went, or, for one answered once
+        // its archive was in, this tab does when it ends.
+        heardImport(done);
       } else if (done.kind === "move") {
         qc.invalidateQueries({ queryKey: ["placement", done.org, done.server] });
         qc.invalidateQueries({ queryKey: ["nodes"] });
@@ -222,4 +224,36 @@ export function useAction<TArgs, TResult>(fn: (args: TArgs) => Promise<TResult>,
     onSuccess: () => Promise.all(invalidate.map((queryKey) => qc.invalidateQueries({ queryKey }))),
     onError,
   });
+}
+
+// Imports answered once their archive was in, which this tab tells of when
+// they end, by "org/server", with the name to tell of them by. An end heard
+// before its answer is kept a little while for it.
+const awaited = new Map<string, string>();
+const endedEarly = new Map<string, OperationDone>();
+
+function tellImport(done: OperationDone, title: string) {
+  if (done.error) toast.error(`Replacing the world of ${title} failed: ${done.error}`);
+  else toast.info(`Replaced the world of ${title}`);
+}
+
+function heardImport(done: OperationDone) {
+  const key = `${done.org}/${done.server}`;
+  const title = awaited.get(key);
+  if (title === undefined) {
+    endedEarly.set(key, done);
+    setTimeout(() => endedEarly.get(key) === done && endedEarly.delete(key), 10_000);
+    return;
+  }
+  awaited.delete(key);
+  tellImport(done, title);
+}
+
+/** Says, in this tab, how the replacing of a server's world went when it ends. */
+export function tellWhenReplaced(org: string, server: string, title: string) {
+  const key = `${org}/${server}`;
+  const done = endedEarly.get(key);
+  endedEarly.delete(key);
+  if (done) tellImport(done, title);
+  else awaited.set(key, title);
 }

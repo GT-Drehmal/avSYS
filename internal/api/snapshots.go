@@ -235,7 +235,7 @@ type operationDone struct {
 	Server string `json:"server"`
 	Error  string `json:"error,omitempty"`
 	// Scheduled is set for the daily snapshots, which nobody asked for just
-	// now and nobody needs telling about unless they fail.
+	// now: how they went shows on the server, not in a toast.
 	Scheduled bool `json:"scheduled,omitempty"`
 	// CalledOff is set when the operation ended because someone stopped it,
 	// which is not a failure anyone needs telling about.
