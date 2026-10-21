@@ -44,11 +44,12 @@ export const cancelled = (err: unknown) => err instanceof ApiError && err.code =
  * Once all is sent the panel is checking and saving it, which cannot be
  * stopped from here.
  */
-export function UploadProgress({ sending, onCancel }: { sending: Sending; onCancel: () => void }) {
+export function UploadProgress({ sending, onCancel, leaving = "Leaving this page stops it." }: { sending: Sending; onCancel: () => void; leaving?: string }) {
   const { sent, total } = sending.progress;
   const done = total > 0 && sent >= total;
   const pct = total > 0 ? Math.min(100, Math.floor((sent / total) * 100)) : 0;
   return (
+    <div className="flex min-w-0 flex-col gap-1">
     <div className="flex min-w-0 items-center gap-2.5 text-xs text-muted" role="status" aria-live="polite">
       {done ? (
         <>
@@ -70,6 +71,8 @@ export function UploadProgress({ sending, onCancel }: { sending: Sending; onCanc
           </button>
         </>
       )}
+    </div>
+    {leaving && <p className="text-[11px] text-faint">{leaving}</p>}
     </div>
   );
 }

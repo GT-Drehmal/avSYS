@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
 import { keys, useAction, useLiveServers, useMe, useMeta } from "../lib/queries";
+import { clearSetups } from "../lib/setups";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Picture } from "./Picture";
 import { Button, cx, Field, Input, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
@@ -189,6 +190,8 @@ export function Shell() {
 
   const signOut = async () => {
     await api.post("/auth/logout");
+    // What was being sent for them stops with them.
+    clearSetups();
     qc.clear();
     navigate("/login");
   };

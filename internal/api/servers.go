@@ -47,6 +47,9 @@ type serverView struct {
 	Java   javaView                      `json:"java"`
 	Spec   avsysv1.MinecraftServerSpec   `json:"spec"`
 	Status avsysv1.MinecraftServerStatus `json:"status"`
+	// Unfinished says why the game may not be run on its files, when a
+	// copy, restore or import of them did not finish.
+	Unfinished string `json:"unfinished,omitempty"`
 }
 
 type javaView struct {
@@ -58,6 +61,10 @@ func (s *Server) view(mc *avsysv1.MinecraftServer) serverView {
 	org, _ := s.orgOfNamespace(mc.Namespace)
 	v := serverView{Org: org, Name: mc.Name, CreatedAt: mc.CreationTimestamp.Time, Revision: mc.ResourceVersion, Generation: mc.Generation, Spec: mc.Spec, Status: mc.Status}
 	v.Java.Game, v.Java.Effective = controller.JavaOf(&mc.Spec)
+	var why *Error
+	if errors.As(unfinished(mc), &why) {
+		v.Unfinished = why.Message
+	}
 	return v
 }
 

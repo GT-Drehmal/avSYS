@@ -156,6 +156,7 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   await page.getByRole("button", { name: "Create server" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/myserver$`));
+  await expect(page.getByText("MyServer is set up")).toBeVisible();
 
   // Unpacked from the folder it is in, into a server made stopped and
   // started once its files were in.
@@ -222,6 +223,7 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/fabric$`));
+  await expect(page.getByText("fabric is set up")).toBeVisible();
   // The top of the archive: nothing to name.
   expect(root ?? "").toBe("");
   // Modrinth does not have them: they are uploaded as they are.
@@ -249,7 +251,7 @@ test("a server run by Fabric's launcher is known by the game jar it keeps", asyn
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
 });
 
-test("an import that fails takes its server away again, and says why", async ({ page, as, org, api }) => {
+test("an import the panel turns down takes its server away again, and says why", async ({ page, as, org, api }) => {
   const slug = await org([]);
   await as("owner");
   await page.goto(`/o/${slug}/new`);
@@ -262,9 +264,10 @@ test("an import that fails takes its server away again, and says why", async ({ 
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
-  await expect(page.getByText("Could not import it. Could not unpack the archive: Truncated input file.")).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/o/${slug}/new$`));
+  await expect(page.getByRole("region", { name: "Setting up broken" })).toContainText("Could not import broken: Could not unpack the archive: Truncated input file. Nothing was kept.");
   expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
+  // Its page, where the form went on to, says it is gone.
+  await expect(page.getByText(/It may have been deleted/)).toBeVisible();
 });
 
 test("what is not an archive is turned down before anything is sent", async ({ page, as, org }) => {
@@ -310,6 +313,7 @@ test("a new server starts from a world of one's own", async ({ page, as, org, ap
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  await expect(page.getByText("Island is set up")).toBeVisible();
   expect(sent?.get("root")).toBe("saves/Island Save");
   expect(sent?.get("world")).toBe("true");
   // A world has no lists of players of its own to leave out.
@@ -382,7 +386,7 @@ test("a connection lost during an import keeps the server, which may have it", a
   await page.getByRole("button", { name: "Create server" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/dotted$`));
-  await expect(page.getByText(/Lost touch with the panel while importing dotted/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Setting up dotted" })).toContainText(/Lost touch with the panel while importing dotted/);
   expect(root ?? "").toBe("");
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/dotted`);
   // Not started: whether its files are in is not known here.
