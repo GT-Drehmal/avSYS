@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { ApiError, qs, serverPath, type Server } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { bytes } from "../lib/format";
-import { keys, tellWhenReplaced } from "../lib/queries";
+import { keys, watchReplace } from "../lib/queries";
 import { useGameVersions } from "../lib/software";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
 import { Button, Modal, Notice } from "./ui";
@@ -24,6 +24,8 @@ export function ReplaceWorld({ server }: { server: Server }) {
   const { sending, send, cancel } = useUpload();
   const reads = useRef(0);
   const stopped = server.spec.state === "Stopped" && server.status.phase === "Stopped";
+  // Stopped, but held while the panel works on its files, which it says.
+  const held = stopped && server.status.message ? server.status.message : null;
 
   const pick = async (picked: File | undefined) => {
     setWorld(null);
@@ -54,14 +56,16 @@ export function ReplaceWorld({ server }: { server: Server }) {
     if (!file || !world) return;
     setBusy(true);
     setError(null);
+    // Answered once the archive is in. The panel does the rest, which the
+    // server's page shows, and this tab says how it went.
+    const watch = watchReplace(server.org, server.name, server.spec.displayName || server.name);
     try {
-      // Answered once the archive is in. The panel does the rest, which the
-      // server's page shows, and this tab says how it went.
       await send<Server>(file.name, `${serverPath(server.org, server.name)}/import?${qs({ root: world.root, world: "true", replace: "true" })}`, file);
-      tellWhenReplaced(server.org, server.name, server.spec.displayName || server.name);
+      watch.taken();
       setBusy(false);
       close(false);
     } catch (err) {
+      watch.refused();
       setBusy(false);
       setError(cancelled(err) ? "The upload was stopped. Nothing was changed." : err instanceof ApiError ? err.message : "Could not replace the world.");
     } finally {
@@ -78,10 +82,11 @@ export function ReplaceWorld({ server }: { server: Server }) {
   return (
     <>
       <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={() => setOpen(true)} disabled={!stopped}>
+        <Button onClick={() => setOpen(true)} disabled={!stopped || !!held}>
           Replace the world
         </Button>
         {!stopped && <p className="text-xs text-muted">Stop the server first.</p>}
+        {held && <p className="text-xs text-muted">{held}</p>}
       </div>
       <Modal open={open} onOpenChange={close} title="Replace the world?" description="A snapshot is taken first. Its other files stay as they are.">
         <form

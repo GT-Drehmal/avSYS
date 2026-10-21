@@ -488,3 +488,46 @@ test("a world the panel would not take in place of a server's says why, and noth
   await expect(dialog.getByText("The current world could not be saved first, so nothing was changed.")).toBeVisible();
   await expect(dialog).toBeVisible();
 });
+
+test("a replaced world whose end is heard before the panel's answer is still told of, and only then", async ({ page, as }) => {
+  await as("owner");
+  const done = JSON.stringify({ kind: "import", org: "friends", server: "creative" });
+  // The end is said on every stream from the start, as for an import by
+  // someone else a moment ago: not told of, as nothing here waits on it.
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: `event: operation.done\ndata: ${done}\n\n` }),
+  );
+  await page.goto("/o/friends/s/creative/settings");
+  await page.waitForTimeout(4_000);
+  await expect(page.getByText(/Replaced the world/)).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("1.21"), "region/r.0.0.mca": "x" }) });
+  await expect(dialog.getByTestId("world-summary")).toBeVisible();
+  // Answered only after the stream has said it ended.
+  let answer = () => {};
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
+    await answered;
+    await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+  });
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  await page.waitForTimeout(4_000);
+  await expect(page.getByText(/Replaced the world/)).toHaveCount(0);
+  answer();
+  await expect(page.getByText("Replaced the world of Creative")).toBeVisible();
+  await expect(page.getByText("Replaced the world of Creative")).toHaveCount(1);
+});
+
+test("a stopped server held while the panel puts its files in place cannot be started, or its world replaced", async ({ page, as }) => {
+  await as("owner");
+  const held = (s: { name: string; status: object }) => (s.name === "creative" ? { ...s, status: { ...s.status, phase: "Stopped", message: "Importing files." } } : s);
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => route.fulfill({ json: (await (await route.fetch()).json()).map(held) }));
+  await page.route("**/api/v1/orgs/friends/servers/creative", async (route) => route.fulfill({ json: held(await (await route.fetch()).json()) }));
+  await page.goto("/o/friends/s/creative/settings");
+  await expect(page.getByRole("main").getByRole("button", { name: "Start", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Replace the world" })).toBeDisabled();
+});

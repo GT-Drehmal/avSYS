@@ -226,11 +226,10 @@ export function useAction<TArgs, TResult>(fn: (args: TArgs) => Promise<TResult>,
   });
 }
 
-// Imports answered once their archive was in, which this tab tells of when
-// they end, by "org/server", with the name to tell of them by. An end heard
-// before its answer is kept a little while for it.
-const awaited = new Map<string, string>();
-const endedEarly = new Map<string, OperationDone>();
+// Worlds being replaced from this tab, by "org/server": the name to tell of
+// one by, and its end if that was heard before the panel's answer, which
+// says the upload is in. Only an import this tab is waiting on is kept.
+const replacing = new Map<string, { title: string; answered: boolean; ended?: OperationDone }>();
 
 function tellImport(done: OperationDone, title: string) {
   if (done.error) toast.error(`Replacing the world of ${title} failed: ${done.error}`);
@@ -239,21 +238,37 @@ function tellImport(done: OperationDone, title: string) {
 
 function heardImport(done: OperationDone) {
   const key = `${done.org}/${done.server}`;
-  const title = awaited.get(key);
-  if (title === undefined) {
-    endedEarly.set(key, done);
-    setTimeout(() => endedEarly.get(key) === done && endedEarly.delete(key), 10_000);
+  const r = replacing.get(key);
+  if (!r) return;
+  if (!r.answered) {
+    r.ended = done;
     return;
   }
-  awaited.delete(key);
-  tellImport(done, title);
+  replacing.delete(key);
+  tellImport(done, r.title);
 }
 
-/** Says, in this tab, how the replacing of a server's world went when it ends. */
-export function tellWhenReplaced(org: string, server: string, title: string) {
+/**
+ * Says, in this tab, how the replacing of a server's world went when it
+ * ends. Called before the world is sent; the upload's end says whether it
+ * was taken, after which the panel does the rest.
+ */
+export function watchReplace(org: string, server: string, title: string) {
   const key = `${org}/${server}`;
-  const done = endedEarly.get(key);
-  endedEarly.delete(key);
-  if (done) tellImport(done, title);
-  else awaited.set(key, title);
+  const r = { title, answered: false } as { title: string; answered: boolean; ended?: OperationDone };
+  replacing.set(key, r);
+  return {
+    taken() {
+      if (replacing.get(key) !== r) return;
+      r.answered = true;
+      if (r.ended) {
+        replacing.delete(key);
+        tellImport(r.ended, title);
+      }
+    },
+    // Refused or stopped: the dialog says so.
+    refused() {
+      if (replacing.get(key) === r) replacing.delete(key);
+    },
+  };
 }

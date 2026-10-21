@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -242,61 +241,58 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 		return errBusy
 	}
+	// The work goes on in a goroutine of its own, so that the handler can
+	// return, and the answer end, once the archive is in: over HTTP/2 an
+	// answer is not over until its handler is.
+	received := make(chan struct{})
+	finished := make(chan error, 1)
 	answered := false
-	var received func()
+	var onReceived func()
 	if !wait {
-		received = func() {
+		onReceived = func() {
 			answered = true
-			view := s.view(mc)
-			if fresh, err := s.fresh(context.WithoutCancel(r.Context()), mc); err == nil {
-				view = s.view(fresh)
+			close(received)
+		}
+	}
+	go func() {
+		undo, err := s.importInto(r, w, mc, root, op, replace, a.Org.Slug, u.Username, onReceived)
+		ctx := context.WithoutCancel(r.Context())
+		if undo != nil || answered {
+			// What it replaced is in a snapshot, noted on the server as its
+			// newest. One answered before it was done says on the server how
+			// it went, for whoever missed its end.
+			s.finishOperation(ctx, a.Namespace, mc.Name, kindImport, nil, undo, err)
+		} else {
+			s.finishUnsaved(ctx, a.Namespace, mc.Name, kindImport, err)
+		}
+		if err == nil {
+			if replace {
+				s.audit(ctx, u, a.Org, "server.replace-world", mc.Name, "")
+			} else {
+				s.audit(ctx, u, a.Org, "server.import", mc.Name, "")
 			}
-			answerNow(w, http.StatusAccepted, view)
 		}
-	}
-	undo, err := s.importInto(r, w, mc, root, op, replace, a.Org.Slug, u.Username, received)
-	ctx := context.WithoutCancel(r.Context())
-	if undo != nil {
-		// What it replaced is in a snapshot, noted on the server as its newest.
-		s.finishOperation(ctx, a.Namespace, mc.Name, kindImport, nil, undo, err)
-	} else {
-		s.finishUnsaved(ctx, a.Namespace, mc.Name, kindImport, err)
-	}
-	if err != nil {
-		if answered {
-			// Said as the operation ended.
-			return nil
+		finished <- err
+	}()
+	select {
+	case <-received:
+		view := s.view(mc)
+		if fresh, err := s.fresh(r.Context(), mc); err == nil {
+			view = s.view(fresh)
 		}
-		return err
-	}
-	if replace {
-		s.audit(ctx, u, a.Org, "server.replace-world", mc.Name, "")
-	} else {
-		s.audit(ctx, u, a.Org, "server.import", mc.Name, "")
-	}
-	if answered {
+		writeJSON(w, http.StatusAccepted, view)
 		return nil
+	case err := <-finished:
+		if err != nil {
+			return err
+		}
 	}
-	fresh, err := s.fresh(ctx, mc)
+	fresh, err := s.fresh(context.WithoutCancel(r.Context()), mc)
 	if err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, s.view(fresh))
 	return nil
-}
-
-// answerNow sends a whole answer while the handler goes on working: its
-// length is given and it is flushed, so the client has all of it now.
-func answerNow(w http.ResponseWriter, status int, v any) {
-	body, err := json.Marshal(v)
-	if err != nil {
-		body = []byte("null")
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
-	_ = http.NewResponseController(w).Flush()
 }
 
 // importInto returns the snapshot it took of what a world replaced, once there
