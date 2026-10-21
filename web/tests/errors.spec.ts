@@ -23,10 +23,20 @@ test("a part of the app that is gone reloads the page once, then says so, and ne
   // is not there. In a real update the reload finds the new file under a new
   // name; here it stays gone, which is the case that could go round for ever.
   await page.route("**/assets/Terminal-*.js", (route) => route.fulfill({ status: 404, headers: { "Cache-Control": "no-store" }, body: "not found" }));
+  // Marked, to tell the document there now from one loaded again.
+  await page.evaluate(() => {
+    (window as { before?: boolean }).before = true;
+  });
   let loads = 0;
-  page.on("load", () => loads++);
+  // Counted by the page asked for again, not by its load event: WebKit does
+  // not always report that for a reload.
+  page.on("request", (r) => {
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame()) loads++;
+  });
   await page.getByRole("link", { name: "Terminal" }).click();
   await expect.poll(() => loads).toBe(1);
+  // Loaded again: the document there now is not the one marked.
+  await expect.poll(() => page.evaluate(() => (window as { before?: boolean }).before ?? false)).toBe(false);
   await expect(page).toHaveURL(/\/terminal$/);
   await expect(page.getByRole("alert")).toContainText("This page needs reloading");
   // The server's name and its other tabs are still there around it.
