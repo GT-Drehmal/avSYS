@@ -60,7 +60,7 @@ test("everything a server can be given later can be given when it is made", asyn
 
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/lobby$`));
-  await expect(page.getByText("Picture set for Lobby")).toBeVisible();
+  await expect(page.getByText("Lobby is set up")).toBeVisible();
   expect(pictured).toBe("PUT image/png");
 
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/lobby`);
@@ -730,11 +730,58 @@ test("a new server is given files from this computer: made stopped, they are upl
   await page.getByRole("switch", { name: "Pack required" }).click();
 
   await page.getByRole("button", { name: "Create server" }).click();
+  // The page goes on to the server at once; its files follow.
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
+  await expect(page.getByText("Up is set up")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Setting up Up" })).toHaveCount(0);
   expect(asked).toEqual(["create Stopped", "PUT /content mine.jar true", "PUT /resource-pack world.zip true", 'PATCH {"resourcePack":{"enforce":true,"prompt":""}}', "POST /start"]);
 });
 
-test("a new server whose upload is refused is left stopped, and its content page says why", async ({ page, as, org }) => {
+test("a new server's files go on being sent while one goes elsewhere in the panel, and closing the tab asks first", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const asked = await newWithUploads(page, slug);
+  // The panel takes its time over this one.
+  let answer: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  await page.route(`**/api/v1/orgs/${slug}/servers/up/content?*`, async (route) => {
+    await held;
+    return route.fallback();
+  });
+  await page.getByRole("button", { name: "Add content" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+  await dialog.locator('input[type="file"]').setInputFiles([{ name: "slow.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
+  const setup = page.getByRole("region", { name: "Setting up Up" });
+  await expect(setup).toContainText("slow.jar");
+  await expect(setup).toContainText("Closing this tab stops it.");
+  // It is started once they are in, and not before.
+  await expect(page.getByRole("main").getByRole("button", { name: "Sending files" })).toBeDisabled();
+
+  // Elsewhere in the panel it goes on, and says so.
+  await page.getByRole("link", { name: "Members" }).click();
+  await expect(page.getByRole("heading", { name: "Members" })).toBeVisible();
+  await expect(setup).toContainText("slow.jar");
+  // Closing the tab would cut it off: the browser asks.
+  let asking = false;
+  page.once("dialog", async (d) => {
+    asking = d.type() === "beforeunload";
+    await d.dismiss();
+  });
+  await page.close({ runBeforeUnload: true }).catch(() => undefined);
+  await expect.poll(() => asking).toBe(true);
+  answer();
+  await expect(page.getByText("Up is set up")).toBeVisible();
+  await expect(setup).toHaveCount(0);
+  expect(asked).toEqual(["create Stopped", "PUT /content slow.jar true", "POST /start"]);
+});
+
+test("a new server whose upload is refused is left stopped, saying why, with the way to its content page", async ({ page, as, org }) => {
   const slug = await org([]);
   await as("owner");
   const asked = await newWithUploads(page, slug, "broken.jar");
@@ -744,21 +791,33 @@ test("a new server whose upload is refused is left stopped, and its content page
   await dialog.locator('input[type="file"]').setInputFiles([{ name: "broken.jar", mimeType: "application/java-archive", buffer: Buffer.from("not a jar") }]);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Create server" }).click();
-  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up/content$`));
-  await expect(page.getByText(/Up was created but not started: broken\.jar is not a valid \.jar file\. Add the rest here, then start it\./)).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
+  const setup = page.getByRole("region", { name: "Setting up Up" });
+  await expect(setup).toContainText("Not started: broken.jar is not a valid .jar file. Add the rest on its Content page, then start it.");
   expect(asked).toEqual(["create Stopped", "PUT /content broken.jar true"]);
+  await setup.getByRole("link", { name: "Open it" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up/content$`));
+  await expect(setup).toHaveCount(0);
 });
 
 test("a copy is given files from this computer too: its own are copied in first, then they are uploaded, then it is started", async ({ page, as }) => {
   await as("owner");
   const asked: string[] = [];
-  await page.route("**/api/v1/orgs/friends/servers?wait=true", async (route) => {
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
     const body = route.request().postDataJSON();
     asked.push(`copy ${body.fromServer} ${body.spec.state} ${JSON.stringify(body.spec.resourcePack)}`);
     const made = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
     return route.fulfill({ status: 201, json: { ...made, name: body.name } });
   });
+  // Its files are copied in a moment.
+  let copying = 2;
   await page.route("**/api/v1/orgs/friends/servers/survival-copy/**", async (route) => {
+    if (route.request().url().endsWith("/operation")) {
+      if (copying-- > 0) return route.fulfill({ json: { kind: "create", org: "friends", server: "survival-copy", stage: "Copying files", percent: 50, startedAt: new Date().toISOString() } });
+      if (!asked.includes("copied")) asked.push("copied");
+      return route.fulfill({ contentType: "application/json", body: "null" });
+    }
     if (route.request().method() === "GET") return route.fallback();
     const url = new URL(route.request().url());
     asked.push(`${route.request().method()} ${url.pathname.split("/survival-copy")[1]} ${url.searchParams.get("name") ?? ""}`.trim());
@@ -782,7 +841,8 @@ test("a copy is given files from this computer too: its own are copied in first,
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect(page).toHaveURL(/\/o\/friends\/s\/survival-copy$/);
-  expect(asked).toEqual(["copy survival Stopped undefined", "PUT /content mine.jar", "POST /start"]);
+  await expect(page.getByText("Survival copy is set up")).toBeVisible();
+  expect(asked).toEqual(["copy survival Stopped undefined", "copied", "PUT /content mine.jar", "POST /start"]);
 });
 
 test("files picked to upload for one kind of server are cleared when another kind is picked", async ({ page, as, org }) => {
@@ -800,7 +860,7 @@ test("files picked to upload for one kind of server are cleared when another kin
   await expect(page.getByText("Removed 1 item that no longer fit")).toBeVisible();
 });
 
-test("a new server whose files went up but that could not be started goes on to its page, saying so", async ({ page, as, org }) => {
+test("a new server whose files went up but that could not be started says so", async ({ page, as, org }) => {
   const slug = await org([]);
   await as("owner");
   const asked = await newWithUploads(page, slug, "", true);
@@ -811,7 +871,7 @@ test("a new server whose files went up but that could not be started goes on to 
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
-  await expect(page.getByText("Up was created but could not start (The panel is busy).")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Setting up Up" })).toContainText("Created but could not start: The panel is busy.");
   expect(asked).toEqual(["create Stopped", "PUT /content mine.jar true", "POST /start"]);
 });
 

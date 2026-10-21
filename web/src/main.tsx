@@ -5,6 +5,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "rea
 import "./app.css";
 import { ErrorBoundary, reloadOnce } from "./components/ErrorBoundary";
 import { Shell } from "./components/Shell";
+import { Setups } from "./components/Setups";
 import { Loading, Spinner, Toaster } from "./components/ui";
 import { queryClient, useMe } from "./lib/queries";
 import { Account } from "./pages/Account";
@@ -76,8 +77,10 @@ createRoot(document.getElementById("root")!).render(
             </Route>
           </Route>
         </Routes>
+        <Toaster>
+          <Setups />
+        </Toaster>
       </BrowserRouter>
-      <Toaster />
     </QueryClientProvider>
     </ErrorBoundary>
   </StrictMode>,

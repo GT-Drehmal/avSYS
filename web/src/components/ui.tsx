@@ -365,11 +365,12 @@ export function MenuItem({ children, icon, onSelect, danger, disabled }: MenuIte
 export const MenuSeparator = () => <Dropdown.Separator className="my-1 h-px bg-line" />;
 export const MenuLabel = ({ children }: { children: ReactNode }) => <Dropdown.Label className="label-mono px-2 py-1.5">{children}</Dropdown.Label>;
 
-export function Toaster() {
+export function Toaster({ children }: { children?: ReactNode }) {
   const toasts = useToasts();
   return (
     // Above a bar along the bottom of the page, where there is one, and not over its buttons.
     <div className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-80 flex-col gap-2 [body:has([data-bottom-bar])_&]:bottom-18" role="status" aria-live="polite">
+      {children}
       {toasts.map((t) => (
         <div
           key={t.id}

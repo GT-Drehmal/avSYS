@@ -1,7 +1,8 @@
-import { Play, RotateCw, Square } from "lucide-react";
+import { Play, RotateCw, Square, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Server } from "../lib/api";
 import { useServerAction } from "../lib/queries";
+import { useSetups } from "../lib/setups";
 import { Button } from "./ui";
 
 /**
@@ -25,6 +26,7 @@ export function ServerActions({ server, compact }: { server: Server; compact?: b
   const size = compact ? "sm" : "md";
   const pending = action.isPending ? action.variables : null;
   const phase = server.status.phase;
+  const sending = useSetups().some((s) => s.org === server.org && s.server === server.name && s.error === null);
   // Asked for a moment ago: the game is told to stop, and says Running until it has.
   const [restarted, setRestarted] = useState(false);
   useEffect(() => {
@@ -42,6 +44,14 @@ export function ServerActions({ server, compact }: { server: Server; compact?: b
     action.mutate(name, { onSuccess: () => name === "restart" && setRestarted(true) });
   };
 
+  // Being given its files from this tab: it is started once they are in.
+  if (sending && server.spec.state === "Stopped") {
+    return (
+      <Button size={size} variant={compact ? "default" : "primary"} icon={<Upload className="size-3.5" />} loading disabled title="It starts once its files are in">
+        Sending files
+      </Button>
+    );
+  }
   if (server.spec.state === "Stopped") {
     if (phase !== "Stopped") {
       return (
