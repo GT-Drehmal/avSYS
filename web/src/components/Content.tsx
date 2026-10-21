@@ -1,4 +1,4 @@
-import { ExternalLink, FileArchive, Upload, X } from "lucide-react";
+import { ExternalLink, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { api, qs, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
@@ -404,7 +404,7 @@ export function PackCard({ pack, children }: { pack: ResourcePack; children?: Re
   const p = pack.project;
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5">
-      {p ? <ProjectIcon url={p.iconUrl} size={32} /> : <span className="grid size-8 shrink-0 place-items-center rounded-md bg-raised"><FileArchive className="size-4 text-muted" /></span>}
+      <ProjectIcon url={p?.iconUrl} size={32} kind="resourcepack" name={packTitle(pack)} />
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-2 truncate text-[13px] font-medium">
           {packTitle(pack)}
@@ -471,7 +471,7 @@ export function ContentList({ mods, gameJava, extra, note, onRemove }: ContentLi
     <ul className="overflow-hidden rounded-lg border border-line bg-surface">
       {mods.map((m, i) => (
         <li key={`${m.source}/${m.project}`} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
-          <ProjectIcon url={m.iconUrl} size={32} />
+          <ProjectIcon url={m.iconUrl} size={32} kind={m.kind ?? "mod"} name={m.title || m.project} />
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 truncate text-[13px] font-medium">
               {m.title || m.project}
