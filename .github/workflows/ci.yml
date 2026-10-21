@@ -67,11 +67,14 @@ jobs:
           git diff --exit-code -- api deploy/crds
       # The lint is two rules about React hooks, which the type checker
       # cannot see: a hook called conditionally, and an effect that does not
-      # say what it depends on. Configured in web/biome.json.
+      # say what it depends on. Configured in web/biome.json. The audit is
+      # govulncheck's counterpart for the web packages: a known advisory in
+      # any of them fails the build, and the nightly run on main.
       - name: Web
         working-directory: web
         run: |
           bun install --frozen-lockfile
+          bun audit --audit-level=moderate
           bun run lint
           bun run build
       # Pushes build the images in the publish job below; pull requests only
