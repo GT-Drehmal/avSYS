@@ -24,7 +24,11 @@ test("a part of the app that is gone reloads the page once, then says so, and ne
   // name; here it stays gone, which is the case that could go round for ever.
   await page.route("**/assets/Terminal-*.js", (route) => route.fulfill({ status: 404, headers: { "Cache-Control": "no-store" }, body: "not found" }));
   let loads = 0;
-  page.on("load", () => loads++);
+  // Counted by the page asked for again, not by its load event: WebKit does
+  // not always report that for a reload.
+  page.on("request", (r) => {
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame()) loads++;
+  });
   await page.getByRole("link", { name: "Terminal" }).click();
   await expect.poll(() => loads).toBe(1);
   await expect(page).toHaveURL(/\/terminal$/);
