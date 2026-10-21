@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -142,5 +143,47 @@ func TestReapingMeasurings(t *testing.T) {
 	}
 	if err := p.srv.Client.Get(ctx, client.ObjectKey{Name: other.Name}, &corev1.Namespace{}); err != nil {
 		t.Errorf("another namespace was removed: %v", err)
+	}
+}
+
+// A node says what it is using in all, where the cluster says, and how many
+// players are on the servers it runs.
+func TestANodesUse(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	n := node("fast", "16Gi", "2.0")
+	n.Status.Allocatable[corev1.ResourceCPU] = resource.MustParse("8")
+	if err := p.srv.Client.Create(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	world := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Namespace: "mc-alpha", Name: "world"}, world); err != nil {
+		t.Fatal(err)
+	}
+	world.Status.Node, world.Status.Players = "fast", &avsysv1.PlayersStatus{Online: 4}
+	if err := p.srv.Client.Status().Update(ctx, world); err != nil {
+		t.Fatal(err)
+	}
+	fast := func() map[string]any {
+		_, got := p.get("root", "GET", "/nodes", "")
+		return got["nodes"].([]any)[0].(map[string]any)
+	}
+	if got := fast(); got["inUse"] != nil || got["cores"] != float64(8000) || got["players"] != float64(4) {
+		t.Errorf("before the cluster said what it uses: %v", got)
+	}
+
+	nodes, err := nodesInUse([]byte(`{"items":[{"metadata":{"name":"fast"},"usage":{"cpu":"1250m","memory":"6Gi"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.srv.usage.setNodes(nodes)
+	p.srv.usage.setAvailable(true, time.Now())
+	if got, _ := fast()["inUse"].(map[string]any); got["cpu"] != float64(1250) || got["memory"] != float64(6<<30) {
+		t.Errorf("in use: %v", got)
+	}
+	// Not shown once the cluster stops saying.
+	p.srv.usage.setAvailable(false, time.Now())
+	if got := fast(); got["inUse"] != nil {
+		t.Errorf("an old figure was shown as current: %v", got["inUse"])
 	}
 }

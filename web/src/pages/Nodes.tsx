@@ -9,6 +9,8 @@ import { useMe } from "../lib/queries";
 import { toast } from "../lib/toast";
 
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+const cores = (milli: number) => `${(milli / 1000).toFixed(milli < 10_000 ? 1 : 0)}`;
+const players = (n: number) => `${n} ${n === 1 ? "player" : "players"}`;
 
 /**
  * The cluster's nodes, for the panel's administrator: whether each is up,
@@ -28,6 +30,9 @@ export function Nodes() {
   if (nodes.isPending) return <Loading />;
   if (!nodes.data) return <Notice tone="danger">{nodes.error instanceof ApiError ? nodes.error.message : "Could not load nodes."}</Notice>;
   const { measuring, measured } = nodes.data;
+  const all = nodes.data.nodes;
+  // Across the cluster, where every node says what it is using.
+  const inUse = all.every((n) => n.inUse) && all.length > 0 ? all.reduce((sum, n) => sum + (n.inUse?.memory ?? 0), 0) : null;
 
   const measure = async () => {
     setAsked(true);
@@ -72,8 +77,12 @@ export function Nodes() {
           </p>
         )
       )}
+      <p className="mb-3 text-xs text-muted" data-testid="cluster-total">
+        {all.length} {all.length === 1 ? "node" : "nodes"} · {players(all.reduce((sum, n) => sum + n.players, 0))}
+        {inUse !== null && ` · ${gb(inUse)} of ${gb(all.reduce((sum, n) => sum + n.memory, 0))} memory in use`}
+      </p>
       <ul className="flex flex-col gap-3">
-        {nodes.data.nodes.map((n) => {
+        {all.map((n) => {
           const used = n.memory > 0 ? Math.min(1, (n.memory - n.free) / n.memory) : 0;
           return (
             <li key={n.name} className="rounded-lg border border-line bg-surface px-4 py-3">
@@ -93,6 +102,10 @@ export function Nodes() {
               <div className="mt-2 h-1 overflow-hidden rounded-full bg-raised" role="meter" aria-label={`Memory promised on ${n.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)}>
                 <div className="h-full bg-accent" style={{ width: `${used * 100}%` }} />
               </div>
+              <p className="mt-2 text-xs text-muted" data-testid="node-use">
+                {n.inUse ? `In use: ${gb(n.inUse.memory)} memory, ${cores(n.inUse.cpu)} of ${cores(n.cores)} cores · ` : ""}
+                {players(n.players)}
+              </p>
               <div className="mt-3">
                 <Toggle
                   checked={n.hosts}
@@ -107,7 +120,10 @@ export function Nodes() {
                     <li key={`${s.org}/${s.name}`}>
                       <Link to={`/o/${s.org}/s/${s.name}`} className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 font-mono text-xs hover:bg-raised">
                         {s.org}/{s.name}
-                        <span className="text-faint">{s.memory}</span>
+                        <span className="text-faint">
+                          {s.memory}
+                          {!!s.players && ` · ${players(s.players)}`}
+                        </span>
                       </Link>
                     </li>
                   ))}

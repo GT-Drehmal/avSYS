@@ -24,8 +24,9 @@ import (
 type nodeServer struct {
 	Org    string `json:"org"`
 	Name   string `json:"name"`
-	Memory string `json:"memory"`
-	Phase  string `json:"phase,omitempty"`
+	Memory  string `json:"memory"`
+	Phase   string `json:"phase,omitempty"`
+	Players int32  `json:"players,omitempty"`
 }
 
 type nodeView struct {
@@ -39,6 +40,12 @@ type nodeView struct {
 	Score  float64 `json:"score"`
 	Memory int64   `json:"memory"`
 	Free   int64   `json:"free"`
+	// Cores is how much CPU it has for pods, in thousandths of a core.
+	Cores int64 `json:"cores"`
+	// InUse is what it is using in all, where the cluster says.
+	InUse *nodeInUse `json:"inUse,omitempty"`
+	// Players is how many are on the servers it runs.
+	Players int32 `json:"players"`
 	// Servers are those it runs, shown to the panel's administrator.
 	Servers []nodeServer `json:"servers,omitempty"`
 }
@@ -76,11 +83,22 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 			Score:     controller.NodeScore(n),
 			Memory:    total,
 			Free:      max(0, total-reserved[n.Name]),
+			Cores:     n.Status.Allocatable.Cpu().MilliValue(),
+		}
+		if used, ok := s.usage.node(n.Name); ok {
+			if available, _ := s.usage.state(); available {
+				v.InUse = &used
+			}
 		}
 		for _, mc := range servers {
 			if mc.Status.Node == n.Name || (mc.Status.Node == "" && mc.Annotations[avsysv1.AnnotationNode] == n.Name) {
 				org, _ := s.orgOfNamespace(mc.Namespace)
-				v.Servers = append(v.Servers, nodeServer{Org: org, Name: mc.Name, Memory: mc.Spec.Resources.Memory.String(), Phase: string(mc.Status.Phase)})
+				on := nodeServer{Org: org, Name: mc.Name, Memory: mc.Spec.Resources.Memory.String(), Phase: string(mc.Status.Phase)}
+				if mc.Status.Players != nil {
+					on.Players = mc.Status.Players.Online
+				}
+				v.Players += on.Players
+				v.Servers = append(v.Servers, on)
 			}
 		}
 		out = append(out, v)

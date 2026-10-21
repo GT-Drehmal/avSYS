@@ -529,8 +529,14 @@ export interface NodeInfo {
   score: number;
   memory: number;
   free: number;
+  /** CPU it has for pods, in thousandths of a core. */
+  cores: number;
+  /** What it is using in all, where the cluster says. */
+  inUse?: { cpu: number; memory: number };
+  /** Players on the servers it runs. */
+  players: number;
   /** What runs on it, for the panel's administrator. */
-  servers?: { org: string; name: string; memory: string; phase?: string }[];
+  servers?: { org: string; name: string; memory: string; phase?: string; players?: number }[];
 }
 
 /** The cluster's nodes, and for the panel's administrator how measuring their speed went. */

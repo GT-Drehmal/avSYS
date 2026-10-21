@@ -48,10 +48,10 @@ rules:
   - apiGroups: [""]
     resources: ["nodes", "persistentvolumes"]
     verbs: ["get", "list"]
-  # What servers' games use of memory and CPU, for their graphs, where the
-  # cluster has a metrics API. Read only.
+  # What servers' games and nodes use of memory and CPU, for the graphs and
+  # the Nodes page, where the cluster has a metrics API. Read only.
   - apiGroups: ["metrics.k8s.io"]
-    resources: ["pods"]
+    resources: ["pods", "nodes"]
     verbs: ["get", "list"]
   # Setting a node's speed score, and whether it takes new servers, from
   # the Nodes page. Only labels are changed.
