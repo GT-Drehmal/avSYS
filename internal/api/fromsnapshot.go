@@ -523,11 +523,6 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	if err := settled(mc); err != nil {
 		return err
 	}
-	// Its newest snapshot says about how much there is to copy, which is
-	// said now rather than once the copy has been made for nothing.
-	if newest, err := s.newestOf(ctx, a.Org.Slug, mc.Name); err == nil && spec.Storage.Size.Value() < newest.Size {
-		return errBadRequest("%s has about %s of files. Give the copy more storage than that.", displayNameOf(mc), sizeOf(newest.Size))
-	}
 	final := spec.State
 	spec.State = avsysv1.StateStopped
 	if err := s.ensureNamespace(ctx, a.Org.Slug); err != nil {
