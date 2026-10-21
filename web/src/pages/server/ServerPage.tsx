@@ -241,6 +241,7 @@ export function ServerPage() {
         {canOperate && <Tab to="files">Files</Tab>}
         {canOperate && <Tab to="terminal">Terminal</Tab>}
         <Tab to="content">Content</Tab>
+        <Tab to="usage">Usage</Tab>
         <Tab to="backups">Backups</Tab>
         {atLeast(role, "admin") && <Tab to="settings">Settings</Tab>}
       </nav>

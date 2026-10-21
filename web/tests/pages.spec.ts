@@ -12,6 +12,7 @@ const pages: [path: string, shows: string | RegExp][] = [
   ["/account", "Account"],
   ["/o/friends/s/survival", "Survival"],
   ["/o/friends/s/survival/content", "LuckPerms"],
+  ["/o/friends/s/survival/usage", "Usage is not known"],
   ["/o/friends/s/survival/backups", /snapshot/i],
   ["/o/friends/s/survival/settings", "Survival"],
   // These two are loaded on demand, from files of their own.
