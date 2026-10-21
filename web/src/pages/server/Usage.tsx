@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Empty, Spinner } from "../../components/ui";
+import { useState } from "react";
+import { cx, Empty, Spinner } from "../../components/ui";
 import { api, serverPath } from "../../lib/api";
 import { bytes } from "../../lib/format";
 import { useServerContext } from "./ServerPage";
@@ -27,6 +28,8 @@ export function Usage() {
     queryFn: () => api.get<UsageView>(`${serverPath(server.org, server.name)}/usage`),
     refetchInterval: 30_000,
   });
+  // The moment the pointer is over, on any chart: all of them mark it.
+  const [hover, setHover] = useState<number | null>(null);
   if (usage.isPending) {
     return (
       <div className="flex justify-center py-10">
@@ -44,9 +47,9 @@ export function Usage() {
       <p className="text-[13px] text-muted">
         The last {span(samples)}.{!available && " This cluster does not report memory and CPU."}
       </p>
-      {available && <Chart title="Memory" samples={samples} every={every} value={(s) => s.memory} format={bytes} limit={limit} />}
-      {available && <Chart title="CPU" samples={samples} every={every} value={(s) => s.cpu} format={cores} />}
-      <Chart title="Players" samples={samples} every={every} value={(s) => s.players} format={(n) => String(n)} whole />
+      {available && <Chart title="Memory" samples={samples} every={every} value={(s) => s.memory} format={bytes} limit={limit} hover={hover} onHover={setHover} />}
+      {available && <Chart title="CPU" samples={samples} every={every} value={(s) => s.cpu} format={cores} hover={hover} onHover={setHover} />}
+      <Chart title="Players" samples={samples} every={every} value={(s) => s.players} format={(n) => String(n)} whole hover={hover} onHover={setHover} />
     </div>
   );
 }
@@ -72,9 +75,12 @@ interface ChartProps {
   limit?: number;
   /** Counted in whole numbers, so the scale is too. */
   whole?: boolean;
+  /** The moment the pointer is over, in milliseconds. */
+  hover: number | null;
+  onHover: (at: number | null) => void;
 }
 
-function Chart({ title, samples: all, every, value, format, limit, whole }: ChartProps) {
+function Chart({ title, samples: all, every, value, format, limit, whole, hover, onHover }: ChartProps) {
   // Only the samples that have this figure: memory and CPU are missing from
   // those taken while the cluster did not say.
   const samples = all.filter((s) => value(s) !== undefined);
@@ -100,6 +106,14 @@ function Chart({ title, samples: all, every, value, format, limit, whole }: Char
   });
   const point = (i: number) => `${x(samples[i]).toFixed(1)},${y(values[i]).toFixed(1)}`;
   const line = runs.map((run) => run.map((i, j) => `${j === 0 ? "M" : "L"}${point(i)}`).join(" ")).join(" ");
+  // The sample nearest the moment pointed at, unless that is in a gap.
+  let marked = -1;
+  if (hover !== null) {
+    for (let i = 0; i < samples.length; i++) {
+      if (marked === -1 || Math.abs(new Date(samples[i].t).getTime() - hover) < Math.abs(new Date(samples[marked].t).getTime() - hover)) marked = i;
+    }
+    if (Math.abs(new Date(samples[marked].t).getTime() - hover) > every * 1500) marked = -1;
+  }
   const area = runs.map((run) => `M${x(samples[run[0]]).toFixed(1)},${height} ${run.map((i) => `L${point(i)}`).join(" ")} L${x(samples[run[run.length - 1]]).toFixed(1)},${height} Z`).join(" ");
   return (
     <section aria-label={title} className="flex flex-col gap-2">
@@ -110,11 +124,41 @@ function Chart({ title, samples: all, every, value, format, limit, whole }: Char
           {limit ? ` · ${format(limit)} allowed` : ""}
         </p>
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-28 w-full rounded-md border border-line bg-surface" role="img" aria-label={`${title}: ${format(now)} ${when}, ${format(peak)} at most`}>
-        <path d={area} className="fill-accent/10" />
-        <path d={line} className="fill-none stroke-accent" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-        {!!limit && <line x1={0} x2={width} y1={y(limit)} y2={y(limit)} className="stroke-warn" strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />}
-      </svg>
+      <div
+        className="relative"
+        onPointerMove={(e) => {
+          const box = e.currentTarget.getBoundingClientRect();
+          onHover(start + Math.min(1, Math.max(0, (e.clientX - box.left) / box.width)) * (end - start));
+        }}
+        // A finger lifted leaves the mark where it was.
+        onPointerLeave={(e) => e.pointerType === "mouse" && onHover(null)}
+      >
+        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-28 w-full rounded-md border border-line bg-surface" role="img" aria-label={`${title}: ${format(now)} ${when}, ${format(peak)} at most`}>
+          <path d={area} className="fill-accent/10" />
+          <path d={line} className="fill-none stroke-accent" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          {!!limit && <line x1={0} x2={width} y1={y(limit)} y2={y(limit)} className="stroke-warn" strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />}
+        </svg>
+        {marked !== -1 && <Mark across={x(samples[marked]) / width} up={y(values[marked]) / height} label={format(values[marked])} at={samples[marked].t} />}
+      </div>
     </section>
+  );
+}
+
+/** A line through one moment on a chart, with what it was then. */
+function Mark({ across, up, label, at }: { across: number; up: number; label: string; at: string }) {
+  const left = `${across * 100}%`;
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      <div className="absolute inset-y-0 w-px bg-line-strong" style={{ left }} />
+      <div className="absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent" style={{ left, top: `${up * 100}%` }} />
+      {/* Kept inside the chart at either end, and off the point. */}
+      <div
+        role="tooltip"
+        className={cx("absolute rounded border border-line-strong bg-raised px-1.5 py-0.5 text-xs whitespace-nowrap", up < 0.4 ? "bottom-1.5" : "top-1.5")}
+        style={{ left, transform: `translateX(${-across * 100}%)` }}
+      >
+        <span className="text-fg">{label}</span> <span className="text-muted">{new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+      </div>
+    </div>
   );
 }
