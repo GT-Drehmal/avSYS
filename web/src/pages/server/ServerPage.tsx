@@ -83,7 +83,7 @@ function Tab({ to, end, children }: { to: string; end?: boolean; children: React
       to={to}
       end={end}
       className={({ isActive }) =>
-        cx("-mb-px flex h-9 items-center border-b-2 px-0.5 text-[13px] font-medium transition-colors", isActive ? "border-accent text-fg" : "border-transparent text-muted hover:text-fg")
+        cx("flex h-9 shrink-0 items-center px-0.5 text-[13px] font-medium transition-colors", isActive ? "text-fg shadow-[inset_0_-2px_0_var(--color-accent)]" : "text-muted hover:text-fg")
       }
     >
       {children}
@@ -234,7 +234,10 @@ export function ServerPage() {
         )}
       </div>
 
-      <nav className="mt-6 flex gap-6 border-b border-line max-sm:gap-4">
+      {/* Scrolled sideways where the tabs do not fit, as on a phone. The line
+          under them is drawn inside, so that scrolling does not cut the
+          line under the tab that is open. */}
+      <nav className="mt-6 flex gap-6 overflow-x-auto shadow-[inset_0_-1px_0_var(--color-line)] [scrollbar-width:none] max-sm:gap-4">
         <Tab to="." end>
           Console
         </Tab>
