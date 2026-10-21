@@ -52,6 +52,11 @@ const (
 // cache) and download caches. Paths are relative to the server directory.
 var excluded = []string{"/.workspace", "/.cache"}
 
+// notSaved are left out of snapshots but not left alone by restores: an
+// import's archive and what it was unpacked into, there only while one runs.
+// A restore over an import that was cut short takes them away.
+var notSaved = []string{"/.avsys/import", "/.avsys/import.archive"}
+
 // excludedFromWhole are left out of a whole snapshot, and of putting one
 // back: download caches, restic's own among them.
 var excludedFromWhole = []string{"/.workspace/.cache", "/.cache"}
@@ -68,6 +73,9 @@ const (
 	TriggerManual     = "manual"
 	TriggerScheduled  = "scheduled"
 	TriggerPreRestore = "pre-restore"
+	// TriggerPreReplace is the snapshot taken of a server before its world
+	// is replaced with one uploaded.
+	TriggerPreReplace = "pre-replace"
 	// TriggerFinal is the snapshot taken of a server as it is deleted.
 	TriggerFinal = "final"
 	// TriggerCopy is the snapshot a copy of a server is made from.
@@ -1040,7 +1048,7 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	for _, tag := range tags {
 		args = append(args, "--tag", tag)
 	}
-	for _, path := range exclusions(meta.Whole) {
+	for _, path := range append(exclusions(meta.Whole), notSaved...) {
 		args = append(args, "--exclude", dataDir+path)
 	}
 	if meta.SkipUnchanged {

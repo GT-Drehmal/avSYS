@@ -16,6 +16,7 @@ import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, S
 export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
   if (s.trigger === "pre-restore") return "Before a restore";
+  if (s.trigger === "pre-replace") return "Before the world was replaced";
   if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
   if (s.trigger === "copy") return s.by ? `For a copy ${s.by} made` : "For a copy";
   if (s.trigger === "move") return s.by ? `For a move ${s.by} made` : "For a move";
@@ -127,7 +128,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
                 +{bytes(s.added)} stored
               </p>
             </div>
-            {s.trigger === "pre-restore" && <Chip className="max-md:hidden">undo point</Chip>}
+            {(s.trigger === "pre-restore" || s.trigger === "pre-replace") && <Chip className="max-md:hidden">undo point</Chip>}
             {canRestore(s) && (
               <Button
                 size="sm"

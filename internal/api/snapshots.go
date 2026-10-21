@@ -665,6 +665,9 @@ func (s *Server) markRestoring(ctx context.Context, key client.ObjectKey, snapsh
 	orig := mc.DeepCopy()
 	if snapshot == "" {
 		delete(mc.Annotations, avsysv1.AnnotationRestoring)
+		// So is an import that did not finish, such as a world replaced
+		// part of the way: the snapshot's files are whole.
+		delete(mc.Annotations, avsysv1.AnnotationImporting)
 		// A move left to be finished by a restore is finished by it.
 		delete(mc.Annotations, avsysv1.AnnotationMoving)
 		delete(mc.Annotations, avsysv1.AnnotationMoveWas)

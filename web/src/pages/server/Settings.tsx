@@ -14,6 +14,7 @@ import { PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
+import { ReplaceWorld } from "../../components/ReplaceWorld";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -385,6 +386,10 @@ export function Settings() {
         <Field label="Image" hint="Leave empty for the default.">
           {(id) => <Input id={id} {...text("image")} placeholder="itzg/minecraft-server:java21" className="font-mono" spellCheck={false} />}
         </Field>
+      </Section>
+
+      <Section title="World" description="Replace it with one you have, as a .zip or .tar.gz.">
+        <ReplaceWorld server={server} />
       </Section>
 
       <Section title="Delete server" description="Removes the server and all of its files.">

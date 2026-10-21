@@ -402,3 +402,54 @@ test("a .tar cut short is turned down", async ({ page, as, org }) => {
   await page.getByLabel("Server archive").setInputFiles({ name: "cut.tar", mimeType: "application/x-tar", buffer: whole.subarray(0, 700) });
   await expect(page.getByText("This archive is cut short.")).toBeVisible();
 });
+
+test("a stopped server's world can be replaced with one of one's own, saying what it is first", async ({ page, as }) => {
+  await as("owner");
+  // Not while it runs.
+  await page.goto("/o/friends/s/survival/settings");
+  await expect(page.getByRole("button", { name: "Replace the world" })).toBeDisabled();
+  await expect(page.getByText("Stop the server first.")).toBeVisible();
+
+  await page.goto("/o/friends/s/creative/settings");
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await expect(dialog).toContainText("A snapshot is taken first.");
+  const replace = dialog.getByRole("button", { name: "Replace the world" });
+  await expect(replace).toBeDisabled();
+  // One with no world in it is turned down before anything is sent.
+  await dialog.getByLabel("World archive").setInputFiles({ name: "notes.zip", mimeType: "application/zip", buffer: zip({ "notes.txt": "hello" }) });
+  await expect(dialog.getByText("No world in this archive: it has no level.dat.")).toBeVisible();
+  await expect(replace).toBeDisabled();
+
+  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "Map/level.dat": levelDat("1.21.5", "Adventure Map"), "Map/region/r.0.0.mca": "x" }) });
+  await expect(dialog.getByTestId("world-summary")).toContainText('World "Adventure Map" · last opened in 1.21.5');
+  await expect(dialog.getByText("This server runs 1.21.4, older than the version this world was last opened in. The game cannot open it.")).toBeVisible();
+  let sent: URL | null = null;
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
+    sent = new URL(route.request().url());
+    await route.fulfill({ json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+  });
+  await replace.click();
+  await expect(page.getByText("Replaced the world of Creative")).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  expect(sent).not.toBeNull();
+  const params = (sent as unknown as URL).searchParams;
+  expect([params.get("root"), params.get("world"), params.get("replace")]).toEqual(["Map", "true", "true"]);
+});
+
+test("a world the panel would not take in place of a server's says why, and nothing is changed", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/s/creative/settings");
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  // An older world is upgraded by the game: nothing to warn of.
+  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("1.21"), "region/r.0.0.mca": "x" }) });
+  await expect(dialog.getByTestId("world-summary")).toContainText("last opened in 1.21 ·");
+  await expect(dialog.getByText(/This server runs/)).toHaveCount(0);
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", (route) =>
+    route.fulfill({ status: 502, json: { code: "snapshot_failed", message: "The current world could not be saved first, so nothing was changed." } }),
+  );
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  await expect(dialog.getByText("The current world could not be saved first, so nothing was changed.")).toBeVisible();
+  await expect(dialog).toBeVisible();
+});
