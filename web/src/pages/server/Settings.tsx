@@ -182,9 +182,11 @@ export function Settings() {
     // Opened to anyone by this change: asked first.
     if (!sure && isOpen(draft) && !isOpen(saved)) return setOpening(true);
     setOpening(false);
+    const sent = draft;
     update.mutate(toPatch(draft, server.spec), {
       onSuccess: (next) => {
-        setDraft(toDraft(next.spec));
+        // Changed again while it was saved: that change is kept, to save next.
+        setDraft((d) => (d === sent ? toDraft(next.spec) : d));
         toast.info("Settings saved");
       },
     });

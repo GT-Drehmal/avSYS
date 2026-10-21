@@ -95,7 +95,7 @@ export function Mods() {
     <div className="flex flex-col gap-5">
       {modpack && (
         <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-4 py-3">
-          <ProjectIcon url={modpack.iconUrl} size={40} />
+          <ProjectIcon url={modpack.iconUrl} size={40} kind="modpack" name={modpack.title || modpack.project} />
           <div className="min-w-0 flex-1">
             <p className="label-mono">Modpack</p>
             <p className="truncate text-[13px] font-medium">{modpack.title || modpack.project}</p>

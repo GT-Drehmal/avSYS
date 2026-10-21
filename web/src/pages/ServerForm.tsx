@@ -1004,7 +1004,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             </>
           ) : importing ? null : v.modpack ? (
             <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-              <ProjectIcon url={v.modpack.iconUrl} />
+              <ProjectIcon url={v.modpack.iconUrl} kind="modpack" name={v.modpack.title} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium">{v.modpack.title}</p>
                 <p className="truncate font-mono text-xs text-muted">modrinth:{v.modpack.project}</p>

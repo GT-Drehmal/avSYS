@@ -965,6 +965,35 @@ test("opening a new server to anyone can be thought better of", async ({ page, a
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/careful$`));
 });
 
+test("what is typed in a server's settings while a save is on its way is kept", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await api("owner").post(`/orgs/${slug}/servers`, {
+    name: "typed",
+    spec: { eula: true, loader: "paper", version: "1.21.4", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" } },
+  });
+  await as("owner");
+  await page.goto(`/o/${slug}/s/typed/settings`);
+  // The panel has saved it, and its answer is slow to arrive.
+  let answer: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  await page.route(`**/api/v1/orgs/${slug}/servers/typed`, async (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback();
+    const res = await route.fetch();
+    await held;
+    await route.fulfill({ response: res });
+  });
+  await page.getByLabel("Message of the day").fill("First");
+  await page.getByRole("button", { name: /^Save/ }).click();
+  await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/typed`)).spec.properties?.motd).toBe("First");
+  await page.getByLabel("Message of the day").fill("Second");
+  answer();
+  await expect(page.getByText("Settings saved")).toBeVisible();
+  await expect(page.getByLabel("Message of the day")).toHaveValue("Second");
+  await expect(page.getByRole("button", { name: /^Save/ })).toBeVisible();
+});
+
 test("a server's whitelist is turned off only once that is confirmed", async ({ page, as, org, api }) => {
   const slug = await org([]);
   await api("owner").post(`/orgs/${slug}/servers`, {
