@@ -566,6 +566,8 @@ with tarfile.open(sys.argv[1] + "/escape.tar", "w") as t:
 with tarfile.open(sys.argv[1] + "/save.tar.gz", "w:gz") as t:
     add(t, "saves/My World/level.dat"); add(t, "saves/My World/session.lock")
     add(t, "saves/My World/region/r.0.0.mca"); add(t, "saves/My World/DIM-1/region/r.0.0.mca")
+with tarfile.open(sys.argv[1] + "/other.tar.gz", "w:gz") as t:
+    add(t, "Other/level.dat"); add(t, "Other/region/r.1.1.mca")
 PY
 IMPORTED=$API/orgs/$ORG/servers/imported
 call -d '{"name":"imported","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
@@ -597,6 +599,19 @@ call -X PUT --data-binary "@$WORK/save.tar.gz" "$OWN/import?root=saves%2FMy%20Wo
 expect "a world of one's own is the server's" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat")" 200
 expect "with its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" 200
 expect "and not locked" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/session.lock")" 404
+# Its world replaced by another: a snapshot is taken first, only the world's
+# folders are replaced, and the snapshot puts the old one back.
+echo "kept" | call -X PUT --data-binary @- "$OWN/files/content?path=/kept.txt" >/dev/null
+expect "only a world replaces a world" "$(call -X PUT --data-binary "@$WORK/other.tar.gz" "$OWN/import?root=Other&replace=true" | field "d['code']")" invalid
+call -X PUT --data-binary "@$WORK/other.tar.gz" "$OWN/import?root=Other&world=true&replace=true&wait=true" >/dev/null
+expect "a world is replaced" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" "200 404 404"
+expect "and the server's other files are kept" "$(call "$OWN/files/content?path=/kept.txt")" kept
+expect "and the server can start" "$(call "$OWN" | field "d['status'].get('message', '')")" ""
+before=$(call "$OWN/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'pre-replace'][0]") || fail "no snapshot was taken before the world was replaced"
+call -X POST "$OWN/snapshots/$before/restore?wait=true" >/dev/null
+expect "the snapshot before it puts the old world back" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca")" "200 404"
+ids=$(call "$OWN/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
+call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
 call -X DELETE "$OWN?snapshot=false" >/dev/null
 
 step "extra ports"

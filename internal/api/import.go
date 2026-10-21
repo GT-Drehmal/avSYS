@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
 	"slices"
@@ -41,7 +42,7 @@ var (
 	errImporting = &Error{Status: http.StatusConflict, Code: "importing", Message: "This server's files are being imported. Wait for that to finish."}
 	// errImportIncomplete is returned to anything that would run the game on
 	// files an import started on and did not finish.
-	errImportIncomplete = &Error{Status: http.StatusConflict, Code: "import_incomplete", Message: "An import did not finish, so files may be missing. Import again, or delete the server."}
+	errImportIncomplete = &Error{Status: http.StatusConflict, Code: "import_incomplete", Message: "An import did not finish, so files may be missing. Import again, restore a snapshot, or delete the server."}
 	errHasFiles         = &Error{Status: http.StatusConflict, Code: "has_files", Message: "This server has files already. Import into a new server."}
 )
 
@@ -65,13 +66,15 @@ var kept = []string{".avsys", ".workspace", "lost+found"}
 // came out of it, checks that the folder named on the first line of stdin is
 // there, and empties the server directory but for what is kept. Then rest
 // runs, and the staging folder is removed. The next lines of stdin say how:
-// "split" and "listed", or nothing.
+// "split", "listed" and "replace", or nothing. With "replace", only the
+// world's folders are emptied, for the one unpacked to take their place.
 func unpacked(rest string) string {
 	return `set -eu
 command -v bsdtar >/dev/null || exit 127
 IFS= read -r root || true
 IFS= read -r split || true
 IFS= read -r listed || true
+IFS= read -r replace || true
 a=` + importArchive + `
 s=` + importStaging + `
 rm -rf "$s" "$s.err"
@@ -89,7 +92,11 @@ if [ ! -d "$s/$root" ]; then
   echo "The archive has no folder $root." >&2
   exit 5
 fi
-find ` + dataRoot + ` -mindepth 1 -maxdepth 1 ! -name .avsys ! -name .workspace ! -name lost+found -exec rm -rf {} +
+if [ "$replace" = replace ]; then
+  rm -rf ` + dataRoot + `/world ` + dataRoot + `/world_nether ` + dataRoot + `/world_the_end
+else
+  find ` + dataRoot + ` -mindepth 1 -maxdepth 1 ! -name .avsys ! -name .workspace ! -name lost+found -exec rm -rf {} +
+fi
 ` + rest + `
 cd /
 rm -rf "$s"
@@ -181,8 +188,9 @@ func archiveRoot(p string) (string, error) {
 
 // importFiles unpacks an archive of a server's folder into a server that is
 // stopped and has no files yet. With ?world=true the folder is a world, and
-// becomes the server's. With ?wait=true it is for a server made a moment
-// ago: its volume is waited for.
+// becomes the server's. With ?replace=true as well, it takes the place of the
+// world of a server that has files, once a snapshot of it is taken. With
+// ?wait=true it is for a server made a moment ago: its volume is waited for.
 func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	wait := r.URL.Query().Get("wait") == "true"
 	a, mc, err := s.serverMaybeNew(r, u, wait)
@@ -192,6 +200,17 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	root, err := archiveRoot(r.URL.Query().Get("root"))
 	if err != nil {
 		return err
+	}
+	replace := r.URL.Query().Get("replace") == "true"
+	if replace && r.URL.Query().Get("world") != "true" {
+		return errBadRequest("Only a world can replace a server's world.")
+	}
+	if replace && !s.Backups.Available() {
+		// What it replaces could not be got back.
+		return errNoBackups
+	}
+	if replace && createUnfinished(mc) {
+		return errCreateIncomplete
 	}
 	if mc.Spec.State != avsysv1.StateStopped {
 		return &Error{Status: http.StatusConflict, Code: "running", Message: "Stop the server first."}
@@ -210,13 +229,17 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 		return errBusy
 	}
-	err = s.importInto(r, w, mc, root, op)
+	err = s.importInto(r, w, mc, root, op, replace, a.Org.Slug, u.Username)
 	ctx := context.WithoutCancel(r.Context())
 	s.finishUnsaved(ctx, a.Namespace, mc.Name, kindImport, err)
 	if err != nil {
 		return err
 	}
-	s.audit(ctx, u, a.Org, "server.import", mc.Name, "")
+	if replace {
+		s.audit(ctx, u, a.Org, "server.replace-world", mc.Name, "")
+	} else {
+		s.audit(ctx, u, a.Org, "server.import", mc.Name, "")
+	}
 	fresh, err := s.fresh(ctx, mc)
 	if err != nil {
 		return err
@@ -225,7 +248,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	return nil
 }
 
-func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation) error {
+func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation, replace bool, org, by string) error {
 	ctx := r.Context()
 	key := client.ObjectKeyFromObject(mc)
 	wasMarked := importUnfinished(mc)
@@ -275,7 +298,8 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	}
 	defer sc.Close()
 	// Over a server whose import did not finish, what it left is replaced.
-	if !wasMarked {
+	// A world replaced goes among files that are there.
+	if !wasMarked && !replace {
 		if has, err := hasFiles(sc); err != nil {
 			return fileError(err)
 		} else if has {
@@ -306,6 +330,14 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 
 	// From here it is seen through even if whoever sent it has gone.
 	ctx = context.WithoutCancel(ctx)
+	if replace {
+		// What it replaces is kept first: nothing is touched if it cannot be.
+		s.setOperation(mc.Namespace, op, "Saving the current world first", 0)
+		if _, err := s.takeSnapshot(ctx, org, mc, op, backup.TriggerPreReplace, by); err != nil {
+			_ = sc.Remove(importArchive)
+			return &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: fmt.Sprintf("The current world could not be saved first, so nothing was changed: %v", err)}
+		}
+	}
 	touched = true
 	s.setOperation(mc.Namespace, op, "Unpacking", 0)
 	session, err := backup.CommandSession(ws)
@@ -326,7 +358,11 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	if r.URL.Query().Get("content") == "listed" {
 		listed = "listed"
 	}
-	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n")
+	again := ""
+	if replace {
+		again = "replace"
+	}
+	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 	if err := session.Run(script); err != nil {

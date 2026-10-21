@@ -31,6 +31,7 @@ const reasons: [trigger: string, label: string][] = [
   ["scheduled", "Scheduled"],
   ["manual", "By hand"],
   ["pre-restore", "Before a restore"],
+  ["pre-replace", "Before the world was replaced"],
   ["final", "Before a delete"],
   ["copy", "For a copy"],
   ["move", "For a move"],

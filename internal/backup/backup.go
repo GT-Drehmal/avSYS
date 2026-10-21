@@ -50,7 +50,7 @@ const (
 // excluded are left out of snapshots and left alone by restores: the
 // workspace's own home directory (shell history, editor servers, restic's
 // cache) and download caches. Paths are relative to the server directory.
-var excluded = []string{"/.workspace", "/.cache"}
+var excluded = []string{"/.workspace", "/.cache", "/.avsys/import", "/.avsys/import.archive"}
 
 // excludedFromWhole are left out of a whole snapshot, and of putting one
 // back: download caches, restic's own among them.
@@ -68,6 +68,9 @@ const (
 	TriggerManual     = "manual"
 	TriggerScheduled  = "scheduled"
 	TriggerPreRestore = "pre-restore"
+	// TriggerPreReplace is the snapshot taken of a server before its world
+	// is replaced with one uploaded.
+	TriggerPreReplace = "pre-replace"
 	// TriggerFinal is the snapshot taken of a server as it is deleted.
 	TriggerFinal = "final"
 	// TriggerCopy is the snapshot a copy of a server is made from.
