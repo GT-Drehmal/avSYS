@@ -190,6 +190,7 @@ func (s *Server) usageTick(ctx context.Context, now time.Time) {
 		} else {
 			s.Log.Warn("could not read what servers are using", "error", err)
 		}
+		s.usage.setNodes(nil)
 		return
 	}
 	var servers avsysv1.MinecraftServerList
@@ -201,14 +202,18 @@ func (s *Server) usageTick(ctx context.Context, now time.Time) {
 		return
 	}
 	s.usage.setAvailable(true, now)
+	// What nodes use is shown only as it is now: not known, it is not
+	// shown, rather than an old figure.
 	raw, err = rest.Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").Do(ctx).Raw()
 	if err != nil {
 		s.Log.Warn("could not read what nodes are using", "error", err)
+		s.usage.setNodes(nil)
 		return
 	}
 	nodes, err := nodesInUse(raw)
 	if err != nil {
 		s.Log.Warn("could not read what nodes are using", "error", err)
+		s.usage.setNodes(nil)
 		return
 	}
 	s.usage.setNodes(nodes)

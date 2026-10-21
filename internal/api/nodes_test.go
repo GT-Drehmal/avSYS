@@ -181,7 +181,19 @@ func TestANodesUse(t *testing.T) {
 	if got, _ := fast()["inUse"].(map[string]any); got["cpu"] != float64(1250) || got["memory"] != float64(6<<30) {
 		t.Errorf("in use: %v", got)
 	}
-	// Not shown once the cluster stops saying.
+	// Someone who is not shown which servers run where is not given a count
+	// of their players either.
+	_, member := p.get("viewer", "GET", "/nodes", "")
+	if _, ok := member["nodes"].([]any)[0].(map[string]any)["players"]; ok {
+		t.Error("a member was given the players on a node's servers")
+	}
+	// Not shown once the cluster could not say what nodes use.
+	p.srv.usage.setNodes(nil)
+	if got := fast(); got["inUse"] != nil {
+		t.Errorf("an old figure was shown as current: %v", got["inUse"])
+	}
+	p.srv.usage.setNodes(nodes)
+	// Nor once the cluster stops saying.
 	p.srv.usage.setAvailable(false, time.Now())
 	if got := fast(); got["inUse"] != nil {
 		t.Errorf("an old figure was shown as current: %v", got["inUse"])

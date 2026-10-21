@@ -533,8 +533,8 @@ export interface NodeInfo {
   cores: number;
   /** What it is using in all, where the cluster says. */
   inUse?: { cpu: number; memory: number };
-  /** Players on the servers it runs. */
-  players: number;
+  /** Players on the servers it runs, for the panel's administrator. */
+  players?: number;
   /** What runs on it, for the panel's administrator. */
   servers?: { org: string; name: string; memory: string; phase?: string; players?: number }[];
 }

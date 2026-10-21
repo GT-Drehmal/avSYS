@@ -22,8 +22,8 @@ import (
 // is made once, when it is made.
 
 type nodeServer struct {
-	Org    string `json:"org"`
-	Name   string `json:"name"`
+	Org     string `json:"org"`
+	Name    string `json:"name"`
 	Memory  string `json:"memory"`
 	Phase   string `json:"phase,omitempty"`
 	Players int32  `json:"players,omitempty"`
@@ -44,8 +44,9 @@ type nodeView struct {
 	Cores int64 `json:"cores"`
 	// InUse is what it is using in all, where the cluster says.
 	InUse *nodeInUse `json:"inUse,omitempty"`
-	// Players is how many are on the servers it runs.
-	Players int32 `json:"players"`
+	// Players is how many are on the servers it runs, for the panel's
+	// administrator, who is shown those servers.
+	Players *int32 `json:"players,omitempty"`
 	// Servers are those it runs, shown to the panel's administrator.
 	Servers []nodeServer `json:"servers,omitempty"`
 }
@@ -90,6 +91,9 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 				v.InUse = &used
 			}
 		}
+		if u.IsAdmin {
+			v.Players = new(int32)
+		}
 		for _, mc := range servers {
 			if mc.Status.Node == n.Name || (mc.Status.Node == "" && mc.Annotations[avsysv1.AnnotationNode] == n.Name) {
 				org, _ := s.orgOfNamespace(mc.Namespace)
@@ -97,7 +101,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 				if mc.Status.Players != nil {
 					on.Players = mc.Status.Players.Online
 				}
-				v.Players += on.Players
+				*v.Players += on.Players
 				v.Servers = append(v.Servers, on)
 			}
 		}

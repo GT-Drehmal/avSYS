@@ -78,7 +78,7 @@ export function Nodes() {
         )
       )}
       <p className="mb-3 text-xs text-muted" data-testid="cluster-total">
-        {all.length} {all.length === 1 ? "node" : "nodes"} · {players(all.reduce((sum, n) => sum + n.players, 0))}
+        {all.length} {all.length === 1 ? "node" : "nodes"} · {players(all.reduce((sum, n) => sum + (n.players ?? 0), 0))}
         {inUse !== null && ` · ${gb(inUse)} of ${gb(all.reduce((sum, n) => sum + n.memory, 0))} memory in use`}
       </p>
       <ul className="flex flex-col gap-3">
@@ -104,7 +104,7 @@ export function Nodes() {
               </div>
               <p className="mt-2 text-xs text-muted" data-testid="node-use">
                 {n.inUse ? `In use: ${gb(n.inUse.memory)} memory, ${cores(n.inUse.cpu)} of ${cores(n.cores)} cores · ` : ""}
-                {players(n.players)}
+                {players(n.players ?? 0)}
               </p>
               <div className="mt-3">
                 <Toggle
