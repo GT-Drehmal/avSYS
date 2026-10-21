@@ -35,8 +35,9 @@ test("a part of the app that is gone reloads the page once, then says so, and ne
   });
   await page.getByRole("link", { name: "Terminal" }).click();
   await expect.poll(() => loads).toBe(1);
-  // Loaded again: the document there now is not the one marked.
-  await expect.poll(() => page.evaluate(() => (window as { before?: boolean }).before ?? false)).toBe(false);
+  // Loaded again: the document there now is not the one marked. Asked while
+  // it is being replaced, there is no document to ask, which is not yet.
+  await expect.poll(() => page.evaluate(() => (window as { before?: boolean }).before ?? false).catch(() => true)).toBe(false);
   await expect(page).toHaveURL(/\/terminal$/);
   await expect(page.getByRole("alert")).toContainText("This page needs reloading");
   // The server's name and its other tabs are still there around it.
