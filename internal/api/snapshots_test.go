@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/backup"
 )
 
 // A restore brings back what the files depend on and leaves alone what the
@@ -65,6 +68,42 @@ func TestRestoreSoftware(t *testing.T) {
 	}
 	if got.Image != "itzg/minecraft-server:java21" || len(got.Env) != 1 || got.Env[0].Name != "USE_AIKAR_FLAGS" {
 		t.Errorf("image or environment was taken from the snapshot: %q %+v", got.Image, got.Env)
+	}
+}
+
+// People are told what failed in plain words. Connection errors, addresses
+// and commands stay in the log.
+func TestPlainly(t *testing.T) {
+	dial := errors.New(`port-forward to mc-a/b: error sending request: Post "https://127.0.0.1:26443/api/v1/namespaces/mc-a/pods/b/portforward": dial tcp 127.0.0.1:26443: connect: connection refused`)
+	unreachable := failed(dial, "the server's files are not reachable")
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{unreachable, "the server's files are not reachable"},
+		{failed(unreachable, "its files could not be saved, so it was not moved"),
+			"its files could not be saved, so it was not moved: the server's files are not reachable"},
+		{failed(fmt.Errorf("checking: %w", backup.ErrOldWorkspace), "the current state could not be saved first, so nothing was changed"),
+			"the current state could not be saved first, so nothing was changed: " + backup.ErrOldWorkspace.Error()},
+		{failed(errCreating, "the server did not stop"),
+			"the server did not stop: this server is still being created. Wait for that to finish"},
+		{failed(context.DeadlineExceeded, "the server did not stop"), "the server did not stop: it took too long"},
+		{errBusy, errBusy.Message},
+		{dial, "something went wrong; the panel's log has the details"},
+	} {
+		if got := plainly(c.err); got != c.want {
+			t.Errorf("plainly(%v)\n got %q\nwant %q", c.err, got, c.want)
+		}
+		if strings.Contains(plainly(c.err), "127.0.0.1") {
+			t.Errorf("an address was shown: %q", plainly(c.err))
+		}
+	}
+	// The log keeps the whole of it.
+	if !strings.Contains(unreachable.Error(), "connection refused") {
+		t.Errorf("the log lost the cause: %q", unreachable.Error())
+	}
+	if got := operationFailed(unreachable).(*Error).Message; got != "The server's files are not reachable." {
+		t.Errorf("answered %q", got)
 	}
 }
 

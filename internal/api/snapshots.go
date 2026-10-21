@@ -519,7 +519,78 @@ func operationFailed(err error) error {
 	if errors.Is(err, backup.ErrOldWorkspace) {
 		return &Error{Status: http.StatusConflict, Code: "workspace_outdated", Message: "Restart the server, then try again."}
 	}
-	return &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: err.Error()}
+	return &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: sentence(plainly(err))}
+}
+
+// failure is an error with a plain account of what went wrong, for people,
+// and the error underneath, for the log.
+type failure struct {
+	plain string
+	err   error
+}
+
+func (f *failure) Error() string { return f.plain + ": " + f.err.Error() }
+func (f *failure) Unwrap() error { return f.err }
+
+func failed(err error, format string, args ...any) error {
+	return &failure{plain: fmt.Sprintf(format, args...), err: err}
+}
+
+// saidPlainly are errors whose own words are fit to show.
+var saidPlainly = []error{
+	backup.ErrNotFound, backup.ErrUnavailable, backup.ErrIncomplete, backup.ErrUnchanged,
+	backup.ErrOldWorkspace, backup.ErrRejectedLeft, backup.ErrNoOffsite, backup.ErrNotEmpty,
+}
+
+// plainly is what to tell people of an operation that failed: the plain
+// accounts along err's chain, without the connection errors, commands and
+// addresses underneath. Those go to the log.
+func plainly(err error) string {
+	var parts []string
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if f, ok := e.(*failure); ok {
+			parts = append(parts, f.plain)
+			continue
+		}
+		if a, ok := e.(*Error); ok {
+			parts = append(parts, a.Message)
+			break
+		}
+		if slices.Contains(saidPlainly, e) {
+			parts = append(parts, e.Error())
+			break
+		}
+		if e == context.DeadlineExceeded {
+			parts = append(parts, "it took too long")
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return "something went wrong; the panel's log has the details"
+	}
+	for i := 1; i < len(parts); i++ {
+		parts[i] = strings.TrimSuffix(lowerFirst(parts[i]), ".")
+	}
+	return strings.Join(parts, ": ")
+}
+
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
+}
+
+// sentence makes a plain account into one to show on its own.
+func sentence(s string) string {
+	if s == "" {
+		return s
+	}
+	s = strings.ToUpper(s[:1]) + s[1:]
+	if !strings.HasSuffix(s, ".") && !strings.HasSuffix(s, ")") {
+		s += "."
+	}
+	return s
 }
 
 // takeSnapshot saves the server as it is now. A running game is told to
@@ -536,7 +607,7 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 	}
 	ws, err := s.Gateway.DialWorkspace(ctx, mc.Namespace, mc.Name)
 	if err != nil {
-		return nil, fmt.Errorf("the server's files are not reachable: %w", err)
+		return nil, failed(err, "the server's files are not reachable")
 	}
 	defer ws.Close()
 
@@ -576,10 +647,10 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 		// in memory, or catch a file half written. That is not a snapshot
 		// anyone should restore from, so there is none.
 		if _, err := s.rconFor(ctx, mc, "save-off", 15*time.Second); err != nil {
-			return nil, fmt.Errorf("the game did not answer, so its world could not be saved first (stop the server to snapshot it as it is): %w", err)
+			return nil, failed(err, "the game did not answer, so its world could not be saved first (stop the server to snapshot it as it is)")
 		}
 		if _, err := s.rconFor(ctx, mc, "save-all flush", 5*time.Minute); err != nil {
-			return nil, fmt.Errorf("the game did not finish writing its world out: %w", err)
+			return nil, failed(err, "the game did not finish writing its world out")
 		}
 	}
 
@@ -616,7 +687,7 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 	})
 	if err != nil {
 		if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF") || strings.Contains(err.Error(), "closed") {
-			return nil, fmt.Errorf("the connection to the server's files was lost while they were being copied, which is what happens when the server is stopped or started meanwhile; no snapshot was kept: %w", err)
+			return nil, failed(err, "the connection to the server's files was lost while they were being copied, which is what happens when the server is stopped or started meanwhile; no snapshot was kept")
 		}
 		return nil, err
 	}
@@ -808,7 +879,7 @@ func (s *Server) finishUnsaved(ctx context.Context, namespace, server, kind stri
 	org, _ := s.orgOfNamespace(namespace)
 	done := operationDone{Kind: kind, Org: org, Server: server}
 	if opErr != nil {
-		done.Error = opErr.Error()
+		done.Error = plainly(opErr)
 		s.Log.Error(kind+" failed", "namespace", namespace, "server", server, "error", opErr)
 	}
 	s.ops.end(namespace, server)
@@ -827,7 +898,7 @@ func (s *Server) finish(ctx context.Context, namespace, server, kind string, sub
 		done.Error, done.CalledOff = opErr.Error(), true
 		s.Log.Info(kind+" called off", "namespace", namespace, "server", server)
 	case opErr != nil:
-		done.Error = opErr.Error()
+		done.Error = plainly(opErr)
 		s.Log.Error(kind+" failed", "namespace", namespace, "server", server, "error", opErr)
 	}
 	mc := &avsysv1.MinecraftServer{}
@@ -974,13 +1045,13 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	restored := mc.Spec.DeepCopy()
 	restoreSoftware(restored, &record.Spec)
 	if err := s.validateSpec(ctx, mc.Namespace, mc.Name, restored); err != nil {
-		return nil, fmt.Errorf("the snapshot's settings are not valid here: %w", err)
+		return nil, failed(err, "the snapshot's settings are not valid here")
 	}
 
 	s.setOperation(mc.Namespace, op, "Saving the current state first", 0)
 	undo, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerPreRestore, by)
 	if err != nil {
-		return nil, fmt.Errorf("the current state could not be saved first, so nothing was changed: %w", err)
+		return nil, failed(err, "the current state could not be saved first, so nothing was changed")
 	}
 
 	s.setOperation(mc.Namespace, op, "Stopping the server", 0)
@@ -992,17 +1063,17 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 		return undo, err
 	}
 	if err := s.waitRestarted(ctx, key, stamp, stopWait); err != nil {
-		return undo, fmt.Errorf("the server did not stop: %w", err)
+		return undo, failed(err, "the server did not stop")
 	}
 	if err := s.waitPhase(ctx, key, avsysv1.PhaseStopped, stopWait); err != nil {
-		return undo, fmt.Errorf("the server did not stop: %w", err)
+		return undo, failed(err, "the server did not stop")
 	}
 
 	// Stopping replaces the pod with one that has only the workspace. That
 	// pod may take a while to be scheduled and have its volume attached.
 	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, 5*time.Minute)
 	if err != nil {
-		return undo, fmt.Errorf("the server was stopped, but its files did not become reachable, so nothing was restored: %w", err)
+		return undo, failed(err, "the server was stopped, but its files did not become reachable, so nothing was restored")
 	}
 	defer ws.Close()
 	// From here the files are in between two states until the restore is
@@ -1030,7 +1101,7 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	if err != nil {
 		// The server is left stopped: its files are in an unknown state and
 		// starting the game on them could make it worse.
-		return undo, fmt.Errorf("restoring files failed and the server was left stopped; the state from before is in the newest snapshot: %w", err)
+		return undo, failed(err, "restoring files failed and the server was left stopped; the state from before is in the newest snapshot")
 	}
 
 	// The settings go on before the mark comes off. With the mark in place
@@ -1045,15 +1116,15 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 		}
 	})
 	if err != nil {
-		return undo, fmt.Errorf("the files were restored, but the settings that go with them could not be applied; restore again: %w", err)
+		return undo, failed(err, "the files were restored, but the settings that go with them could not be applied; restore again")
 	}
 	// The operators in the files are the ones of then, and so is the note
 	// of which of them the panel made.
 	if err := s.noteRoleLists(ctx, key, record.roleListNotes()); err != nil {
-		return undo, fmt.Errorf("the files and settings were restored, but the note of who was made an operator could not be put back; restore again: %w", err)
+		return undo, failed(err, "the files and settings were restored, but the note of who was made an operator could not be put back; restore again")
 	}
 	if err := s.markRestoring(ctx, key, ""); err != nil {
-		return undo, fmt.Errorf("the files and settings were restored, but the server could not be released to start; restore again: %w", err)
+		return undo, failed(err, "the files and settings were restored, but the server could not be released to start; restore again")
 	}
 	return undo, nil
 }
@@ -1062,11 +1133,11 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 func (s *Server) recordOf(ctx context.Context, org, id string) (*snapshotRecord, error) {
 	raw, err := s.Backups.Record(ctx, org, id)
 	if err != nil {
-		return nil, fmt.Errorf("reading the snapshot's record of the server: %w", err)
+		return nil, failed(err, "the snapshot's record of the server could not be read")
 	}
 	record := &snapshotRecord{}
 	if err := json.Unmarshal(raw, record); err != nil {
-		return nil, fmt.Errorf("the snapshot's record of the server is unreadable: %w", err)
+		return nil, failed(err, "the snapshot's record of the server is unreadable")
 	}
 	return record, nil
 }
