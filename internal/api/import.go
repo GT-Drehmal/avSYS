@@ -66,8 +66,9 @@ var kept = []string{".avsys", ".workspace", "lost+found"}
 // came out of it, checks that the folder named on the first line of stdin is
 // there, and empties the server directory but for what is kept. Then rest
 // runs, and the staging folder is removed. The next lines of stdin say how:
-// "split", "listed" and "replace", or nothing. With "replace", only the
-// world's folders are emptied, for the one unpacked to take their place.
+// "split", "listed", "replace" and the world's folder, or nothing. With
+// "replace", only the world's folders are emptied, for the one unpacked to
+// take their place; the world's folder is "world" unless said.
 func unpacked(rest string) string {
 	return `set -eu
 command -v bsdtar >/dev/null || exit 127
@@ -75,6 +76,8 @@ IFS= read -r root || true
 IFS= read -r split || true
 IFS= read -r listed || true
 IFS= read -r replace || true
+IFS= read -r level || true
+lv=${level:-world}
 a=` + importArchive + `
 s=` + importStaging + `
 rm -rf "$s" "$s.err"
@@ -93,7 +96,7 @@ if [ ! -d "$s/$root" ]; then
   exit 5
 fi
 if [ "$replace" = replace ]; then
-  rm -rf ` + dataRoot + `/world ` + dataRoot + `/world_nether ` + dataRoot + `/world_the_end
+  rm -rf "` + dataRoot + `/$lv" "` + dataRoot + `/${lv}_nether" "` + dataRoot + `/${lv}_the_end"
 else
   find ` + dataRoot + ` -mindepth 1 -maxdepth 1 ! -name .avsys ! -name .workspace ! -name lost+found -exec rm -rf {} +
 fi
@@ -144,7 +147,7 @@ done`)
 // with "split" on the second line in folders of their own, as Paper and its
 // relatives do. They are found either way in the archive, and a folder of
 // one of them beside the world goes as a whole.
-var worldScript = unpacked(`w=` + dataRoot + `/world
+var worldScript = unpacked(`w=` + dataRoot + `/$lv
 src="$s/$root"
 name=${src##*/}
 parent=${src%/*}
@@ -156,14 +159,14 @@ for pair in nether:DIM-1 the_end:DIM1; do
   beside="$parent/${name}_$suffix"
   if [ "$root" != "" ] && [ -d "$beside" ]; then
     if [ "$split" = split ] && [ ! -e "$w/$dim" ]; then
-      mv -- "$beside" "` + dataRoot + `/world_$suffix"
+      mv -- "$beside" "` + dataRoot + `/${lv}_$suffix"
     elif [ -d "$beside/$dim" ] && [ ! -e "$w/$dim" ]; then
       mv -- "$beside/$dim" "$w/$dim"
     fi
   fi
   if [ "$split" = split ] && [ -d "$w/$dim" ]; then
-    mkdir -p "` + dataRoot + `/world_$suffix"
-    if [ ! -e "` + dataRoot + `/world_$suffix/$dim" ]; then mv -- "$w/$dim" "` + dataRoot + `/world_$suffix/$dim"; fi
+    mkdir -p "` + dataRoot + `/${lv}_$suffix"
+    if [ ! -e "` + dataRoot + `/${lv}_$suffix/$dim" ]; then mv -- "$w/$dim" "` + dataRoot + `/${lv}_$suffix/$dim"; fi
   fi
 done`)
 
@@ -212,6 +215,9 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	if replace && createUnfinished(mc) {
 		return errCreateIncomplete
 	}
+	if replace && levelOf(&mc.Spec) == "" {
+		return errBadRequest("Which folder this server's world is in could not be told from its settings, so it cannot be replaced here.")
+	}
 	if mc.Spec.State != avsysv1.StateStopped {
 		return &Error{Status: http.StatusConflict, Code: "running", Message: "Stop the server first."}
 	}
@@ -229,9 +235,14 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 		return errBusy
 	}
-	err = s.importInto(r, w, mc, root, op, replace, a.Org.Slug, u.Username)
+	undo, err := s.importInto(r, w, mc, root, op, replace, a.Org.Slug, u.Username)
 	ctx := context.WithoutCancel(r.Context())
-	s.finishUnsaved(ctx, a.Namespace, mc.Name, kindImport, err)
+	if undo != nil {
+		// What it replaced is in a snapshot, noted on the server as its newest.
+		s.finishOperation(ctx, a.Namespace, mc.Name, kindImport, nil, undo, err)
+	} else {
+		s.finishUnsaved(ctx, a.Namespace, mc.Name, kindImport, err)
+	}
 	if err != nil {
 		return err
 	}
@@ -248,7 +259,9 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	return nil
 }
 
-func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation, replace bool, org, by string) error {
+// importInto returns the snapshot it took of what a world replaced, once there
+// is one, whether or not the rest then succeeded.
+func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation, replace bool, org, by string) (undo *backup.Snapshot, err error) {
 	ctx := r.Context()
 	key := client.ObjectKeyFromObject(mc)
 	wasMarked := importUnfinished(mc)
@@ -257,7 +270,7 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		err := s.ownPod(waitCtx, mc)
 		cancel()
 		if err != nil {
-			return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. Try again."}
+			return undo, &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. Try again."}
 		}
 	}
 	// Its pod is made again, so that a shell already open to its files ends,
@@ -266,7 +279,7 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
 	mark := func(m *avsysv1.MinecraftServer) { m.Annotations[avsysv1.AnnotationImporting] = "true" }
 	if err := s.stopReplacing(ctx, key, stamp, mark); err != nil {
-		return err
+		return undo, err
 	}
 	// Until the files are touched, an import that goes no further leaves the
 	// server as it was.
@@ -279,41 +292,41 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 	}()
 	if err := s.waitRestarted(ctx, key, stamp, stopWait); err != nil {
-		return err
+		return undo, err
 	}
 	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, 5*time.Minute)
 	if err != nil {
 		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
-		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. Try again."}
+		return undo, &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. Try again."}
 	}
 	defer ws.Close()
 	if running, err := gameIn(ctx, s.nodeReader(), mc); err != nil {
-		return err
+		return undo, err
 	} else if running {
-		return &Error{Status: http.StatusConflict, Code: "running", Message: "Stop the server first."}
+		return undo, &Error{Status: http.StatusConflict, Code: "running", Message: "Stop the server first."}
 	}
 	sc, err := sftp.NewClient(ws)
 	if err != nil {
-		return err
+		return undo, err
 	}
 	defer sc.Close()
 	// Over a server whose import did not finish, what it left is replaced.
 	// A world replaced goes among files that are there.
 	if !wasMarked && !replace {
 		if has, err := hasFiles(sc); err != nil {
-			return fileError(err)
+			return undo, fileError(err)
 		} else if has {
-			return errHasFiles
+			return undo, errHasFiles
 		}
 	}
 
 	s.setOperation(mc.Namespace, op, "Uploading", 0)
 	if err := sc.MkdirAll(path.Dir(importArchive)); err != nil {
-		return fileError(err)
+		return undo, fileError(err)
 	}
 	f, err := sc.Create(importArchive)
 	if err != nil {
-		return fileError(err)
+		return undo, fileError(err)
 	}
 	_, err = f.ReadFromWithConcurrency(http.MaxBytesReader(w, r.Body, maxUpload), 0)
 	if cerr := f.Close(); err == nil {
@@ -323,9 +336,9 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		_ = sc.Remove(importArchive)
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Archives over 2 GB must be copied over SSH."}
+			return undo, &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Archives over 2 GB must be copied over SSH."}
 		}
-		return errBadRequest("The upload did not complete: %v.", err)
+		return undo, errBadRequest("The upload did not complete: %v.", err)
 	}
 
 	// From here it is seen through even if whoever sent it has gone.
@@ -333,16 +346,22 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	if replace {
 		// What it replaces is kept first: nothing is touched if it cannot be.
 		s.setOperation(mc.Namespace, op, "Saving the current world first", 0)
-		if _, err := s.takeSnapshot(ctx, org, mc, op, backup.TriggerPreReplace, by); err != nil {
+		undo, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerPreReplace, by)
+		if err != nil {
 			_ = sc.Remove(importArchive)
-			return &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: fmt.Sprintf("The current world could not be saved first, so nothing was changed: %v", err)}
+			return nil, &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: fmt.Sprintf("The current world could not be saved first, so nothing was changed: %v", err)}
+		}
+		// It is the way back until the world is in: not to be deleted before.
+		if !s.ops.carry(mc.Namespace, op, undo.ID) {
+			_ = sc.Remove(importArchive)
+			return undo, &Error{Status: http.StatusConflict, Code: "snapshot_deleting", Message: "The snapshot just taken of it is being deleted, so nothing was changed."}
 		}
 	}
 	touched = true
 	s.setOperation(mc.Namespace, op, "Unpacking", 0)
 	session, err := backup.CommandSession(ws)
 	if err != nil {
-		return err
+		return undo, err
 	}
 	defer session.Close()
 	script, split := serverScript, ""
@@ -358,26 +377,26 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	if r.URL.Query().Get("content") == "listed" {
 		listed = "listed"
 	}
-	again := ""
+	again, level := "", ""
 	if replace {
-		again = "replace"
+		again, level = "replace", levelOf(&mc.Spec)
 	}
-	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n")
+	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n" + level + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 	if err := session.Run(script); err != nil {
 		var exit *ssh.ExitError
 		if errors.As(err, &exit) && exit.ExitStatus() == 127 {
-			return backup.ErrOldWorkspace
+			return undo, backup.ErrOldWorkspace
 		}
 		why := strings.TrimSpace(stderr.String())
 		if why == "" {
 			why = err.Error()
 		}
-		return errBadRequest("Could not unpack the archive: %s", strings.TrimPrefix(why, "bsdtar: "))
+		return undo, errBadRequest("Could not unpack the archive: %s", strings.TrimPrefix(why, "bsdtar: "))
 	}
 	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
-	return s.markImporting(ctx, key, false)
+	return undo, s.markImporting(ctx, key, false)
 }
 
 // markImporting sets or clears the mark of an import on a server.

@@ -415,7 +415,7 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
 
   await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "Map/level.dat": levelDat("1.21.5", "Adventure Map"), "Map/region/r.0.0.mca": "x" }) });
   await expect(dialog.getByTestId("world-summary")).toContainText('World "Adventure Map" · last opened in 1.21.5');
-  await expect(dialog.getByText("This server runs 1.21.4. A world opened in a newer version cannot open in an older one.")).toBeVisible();
+  await expect(dialog.getByText("This server runs 1.21.4, older than the version this world was last opened in. The game cannot open it.")).toBeVisible();
   let sent: URL | null = null;
   await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
     sent = new URL(route.request().url());
@@ -434,8 +434,9 @@ test("a world the panel would not take in place of a server's says why, and noth
   await page.goto("/o/friends/s/creative/settings");
   await page.getByRole("button", { name: "Replace the world" }).click();
   const dialog = page.getByRole("dialog", { name: "Replace the world?" });
-  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("1.21.4"), "region/r.0.0.mca": "x" }) });
-  await expect(dialog.getByTestId("world-summary")).toContainText("last opened in 1.21.4");
+  // An older world is upgraded by the game: nothing to warn of.
+  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("1.21"), "region/r.0.0.mca": "x" }) });
+  await expect(dialog.getByTestId("world-summary")).toContainText("last opened in 1.21 ·");
   await expect(dialog.getByText(/This server runs/)).toHaveCount(0);
   await page.route("**/api/v1/orgs/friends/servers/creative/import?*", (route) =>
     route.fulfill({ status: 502, json: { code: "snapshot_failed", message: "The current world could not be saved first, so nothing was changed." } }),

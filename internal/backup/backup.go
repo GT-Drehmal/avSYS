@@ -50,7 +50,12 @@ const (
 // excluded are left out of snapshots and left alone by restores: the
 // workspace's own home directory (shell history, editor servers, restic's
 // cache) and download caches. Paths are relative to the server directory.
-var excluded = []string{"/.workspace", "/.cache", "/.avsys/import", "/.avsys/import.archive"}
+var excluded = []string{"/.workspace", "/.cache"}
+
+// notSaved are left out of snapshots but not left alone by restores: an
+// import's archive and what it was unpacked into, there only while one runs.
+// A restore over an import that was cut short takes them away.
+var notSaved = []string{"/.avsys/import", "/.avsys/import.archive"}
 
 // excludedFromWhole are left out of a whole snapshot, and of putting one
 // back: download caches, restic's own among them.
@@ -1043,7 +1048,7 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 	for _, tag := range tags {
 		args = append(args, "--tag", tag)
 	}
-	for _, path := range exclusions(meta.Whole) {
+	for _, path := range append(exclusions(meta.Whole), notSaved...) {
 		args = append(args, "--exclude", dataDir+path)
 	}
 	if meta.SkipUnchanged {

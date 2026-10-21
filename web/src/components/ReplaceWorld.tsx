@@ -4,6 +4,7 @@ import { ApiError, qs, serverPath, type Server } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { bytes } from "../lib/format";
 import { keys } from "../lib/queries";
+import { useGameVersions } from "../lib/software";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
 import { toast } from "../lib/toast";
 import { Button, Modal, Notice } from "./ui";
@@ -68,7 +69,11 @@ export function ReplaceWorld({ server }: { server: Server }) {
     }
   };
 
-  const version = server.spec.version;
+  // Told newer by the order the game's versions came out in, newest first.
+  const versions = useGameVersions();
+  const version = server.spec.version === "LATEST" ? (versions.data?.latest ?? "") : server.spec.version;
+  const order = versions.data?.ordered ?? [];
+  const newer = !!world?.version && order.includes(world.version) && order.includes(version) && order.indexOf(world.version) < order.indexOf(version);
   return (
     <>
       <div className="flex flex-wrap items-center gap-3">
@@ -100,11 +105,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
               World "{world.name}"{world.version ? ` · last opened in ${world.version}` : ""} · {bytes(world.size)}
             </p>
           )}
-          {world?.version && version !== "LATEST" && world.version !== version && (
-            <Notice>
-              This server runs {version}. A world opened in a newer version cannot open in an older one.
-            </Notice>
-          )}
+          {newer && <Notice>This server runs {version}, older than the version this world was last opened in. The game cannot open it.</Notice>}
           {error && <Notice tone="danger">{error}</Notice>}
           {sending && <UploadProgress sending={sending} onCancel={cancel} />}
           <div className="flex justify-end gap-2">
