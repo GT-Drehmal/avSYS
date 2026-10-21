@@ -9,6 +9,7 @@ test.beforeEach(async ({ as }) => {
 
 const lithium = { source: "modrinth", project: "gvQqBUqZ", title: "Lithium", kind: "mod", version: "v1", versionName: "0.20.1" };
 const fire = { source: "upload", project: "hell-is-fire", title: "Hell_Is_Fire_v0.1.0.zip", kind: "datapack" };
+const sodium = { source: "curseforge", project: "394468", title: "Sodium", kind: "mod" };
 const essentials = { source: "upload", project: "essentials", title: "EssentialsX.jar", kind: "plugin" };
 
 /** Shows survival as running this software with this content, and keeps what is saved. */
@@ -45,7 +46,7 @@ test("which sections a server has follows what it runs", async ({ page }) => {
 });
 
 test("each kind is in its own section, without a chip saying what it is", async ({ page }) => {
-  await survival(page, { loader: "fabric" }, [lithium, fire]);
+  await survival(page, { loader: "fabric" }, [lithium, fire, sodium]);
   await page.goto("/o/friends/s/survival/content");
   const mods = page.getByRole("region", { name: "Mods", exact: true });
   const datapacks = page.getByRole("region", { name: "Datapacks", exact: true });
@@ -54,6 +55,8 @@ test("each kind is in its own section, without a chip saying what it is", async 
   // An upload shows its name without its extension, and one from Modrinth no ID.
   await expect(datapacks.getByText("Hell_Is_Fire_v0.1.0", { exact: true })).toBeVisible();
   await expect(page.getByText("modrinth:gvQqBUqZ")).toHaveCount(0);
+  // One from elsewhere has no link, so it says where it is from.
+  await expect(page.getByText("curseforge:394468")).toBeVisible();
   await expect(page.getByText("mod", { exact: true })).toHaveCount(0);
   await expect(page.getByText("datapack", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Resource pack" }).getByText("None.", { exact: false })).toBeVisible();

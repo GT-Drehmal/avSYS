@@ -463,7 +463,7 @@ export function PackFit({ pack, version }: { pack: ResourcePack; version?: strin
 }
 
 // One from Modrinth links there, which says it all.
-const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? "uploaded file" : undefined);
+const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? "uploaded file" : m.source === "modrinth" ? undefined : `${m.source}:${m.project}`);
 
 const titleOf = (m: ContentRef) => (m.source === "upload" ? withoutExtension(m.title || m.project) : m.title || m.project);
 
