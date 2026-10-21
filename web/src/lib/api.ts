@@ -395,6 +395,8 @@ export interface Server {
   java: { game: number; effective: number };
   spec: ServerSpec;
   status: ServerStatus;
+  /** Why the game may not be run on its files, when a copy, restore or import of them did not finish. */
+  unfinished?: string;
 }
 
 /** A partial spec for PATCH: omitted fields are kept, null clears a field. */

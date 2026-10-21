@@ -72,7 +72,7 @@ export function UploadProgress({ sending, onCancel, leaving = "Leaving this page
         </>
       )}
     </div>
-    {!done && leaving && <p className="text-[11px] text-faint">{leaving}</p>}
+    {leaving && <p className="text-[11px] text-faint">{leaving}</p>}
     </div>
   );
 }

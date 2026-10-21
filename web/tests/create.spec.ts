@@ -812,6 +812,10 @@ test("a copy is given files from this computer too: its own are copied in first,
   });
   // Its files are copied in a moment.
   let copying = 2;
+  await page.route("**/api/v1/orgs/friends/servers/survival-copy", async (route) => {
+    const made = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+    return route.fulfill({ json: { ...made, name: "survival-copy" } });
+  });
   await page.route("**/api/v1/orgs/friends/servers/survival-copy/**", async (route) => {
     if (route.request().url().endsWith("/operation")) {
       if (copying-- > 0) return route.fulfill({ json: { kind: "create", org: "friends", server: "survival-copy", stage: "Copying files", percent: 50, startedAt: new Date().toISOString() } });
@@ -843,6 +847,55 @@ test("a copy is given files from this computer too: its own are copied in first,
   await expect(page).toHaveURL(/\/o\/friends\/s\/survival-copy$/);
   await expect(page.getByText("Survival copy is set up")).toBeVisible();
   expect(asked).toEqual(["copy survival Stopped undefined", "copied", "PUT /content mine.jar", "POST /start"]);
+});
+
+test("a copy whose own files did not all come is not given the rest, and says why", async ({ page, as }) => {
+  await as("owner");
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const made = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+    return route.fulfill({ status: 201, json: { ...made, name: route.request().postDataJSON().name } });
+  });
+  await page.route("**/api/v1/orgs/friends/servers/survival-copy", async (route) => {
+    const made = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+    return route.fulfill({ json: { ...made, name: "survival-copy", unfinished: "Creating this server did not finish, so files are missing. Delete it and create it again." } });
+  });
+  await page.route("**/api/v1/orgs/friends/servers/survival-copy/**", async (route) => {
+    if (route.request().url().endsWith("/operation")) return route.fulfill({ contentType: "application/json", body: "null" });
+    if (route.request().method() === "GET") return route.fallback();
+    asked.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 500, json: { code: "error", message: "not expected" } });
+  });
+  await page.goto("/o/friends/new?from=server:survival");
+  await page.getByRole("button", { name: "Add content" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Upload", exact: true }).click();
+  await page.getByRole("dialog").locator('input[type="file"]').setInputFiles([{ name: "mine.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Setting up Survival copy" })).toContainText("Creating this server did not finish, so files are missing.");
+  expect(asked).toEqual([]);
+});
+
+test("signing out stops what was being sent, and its card goes", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await newWithUploads(page, slug);
+  await page.route(`**/api/v1/orgs/${slug}/servers/up/content?*`, () => new Promise(() => {}));
+  await page.getByRole("button", { name: "Add content" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Upload", exact: true }).click();
+  await page.getByRole("dialog").locator('input[type="file"]').setInputFiles([{ name: "slow.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Create server" }).click();
+  const setup = page.getByRole("region", { name: "Setting up Up" });
+  await expect(setup).toBeVisible();
+  // Signed in here by a header, which signing out does not end: the panel
+  // is made to answer as it would once it has.
+  await page.route("**/api/v1/me", (route) => route.fulfill({ status: 401, json: { code: "unauthorized", message: "Sign in." } }));
+  await page.getByRole("button", { name: /^Owner/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/login/);
+  await expect(setup).toHaveCount(0);
 });
 
 test("files picked to upload for one kind of server are cleared when another kind is picked", async ({ page, as, org }) => {

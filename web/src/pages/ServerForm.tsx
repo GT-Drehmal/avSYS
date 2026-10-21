@@ -382,10 +382,20 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [keepCustom, setKeepCustom] = useState(custom);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // What a wait on Create is for, while the panel takes one.
+  const [stage, setStage] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
   const archiveInput = useRef<HTMLInputElement>(null);
   // The archive read last: one read earlier that ends later is not used.
   const reads = useRef(0);
+
+  // Closing the tab before the files are handed over would leave them unsent.
+  useEffect(() => {
+    if (!stage || !toUpload) return;
+    const ask = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", ask);
+    return () => window.removeEventListener("beforeunload", ask);
+  }, [stage, toUpload]);
 
   const name = v.customName ?? slugify(v.displayName);
   const bringingBack = !!source && !copying && name === source.name;
@@ -621,12 +631,32 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       );
     } catch (err) {
       if (err instanceof ApiError && (cancelled(err) || (err.status >= 400 && err.code !== "error"))) {
-        await api.del(`${path}?snapshot=false`).catch(() => undefined);
+        const why = cancelled(err) ? "the upload was stopped." : err.message;
+        const removed = await removeServer(server);
         await qc.invalidateQueries({ queryKey: keys.servers(org) });
-        throw new SetupFailed(`Could not import ${title}: ${cancelled(err) ? "the upload was stopped." : err.message} Nothing was kept.`);
+        if (!removed) throw new SetupFailed(`Could not import ${title}: ${why} It could not be removed: delete it in its Settings.`, `/o/${org}/s/${server}/settings`);
+        throw new SetupFailed(`Could not import ${title}: ${why} Nothing was kept.`);
       }
       throw new SetupFailed(`Lost touch with the panel while importing ${title}. Check its files before starting it.`, `/o/${org}/s/${server}/files`);
     }
+  };
+
+  /**
+   * Deletes a server made only to be imported into. An import cut short may
+   * hold it for a moment more, until the panel has let go of it.
+   */
+  const removeServer = async (server: string) => {
+    for (let tries = 0; tries < 30; tries++) {
+      try {
+        await api.del(`${serverPath(org, server)}?snapshot=false`);
+        return true;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return true;
+        if (!(err instanceof ApiError) || err.status !== 409) return false;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    return false;
   };
 
   /**
@@ -666,23 +696,39 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     }
   };
 
-  /** Waits for a copy's own files to be copied in, which what is uploaded joins. */
+  /**
+   * Waits for a copy's own files to be copied in, which what is uploaded
+   * joins, and checks that they all were.
+   */
   const copied = async (w: SetupWork, server: string) => {
-    w.say("Copying files");
+    w.say("Copying files", true);
+    const path = serverPath(org, server);
     const since = Date.now();
+    let lost = 0;
+    const stopped = () => new SetupFailed("Not started: the upload was stopped. Add the files on its Content page, then start it.", `/o/${org}/s/${server}/content`);
     for (;;) {
-      const op = await api.get<Operation | null>(`${serverPath(org, server)}/operation`).then(
+      if (w.signal.aborted) throw stopped();
+      const op = await api.get<Operation | null>(`${path}/operation`).then(
         (running) => running ?? null,
         (err) => {
           // Gone, as when it was deleted meanwhile: there is nothing to give
           // files to. Just made, the panel may not have caught up with it.
           if (err instanceof ApiError && err.status === 404 && Date.now() - since > 15_000) throw new SetupFailed("It is gone: nothing was uploaded.");
-          // Not known: asked again.
           return "unknown" as const;
         },
       );
-      if (op === null) return;
-      if (w.signal.aborted) throw new ApiError(0, "aborted", "Upload cancelled.");
+      lost = op === "unknown" ? lost + 1 : 0;
+      // Asked again for a minute, then given up on.
+      if (lost > 60) throw new SetupFailed("Lost touch with the panel while its files were copied. Nothing was uploaded.", `/o/${org}/s/${server}`);
+      if (op === null) break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    // Ended is not done: a copy that failed leaves the server marked. The
+    // mark may take a moment to be seen gone.
+    for (let tries = 0; ; tries++) {
+      const made = await api.get<Server>(path).catch(() => null);
+      if (made && !made.unfinished) return;
+      if (tries >= 5) throw new SetupFailed(made?.unfinished ?? "Could not tell whether its files were copied. Nothing was uploaded.", `/o/${org}/s/${server}`);
       await new Promise((r) => setTimeout(r, 1000));
     }
   };
@@ -720,7 +766,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         // "auto" lets the panel choose for a copy of a server kept to some
         // nodes, which would otherwise be kept to them too.
         const placed = v.node === "auto" ? { spec: { ...copyRequest(), nodeSelector: {} } } : { ...(v.node ? { node: v.node } : {}), spec: copyRequest() };
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed });
+        // A copy of a server as it is now waits for a snapshot of it. Files
+        // to upload are not handed over until it is taken.
+        if (source.origin.kind === "server") setStage(`Taking a snapshot of ${source.live?.spec.displayName || source.origin.name}…`);
+        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed }).finally(() => setStage(null));
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files
         // are in. Files to upload join them after.
@@ -750,12 +799,12 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           // Its picture goes onto its volume, which may not be there yet:
           // the panel waits for it, puts the picture in place and starts
           // the server.
-          w.say("Setting its picture");
           try {
-            await api.putRaw(`${serverPath(org, server.name)}/icon?wait=true&start=true`, picture);
+            await w.send(`Its picture`, `${serverPath(org, server.name)}/icon?wait=true&start=true`, picture);
             qc.setQueryData(["picture-version"], Date.now());
           } catch (err) {
-            throw new SetupFailed(err instanceof ApiError ? `Could not set the picture: ${err.message}` : "Could not set the picture. Try again in Settings.", `/o/${org}/s/${server.name}/settings`);
+            const why = cancelled(err) ? "the upload was stopped." : err instanceof ApiError ? err.message : "it did not go.";
+            throw new SetupFailed(`Not started: could not set its picture: ${why} Set it in Settings, then start it.`, `/o/${org}/s/${server.name}/settings`);
           }
           return;
         }
@@ -1353,6 +1402,12 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           </>
         )}
         {error && <Notice tone="danger">{error}</Notice>}
+        {stage && (
+          <p className="text-xs text-muted" role="status">
+            {stage}
+            {toUpload && " Closing this tab stops the files being sent."}
+          </p>
+        )}
         <div className="flex gap-2">
           <Button type="submit" variant="primary" loading={busy}>
             {!source ? "Create server" : duplicating ? "Duplicate" : "Create server"}

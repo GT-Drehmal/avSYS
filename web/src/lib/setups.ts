@@ -17,6 +17,8 @@ export interface Setup {
   stage: string;
   /** How far the file being sent is, while one is. */
   progress: Progress | null;
+  /** Whether what it is doing now can be stopped from here. */
+  stoppable: boolean;
   /** Why it stopped, once it has. It stays until dismissed. */
   error: string | null;
   /** Where to go to put it right, with the error. */
@@ -25,7 +27,7 @@ export interface Setup {
 
 /** What a setup's work is given: a way to say what it does, and to send a file. */
 export interface SetupWork {
-  say: (stage: string) => void;
+  say: (stage: string, stoppable?: boolean) => void;
   send: <T>(label: string, path: string, file: Blob) => Promise<T>;
   signal: AbortSignal;
 }
@@ -69,16 +71,16 @@ export function startSetup(org: string, server: string, title: string, work: (w:
   const id = nextId++;
   const ctl = new AbortController();
   stops.set(id, ctl);
-  setups = [...setups, { id, org, server, title, stage: "Getting ready", progress: null, error: null }];
+  setups = [...setups, { id, org, server, title, stage: "Getting ready", progress: null, stoppable: false, error: null }];
   emit();
   const w: SetupWork = {
-    say: (stage) => update(id, { stage, progress: null }),
+    say: (stage, stoppable = false) => update(id, { stage, progress: null, stoppable }),
     send: async <T>(label: string, path: string, file: Blob) => {
-      update(id, { stage: label, progress: { sent: 0, total: file.size } });
+      update(id, { stage: label, progress: { sent: 0, total: file.size }, stoppable: true });
       try {
         return await upload<T>(path, file, (progress) => update(id, { progress }), ctl.signal);
       } finally {
-        update(id, { progress: null });
+        update(id, { progress: null, stoppable: false });
       }
     },
     signal: ctl.signal,
@@ -91,7 +93,9 @@ export function startSetup(org: string, server: string, title: string, work: (w:
     })
     .catch((err) => {
       const message = err instanceof ApiError && err.code === "aborted" ? "The upload was stopped." : err instanceof Error ? err.message : "Something went wrong.";
-      update(id, { error: message, fix: err instanceof SetupFailed ? err.fix : undefined, progress: null });
+      // Cleared meanwhile, as by signing out: nothing is left to say it to.
+      if (!stops.has(id)) return false;
+      update(id, { error: message, fix: err instanceof SetupFailed ? err.fix : undefined, progress: null, stoppable: false });
       return false;
     })
     .then((ok) => {
@@ -102,6 +106,14 @@ export function startSetup(org: string, server: string, title: string, work: (w:
 
 /** Stops a setup's upload. What was already sent stays. */
 export const stopSetup = (id: number) => stops.get(id)?.abort();
+
+/** Stops and forgets every setup, as when signing out. */
+export function clearSetups() {
+  for (const ctl of stops.values()) ctl.abort();
+  stops.clear();
+  setups = [];
+  emit();
+}
 
 export function dismissSetup(id: number) {
   setups = setups.filter((s) => s.id !== id);
