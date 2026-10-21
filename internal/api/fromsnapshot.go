@@ -468,12 +468,11 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	return nil
 }
 
-// createFromServer makes a copy of a server as it is now: a snapshot of it
-// is taken, unless its newest one already has everything, and the new server
-// is made from that. The original keeps running and is not touched.
-//
-// The request waits for the snapshot. What follows is as for any server made
-// from a snapshot: it exists once this answers, and its files follow.
+// createFromServer makes a copy of a server as it is now. The copy is made
+// at once, stopped and held, and answered with; a snapshot of the original
+// is then taken, unless its newest one already has everything, and the copy
+// is given its files from that, as its create operation. The original keeps
+// running and is not touched. With ?wait=true it answers when all is done.
 func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string, picture newPicture, node string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
@@ -485,10 +484,11 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	} else if err != nil {
 		return err
 	}
-	// Said before the snapshot, which is the slow part and would be for
-	// nothing. They are checked again when the server is made. A copy is
-	// never the server that a name's snapshots are of.
+	// A copy is never the server that a name's snapshots are of.
 	if err := s.nameIsFree(ctx, a, name); err != nil {
+		return err
+	}
+	if err := s.serviceNameIsFree(ctx, a.Namespace, name); err != nil {
 		return err
 	}
 	if err := checkCopiedContent(&requested, &mc.Spec, given); err != nil {
@@ -498,23 +498,22 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 		return errBadRequest("%q is not a state. A server is Running or Stopped.", st)
 	}
 	fromLive(&requested, given, &mc.Spec)
-	// What the request asks for is held against the server as it is now,
-	// before the snapshot: a copy that could not be made is not worth one.
-	// That includes its mods having a build for the game version asked for.
-	wanted, err := s.specFromSnapshot(ctx, a, name, &requested, &mc.Spec, given)
+	// Made from the server as it is now: what its snapshot records of it is
+	// the same, written a moment later.
+	spec, err := s.specFromSnapshot(ctx, a, name, &requested, &mc.Spec, given)
 	if err != nil {
 		return err
 	}
-	if err := s.checkHostnameOwner(ctx, a.Org, wanted.Expose.Hostname); err != nil {
+	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
 		return err
 	}
-	if _, said := given["mods"]; said || targetOf(&wanted) != targetOf(&mc.Spec) {
-		if err := s.resolveContent(ctx, &wanted, &mc.Spec); err != nil {
+	if _, said := given["mods"]; said || targetOf(&spec) != targetOf(&mc.Spec) {
+		if err := s.resolveContent(ctx, &spec, &mc.Spec); err != nil {
 			return err
 		}
 	}
 	if node != "" {
-		if err := s.checkNode(ctx, node, wanted.Resources.Memory); err != nil {
+		if err := s.checkNode(ctx, node, spec.Resources.Memory); err != nil {
 			return err
 		}
 	}
@@ -524,28 +523,131 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	if err := settled(mc); err != nil {
 		return err
 	}
-	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot, "")
+	// Its newest snapshot says about how much there is to copy, which is
+	// said now rather than once the copy has been made for nothing.
+	if newest, err := s.newestOf(ctx, a.Org.Slug, mc.Name); err == nil && spec.Storage.Size.Value() < newest.Size {
+		return errBadRequest("%s has about %s of files. Give the copy more storage than that.", displayNameOf(mc), sizeOf(newest.Size))
+	}
+	final := spec.State
+	spec.State = avsysv1.StateStopped
+	if err := s.ensureNamespace(ctx, a.Org.Slug); err != nil {
+		return err
+	}
+
+	// Both are claimed before the copy exists: the original, so that it is
+	// not restored or moved while it is snapshotted, and the copy's name,
+	// so that there is no moment at which it is there and anyone else may
+	// act on it.
+	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, name, kindCreate, "")
 	if !ok {
+		return &Error{Status: http.StatusConflict, Code: "busy", Message: "A server with this name is already being created."}
+	}
+	origOp, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot, "")
+	if !ok {
+		s.ops.end(a.Namespace, name)
+		if running := s.ops.current(a.Namespace, mc.Name); running != nil {
+			return heldBy(running.Kind)
+		}
 		return errBusy
 	}
-	// The caller hanging up does not stop the snapshot once it has begun.
-	working, cancel := context.WithTimeout(context.WithoutCancel(ctx), operationTimeout)
-	defer cancel()
-	snap, err := s.takeSnapshot(working, a.Org.Slug, mc, op, backup.TriggerCopy, u.Username)
+	created := &avsysv1.MinecraftServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: a.Namespace, Name: name,
+			// Held, as one whose files are on their way, until the snapshot
+			// they come from is known and then they are in.
+			Annotations: map[string]string{avsysv1.AnnotationRestoring: snapshotNotYetTaken, avsysv1.AnnotationCreating: snapshotNotYetTaken},
+		},
+		Spec: spec,
+	}
+	if node != "" {
+		created.Annotations[avsysv1.AnnotationNode] = node
+		created.Spec.NodeSelector = nil
+	}
+	// Its files come with operators in them, some of whom the panel made
+	// for their role in the organization.
+	for _, note := range []string{avsysv1.AnnotationAutoOps, avsysv1.AnnotationAutoWhitelist} {
+		if made := splitNames(mc.Annotations[note]); len(made) > 0 {
+			created.Annotations[note] = strings.Join(made, ",")
+		}
+	}
+	if err := s.withHostname(ctx, a.Org, created.Spec.Expose.Hostname, func() error { return s.createPlaced(ctx, created, node) }); err != nil {
+		s.ops.end(a.Namespace, mc.Name)
+		s.ops.end(a.Namespace, name)
+		return err
+	}
+	s.audit(ctx, u, a.Org, "server.copy", mc.Name, "to "+name)
+	s.audit(ctx, u, a.Org, "server.create", name, "copy of "+mc.Name)
+
+	// Deleting the copy calls this off. Nothing else does: the request that
+	// asked for it going away does not.
+	working, stop := context.WithCancel(context.WithoutCancel(ctx))
+	s.ops.stoppable(op, stop)
+	original := mc.Spec.DeepCopy()
+	work := func() error {
+		defer stop()
+		ctx, cancel := context.WithTimeout(working, operationTimeout)
+		defer cancel()
+		snap, err := s.copyFrom(ctx, a, mc, origOp, created, op, u.Username)
+		if err == nil {
+			err = s.populate(ctx, a.Org.Slug, created, snap, op, final, original, picture)
+			if err != nil {
+				err = failed(err, "making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again")
+			}
+		}
+		s.finishOperation(ctx, a.Namespace, name, kindCreate, snap, nil, err)
+		return err
+	}
+	if r.URL.Query().Get("wait") == "true" {
+		if err := work(); err != nil {
+			return operationFailed(err)
+		}
+		if fresh, err := s.fresh(context.WithoutCancel(ctx), created); err == nil {
+			created = fresh
+		}
+	} else {
+		go func() { _ = work() }()
+	}
+	writeJSON(w, http.StatusCreated, s.view(created))
+	return nil
+}
+
+// snapshotNotYetTaken stands for the snapshot a copy's files are to come
+// from, on the copy, until it is taken.
+const snapshotNotYetTaken = "pending"
+
+// copyFrom takes the snapshot a copy is made from, ending the original's
+// claim, and notes it on the copy, whose claim then carries it.
+func (s *Server) copyFrom(ctx context.Context, a *access, mc *avsysv1.MinecraftServer, origOp *operation, created *avsysv1.MinecraftServer, op *operation, by string) (*backup.Snapshot, error) {
+	s.setOperation(a.Namespace, op, "Taking a snapshot of "+displayNameOf(mc), 0)
+	snap, err := s.takeSnapshot(ctx, a.Org.Slug, mc, origOp, backup.TriggerCopy, by)
 	if errors.Is(err, backup.ErrUnchanged) {
 		// Nothing has changed since its newest snapshot, which is then what
 		// the copy is made from.
-		snap, err = s.newestOf(working, a.Org.Slug, mc.Name)
+		snap, err = s.newestOf(ctx, a.Org.Slug, mc.Name)
 	}
-	s.finishOperation(working, a.Namespace, mc.Name, kindSnapshot, snap, snap, err)
+	s.finishOperation(ctx, a.Namespace, mc.Name, kindSnapshot, snap, snap, err)
 	if err != nil {
-		return operationFailed(err)
+		return nil, failed(err, "no snapshot of %s could be taken, so nothing was copied; delete this server and make the copy again", displayNameOf(mc))
 	}
-	s.audit(ctx, u, a.Org, "server.copy", mc.Name, "to "+name)
-	// The snapshot was seen through although the caller may have hung up
-	// meanwhile, and so is making the server from it: otherwise a dropped
-	// connection would leave the snapshot and nothing to show for it.
-	return s.createFromSnapshot(w, r.WithContext(context.WithoutCancel(ctx)), u, a, name, requested, given, snap.ID, picture, node)
+	if created.Spec.Storage.Size.Value() < snap.Size {
+		return nil, failed(errors.New("too small"), "%s has %s of files, more than this server's storage; delete it and make the copy again with more", displayNameOf(mc), sizeOf(snap.Size))
+	}
+	// Not to be deleted until the copy has its files.
+	if !s.ops.carry(a.Namespace, op, snap.ID) {
+		return nil, failed(errors.New("being deleted"), "the snapshot taken of %s is being deleted, so nothing was copied; delete this server and make the copy again", displayNameOf(mc))
+	}
+	key := client.ObjectKeyFromObject(created)
+	fresh := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, fresh); err != nil {
+		return nil, err
+	}
+	orig := fresh.DeepCopy()
+	fresh.Annotations[avsysv1.AnnotationRestoring] = snap.ID
+	fresh.Annotations[avsysv1.AnnotationCreating] = snap.ID
+	if err := s.Client.Patch(ctx, fresh, client.MergeFrom(orig)); err != nil {
+		return nil, err
+	}
+	return snap, nil
 }
 
 // fromLive fills in what a copy of a server takes from the server itself
@@ -712,4 +814,12 @@ func sizeOf(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// displayNameOf is what a server is called on its page.
+func displayNameOf(mc *avsysv1.MinecraftServer) string {
+	if mc.Spec.DisplayName != "" {
+		return mc.Spec.DisplayName
+	}
+	return mc.Name
 }
