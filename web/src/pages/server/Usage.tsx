@@ -6,9 +6,9 @@ import { useServerContext } from "./ServerPage";
 
 interface Sample {
   t: string;
-  /** Thousandths of a core. */
-  cpu: number;
-  memory: number;
+  /** Thousandths of a core. Missing where the cluster does not say. */
+  cpu?: number;
+  memory?: number;
   players: number;
 }
 
@@ -37,14 +37,15 @@ export function Usage() {
   if (usage.isError) return <Empty title="Could not load usage">{usage.error.message}</Empty>;
   const { available, limit, every } = usage.data;
   const samples = usage.data.samples ?? [];
-  if (!available) return <Empty title="Usage is not known">This cluster does not report what servers use.</Empty>;
   if (samples.length < 2) return <Empty title="Nothing yet">Usage shows here while the server runs.</Empty>;
   const cores = (m: number) => `${(m / 1000).toFixed(m < 10_000 ? 2 : 1)} cores`;
   return (
     <div className="flex flex-col gap-6">
-      <p className="text-[13px] text-muted">The last {span(samples)}.</p>
-      <Chart title="Memory" samples={samples} every={every} value={(s) => s.memory} format={bytes} limit={limit} />
-      <Chart title="CPU" samples={samples} every={every} value={(s) => s.cpu} format={cores} />
+      <p className="text-[13px] text-muted">
+        The last {span(samples)}.{!available && " This cluster does not report memory and CPU."}
+      </p>
+      {available && <Chart title="Memory" samples={samples} every={every} value={(s) => s.memory} format={bytes} limit={limit} />}
+      {available && <Chart title="CPU" samples={samples} every={every} value={(s) => s.cpu} format={cores} />}
       <Chart title="Players" samples={samples} every={every} value={(s) => s.players} format={(n) => String(n)} whole />
     </div>
   );
@@ -65,7 +66,7 @@ interface ChartProps {
   samples: Sample[];
   /** Seconds between samples. */
   every: number;
-  value: (s: Sample) => number;
+  value: (s: Sample) => number | undefined;
   format: (n: number) => string;
   /** Drawn as a line: what the server may use. */
   limit?: number;
@@ -73,15 +74,20 @@ interface ChartProps {
   whole?: boolean;
 }
 
-function Chart({ title, samples, every, value, format, limit, whole }: ChartProps) {
-  const values = samples.map(value);
+function Chart({ title, samples: all, every, value, format, limit, whole }: ChartProps) {
+  // Only the samples that have this figure: memory and CPU are missing from
+  // those taken while the cluster did not say.
+  const samples = all.filter((s) => value(s) !== undefined);
+  if (samples.length === 0) return null;
+  const values = samples.map((s) => value(s) ?? 0);
   const now = values[values.length - 1];
   // Not running now: its last figure is from when it last ran.
   const when = Date.now() - new Date(samples[samples.length - 1].t).getTime() > every * 3000 ? "when it last ran" : "now";
   const peak = Math.max(...values);
   const top = Math.max(limit ?? 0, peak, whole ? 1 : 0) * 1.1 || 1;
-  const start = new Date(samples[0].t).getTime();
-  const end = new Date(samples[samples.length - 1].t).getTime();
+  // Over the same hours as the other charts, so they line up.
+  const start = new Date(all[0].t).getTime();
+  const end = new Date(all[all.length - 1].t).getTime();
   const x = (s: Sample) => ((new Date(s.t).getTime() - start) / (end - start || 1)) * width;
   const y = (v: number) => height - (v / top) * height;
   // A run of samples with none missing, as while the server was up: a

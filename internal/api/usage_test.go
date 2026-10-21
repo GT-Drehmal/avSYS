@@ -46,9 +46,8 @@ func TestUsage(t *testing.T) {
 	if len(got) != 2 || !got[0].At.Equal(at.Add(4*time.Hour)) {
 		t.Fatalf("kept %d samples, from %v; want the last two", len(got), got)
 	}
-	want := usageSample{At: at.Add(8 * time.Hour), CPU: 1500, Memory: 3 << 30, Players: 3}
-	if got[1] != want {
-		t.Errorf("noted %+v, want %+v", got[1], want)
+	if last := got[1]; !last.At.Equal(at.Add(8*time.Hour)) || last.CPU == nil || *last.CPU != 1500 || last.Memory == nil || *last.Memory != 3<<30 || last.Players != 3 {
+		t.Errorf("noted %s, want 1500m and 3Gi with 3 players at %v", sampleString(last), at.Add(8*time.Hour))
 	}
 	if other := p.srv.usage.of("kube-system/coredns", ""); len(other) != 0 {
 		t.Errorf("a pod that is not a server's was noted: %+v", other)
@@ -79,6 +78,24 @@ func TestUsage(t *testing.T) {
 	if left := p.srv.usage.of("mc-alpha/world", world.UID); len(left) != 0 {
 		t.Errorf("samples older than six hours were kept for a stopped server: %+v", left)
 	}
+	// With no metrics API, a running server's players are noted all the
+	// same, and a stopped one's are not.
+	running := *world
+	running.Status.Phase = avsysv1.PhaseRunning
+	stopped := running
+	stopped.Name, stopped.UID, stopped.Status.Phase = "stopped", "stopped", avsysv1.PhaseStopped
+	later := at.Add(15 * time.Hour)
+	if err := p.srv.noteUsage(nil, []avsysv1.MinecraftServer{running, stopped}, later); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.srv.usage.of("mc-alpha/world", world.UID); len(got) != 1 || !got[0].At.Equal(later) || got[0].CPU != nil || got[0].Memory != nil || got[0].Players != 3 {
+		t.Errorf("with no metrics API, noted %d samples, the last %s; want players alone", len(got), sampleString(got[len(got)-1]))
+	}
+	if got := p.srv.usage.of("mc-alpha/stopped", "stopped"); len(got) != 0 {
+		t.Errorf("a stopped server was noted: %+v", got)
+	}
+	p.srv.usage.keep(nil, later)
+
 	// A server made under the name of one deleted does not take on its history.
 	if err := p.srv.noteUsage(metrics(at), servers, at); err != nil {
 		t.Fatal(err)
@@ -99,4 +116,14 @@ func TestUsage(t *testing.T) {
 	if left := p.srv.usage.of("mc-alpha/world", world.UID); len(left) != 0 {
 		t.Errorf("a deleted server's use was kept: %+v", left)
 	}
+}
+
+func sampleString(s usageSample) string {
+	n := func(v *int64) string {
+		if v == nil {
+			return "nil"
+		}
+		return fmt.Sprint(*v)
+	}
+	return fmt.Sprintf("{%v cpu=%s memory=%s players=%d}", s.At, n(s.CPU), n(s.Memory), s.Players)
 }
