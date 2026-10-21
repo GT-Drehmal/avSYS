@@ -73,24 +73,27 @@ func TestPickedMembers(t *testing.T) {
 	}
 }
 
-// Only operators the panel made are taken off by it, and not ones that are
-// also set by hand.
+// Only players the panel put on a list are taken off by it: by role, or by
+// being set by hand in the server's settings and then taken out.
 func TestOpChanges(t *testing.T) {
 	for name, c := range map[string]struct {
 		made, wanted, kept []string
 		add, remove        []string
 	}{
-		"nothing yet":               {nil, []string{"Ada", "Otto"}, nil, []string{"Ada", "Otto"}, nil},
-		"in step":                   {[]string{"Ada"}, []string{"Ada"}, nil, nil, nil},
-		"in step but for case":      {[]string{"ada"}, []string{"Ada"}, nil, nil, nil},
-		"one lost the role":         {[]string{"Ada", "Otto"}, []string{"Ada"}, nil, nil, []string{"Otto"}},
-		"one changed their account": {[]string{"Ada"}, []string{"Ada2"}, nil, []string{"Ada2"}, []string{"Ada"}},
-		"set by hand as well":       {[]string{"Ada", "Otto"}, []string{"Ada"}, []string{"otto"}, nil, nil},
-		"switched off":              {[]string{"Ada", "Otto"}, nil, nil, nil, []string{"Ada", "Otto"}},
-		"made by hand, never by us": {nil, nil, []string{"Steve"}, nil, nil},
-		"a new one beside the kept": {[]string{"Ada"}, []string{"Ada", "Otto"}, []string{"Steve"}, []string{"Otto"}, nil},
+		"nothing yet":                 {nil, []string{"Ada", "Otto"}, nil, []string{"Ada", "Otto"}, nil},
+		"in step":                     {[]string{"Ada"}, []string{"Ada"}, nil, nil, nil},
+		"in step but for case":        {[]string{"ada"}, []string{"Ada"}, nil, nil, nil},
+		"one lost the role":           {[]string{"Ada", "Otto"}, []string{"Ada"}, nil, nil, []string{"Otto"}},
+		"one changed their account":   {[]string{"Ada"}, []string{"Ada2"}, nil, []string{"Ada2"}, []string{"Ada"}},
+		"set by hand as well":         {[]string{"Ada", "Otto"}, []string{"Ada"}, []string{"otto"}, nil, nil},
+		"switched off":                {[]string{"Ada", "Otto"}, nil, nil, nil, []string{"Ada", "Otto"}},
+		"set by hand, noted":          {nil, nil, []string{"Steve"}, []string{"Steve"}, nil},
+		"taken out by hand":           {[]string{"Steve"}, nil, nil, nil, []string{"Steve"}},
+		"by hand and by role":         {[]string{"Ada"}, []string{"Ada"}, []string{"ADA"}, nil, nil},
+		"a UUID is left to the image": {nil, nil, []string{"069a79f4-44e9-4726-a5be-fca90e38aaf5"}, nil, nil},
+		"a new one beside the kept":   {[]string{"Ada", "Steve"}, []string{"Ada", "Otto"}, []string{"Steve"}, []string{"Otto"}, nil},
 	} {
-		add, remove := opChanges(c.made, c.wanted, c.kept)
+		add, remove := opChanges(c.made, withKept(c.wanted, c.kept))
 		if !reflect.DeepEqual(add, c.add) || !reflect.DeepEqual(remove, c.remove) {
 			t.Errorf("%s: add %v remove %v, want add %v remove %v", name, add, remove, c.add, c.remove)
 		}
@@ -301,8 +304,32 @@ func TestWhitelistByRole(t *testing.T) {
 		}
 	}
 	// A friend added by hand stays when a member who gave the same name leaves.
-	if _, remove := opChanges([]string{"Friend", "Vera"}, nil, spec.Whitelist); len(remove) != 1 || remove[0] != "Vera" {
+	if _, remove := opChanges([]string{"Friend", "Vera"}, withKept(nil, spec.Whitelist)); len(remove) != 1 || remove[0] != "Vera" {
 		t.Errorf("taken off the whitelist: %v, want only Vera", remove)
+	}
+}
+
+// Names set by hand end up in the game's commands: only players' names and
+// UUIDs are taken.
+func TestPlayerListNames(t *testing.T) {
+	p := newPanel(t)
+	for list, want := range map[string]int{
+		`[".BedrockGuy","*Steve"]`: 200,
+		`["@a"]`:                   400,
+		`["Steve","jeb_"]`:         200,
+		`["069a79f4-44e9-4726-a5be-fca90e38aaf5"]`: 200,
+		`["069a79f444e94726a5befca90e38aaf5"]`:     200,
+		`["Steve\nstop"]`:                          400,
+		`["two words"]`:                            400,
+		`["a"]`:                                    400,
+		`["ThisNameIsTooLong1"]`:                   400,
+		`[""]`:                                     400,
+	} {
+		for _, field := range []string{"ops", "whitelist"} {
+			if got, body := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"`+field+`":`+list+`}}`); got != want {
+				t.Errorf("%s %s: %d %s, want %d", field, list, got, body, want)
+			}
+		}
 	}
 }
 
