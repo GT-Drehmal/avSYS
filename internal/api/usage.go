@@ -166,6 +166,12 @@ func (s *Server) RunUsage(ctx context.Context) {
 }
 
 func (s *Server) usageTick(ctx context.Context, now time.Time) {
+	// What the panel last heard is not what servers are doing now: nothing
+	// is noted, and the time shows as a gap.
+	if _, lost := s.reach.lostSince(); lost {
+		s.usage.setNodes(nil)
+		return
+	}
 	var servers avsysv1.MinecraftServerList
 	if err := s.Client.List(ctx, &servers); err != nil {
 		return

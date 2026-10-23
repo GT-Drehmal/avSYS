@@ -113,6 +113,8 @@ type Server struct {
 	bench nodeBench
 	// usage is what each running server's game has been using lately.
 	usage usage
+	// reach is whether the cluster can be reached.
+	reach reach
 	// restacking holds the servers whose resource packs are being joined
 	// again for their game version.
 	restacking sync.Map
