@@ -272,7 +272,8 @@ function PackSection({
   const busy = update.isPending || remove.isPending || order.isPending || looking;
   return (
     <section aria-label="Resource packs" className="flex flex-col gap-2.5">
-      <SectionHead title="Resource packs" count={stack?.length} addLabel="Add resource pack" onAdd={canEdit ? onChoose : undefined} />
+      {/* Not while the pack is being changed: a version still being looked up would land over it. */}
+      <SectionHead title="Resource packs" count={stack?.length} addLabel="Add resource pack" onAdd={canEdit ? onChoose : undefined} addDisabled={busy} />
       {!pack ? (
         <p className="text-[13px] text-muted">None. A pack added here is offered to each player as they join.</p>
       ) : (
@@ -416,7 +417,7 @@ function PackStack({ stack, canEdit, busy, onOrder }: { stack: StackedPack[]; ca
   );
 }
 
-function SectionHead({ title, count, addLabel, onAdd }: { title: string; count?: number; addLabel?: string; onAdd?: () => void }) {
+function SectionHead({ title, count, addLabel, onAdd, addDisabled }: { title: string; count?: number; addLabel?: string; onAdd?: () => void; addDisabled?: boolean }) {
   return (
     <div className="flex min-h-8 items-center justify-between gap-3">
       <h2 className="text-[13px] font-medium">
@@ -424,7 +425,7 @@ function SectionHead({ title, count, addLabel, onAdd }: { title: string; count?:
         {!!count && <span className="ml-1.5 font-normal text-muted">{count}</span>}
       </h2>
       {onAdd && (
-        <Button size="sm" icon={<Plus className="size-4" />} onClick={onAdd} aria-label={addLabel ?? `Add ${title.toLowerCase()}`}>
+        <Button size="sm" icon={<Plus className="size-4" />} onClick={onAdd} disabled={addDisabled} aria-label={addLabel ?? `Add ${title.toLowerCase()}`}>
           Add
         </Button>
       )}

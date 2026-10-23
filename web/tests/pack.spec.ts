@@ -166,9 +166,12 @@ test("while a change to it is being saved, it is not replaced or removed", async
   await page.getByLabel("Prompt").press("Enter");
   await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Replace" })).toBeDisabled();
+  // Nor another put on top of it.
+  await expect(page.getByRole("button", { name: "Add resource pack" })).toBeDisabled();
   await expect.poll(() => answer).toBeDefined();
   answer?.();
   await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Add resource pack" })).toBeEnabled();
   expect(state.sent).toEqual([{ resourcePack: { prompt: "For the map" } }]);
 
   // Nor is its prompt changed while whether it is required is saved: the two
