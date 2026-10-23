@@ -391,6 +391,11 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if in.Spec.ResourcePack != nil && in.Spec.ResourcePack.Uploaded != nil {
 		return errBadRequest("A new server is given an uploaded resource pack with PUT /orgs/{org}/servers/{server}/resource-pack once it is made, or takes the one of the server it is copied from.")
 	}
+	// Nor what a pack is joined from, which is a copy's only with its
+	// original's pack.
+	if in.Spec.ResourcePack != nil {
+		in.Spec.ResourcePack.Stack = nil
+	}
 	// One given here is checked. A copy's is checked once it is known what
 	// its original has: the original's own is taken as it is.
 	if raw.FromSnapshot == "" && raw.FromServer == "" {
@@ -611,6 +616,11 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.removeDroppedPack(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
+	// A pack joined from several says the pack format of its game: joined
+	// again for the new one, once this has let go of its files.
+	if rp := mc.Spec.ResourcePack; previous.Version != mc.Spec.Version && rp != nil && len(rp.Stack) > 0 {
+		go s.restackFor(context.WithoutCancel(r.Context()), client.ObjectKeyFromObject(mc))
+	}
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
 	// Who is on its lists in game, acted on now and not with the next look.
 	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist ||
@@ -897,6 +907,14 @@ func checkPackSHA1(rp, was *avsysv1.ResourcePackSpec) error {
 // address is one hosted elsewhere now, and no longer the uploaded one.
 func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 	rp, was := spec.ResourcePack, previous.ResourcePack
+	// What a pack is joined from is changed only by joining it again: kept
+	// with the same pack, and gone with another.
+	if rp != nil {
+		rp.Stack = nil
+		if was != nil && rp.URL == was.URL && rp.SHA1 == was.SHA1 {
+			rp.Stack = was.DeepCopy().Stack
+		}
+	}
 	// A pack picked from a project is that project's file: given another
 	// address, and not another project or version with it, it is no
 	// longer the project's.

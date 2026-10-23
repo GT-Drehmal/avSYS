@@ -372,6 +372,32 @@ expect "the game offers it to players" "$(call "$SRV/files/content?path=/server.
 game_clean "and reads all that was written for the pack, its prompt too"
 expect "and it is taken away again" "$(call -X DELETE "$SRV/resource-pack" | field "d['spec'].get('resourcePack')")" None
 expect "with its file" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip")" 404
+
+step "resource packs joined into one"
+# Several packs, in order, the top one first: the panel joins them into one,
+# which it serves, and joins them again when the order changes.
+python3 - "$WORK/pack2.zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e two"}}')
+    z.writestr("assets/minecraft/lang/en_us.json", '{"menu.singleplayer":"two","menu.multiplayer":"two"}')
+PY
+PACK2_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack2.zip")
+call -X PUT --data-binary @"$WORK/pack.zip" "$SRV/resource-pack?name=e2e-pack.zip" >/dev/null
+stack=$(call -X POST --data-binary @"$WORK/pack2.zip" "$SRV/resource-packs?name=two.zip")
+expect "a second pack goes on top of the one it had" "$(echo "$stack" | field "[p['sha1'] for p in d['spec']['resourcePack']['stack']]")" "['$PACK2_SHA', '$PACK_SHA']"
+JOINED_URL=$(echo "$stack" | field "d['spec']['resourcePack']['url']")
+JOINED_SHA=$(echo "$stack" | field "d['spec']['resourcePack']['sha1']")
+expect "the pack joined is served at its hash" "$(curl -sS "$JOINED_URL" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$JOINED_SHA"
+joined_lang() { curl -sS "$1" | python3 -c 'import io,json,sys,zipfile; d=json.load(zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())).open("assets/minecraft/lang/en_us.json")); print(d["menu.singleplayer"], d["menu.multiplayer"])'; }
+expect "with what both say, the top one's where both say it" "$(joined_lang "$JOINED_URL")" "two two"
+expect "and every pack's file is kept in the server's files" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip") $(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.avsys/resource-pack-$JOINED_SHA.zip")" "200 200"
+turned=$(call -X PUT -d '{"order":["'"$PACK_SHA"'","'"$PACK2_SHA"'"]}' "$SRV/resource-packs")
+TURNED_URL=$(echo "$turned" | field "d['spec']['resourcePack']['url']")
+expect "put the other way up, it is joined again" "$(joined_lang "$TURNED_URL")" "e2e two"
+expect "and the pack joined before is gone from its files" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.avsys/resource-pack-$JOINED_SHA.zip")" 404
+expect "with none left, it has none" "$(call -X PUT -d '{"order":[]}' "$SRV/resource-packs" | field "d['spec'].get('resourcePack')")" None
+expect "and none of their files" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/.avsys/resource-pack-$PACK2_SHA.zip")" 404
 # One picked from Modrinth says which project and version it is, and stops
 # saying so once it is given another address.
 picked=$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://cdn.modrinth.com/data/e2e/pack.zip","sha1":"'"$PACK_SHA"'","project":{"source":"modrinth","id":"e2e-pack","version":"v1","versionName":"1.0","title":"E2E Pack"}}}}' "$SRV")

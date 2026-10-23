@@ -605,6 +605,17 @@ func TestFromSnapshotResourcePack(t *testing.T) {
 	if rp := got.ResourcePack; rp == nil || rp.Uploaded == nil || rp.SHA1 != sha || !rp.Enforce || rp.Prompt != "Please" || rp.Formats == nil || rp.Formats.Min != 15 {
 		t.Errorf("made required: %+v, want the uploaded one, required, with its formats", rp)
 	}
+	// One joined from several is still joined from them, and from those the
+	// original has, not any the request says.
+	recorded.ResourcePack.Stack = []avsysv1.StackedPack{{SHA1: "aa"}, {SHA1: "bb"}}
+	asked = &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: recorded.ResourcePack.URL, Enforce: true, Stack: []avsysv1.StackedPack{{SHA1: "made-up"}}}}
+	if rp := fromSnapshot(asked, recorded, said).ResourcePack; rp == nil || len(rp.Stack) != 2 || rp.Stack[0].SHA1 != "aa" {
+		t.Errorf("joined, made required: %+v, want the original's stack", rp)
+	}
+	if rp := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, nil).ResourcePack; rp == nil || len(rp.Stack) != 2 {
+		t.Errorf("joined, none asked: %+v, want the original's stack", rp)
+	}
+	recorded.ResourcePack.Stack = nil
 	asked = &avsysv1.MinecraftServerSpec{ResourcePack: &avsysv1.ResourcePackSpec{URL: "https://cdn.modrinth.example/p.zip", SHA1: strings.Repeat("cd", 20), Project: &avsysv1.PackProject{Source: "modrinth", ID: "faithful"}}}
 	if rp := fromSnapshot(asked, recorded, said).ResourcePack; rp == nil || rp.Uploaded != nil || rp.Project == nil {
 		t.Errorf("another picked: %+v, want the picked one", rp)

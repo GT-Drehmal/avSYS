@@ -394,6 +394,10 @@ func (s *Server) Handler() http.Handler {
 	api("DELETE /orgs/{org}/servers/{server}/icon", s.authed(s.deleteServerIcon))
 	api("PUT /orgs/{org}/servers/{server}/resource-pack", s.authed(s.putResourcePack))
 	api("DELETE /orgs/{org}/servers/{server}/resource-pack", s.authed(s.deleteResourcePack))
+	// Several packs joined into one, in order.
+	api("POST /orgs/{org}/servers/{server}/resource-packs", s.authed(s.addToStack))
+	api("POST /orgs/{org}/servers/{server}/resource-packs/url", s.authed(s.addURLToStack))
+	api("PUT /orgs/{org}/servers/{server}/resource-packs", s.authed(s.orderStack))
 	api("GET /orgs/{org}/servers/{server}/files", s.authed(s.listFiles))
 	api("DELETE /orgs/{org}/servers/{server}/files", s.authed(s.deleteFile))
 	api("GET /orgs/{org}/servers/{server}/files/content", s.authed(s.readFile))
