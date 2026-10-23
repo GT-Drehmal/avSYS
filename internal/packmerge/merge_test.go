@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -103,17 +104,16 @@ func TestTheTopPackWins(t *testing.T) {
 func TestPackMeta(t *testing.T) {
 	top := pack(t, "Top", map[string]string{"pack.mcmeta": `{"pack":{"pack_format":34,"description":"x"},"overlays":{"entries":[{"formats":[30,40],"directory":"top_new"}]},"language":{"xx_yy":{"name":"Top"}}}`})
 	under := pack(t, "Under", map[string]string{"pack.mcmeta": `{"pack":{"pack_format":15,"description":"y"},"overlays":{"entries":[{"formats":[18,40],"directory":"under_new"}]},"filter":{"block":[{"namespace":"minecraft","path":"textures/x"}]},"language":{"xx_yy":{"name":"Under"},"zz_zz":{"name":"Z"}}}`})
+	// With the format known, overlays are laid over the files already.
 	files, _ := merge(t, 46, top, under)
 	same(t, files["pack.mcmeta"], `{
 		"pack": {"description": "Top, Under", "pack_format": 46},
-		"overlays": {"entries": [{"formats":[18,40],"directory":"under_new"}, {"formats":[30,40],"directory":"top_new"}]},
 		"filter": {"block": [{"namespace":"minecraft","path":"textures/x"}]},
 		"language": {"xx_yy": {"name":"Top"}, "zz_zz": {"name":"Z"}}
 	}`)
 	files, _ = merge(t, 69, top, under)
 	same(t, files["pack.mcmeta"], `{
 		"pack": {"description": "Top, Under", "min_format": 69, "max_format": 69},
-		"overlays": {"entries": [{"formats":[18,40],"directory":"under_new"}, {"formats":[30,40],"directory":"top_new"}]},
 		"filter": {"block": [{"namespace":"minecraft","path":"textures/x"}]},
 		"language": {"xx_yy": {"name":"Top"}, "zz_zz": {"name":"Z"}}
 	}`)
@@ -141,7 +141,7 @@ func TestLangFilesAreJoined(t *testing.T) {
 // otherwise the sounds of both are played.
 func TestSoundsAreJoined(t *testing.T) {
 	top := pack(t, "Top", map[string]string{"pack.mcmeta": meta, "assets/minecraft/sounds.json": `{
-		"block.stone.break": {"sounds": ["top/break"]},
+		"block.stone.break": {"sounds": ["top/break"], "subtitle": "top.subtitle"},
 		"music.menu": {"replace": true, "sounds": ["top/menu"]},
 		"top.only": {"sounds": ["top/only"], "subtitle": "top.subtitle"}
 	}`})
@@ -159,8 +159,9 @@ func TestSoundsAreJoined(t *testing.T) {
 	}`)
 }
 
-// Fonts and atlases are lists the game joins from every pack, the bottom
-// one's first, which is what is made here.
+// Fonts and atlases are lists the game joins from every pack. The first
+// font provider with a character draws it, so the top pack's come first;
+// atlases' sources go the bottom pack's first, as the game joins them.
 func TestFontsAndAtlasesAreJoined(t *testing.T) {
 	top := pack(t, "Top", map[string]string{"pack.mcmeta": meta,
 		"assets/minecraft/font/default.json":   `{"providers":[{"type":"bitmap","file":"top.png","chars":[""]}]}`,
@@ -171,7 +172,7 @@ func TestFontsAndAtlasesAreJoined(t *testing.T) {
 		"assets/minecraft/atlases/blocks.json": `{"sources":[{"type":"directory","source":"under","prefix":"under/"}]}`,
 	})
 	files, _ := merge(t, 0, top, under)
-	same(t, files["assets/minecraft/font/default.json"], `{"providers":[{"type":"bitmap","file":"under.png","chars":[""]},{"type":"bitmap","file":"top.png","chars":[""]}]}`)
+	same(t, files["assets/minecraft/font/default.json"], `{"providers":[{"type":"bitmap","file":"top.png","chars":[""]},{"type":"bitmap","file":"under.png","chars":[""]}]}`)
 	same(t, files["assets/minecraft/atlases/blocks.json"], `{"sources":[{"type":"directory","source":"under","prefix":"under/"},{"type":"directory","source":"top","prefix":"top/"}]}`)
 }
 
@@ -308,5 +309,100 @@ func TestNamesOutsideThePack(t *testing.T) {
 	}
 	if files["assets/minecraft/a.png"] != "a" {
 		t.Errorf("did not keep ./assets/minecraft/a.png as assets/minecraft/a.png: %v", files)
+	}
+}
+
+// A lower pack's overlay is laid over its own files, not over the top
+// pack's: in one pack it would cover what the top one has. Overlays not for
+// the format are left out.
+func TestOverlaysAreLaidOverTheirOwnPack(t *testing.T) {
+	top := pack(t, "Top", map[string]string{"pack.mcmeta": meta, "assets/minecraft/textures/block/stone.png": "top stone"})
+	under := pack(t, "Under", map[string]string{
+		"pack.mcmeta": `{"pack":{"pack_format":34,"description":"y"},"overlays":{"entries":[{"formats":[40,50],"directory":"new"},{"formats":{"min_inclusive":10,"max_inclusive":20},"directory":"old"},{"min_format":46,"max_format":[50,0],"directory":"newer"}]}}`,
+		"assets/minecraft/textures/block/dirt.png":       "under dirt",
+		"new/assets/minecraft/textures/block/stone.png":  "under new stone",
+		"new/assets/minecraft/textures/block/dirt.png":   "under new dirt",
+		"newer/assets/minecraft/textures/block/dirt.png": "under newer dirt",
+		"old/assets/minecraft/textures/block/sand.png":   "under old sand",
+	})
+	files, _ := merge(t, 46, top, under)
+	for name, want := range map[string]string{
+		"assets/minecraft/textures/block/stone.png": "top stone",
+		// The later overlay over the earlier.
+		"assets/minecraft/textures/block/dirt.png": "under newer dirt",
+	} {
+		if files[name] != want {
+			t.Errorf("%s is %q, want %q", name, files[name], want)
+		}
+	}
+	for name := range files {
+		if strings.HasPrefix(name, "new/") || strings.HasPrefix(name, "old/") || strings.HasPrefix(name, "newer/") || strings.HasSuffix(name, "sand.png") {
+			t.Errorf("kept %s", name)
+		}
+	}
+}
+
+// A pack's block filters hide what packs under it have of those assets,
+// not its own; the pack made keeps them, for any pack under it.
+func TestFiltersHideWhatIsUnder(t *testing.T) {
+	top := pack(t, "Top", map[string]string{
+		"pack.mcmeta": `{"pack":{"pack_format":34,"description":"x"},"filter":{"block":[{"namespace":"minecraft","path":"textures/block/sa.*"}]}}`,
+		"assets/minecraft/textures/block/sandstone.png": "top sandstone",
+	})
+	under := pack(t, "Under", map[string]string{"pack.mcmeta": meta,
+		"assets/minecraft/textures/block/sand.png":      "under sand",
+		"assets/minecraft/textures/block/sandstone.png": "under sandstone",
+		"assets/minecraft/textures/block/stone.png":     "under stone",
+	})
+	files, res := merge(t, 34, top, under)
+	if _, ok := files["assets/minecraft/textures/block/sand.png"]; ok {
+		t.Error("kept what the top pack filters out of the one under")
+	}
+	if files["assets/minecraft/textures/block/sandstone.png"] != "top sandstone" || files["assets/minecraft/textures/block/stone.png"] != "under stone" {
+		t.Errorf("files %v", files)
+	}
+	// Filtered out, it is not hidden by the top one: it is not there.
+	if len(res.Hidden) != 0 {
+		t.Errorf("hidden %+v", res.Hidden)
+	}
+	same(t, files["pack.mcmeta"], `{"pack":{"description":"Top, Under","pack_format":34},"filter":{"block":[{"namespace":"minecraft","path":"textures/block/sa.*"}]}}`)
+}
+
+// What a texture is drawn with, in the .mcmeta beside it, is of the pack it
+// is from, or one over it; one under's is not used for another's texture.
+func TestTextureMetaGoesWithItsTexture(t *testing.T) {
+	top := pack(t, "Top", map[string]string{"pack.mcmeta": meta,
+		"assets/minecraft/textures/block/stone.png":       "top stone",
+		"assets/minecraft/textures/block/sand.png.mcmeta": `{"animation":{"frametime":1}}`,
+	})
+	under := pack(t, "Under", map[string]string{"pack.mcmeta": meta,
+		"assets/minecraft/textures/block/stone.png":        "under stone",
+		"assets/minecraft/textures/block/stone.png.mcmeta": `{"animation":{}}`,
+		"assets/minecraft/textures/block/dirt.png":         "under dirt",
+		"assets/minecraft/textures/block/dirt.png.mcmeta":  `{"animation":{}}`,
+		"assets/minecraft/textures/block/sand.png":         "under sand",
+	})
+	files, _ := merge(t, 0, top, under)
+	if _, ok := files["assets/minecraft/textures/block/stone.png.mcmeta"]; ok {
+		t.Error("the top pack's stone is drawn with the .mcmeta of the one under")
+	}
+	if files["assets/minecraft/textures/block/dirt.png.mcmeta"] == "" {
+		t.Error("lost the .mcmeta of a texture only the pack under has")
+	}
+	if files["assets/minecraft/textures/block/sand.png.mcmeta"] != `{"animation":{"frametime":1}}` {
+		t.Error("lost the .mcmeta a pack over the texture's gives it")
+	}
+}
+
+// The same type and property, written with their namespace or without, are
+// the same: the items of both are joined.
+func TestItemDefinitionsWithAndWithoutNamespace(t *testing.T) {
+	const name = "assets/minecraft/items/stick.json"
+	top := pack(t, "Top", map[string]string{"pack.mcmeta": meta, name: `{"model":{"type":"minecraft:range_dispatch","property":"minecraft:custom_model_data","entries":[{"threshold":1,"model":{"type":"model","model":"top/one"}}]}}`})
+	under := pack(t, "Under", map[string]string{"pack.mcmeta": meta, name: `{"model":{"type":"range_dispatch","property":"custom_model_data","entries":[{"threshold":2,"model":{"type":"model","model":"under/two"}}]}}`})
+	files, res := merge(t, 0, top, under)
+	same(t, files[name], `{"model":{"type":"minecraft:range_dispatch","property":"minecraft:custom_model_data","entries":[{"threshold":1,"model":{"type":"model","model":"top/one"}},{"threshold":2,"model":{"type":"model","model":"under/two"}}]}}`)
+	if len(res.Hidden) != 0 {
+		t.Errorf("hidden %+v", res.Hidden)
 	}
 }
