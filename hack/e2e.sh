@@ -874,7 +874,11 @@ expect "and the picture that came with them, though it was asked for before" "$(
 copies="len([s for s in d['snapshots'] if s['trigger'] == 'copy'])"
 expect "it was made from a snapshot taken for it" "$(call "$SRV/snapshots" | field "$copies")" 1
 # A copy that differs from its original in what the request names, and in nothing else.
-second=$(call -d '{"name":"twin-2","fromServer":"probe","picture":null,"spec":{"state":"Stopped","properties":{"difficulty":"peaceful","motd":null},"autoWhitelist":"admin"}}' "$API/orgs/$ORG/servers?wait=true")
+# Answered at once, before its snapshot: the panel sees the rest through.
+second=$(call -d '{"name":"twin-2","fromServer":"probe","picture":null,"spec":{"state":"Stopped","properties":{"difficulty":"peaceful","motd":null},"autoWhitelist":"admin"}}' "$API/orgs/$ORG/servers")
+expect "a copy is answered with before its files are in" "$(call "$API/orgs/$ORG/servers/twin-2/operation" | field "d and d['kind']")" create
+for _ in $(seq 1 300); do [ "$(call "$API/orgs/$ORG/servers/twin-2/operation")" = null ] && break; sleep 1; done
+expect "and is then made" "$(call "$API/orgs/$ORG/servers/twin-2" | field "(d['status'].get('snapshots') or {}).get('error', '')")" ""
 expect "a second copy with nothing changed in the original needs no new one" "$(call "$SRV/snapshots" | field "$copies")" 1
 expect "a copy takes the settings it is asked to have" "$(echo "$second" | field "(d['spec']['properties'].get('difficulty'), 'motd' in d['spec']['properties'], d['spec']['autoWhitelist'])")" "('peaceful', False, 'admin')"
 expect "and no picture, when asked for none" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/twin-2/icon")" 404
