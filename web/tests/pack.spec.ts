@@ -14,7 +14,8 @@ test.beforeEach(async ({ as }) => {
 
 /** Opens the picker for the resource pack, from its section. */
 async function choosePack(page: Page) {
-  await page.getByRole("region", { name: "Resource pack" }).getByRole("button", { name: /^(Add resource pack|Replace)$/ }).click();
+  // Replace where there is one; Add would put another on top of it.
+  await page.getByRole("region", { name: "Resource packs" }).getByRole("button", { name: /^(Add resource pack|Replace)$/ }).last().click();
 }
 
 /** A JSON merge patch, as the panel applies one. */

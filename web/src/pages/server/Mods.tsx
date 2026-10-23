@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, GripVertical, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
+import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, stackedTitle, type PickKind } from "../../components/Content";
 import { ProjectIcon } from "../../components/ModrinthSearch";
-import { Button, Chip, Field, Input, Modal, Notice, Spinner, Toggle } from "../../components/ui";
-import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
-import { ago } from "../../lib/format";
+import { Button, Chip, cx, Field, Input, Modal, Notice, Spinner, Toggle } from "../../components/ui";
+import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server, type StackedPack } from "../../lib/api";
+import { ago, bytes } from "../../lib/format";
 import { applyServer, keys, useAction, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
@@ -69,6 +69,8 @@ export function Mods() {
   const update = useUpdateServer(server.org, server.name);
   const qc = useQueryClient();
   const [adding, setAdding] = useState<PickKind | null>(null);
+  // The pack there is being replaced, rather than another put on top of it.
+  const [replacing, setReplacing] = useState(false);
   const [versioning, setVersioning] = useState<number | "modpack" | "pack" | null>(null);
   // A pack's version being looked up, before it is saved.
   const [looking, setLooking] = useState(false);
@@ -146,7 +148,13 @@ export function Mods() {
         );
       })}
 
-      <PackSection server={server} gameVersion={server.spec.modpack ? server.spec.modpack.gameVersion : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
+      <PackSection server={server} gameVersion={server.spec.modpack ? server.spec.modpack.gameVersion : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")}
+        onReplace={() => {
+          setReplacing(true);
+          setAdding("resourcepack");
+        }}
+        onVersion={() => setVersioning("pack")}
+      />
 
       {adding && (
         <AddContentDialog
@@ -158,12 +166,25 @@ export function Mods() {
           onUpload={upload}
           start={adding}
           only
-          pack={{
-            current: server.spec.resourcePack,
-            onPick: (pack) => update.mutateAsync({ resourcePack: { ...pack, enforce: !!server.spec.resourcePack?.enforce, prompt: server.spec.resourcePack?.prompt ?? "" } }),
-            upload: { path: `${serverPath(server.org, server.name)}/resource-pack`, onDone: (next) => applyServer(qc, next) },
+          pack={
+            // With one there, another goes on top of it; the first is just the pack.
+            server.spec.resourcePack?.url && !replacing
+              ? {
+                  current: server.spec.resourcePack,
+                  onTop: true,
+                  onPick: async (pack) => applyServer(qc, await api.post<Server>(`${serverPath(server.org, server.name)}/resource-packs/url`, { url: pack.url, sha1: pack.sha1, project: pack.project, formats: pack.formats })),
+                  upload: { path: `${serverPath(server.org, server.name)}/resource-packs`, method: "POST", onDone: (next) => applyServer(qc, next) },
+                }
+              : {
+                  current: server.spec.resourcePack,
+                  onPick: (pack) => update.mutateAsync({ resourcePack: { ...pack, enforce: !!server.spec.resourcePack?.enforce, prompt: server.spec.resourcePack?.prompt ?? "" } }),
+                  upload: { path: `${serverPath(server.org, server.name)}/resource-pack`, onDone: (next) => applyServer(qc, next) },
+                }
+          }
+          onClose={() => {
+            setAdding(null);
+            setReplacing(false);
           }}
-          onClose={() => setAdding(null)}
         />
       )}
       {versioning === "pack" && server.spec.resourcePack?.project && (
@@ -224,8 +245,8 @@ export function Mods() {
 
 /**
  * The resource pack offered to players as they join, beside what is
- * installed: one at most, chosen in the same picker, with whether it is
- * required and what the game asks.
+ * installed, with whether it is required and what the game asks. Several
+ * are joined into one, in an order, as in the game's own list of packs.
  */
 function PackSection({
   server,
@@ -234,25 +255,31 @@ function PackSection({
   canEdit,
   update,
   onChoose,
+  onReplace,
   onVersion,
-}: { server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onVersion: () => void }) {
+}: { server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
   // An uploaded one takes its file with it, which only this does.
   const remove = useAction(() => api.del<Server>(`${serverPath(server.org, server.name)}/resource-pack`));
+  const stack = pack?.stack?.length ? pack.stack : null;
+  const order = useAction((order: string[]) => api.put<Server>(`${serverPath(server.org, server.name)}/resource-packs`, { order }));
   const [prompt, setPrompt] = useState(pack?.prompt ?? "");
   useEffect(() => setPrompt(pack?.prompt ?? ""), [pack?.prompt]);
   const change = (patch: Partial<ResourcePack>) => update.mutate({ resourcePack: patch as ResourcePack });
   // One change to it at a time: a prompt saved as its field is left is
   // done before the pack is replaced or removed, so neither undoes the other.
-  const busy = update.isPending || remove.isPending || looking;
+  const busy = update.isPending || remove.isPending || order.isPending || looking;
   return (
-    <section aria-label="Resource pack" className="flex flex-col gap-2.5">
-      <SectionHead title="Resource pack" onAdd={canEdit && !pack ? onChoose : undefined} />
+    <section aria-label="Resource packs" className="flex flex-col gap-2.5">
+      <SectionHead title="Resource packs" count={stack?.length} addLabel="Add resource pack" onAdd={canEdit ? onChoose : undefined} />
       {!pack ? (
         <p className="text-[13px] text-muted">None. A pack added here is offered to each player as they join.</p>
       ) : (
         <>
+          {stack ? (
+            <PackStack stack={stack} canEdit={canEdit} busy={busy} onOrder={(shas) => order.mutate(shas, { onSuccess: (next) => applyServer(qc, next) })} />
+          ) : (
           <PackCard pack={pack} showKind={false}>
             {pack.project && (
               <Button size="sm" disabled={!canEdit || busy} onClick={onVersion} className="max-w-40">
@@ -261,7 +288,7 @@ function PackSection({
             )}
             {canEdit && (
               <>
-                <Button size="sm" disabled={busy} onClick={onChoose}>
+                <Button size="sm" disabled={busy} onClick={onReplace}>
                   Replace
                 </Button>
                 <Button
@@ -284,7 +311,8 @@ function PackSection({
               </>
             )}
           </PackCard>
-          <PackFit pack={pack} version={gameVersion} />
+          )}
+          {!stack && <PackFit pack={pack} version={gameVersion} />}
           <div className="flex flex-col gap-3 px-1">
             <Toggle checked={!!pack.enforce} disabled={!canEdit || busy} onChange={(enforce) => change({ enforce })} label="Required" hint="Players who decline the pack are disconnected." />
             <Field label="Prompt" hint="Shown when the game asks to download the pack.">
@@ -307,7 +335,88 @@ function PackSection({
   );
 }
 
-function SectionHead({ title, count, onAdd }: { title: string; count?: number; onAdd?: () => void }) {
+/**
+ * The packs a server's pack is joined from, the top one first, as in the
+ * game: where two change the same thing, the one higher up wins. Dragged, or
+ * moved with their buttons, into another order.
+ */
+function PackStack({ stack, canEdit, busy, onOrder }: { stack: StackedPack[]; canEdit: boolean; busy: boolean; onOrder: (order: string[]) => void }) {
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  const shas = stack.map((p) => p.sha1);
+  const move = (from: number, to: number) => {
+    if (from === to) return;
+    const next = shas.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onOrder(next);
+  };
+  const titleOf = (sha?: string) => {
+    const p = stack.find((p) => p.sha1 === sha);
+    return p ? stackedTitle(p) : "another pack";
+  };
+  const canMove = canEdit && !busy;
+  return (
+    <>
+      <ol aria-label="Packs, the top one first" className="overflow-hidden rounded-lg border border-line bg-surface">
+        {stack.map((p, i) => {
+          const title = stackedTitle(p);
+          const line = [p.project ? p.project.versionName : p.size ? bytes(p.size) : "", p.hidden ? `${p.hidden} ${p.hidden === 1 ? "file" : "files"} covered by ${titleOf(p.hiddenBy)}` : ""].filter(Boolean).join(" · ");
+          return (
+            <li
+              key={p.sha1}
+              draggable={canMove}
+              onDragStart={(e) => {
+                setDragging(i);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                if (dragging === null) return;
+                e.preventDefault();
+                setOver(i);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragging !== null) move(dragging, i);
+                setDragging(null);
+                setOver(null);
+              }}
+              onDragEnd={() => {
+                setDragging(null);
+                setOver(null);
+              }}
+              className={cx("flex items-center gap-3 border-b border-line px-3 py-2.5 last:border-b-0", dragging === i && "opacity-50", over === i && dragging !== null && dragging !== i && "bg-raised")}
+            >
+              {canEdit && <GripVertical aria-hidden className={cx("size-4 shrink-0 text-faint", canMove && "cursor-grab")} />}
+              <ProjectIcon url={p.project?.iconUrl} size={32} kind="resourcepack" name={title} />
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-2 truncate text-[13px] font-medium">
+                  {title}
+                  {p.project && (
+                    <a href={`https://modrinth.com/resourcepack/${p.project.id}`} target="_blank" rel="noreferrer" className="text-faint hover:text-accent" aria-label="Open on Modrinth">
+                      <ExternalLink className="size-3" />
+                    </a>
+                  )}
+                </p>
+                {line && <p className="truncate text-xs text-faint">{line}</p>}
+              </div>
+              {canEdit && (
+                <div className="flex shrink-0 items-center">
+                  <Button size="sm" variant="ghost" icon={<ArrowUp className="size-4" />} aria-label={`Move ${title} up`} disabled={!canMove || i === 0} onClick={() => move(i, i - 1)} />
+                  <Button size="sm" variant="ghost" icon={<ArrowDown className="size-4" />} aria-label={`Move ${title} down`} disabled={!canMove || i === stack.length - 1} onClick={() => move(i, i + 1)} />
+                  <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${title}`} disabled={!canMove} onClick={() => onOrder(shas.filter((sha) => sha !== p.sha1))} />
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      <p className="px-1 text-xs text-muted">Joined into one pack. Where two change the same thing, the higher one wins.</p>
+    </>
+  );
+}
+
+function SectionHead({ title, count, addLabel, onAdd }: { title: string; count?: number; addLabel?: string; onAdd?: () => void }) {
   return (
     <div className="flex min-h-8 items-center justify-between gap-3">
       <h2 className="text-[13px] font-medium">
@@ -315,7 +424,7 @@ function SectionHead({ title, count, onAdd }: { title: string; count?: number; o
         {!!count && <span className="ml-1.5 font-normal text-muted">{count}</span>}
       </h2>
       {onAdd && (
-        <Button size="sm" icon={<Plus className="size-4" />} onClick={onAdd} aria-label={`Add ${title.toLowerCase()}`}>
+        <Button size="sm" icon={<Plus className="size-4" />} onClick={onAdd} aria-label={addLabel ?? `Add ${title.toLowerCase()}`}>
           Add
         </Button>
       )}

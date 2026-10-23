@@ -252,7 +252,8 @@ export function Settings() {
           </div>
         )}
         {/* What a change of version does to the pack it offers. */}
-        {!server.spec.modpack && server.spec.resourcePack?.url && draft.version !== server.spec.version && (
+        {/* One joined from several is joined again for the version it is changed to. */}
+        {!server.spec.modpack && server.spec.resourcePack?.url && !server.spec.resourcePack.stack?.length && draft.version !== server.spec.version && (
           <PackFit pack={server.spec.resourcePack} version={draft.version === "LATEST" ? versions.data?.latest : draft.version} />
         )}
       </Section>

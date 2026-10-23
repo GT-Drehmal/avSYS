@@ -19,14 +19,14 @@ export function useUpload() {
   const stop = useRef<AbortController | null>(null);
   // Leaving the page stops what it was sending.
   useEffect(() => () => stop.current?.abort(), []);
-  const send = async <T,>(label: string, path: string, file: Blob): Promise<T> => {
+  const send = async <T,>(label: string, path: string, file: Blob, method?: "PUT" | "POST"): Promise<T> => {
     // One at a time: the progress shown and Cancel are of one upload.
     if (stop.current) throw new ApiError(0, "busy", "Wait for the current upload to finish, or cancel it.");
     const ctl = new AbortController();
     stop.current = ctl;
     setSending({ label, progress: { sent: 0, total: file.size } });
     try {
-      return await upload<T>(path, file, (progress) => setSending({ label, progress }), ctl.signal);
+      return await upload<T>(path, file, (progress) => setSending({ label, progress }), ctl.signal, method);
     } finally {
       if (stop.current === ctl) {
         stop.current = null;
