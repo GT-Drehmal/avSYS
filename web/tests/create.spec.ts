@@ -716,7 +716,7 @@ test("a new server is given files from this computer: made stopped, they are upl
   await expect(dialog.getByText("Uploaded after the server is created.")).toBeVisible();
   await dialog.locator('input[type="file"]').setInputFiles([{ name: "mine.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
   await page.keyboard.press("Escape");
-  await expect(page.getByText("mine.jar", { exact: true })).toBeVisible();
+  await expect(page.getByText("mine", { exact: true })).toBeVisible();
   await expect(page.getByText(/· uploaded when created/)).toBeVisible();
   // And a resource pack, made required.
   await page.getByRole("button", { name: "Add content" }).click();
@@ -725,7 +725,7 @@ test("a new server is given files from this computer: made stopped, they are upl
   await dialog.getByRole("button", { name: "Upload", exact: true }).click();
   await dialog.getByLabel("Resource pack file").setInputFiles({ name: "world.zip", mimeType: "application/zip", buffer: Buffer.from("PK zip") });
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByText("world.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("world", { exact: true })).toBeVisible();
   await expect(page.getByText(/6 B · uploaded when created/)).toHaveCount(2);
   await page.getByRole("switch", { name: "Pack required" }).click();
 
@@ -907,9 +907,9 @@ test("files picked to upload for one kind of server are cleared when another kin
   await dialog.getByRole("button", { name: "Upload", exact: true }).click();
   await dialog.locator('input[type="file"]').setInputFiles([{ name: "plugin.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
   await page.keyboard.press("Escape");
-  await expect(page.getByText("plugin.jar", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove plugin" })).toBeVisible();
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ }).click();
-  await expect(page.getByText("plugin.jar", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Remove plugin" })).toHaveCount(0);
   await expect(page.getByText("Removed 1 item that no longer fit")).toBeVisible();
 });
 

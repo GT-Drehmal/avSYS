@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
-import { AddContentDialog, ContentList, filtersFor, kindsFor, kindsPhrase, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
+import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { ProjectIcon } from "../../components/ModrinthSearch";
-import { Button, Chip, Empty, Field, Input, Modal, Notice, Spinner, Toggle } from "../../components/ui";
+import { Button, Chip, Field, Input, Modal, Notice, Spinner, Toggle } from "../../components/ui";
 import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { applyServer, keys, useAction, useUpdateServer } from "../../lib/queries";
@@ -89,6 +89,10 @@ export function Mods() {
   };
 
   const setMod = (index: number, patch: Partial<ContentRef>) => update.mutate({ mods: mods.map((m, i) => (i === index ? { ...m, ...patch } : m)) });
+  // A section for each kind the server takes, and for any it has from
+  // before its software was changed, so nothing on it goes unseen.
+  const takes = kindsFor(server.spec);
+  const sections = [...takes, ...(["mod", "plugin", "datapack"] as const).filter((k) => !takes.includes(k) && mods.some((m) => (m.kind ?? "mod") === k))];
   const versionTarget = typeof versioning === "number" ? mods[versioning] : null;
 
   return (
@@ -114,39 +118,33 @@ export function Mods() {
         </Notice>
       )}
 
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] text-muted">
-          {mods.length === 0 ? `No ${kindsPhrase(server.spec)} added.` : `${mods.length} added${modpack ? " on top of the modpack" : ""}.`}
-        </p>
-        {canEdit && (
-          <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setAdding(kindsFor(server.spec)[0])}>
-            Add
-          </Button>
-        )}
-      </div>
-
-      {mods.length === 0 ? (
-        !modpack && (
-          <Empty title={server.spec.loader === "vanilla" ? "Vanilla servers take datapacks" : "Nothing installed yet"}>
-            {server.spec.loader === "vanilla"
-              ? "To use mods or plugins, change the server type in Settings."
-              : "Add some from Modrinth."}
-          </Empty>
-        )
-      ) : (
-        <ContentList
-          mods={mods}
-          gameJava={server.java.game}
-          onRemove={canEdit ? (i) => update.mutate({ mods: mods.filter((_, j) => j !== i) }) : undefined}
-          extra={(m, i) =>
-            m.source === "modrinth" && (
-              <Button size="sm" disabled={!canEdit} onClick={() => setVersioning(i)} className="max-w-40">
-                <span className="truncate">{m.versionName || "Newest"}</span>
-              </Button>
-            )
-          }
-        />
-      )}
+      {sections.map((kind) => {
+        // Where each is in the server's whole list, which is what is saved.
+        const at = mods.flatMap((m, i) => ((m.kind ?? "mod") === kind ? [i] : []));
+        const name = kindNames[kind].toLowerCase();
+        return (
+          <section key={kind} aria-label={kindNames[kind]} className="flex flex-col gap-2.5">
+            <SectionHead title={kindNames[kind]} count={at.length} onAdd={canEdit && takes.includes(kind) ? () => setAdding(kind) : undefined} />
+            {at.length === 0 ? (
+              <p className="text-[13px] text-muted">{modpack && kind === "mod" ? "None on top of the modpack." : `No ${name}.`}</p>
+            ) : (
+              <ContentList
+                mods={at.map((i) => mods[i])}
+                gameJava={server.java.game}
+                showKind={false}
+                onRemove={canEdit ? (j) => update.mutate({ mods: mods.filter((_, i) => i !== at[j]) }) : undefined}
+                extra={(m, j) =>
+                  m.source === "modrinth" && (
+                    <Button size="sm" disabled={!canEdit} onClick={() => setVersioning(at[j])} className="max-w-40">
+                      <span className="truncate">{m.versionName || "Newest"}</span>
+                    </Button>
+                  )
+                }
+              />
+            )}
+          </section>
+        );
+      })}
 
       <PackSection server={server} gameVersion={server.spec.modpack ? server.spec.modpack.gameVersion : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")} onVersion={() => setVersioning("pack")} />
 
@@ -159,6 +157,7 @@ export function Mods() {
           onAdd={(ref) => update.mutate({ mods: [...mods, ref] })}
           onUpload={upload}
           start={adding}
+          only
           pack={{
             current: server.spec.resourcePack,
             onPick: (pack) => update.mutateAsync({ resourcePack: { ...pack, enforce: !!server.spec.resourcePack?.enforce, prompt: server.spec.resourcePack?.prompt ?? "" } }),
@@ -248,15 +247,13 @@ function PackSection({
   // done before the pack is replaced or removed, so neither undoes the other.
   const busy = update.isPending || remove.isPending || looking;
   return (
-    <section className="flex flex-col gap-2.5">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-[13px] font-medium">Resource pack</h2>
-      </div>
+    <section aria-label="Resource pack" className="flex flex-col gap-2.5">
+      <SectionHead title="Resource pack" onAdd={canEdit && !pack ? onChoose : undefined} />
       {!pack ? (
-        <p className="text-[13px] text-muted">None. One added from Modrinth, an upload or a URL is offered to each player's game as they join.</p>
+        <p className="text-[13px] text-muted">None. A pack added here is offered to each player as they join.</p>
       ) : (
         <>
-          <PackCard pack={pack}>
+          <PackCard pack={pack} showKind={false}>
             {pack.project && (
               <Button size="sm" disabled={!canEdit || busy} onClick={onVersion} className="max-w-40">
                 <span className="truncate">{pack.project.versionName || "Version"}</span>
@@ -307,5 +304,21 @@ function PackSection({
         </>
       )}
     </section>
+  );
+}
+
+function SectionHead({ title, count, onAdd }: { title: string; count?: number; onAdd?: () => void }) {
+  return (
+    <div className="flex min-h-8 items-center justify-between gap-3">
+      <h2 className="text-[13px] font-medium">
+        {title}
+        {!!count && <span className="ml-1.5 font-normal text-muted">{count}</span>}
+      </h2>
+      {onAdd && (
+        <Button size="sm" icon={<Plus className="size-4" />} onClick={onAdd} aria-label={`Add ${title.toLowerCase()}`}>
+          Add
+        </Button>
+      )}
+    </div>
   );
 }
