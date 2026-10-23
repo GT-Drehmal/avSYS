@@ -618,7 +618,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.removeDroppedPack(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	// A pack joined from several says the pack format of its game: joined
 	// again for the new one, once this has let go of its files.
-	if rp := mc.Spec.ResourcePack; previous.Version != mc.Spec.Version && rp != nil && len(rp.Stack) > 0 {
+	if rp := mc.Spec.ResourcePack; controller.GameVersionOf(previous) != controller.GameVersionOf(&mc.Spec) && rp != nil && len(rp.Stack) > 0 {
 		go s.restackFor(context.WithoutCancel(r.Context()), client.ObjectKeyFromObject(mc))
 	}
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")

@@ -113,6 +113,9 @@ type Server struct {
 	bench nodeBench
 	// usage is what each running server's game has been using lately.
 	usage usage
+	// restacking holds the servers whose resource packs are being joined
+	// again for their game version.
+	restacking sync.Map
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
 	// to check that no route is left without a decision on who may call it.
 	routes []string

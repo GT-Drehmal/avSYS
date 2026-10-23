@@ -58,23 +58,38 @@ var stamp = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // Merge writes the packs, the top one first, joined into one zip. format is
 // the pack format the game it is for reads, which the pack made says it is
-// for; with 0, it says what the top pack says.
+// for, and which decides which of each pack's overlays are used: they are
+// laid over its own files here, as the game would, since in one pack an
+// overlay of one under would cover what one over it has. With 0, it says
+// what the top pack says, and every overlay is kept as it is.
 func Merge(w io.Writer, packs []Pack, format int) (*Result, error) {
 	if len(packs) == 0 {
 		return nil, errors.New("no packs to join")
 	}
+	metas := make([]packMeta, len(packs))
+	for i, p := range packs {
+		var err error
+		if metas[i], err = readMeta(p); err != nil {
+			return nil, err
+		}
+	}
+	// Each pack's files, as the game reads them.
+	own := make([]map[string]*zip.File, len(packs))
+	for i := range packs {
+		own[i] = filesOf(packs[i], metas[i], format)
+	}
+	// A pack's block filters hide what packs under it have, not its own:
+	// what they hide of those is left out here. They are kept in the pack
+	// made, for any pack under it.
+	for i := range packs {
+		for j := 0; j < i; j++ {
+			hideFiltered(own[i], metas[j].Filter.Block)
+		}
+	}
 	// Each file, and the packs that have it, the top one first.
 	files := map[string][]entry{}
-	for i, p := range packs {
-		for _, f := range p.Zip.File {
-			name, ok := cleanName(f.Name)
-			if !ok || f.FileInfo().IsDir() {
-				continue
-			}
-			// A zip with the same name twice: its first is the one read.
-			if have := files[name]; len(have) > 0 && have[len(have)-1].pack == i {
-				continue
-			}
+	for i := range packs {
+		for name, f := range own[i] {
 			files[name] = append(files[name], entry{pack: i, file: f})
 		}
 	}
@@ -85,7 +100,7 @@ func Merge(w io.Writer, packs []Pack, format int) (*Result, error) {
 	sort.Strings(names)
 
 	out := zip.NewWriter(w)
-	meta, err := mergeMeta(packs, files["pack.mcmeta"], format)
+	meta, err := mergeMeta(packs, metas, format)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +111,19 @@ func Merge(w io.Writer, packs []Pack, format int) (*Result, error) {
 	for _, name := range names {
 		have := files[name]
 		if name == "pack.mcmeta" {
+			continue
+		}
+		// What a texture is drawn with, beside it, is of the pack the
+		// texture is from, or one over it: one under has none of its say.
+		if asset, ok := files[strings.TrimSuffix(name, ".mcmeta")]; ok && strings.HasSuffix(name, ".mcmeta") {
+			for _, e := range have {
+				if e.pack <= asset[0].pack {
+					if err := copyFile(out, name, e.file); err != nil {
+						return nil, err
+					}
+					break
+				}
+			}
 			continue
 		}
 		if len(have) == 1 || name == "pack.png" {
@@ -139,6 +167,180 @@ func Merge(w io.Writer, packs []Pack, format int) (*Result, error) {
 		return a.Over < b.Over || (a.Over == b.Over && a.Under < b.Under)
 	})
 	return res, nil
+}
+
+// packMeta is what is read of a pack's pack.mcmeta.
+type packMeta struct {
+	Pack     map[string]json.RawMessage `json:"pack"`
+	Overlays struct {
+		Entries []json.RawMessage `json:"entries"`
+	} `json:"overlays"`
+	Filter struct {
+		Block []json.RawMessage `json:"block"`
+	} `json:"filter"`
+	Language map[string]json.RawMessage `json:"language"`
+}
+
+// readMeta reads a pack's pack.mcmeta; one with none says nothing.
+func readMeta(p Pack) (packMeta, error) {
+	var meta packMeta
+	for _, f := range p.Zip.File {
+		if name, ok := cleanName(f.Name); !ok || name != "pack.mcmeta" {
+			continue
+		}
+		data, err := readFile(f)
+		if err != nil {
+			return meta, fmt.Errorf("pack.mcmeta of %s: %w", p.Name, err)
+		}
+		if err := json.Unmarshal(data, &meta); err != nil {
+			return meta, fmt.Errorf("pack.mcmeta of %s is not valid: %w", p.Name, err)
+		}
+		return meta, nil
+	}
+	return meta, nil
+}
+
+// filesOf is a pack's files, by name, as a game of this format reads them:
+// the overlays it uses laid over the rest, the later ones on top. With no
+// format, as they are.
+func filesOf(p Pack, meta packMeta, format int) map[string]*zip.File {
+	root := map[string]*zip.File{}
+	for _, f := range p.Zip.File {
+		name, ok := cleanName(f.Name)
+		// A zip with the same name twice: its first is the one read.
+		if _, seen := root[name]; !ok || seen || f.FileInfo().IsDir() {
+			continue
+		}
+		root[name] = f
+	}
+	if format == 0 {
+		return root
+	}
+	var every, used []string
+	for _, raw := range meta.Overlays.Entries {
+		var o struct {
+			Directory string `json:"directory"`
+		}
+		if json.Unmarshal(raw, &o) != nil || o.Directory == "" || strings.Contains(o.Directory, "/") {
+			continue
+		}
+		every = append(every, o.Directory+"/")
+		if overlayFits(raw, format) {
+			used = append(used, o.Directory+"/")
+		}
+	}
+	out := map[string]*zip.File{}
+	for name, f := range root {
+		if !hasAnyPrefix(name, every) {
+			out[name] = f
+		}
+	}
+	for _, dir := range used {
+		for name, f := range root {
+			if rest, ok := strings.CutPrefix(name, dir); ok && rest != "" && rest != "pack.mcmeta" {
+				out[rest] = f
+			}
+		}
+	}
+	return out
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// overlayFits says whether an overlay is for this format: by formats (a
+// number, [min, max], or {min_inclusive, max_inclusive}), or from the
+// game's 1.21.9 on by min_format and max_format.
+func overlayFits(raw json.RawMessage, format int) bool {
+	var o struct {
+		Formats   json.RawMessage `json:"formats"`
+		MinFormat json.RawMessage `json:"min_format"`
+		MaxFormat json.RawMessage `json:"max_format"`
+	}
+	if json.Unmarshal(raw, &o) != nil {
+		return false
+	}
+	if o.Formats != nil {
+		lo, hi, ok := formatRange(o.Formats)
+		return ok && lo <= format && format <= hi
+	}
+	lo, okLo := major(o.MinFormat)
+	hi, okHi := major(o.MaxFormat)
+	return okLo && okHi && lo <= format && format <= hi
+}
+
+func formatRange(v json.RawMessage) (int, int, bool) {
+	if n, ok := major(v); ok {
+		return n, n, true
+	}
+	var pair []int
+	if json.Unmarshal(v, &pair) == nil && len(pair) == 2 {
+		return pair[0], pair[1], true
+	}
+	var bounds struct {
+		Min *int `json:"min_inclusive"`
+		Max *int `json:"max_inclusive"`
+	}
+	if json.Unmarshal(v, &bounds) == nil && bounds.Min != nil && bounds.Max != nil {
+		return *bounds.Min, *bounds.Max, true
+	}
+	return 0, 0, false
+}
+
+// major is a format as a number, or the major of [major] or [major, minor].
+func major(v json.RawMessage) (int, bool) {
+	var n int
+	if json.Unmarshal(v, &n) == nil {
+		return n, true
+	}
+	var parts []int
+	if json.Unmarshal(v, &parts) == nil && len(parts) > 0 {
+		return parts[0], true
+	}
+	return 0, false
+}
+
+// hideFiltered takes out of a pack's files those a pack over it filters
+// out: assets whose namespace and path match a block filter's patterns,
+// each the whole of it, a pattern left out matching any.
+func hideFiltered(files map[string]*zip.File, blocks []json.RawMessage) {
+	for _, raw := range blocks {
+		var b struct {
+			Namespace *string `json:"namespace"`
+			Path      *string `json:"path"`
+		}
+		if json.Unmarshal(raw, &b) != nil {
+			continue
+		}
+		match := func(pattern *string) func(string) bool {
+			if pattern == nil {
+				return func(string) bool { return true }
+			}
+			re, err := regexp.Compile(`^(?:` + *pattern + `)$`)
+			if err != nil {
+				// A pattern Go does not read is not applied.
+				return func(string) bool { return false }
+			}
+			return re.MatchString
+		}
+		ns, path := match(b.Namespace), match(b.Path)
+		for name := range files {
+			rest, ok := strings.CutPrefix(name, "assets/")
+			if !ok {
+				continue
+			}
+			space, p, ok := strings.Cut(rest, "/")
+			if ok && ns(space) && path(p) {
+				delete(files, name)
+			}
+		}
+	}
 }
 
 type entry struct {
@@ -211,8 +413,10 @@ func readFile(f *zip.File) ([]byte, error) {
 }
 
 // mergeMeta makes the pack.mcmeta of the pack made: the format it is for,
-// the overlays of every pack, and their block filters and languages.
-func mergeMeta(packs []Pack, have []entry, format int) ([]byte, error) {
+// and every pack's block filters and languages. Their overlays are laid over
+// their files already, for a format given; for none, they are kept, the
+// bottom pack's first.
+func mergeMeta(packs []Pack, metas []packMeta, format int) ([]byte, error) {
 	names := make([]string, len(packs))
 	for i, p := range packs {
 		names[i] = p.Name
@@ -220,42 +424,23 @@ func mergeMeta(packs []Pack, have []entry, format int) ([]byte, error) {
 	pack := map[string]any{"description": strings.Join(names, ", ")}
 	var overlays, filters []json.RawMessage
 	languages := map[string]json.RawMessage{}
-	// From the bottom up: an overlay further down the list is applied over
-	// those before it, as one in a pack higher up is.
-	for i := len(have) - 1; i >= 0; i-- {
-		data, err := readFile(have[i].file)
-		if err != nil {
-			return nil, fmt.Errorf("pack.mcmeta of %s: %w", packs[have[i].pack].Name, err)
+	for i := len(metas) - 1; i >= 0; i-- {
+		if format == 0 {
+			overlays = append(overlays, metas[i].Overlays.Entries...)
 		}
-		var meta struct {
-			Pack     map[string]json.RawMessage `json:"pack"`
-			Overlays struct {
-				Entries []json.RawMessage `json:"entries"`
-			} `json:"overlays"`
-			Filter struct {
-				Block []json.RawMessage `json:"block"`
-			} `json:"filter"`
-			Language map[string]json.RawMessage `json:"language"`
-		}
-		if err := json.Unmarshal(data, &meta); err != nil {
-			return nil, fmt.Errorf("pack.mcmeta of %s is not valid: %w", packs[have[i].pack].Name, err)
-		}
-		overlays = append(overlays, meta.Overlays.Entries...)
-		filters = append(filters, meta.Filter.Block...)
-		for k, v := range meta.Language {
+		filters = append(filters, metas[i].Filter.Block...)
+		for k, v := range metas[i].Language {
 			languages[k] = v
-		}
-		// With no format to say, what the top pack says.
-		if format == 0 && i == 0 {
-			for _, k := range []string{"pack_format", "supported_formats", "min_format", "max_format"} {
-				if v, ok := meta.Pack[k]; ok {
-					pack[k] = v
-				}
-			}
 		}
 	}
 	switch {
 	case format == 0:
+		// With no format to say, what the top pack says.
+		for _, k := range []string{"pack_format", "supported_formats", "min_format", "max_format"} {
+			if v, ok := metas[0].Pack[k]; ok {
+				pack[k] = v
+			}
+		}
 	// From the game's 1.21.9, whose packs are of format 65 on, a pack says
 	// the formats it is for as min_format and max_format.
 	case format >= 65:
@@ -352,11 +537,17 @@ func mergeTwo(k kind, under, over object) (object, error) {
 	case sounds:
 		return mergeSounds(under, over)
 	case font:
-		return mergeList(under, over, "providers")
+		// The first provider that has a character draws it: the top
+		// pack's come first.
+		return joinList(over, "providers", over, under)
 	case atlas:
-		return mergeList(under, over, "sources")
+		// The game joins atlases' sources from every pack, the bottom
+		// one's first.
+		return joinList(over, "sources", under, over)
 	case itemModel:
-		return mergeList(under, over, "overrides")
+		// The game does not join these: the top pack's model, with the
+		// overrides of both, the last of which that fits is used.
+		return joinList(over, "overrides", under, over)
 	case itemDefinition:
 		return mergeItem(under, over)
 	}
@@ -375,19 +566,18 @@ func mergeKeys(under, over object) object {
 	return out
 }
 
-// mergeList is over, with the list of key in both joined: under's first,
-// as the game does with the lists of fonts and atlases in packs one over
-// another. The overrides of item models, which it does not join, are joined
-// the same way, as the last of them that fits is the one used.
-func mergeList(under, over object, key string) (object, error) {
+// joinList is base, with its list of key that of first and then that of
+// second.
+func joinList(base object, key string, first, second object) (object, error) {
 	var a, b []json.RawMessage
-	if v, ok := under[key]; ok && json.Unmarshal(v, &a) != nil {
+	if v, ok := first[key]; ok && json.Unmarshal(v, &a) != nil {
 		return nil, errCannotJoin
 	}
-	if v, ok := over[key]; ok && json.Unmarshal(v, &b) != nil {
+	if v, ok := second[key]; ok && json.Unmarshal(v, &b) != nil {
 		return nil, errCannotJoin
 	}
-	out := mergeKeys(object{}, over)
+	out := mergeKeys(object{}, base)
+	delete(out, key)
 	if len(a)+len(b) > 0 {
 		list, err := json.Marshal(append(a, b...))
 		if err != nil {
@@ -418,20 +608,11 @@ func mergeSounds(under, over object) (object, error) {
 			out[name] = v
 			continue
 		}
-		event, err := mergeList(a, b, "sounds")
+		// Its sounds are added to the one under's, which is otherwise as it
+		// was: its subtitle, or none, and whether it replaces the game's.
+		event, err := joinList(a, "sounds", a, b)
 		if err != nil {
 			return nil, err
-		}
-		// Its subtitle is the one over's if it says one.
-		for k, v := range a {
-			if _, ok := event[k]; !ok {
-				event[k] = v
-			}
-		}
-		// Whether it replaces the game's own sounds is the one under's to say.
-		delete(event, "replace")
-		if r, ok := a["replace"]; ok {
-			event["replace"] = r
 		}
 		if out[name], err = json.Marshal(event); err != nil {
 			return nil, err
@@ -468,9 +649,7 @@ func mergeItemModel(under, over object) (object, error) {
 	picks := func(o object) bool {
 		var property string
 		_ = json.Unmarshal(o["property"], &property)
-		if property != "" && !strings.Contains(property, ":") {
-			property = "minecraft:" + property
-		}
+		property = namespaced(property)
 		t := typeOf(o)
 		return (t == "minecraft:range_dispatch" || t == "minecraft:select") && (property == "minecraft:custom_model_data" || (t == "minecraft:select" && property == "minecraft:component"))
 	}
@@ -525,13 +704,20 @@ func mergeItemModel(under, over object) (object, error) {
 func typeOf(o object) string {
 	var t string
 	_ = json.Unmarshal(o["type"], &t)
-	if t != "" && !strings.Contains(t, ":") {
-		t = "minecraft:" + t
-	}
-	return t
+	return namespaced(t)
 }
 
-// sameExcept says whether two objects are the same but for these keys.
+// namespaced is an id with its namespace, minecraft where it says none.
+func namespaced(id string) string {
+	if id != "" && !strings.Contains(id, ":") {
+		return "minecraft:" + id
+	}
+	return id
+}
+
+// sameExcept says whether two objects are the same but for these keys,
+// with what names a type, property or component the same with or without
+// its namespace, as the game reads them.
 func sameExcept(a, b object, except ...string) bool {
 	strip := func(o object) map[string]any {
 		out := map[string]any{}
@@ -539,6 +725,9 @@ func sameExcept(a, b object, except ...string) bool {
 			if !contains(except, k) {
 				var x any
 				_ = json.Unmarshal(v, &x)
+				if id, ok := x.(string); ok && (k == "type" || k == "property" || k == "component") {
+					x = namespaced(id)
+				}
 				out[k] = x
 			}
 		}
