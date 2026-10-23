@@ -42,6 +42,10 @@ type Gateway struct {
 	// WorkspaceKey is the only key workspace containers accept.
 	WorkspaceKey ssh.Signer
 	Log          *slog.Logger
+	// WorkspaceTries is how many times a workspace is dialled, a second
+	// apart, while its pod may be being replaced; 0 is the usual. A panel
+	// with no cluster behind it, as the browser tests run, tries once.
+	WorkspaceTries int
 }
 
 // LoadOrCreateKey returns the ed25519 key stored under name, generating it on
@@ -186,8 +190,12 @@ func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string) (
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}
+	tries := g.WorkspaceTries
+	if tries <= 0 {
+		tries = workspaceDials
+	}
 	var lastErr error
-	for attempt := 0; attempt < workspaceDials; attempt++ {
+	for attempt := 0; attempt < tries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
