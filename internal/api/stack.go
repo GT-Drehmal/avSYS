@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/packmerge"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
@@ -91,13 +92,14 @@ func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
-	limit := packLimit(mc.Spec.Version)
+	game := controller.GameVersionOf(&mc.Spec)
+	limit := packLimit(game)
 	top, err := get(tmp, limit)
 	if err != nil {
 		return err
 	}
 	if top.Size > limit {
-		return errBadRequest("That pack is over %d MB, the most the game takes for %s.", limit>>20, mc.Spec.Version)
+		return errBadRequest("That pack is over %d MB, the most the game takes for %s.", limit>>20, game)
 	}
 	if top.Size == 0 {
 		return errBadRequest("That pack is empty.")
@@ -257,7 +259,8 @@ func (s *Server) restack(ctx context.Context, now *avsysv1.MinecraftServer, sc *
 	if len(stack) == 0 {
 		next.Spec.ResourcePack = nil
 	} else {
-		rp, err := s.joinStack(ctx, sc, stack, now.Spec.Version)
+		// For the game it runs, which a modpack's says.
+		rp, err := s.joinStack(ctx, sc, stack, controller.GameVersionOf(&now.Spec))
 		if err != nil {
 			return now, err
 		}
@@ -291,10 +294,15 @@ func (s *Server) joinStack(ctx context.Context, sc *sftp.Client, stack []avsysv1
 		if err != nil {
 			return nil, fmt.Errorf("the file of %s is not in the server's files: %w", stackedName(p), fileError(err))
 		}
-		size, err := io.Copy(local, io.LimitReader(src, packLimit("")+1))
+		size, sha, err := copyHashed(local, src, packLimit(""))
 		src.Close()
 		if err != nil {
 			return nil, fileError(err)
+		}
+		// The server's files are anyone's with a shell there: a pack is
+		// joined only as it was when it was added.
+		if sha != p.SHA1 {
+			return nil, errBadRequest("The file of %s has changed since it was added. Take it off and add it again.", stackedName(p))
 		}
 		z, err := zip.NewReader(local, size)
 		if err != nil {
@@ -359,25 +367,43 @@ func (s *Server) joinStack(ctx context.Context, sc *sftp.Client, stack []avsysv1
 	return rp, nil
 }
 
-// restackFor joins a server's stack again for the game version it has now,
-// as after it was changed: the pack joined says the format of its game.
+// stackOutdated says whether a server's pack joined from several is made
+// for another pack format than its game reads, as after its version was
+// changed: then while a snapshot held it, or before the panel restarted.
+func (s *Server) stackOutdated(ctx context.Context, mc *avsysv1.MinecraftServer) bool {
+	rp := mc.Spec.ResourcePack
+	if rp == nil || len(rp.Stack) == 0 {
+		return false
+	}
+	format, err := s.packFormatOf(ctx, controller.GameVersionOf(&mc.Spec))
+	if err != nil || format == 0 {
+		return false
+	}
+	return rp.Formats == nil || rp.Formats.Min != format || rp.Formats.Max != format
+}
+
+// restackFor joins a server's stack again for the game it runs now, if it
+// is not made for it: the pack joined says the format of its game. Looked
+// at once a minute, so one that cannot be now is later.
 func (s *Server) restackFor(ctx context.Context, key client.ObjectKey) {
-	mc := &avsysv1.MinecraftServer{}
-	if err := s.Client.Get(ctx, key, mc); err != nil {
+	// One at a time for each server.
+	if _, busy := s.restacking.LoadOrStore(key.String(), true); busy {
 		return
 	}
-	if rp := mc.Spec.ResourcePack; rp == nil || len(rp.Stack) == 0 {
+	defer s.restacking.Delete(key.String())
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, mc); err != nil || !s.stackOutdated(ctx, mc) {
 		return
 	}
 	release, err := s.changing(mc, true)
 	if err != nil {
-		s.Log.Info("did not join a server's resource packs again for its new version; they are when they next change", "server", key.String(), "error", err)
+		// Tried again in a minute.
 		return
 	}
 	defer release()
 	defer s.lockContent(key)()
 	now, err := s.live(ctx, mc)
-	if err != nil || now.Spec.ResourcePack == nil || len(now.Spec.ResourcePack.Stack) == 0 {
+	if err != nil || !s.stackOutdated(ctx, now) {
 		return
 	}
 	sc, done, err := s.filesOf(ctx, now, false)

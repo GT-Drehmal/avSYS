@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pkg/sftp"
@@ -146,6 +147,19 @@ func TestRestack(t *testing.T) {
 		t.Errorf("saved %+v", saved.Spec.ResourcePack)
 	}
 
+	// A pack's file changed in the server's files since it was added is
+	// not joined as it is now.
+	if err := sc.Remove(packFile(b.SHA1)); err != nil {
+		t.Fatal(err)
+	}
+	other := stacked(t, sc, "Other", map[string]string{"pack.mcmeta": meta, "x.png": "x"})
+	if err := sc.Rename(packFile(other.SHA1), packFile(b.SHA1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.srv.restack(ctx, got, sc, []avsysv1.StackedPack{b, a}); err == nil || !strings.Contains(err.Error(), "has changed since it was added") {
+		t.Errorf("joined a pack whose file changed: %v", err)
+	}
+
 	// None: no pack, and none of their files.
 	got, err = p.srv.restack(ctx, got, sc, nil)
 	if err != nil {
@@ -243,4 +257,31 @@ func zipFile(t *testing.T, z *zip.Reader, name string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// A pack joined from several is made for the format of the game its server
+// runs: a modpack's, where it has one. Made for another, it is outdated.
+func TestStackOutdated(t *testing.T) {
+	p := newPanel(t)
+	p.srv.gameFormats.Store("1.21.4", int32(46))
+	p.srv.gameFormats.Store("1.20.1", int32(15))
+	mc := &avsysv1.MinecraftServer{Spec: avsysv1.MinecraftServerSpec{Version: "1.21.4", ResourcePack: &avsysv1.ResourcePackSpec{URL: "x", Uploaded: &avsysv1.UploadedPack{}, Formats: &avsysv1.PackFormats{Min: 46, Max: 46}, Stack: []avsysv1.StackedPack{{SHA1: "aa"}}}}}
+	ctx := context.Background()
+	if p.srv.stackOutdated(ctx, mc) {
+		t.Error("made for its game, and said to be outdated")
+	}
+	mc.Spec.Version = "1.20.1"
+	if !p.srv.stackOutdated(ctx, mc) {
+		t.Error("made for another game, and not said to be outdated")
+	}
+	// A modpack's game is the one it runs, whatever the version says.
+	mc.Spec.Modpack = &avsysv1.ModpackSpec{GameVersion: "1.21.4"}
+	if p.srv.stackOutdated(ctx, mc) {
+		t.Error("made for its modpack's game, and said to be outdated")
+	}
+	// Not joined from several: nothing to join again.
+	mc.Spec.Modpack, mc.Spec.ResourcePack.Stack = nil, nil
+	if p.srv.stackOutdated(ctx, mc) {
+		t.Error("a pack not joined was said to be outdated")
+	}
 }
