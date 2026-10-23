@@ -111,6 +111,8 @@ type Server struct {
 	consoles sync.Map
 	// bench is the measuring of nodes' speed.
 	bench nodeBench
+	// usage is what each running server's game has been using lately.
+	usage usage
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
 	// to check that no route is left without a decision on who may call it.
 	routes []string
@@ -383,6 +385,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/servers/{server}/snapshots", s.authed(s.createSnapshot))
 	api("POST /orgs/{org}/servers/{server}/snapshots/{id}/restore", s.authed(s.restoreSnapshot))
 	api("GET /orgs/{org}/servers/{server}/operation", s.authed(s.getOperation))
+	api("GET /orgs/{org}/servers/{server}/usage", s.authed(s.getUsage))
 	api("GET /orgs/{org}/servers/{server}/placement", s.authed(s.getPlacement))
 	api("POST /orgs/{org}/servers/{server}/move", s.authed(s.moveServer))
 	api("GET /orgs/{org}/servers/{server}/terminal", s.authed(s.terminal))

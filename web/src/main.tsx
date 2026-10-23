@@ -23,6 +23,7 @@ import { Console } from "./pages/server/Console";
 import { Mods } from "./pages/server/Mods";
 import { Settings } from "./pages/server/Settings";
 import { Snapshots } from "./pages/server/Snapshots";
+import { Usage } from "./pages/server/Usage";
 
 // The editor and terminal pull in large libraries, so they load on demand.
 const Files = lazy(() => import("./pages/server/Files"));
@@ -67,6 +68,7 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="files/*" element={<Suspense fallback={<Loading />}><Files /></Suspense>} />
                   <Route path="terminal" element={<Suspense fallback={<Loading />}><Terminal /></Suspense>} />
                   <Route path="content" element={<Mods />} />
+                  <Route path="usage" element={<Usage />} />
                   {/* Where it was before it was called Content. */}
                   <Route path="mods" element={<Navigate to="../content" replace />} />
                   <Route path="backups" element={<Snapshots />} />
