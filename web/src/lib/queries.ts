@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type BackupPolicy, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
+import { api, ApiError, serverPath, type BackupPolicy, type Cluster, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
 import { toast } from "./toast";
 
 export const queryClient = new QueryClient({
@@ -18,6 +18,7 @@ export const queryClient = new QueryClient({
 export const keys = {
   meta: ["meta"] as const,
   me: ["me"] as const,
+  cluster: ["cluster"] as const,
   servers: (org: string) => ["servers", org] as const,
   members: (org: string) => ["members", org] as const,
   invites: (org: string) => ["invites", org] as const,
@@ -79,6 +80,9 @@ function upsert(list: Server[] | undefined, server: Server) {
 export const applyServer = (qc: QueryClient, server: Server) =>
   qc.setQueryData<Server[]>(keys.servers(server.org), (list) => upsert(list, server));
 
+/** Whether the panel can reach the cluster, as the event stream says. */
+export const useCluster = () => useQuery<Cluster>({ queryKey: keys.cluster, queryFn: () => ({ reachable: true }), enabled: false }).data;
+
 /**
  * Keeps server lists current from the panel's event stream. Mounted once for
  * the whole signed-in app; nothing polls.
@@ -108,6 +112,7 @@ export function useLiveServers() {
       if (opened) refetchAll();
       opened = true;
     };
+    source.addEventListener("cluster", (e) => qc.setQueryData<Cluster>(keys.cluster, JSON.parse(e.data)));
     source.addEventListener("server.updated", (e) => applyServer(qc, JSON.parse(e.data)));
     source.addEventListener("server.deleted", (e) => {
       const gone: Server = JSON.parse(e.data);

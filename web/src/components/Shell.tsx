@@ -3,7 +3,7 @@ import { Archive, Check, ChevronsUpDown, Cpu, LogOut, Plus, Server, Settings, Us
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
-import { keys, useAction, useLiveServers, useMe, useMeta } from "../lib/queries";
+import { keys, useAction, useCluster, useLiveServers, useMe, useMeta } from "../lib/queries";
 import { clearSetups } from "../lib/setups";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Picture } from "./Picture";
@@ -170,6 +170,21 @@ function UpdateNotice({ loaded }: { loaded?: string }) {
   );
 }
 
+/**
+ * Says when the panel cannot reach the cluster: what it shows of servers is
+ * what it last heard.
+ */
+function ClusterNotice() {
+  const cluster = useCluster();
+  if (!cluster || cluster.reachable) return null;
+  const since = cluster.since && new Date(cluster.since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return (
+    <div role="alert" className="border-b border-warn/30 bg-warn-wash px-4 py-2 text-center text-[13px] text-warn">
+      Can't reach the cluster{since && ` since ${since}`}. Servers may not be as shown.
+    </div>
+  );
+}
+
 export function Shell() {
   const { pathname } = useLocation();
   const me = useMe().data!;
@@ -254,6 +269,7 @@ export function Shell() {
         </div>
       </aside>
       <main className="min-w-0 flex-1">
+        <ClusterNotice />
         <UpdateNotice loaded={meta?.version} />
         <div className="mx-auto max-w-5xl px-5 py-8 md:px-10">
           {/* An error in a page leaves the navigation standing, and going elsewhere clears it. */}

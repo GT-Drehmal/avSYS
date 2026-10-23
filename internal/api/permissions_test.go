@@ -606,7 +606,8 @@ func TestEventsStayInsideTheOrganization(t *testing.T) {
 	lines := bufio.NewScanner(res.Body)
 	for lines.Scan() {
 		data, ok := strings.CutPrefix(lines.Text(), "data: ")
-		if !ok {
+		// The first says whether the cluster can be reached, to everyone.
+		if !ok || strings.HasPrefix(data, `{"reachable"`) {
 			continue
 		}
 		if data != `"from alpha"` {
