@@ -46,6 +46,29 @@ type usage struct {
 	// when; a cluster without a metrics API is asked again now and then.
 	available bool
 	checked   time.Time
+	// nodes is what each node was last using in all, by name.
+	nodes map[string]nodeInUse
+}
+
+// nodeInUse is what a node is using in all, of everything that runs on it.
+type nodeInUse struct {
+	// CPU is in thousandths of a core.
+	CPU    int64 `json:"cpu"`
+	Memory int64 `json:"memory"`
+}
+
+func (u *usage) setNodes(nodes map[string]nodeInUse) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.nodes = nodes
+}
+
+// node returns what a node was last using, if that is known.
+func (u *usage) node(name string) (nodeInUse, bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	n, ok := u.nodes[name]
+	return n, ok
 }
 
 // history is one server's samples, oldest first. uid is the server's: one
@@ -150,11 +173,21 @@ func (s *Server) usageTick(ctx context.Context, now time.Time) {
 	raw := s.podMetrics(ctx, now)
 	if err := s.noteUsage(raw, servers.Items, now); err != nil {
 		s.Log.Warn("could not read what servers are using", "error", err)
+		s.usage.setNodes(nil)
 		return
 	}
-	if raw != nil {
-		s.usage.setAvailable(true, now)
+	// What nodes use is shown only as it is now: not known, it is not
+	// shown, rather than an old figure.
+	if raw == nil {
+		s.usage.setNodes(nil)
+		return
 	}
+	s.usage.setAvailable(true, now)
+	nodes, err := s.nodeMetrics(ctx)
+	if err != nil {
+		s.Log.Warn("could not read what nodes are using", "error", err)
+	}
+	s.usage.setNodes(nodes)
 }
 
 // podMetrics asks the metrics API what the panel's own pods are using: nil
@@ -189,6 +222,36 @@ func (s *Server) podMetrics(ctx context.Context, now time.Time) []byte {
 		return nil
 	}
 	return raw
+}
+
+// nodeMetrics asks the metrics API what each node is using in all.
+func (s *Server) nodeMetrics(ctx context.Context) (map[string]nodeInUse, error) {
+	raw, err := s.Kube.Discovery().RESTClient().Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").Do(ctx).Raw()
+	if err != nil {
+		return nil, err
+	}
+	return nodesInUse(raw)
+}
+
+// nodesInUse reads the metrics API's list of nodes.
+func nodesInUse(raw []byte) (map[string]nodeInUse, error) {
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Usage map[string]string `json:"usage"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, err
+	}
+	nodes := map[string]nodeInUse{}
+	for _, n := range list.Items {
+		cpu, memory := quantityOf(n.Usage["cpu"]), quantityOf(n.Usage["memory"])
+		nodes[n.Metadata.Name] = nodeInUse{CPU: cpu.MilliValue(), Memory: memory.Value()}
+	}
+	return nodes, nil
 }
 
 // noteUsage notes what each of these servers' games is using, from the

@@ -3,8 +3,8 @@ import { expect, test } from "./panel";
 const GiB = 1024 ** 3;
 const listed = (over: Record<string, unknown> = {}) => ({
   nodes: [
-    { name: "pc", ready: true, automatic: true, hosts: true, score: 5500, memory: 32 * GiB, free: 20 * GiB },
-    { name: "pi5", ready: false, automatic: false, hosts: true, score: 0, memory: 8 * GiB, free: 8 * GiB },
+    { name: "pc", ready: true, automatic: true, hosts: true, score: 5500, memory: 32 * GiB, free: 20 * GiB, cores: 16000, players: 0 },
+    { name: "pi5", ready: false, automatic: false, hosts: true, score: 0, memory: 8 * GiB, free: 8 * GiB, cores: 4000, players: 0 },
   ],
   measuring: false,
   ...over,
@@ -52,4 +52,27 @@ test("nodes are for the administrator only", async ({ page, as }) => {
   await as("admin");
   await page.goto("/nodes");
   await expect(page.getByText("Only the panel's administrator can see nodes.")).toBeVisible();
+});
+
+test("each node says what it is using and how many are playing on it, and the cluster in all", async ({ page, as }) => {
+  await as("owner");
+  const pc = { name: "pc", ready: true, automatic: true, hosts: true, score: 5500, memory: 32 * GiB, free: 20 * GiB, cores: 16000, players: 3 };
+  const servers = [
+    { org: "friends", name: "survival", memory: "8Gi", phase: "Running", players: 3 },
+    { org: "friends", name: "creative", memory: "4Gi", phase: "Stopped" },
+  ];
+  const pi5 = { name: "pi5", ready: true, automatic: true, hosts: true, score: 0, memory: 8 * GiB, free: 8 * GiB, cores: 4000, players: 0 };
+  let state: object = { nodes: [{ ...pc, servers, inUse: { cpu: 2500, memory: 11.5 * GiB } }, { ...pi5, inUse: { cpu: 100, memory: 0.5 * GiB } }], measuring: false };
+  await page.route("**/api/v1/nodes", (route) => route.fulfill({ json: state }));
+  await page.goto("/nodes");
+  await expect(page.getByTestId("cluster-total")).toHaveText("2 nodes · 3 players · 12.0 GB of 40.0 GB memory in use");
+  await expect(page.getByTestId("node-use").first()).toHaveText("In use: 11.5 GB memory, 2.5 of 16 cores · 3 players");
+  await expect(page.getByRole("link", { name: /friends\/survival/ })).toContainText("8Gi · 3 players");
+  await expect(page.getByRole("link", { name: /friends\/creative/ })).not.toContainText("player");
+
+  // A cluster that does not say what nodes use: players only.
+  state = { nodes: [{ ...pc, servers }, pi5], measuring: false };
+  await page.reload();
+  await expect(page.getByTestId("cluster-total")).toHaveText("2 nodes · 3 players");
+  await expect(page.getByTestId("node-use").first()).toHaveText("3 players");
 });
