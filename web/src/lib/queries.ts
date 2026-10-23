@@ -145,7 +145,9 @@ export function useLiveServers() {
         // Only ever sent with an error, which says the whole of it.
         if (done.error) toast.error(done.error);
       } else if (done.kind === "import") {
-        // The page that sent it says how it went.
+        // The page that sent it says how it went, or, for one answered once
+        // its archive was in, this tab does when it ends.
+        heardImport(done);
       } else if (done.kind === "move") {
         qc.invalidateQueries({ queryKey: ["placement", done.org, done.server] });
         qc.invalidateQueries({ queryKey: ["nodes"] });
@@ -227,4 +229,51 @@ export function useAction<TArgs, TResult>(fn: (args: TArgs) => Promise<TResult>,
     onSuccess: () => Promise.all(invalidate.map((queryKey) => qc.invalidateQueries({ queryKey }))),
     onError,
   });
+}
+
+// Worlds being replaced from this tab, by "org/server": the name to tell of
+// one by, and its end if that was heard before the panel's answer, which
+// says the upload is in. Only an import this tab is waiting on is kept.
+const replacing = new Map<string, { title: string; answered: boolean; ended?: OperationDone }>();
+
+function tellImport(done: OperationDone, title: string) {
+  if (done.error) toast.error(`Replacing the world of ${title} failed: ${done.error}`);
+  else toast.info(`Replaced the world of ${title}`);
+}
+
+function heardImport(done: OperationDone) {
+  const key = `${done.org}/${done.server}`;
+  const r = replacing.get(key);
+  if (!r) return;
+  if (!r.answered) {
+    r.ended = done;
+    return;
+  }
+  replacing.delete(key);
+  tellImport(done, r.title);
+}
+
+/**
+ * Says, in this tab, how the replacing of a server's world went when it
+ * ends. Called before the world is sent; the upload's end says whether it
+ * was taken, after which the panel does the rest.
+ */
+export function watchReplace(org: string, server: string, title: string) {
+  const key = `${org}/${server}`;
+  const r = { title, answered: false } as { title: string; answered: boolean; ended?: OperationDone };
+  replacing.set(key, r);
+  return {
+    taken() {
+      if (replacing.get(key) !== r) return;
+      r.answered = true;
+      if (r.ended) {
+        replacing.delete(key);
+        tellImport(r.ended, title);
+      }
+    },
+    // Refused or stopped: the dialog says so.
+    refused() {
+      if (replacing.get(key) === r) replacing.delete(key);
+    },
+  };
 }

@@ -127,7 +127,7 @@ test("an existing server is imported from a .tar.gz, its settings read from it",
   // Its plugins are its content: one from Modrinth, to keep up to date
   // here, and one uploaded as it is.
   await expect(page.getByText("WorldEdit", { exact: true })).toBeVisible();
-  await expect(page.getByText("Essentials.jar", { exact: true })).toBeVisible();
+  await expect(page.getByText("Essentials", { exact: true })).toBeVisible();
   await expect(page.getByText(/14 B · uploaded when created/)).toBeVisible();
   // Its own lists, to see and change before it is made.
   await expect(page.getByLabel("Whitelisted players")).toHaveValue("jeb_\nNotch");
@@ -198,10 +198,10 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   });
   await page.getByLabel("Server archive").setInputFiles({ name: "fabric.zip", mimeType: "application/zip", buffer: archive });
   await expect(page.getByTestId("archive-summary")).toContainText("1 mod");
-  await expect(page.getByText("terrain.zip", { exact: true })).toHaveCount(1);
-  await expect(page.getByText("unused.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("terrain", { exact: true })).toHaveCount(1);
+  await expect(page.getByText("unused", { exact: true })).toBeVisible();
   await expect(page.getByText(/15 B · uploaded when created · not on in its world before/)).toBeVisible();
-  await expect(page.getByText("resources.zip", { exact: true })).toBeVisible();
+  await expect(page.getByText("resources", { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
   // Named after the file, as it is not in a folder.
@@ -405,6 +405,11 @@ test("a .tar cut short is turned down", async ({ page, as, org }) => {
 
 test("a stopped server's world can be replaced with one of one's own, saying what it is first", async ({ page, as }) => {
   await as("owner");
+  // Answered once the archive is in; the panel says later how it went.
+  let ended = "";
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
+  );
   // Not while it runs.
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByRole("button", { name: "Replace the world" })).toBeDisabled();
@@ -427,14 +432,44 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
   let sent: URL | null = null;
   await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
     sent = new URL(route.request().url());
-    await route.fulfill({ json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+    await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
   });
   await replace.click();
-  await expect(page.getByText("Replaced the world of Creative")).toBeVisible();
   await expect(dialog).toHaveCount(0);
+  await expect(page.getByText(/Replaced the world/)).toHaveCount(0);
   expect(sent).not.toBeNull();
   const params = (sent as unknown as URL).searchParams;
-  expect([params.get("root"), params.get("world"), params.get("replace")]).toEqual(["Map", "true", "true"]);
+  expect([params.get("root"), params.get("world"), params.get("replace"), params.get("wait")]).toEqual(["Map", "true", "true", null]);
+  ended = JSON.stringify({ kind: "import", org: "friends", server: "creative" });
+  await expect(page.getByText("Replaced the world of Creative")).toBeVisible({ timeout: 15_000 });
+});
+
+test("a world that could not be put in place after it was sent says so when the panel is done", async ({ page, as }) => {
+  await as("owner");
+  let ended = "";
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
+  );
+  await page.goto("/o/friends/s/creative/settings");
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("1.21"), "region/r.0.0.mca": "x" }) });
+  await expect(dialog.getByTestId("world-summary")).toBeVisible();
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) =>
+    route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() }),
+  );
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  await expect(dialog).toHaveCount(0);
+  // Another tab, or a page that did not send it, says nothing of it.
+  const other = await page.context().newPage();
+  await other.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
+  );
+  await other.goto("/o/friends/s/creative");
+  ended = JSON.stringify({ kind: "import", org: "friends", server: "creative", error: "the current world could not be saved first, so nothing was changed: the server's files are not reachable" });
+  await expect(page.getByText("Replacing the world of Creative failed: the current world could not be saved first, so nothing was changed: the server's files are not reachable")).toBeVisible({ timeout: 15_000 });
+  await other.waitForTimeout(4_000);
+  await expect(other.getByText(/Replacing the world/)).toHaveCount(0);
 });
 
 test("a world the panel would not take in place of a server's says why, and nothing is changed", async ({ page, as }) => {
@@ -452,4 +487,47 @@ test("a world the panel would not take in place of a server's says why, and noth
   await dialog.getByRole("button", { name: "Replace the world" }).click();
   await expect(dialog.getByText("The current world could not be saved first, so nothing was changed.")).toBeVisible();
   await expect(dialog).toBeVisible();
+});
+
+test("a replaced world whose end is heard before the panel's answer is still told of, and only then", async ({ page, as }) => {
+  await as("owner");
+  const done = JSON.stringify({ kind: "import", org: "friends", server: "creative" });
+  // The end is said on every stream from the start, as for an import by
+  // someone else a moment ago: not told of, as nothing here waits on it.
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: `event: operation.done\ndata: ${done}\n\n` }),
+  );
+  await page.goto("/o/friends/s/creative/settings");
+  await page.waitForTimeout(4_000);
+  await expect(page.getByText(/Replaced the world/)).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("1.21"), "region/r.0.0.mca": "x" }) });
+  await expect(dialog.getByTestId("world-summary")).toBeVisible();
+  // Answered only after the stream has said it ended.
+  let answer = () => {};
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
+    await answered;
+    await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+  });
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  await page.waitForTimeout(4_000);
+  await expect(page.getByText(/Replaced the world/)).toHaveCount(0);
+  answer();
+  await expect(page.getByText("Replaced the world of Creative")).toBeVisible();
+  await expect(page.getByText("Replaced the world of Creative")).toHaveCount(1);
+});
+
+test("a stopped server held while the panel puts its files in place cannot be started, or its world replaced", async ({ page, as }) => {
+  await as("owner");
+  const held = (s: { name: string; status: object }) => (s.name === "creative" ? { ...s, status: { ...s.status, phase: "Stopped", message: "Importing files." } } : s);
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => route.fulfill({ json: (await (await route.fetch()).json()).map(held) }));
+  await page.route("**/api/v1/orgs/friends/servers/creative", async (route) => route.fulfill({ json: held(await (await route.fetch()).json()) }));
+  await page.goto("/o/friends/s/creative/settings");
+  await expect(page.getByRole("main").getByRole("button", { name: "Start", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Replace the world" })).toBeDisabled();
 });

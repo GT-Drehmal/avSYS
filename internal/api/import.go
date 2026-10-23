@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -195,8 +194,12 @@ func archiveRoot(p string) (string, error) {
 // importFiles unpacks an archive of a server's folder into a server that is
 // stopped and has no files yet. With ?world=true the folder is a world, and
 // becomes the server's. With ?replace=true as well, it takes the place of the
-// world of a server that has files, once a snapshot of it is taken. With
-// ?wait=true it is for a server made a moment ago: its volume is waited for.
+// world of a server that has files, once a snapshot of it is taken.
+//
+// It answers once the archive is in, and the panel sees the rest through:
+// how it went is told as the operation ends. With ?wait=true it answers when
+// all is done instead, and is for a server made a moment ago, whose volume is
+// waited for.
 func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	wait := r.URL.Query().Get("wait") == "true"
 	a, mc, err := s.serverMaybeNew(r, u, wait)
@@ -238,23 +241,53 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 		return errBusy
 	}
-	undo, err := s.importInto(r, w, mc, root, op, replace, a.Org.Slug, u.Username)
-	ctx := context.WithoutCancel(r.Context())
-	if undo != nil {
-		// What it replaced is in a snapshot, noted on the server as its newest.
-		s.finishOperation(ctx, a.Namespace, mc.Name, kindImport, nil, undo, err)
-	} else {
-		s.finishUnsaved(ctx, a.Namespace, mc.Name, kindImport, err)
+	// The work goes on in a goroutine of its own, so that the handler can
+	// return, and the answer end, once the archive is in: over HTTP/2 an
+	// answer is not over until its handler is.
+	received := make(chan struct{})
+	finished := make(chan error, 1)
+	answered := false
+	var onReceived func()
+	if !wait {
+		onReceived = func() {
+			answered = true
+			close(received)
+		}
 	}
-	if err != nil {
-		return err
+	go func() {
+		undo, err := s.importInto(r, w, mc, root, op, replace, a.Org.Slug, u.Username, onReceived)
+		ctx := context.WithoutCancel(r.Context())
+		if undo != nil || answered {
+			// What it replaced is in a snapshot, noted on the server as its
+			// newest. One answered before it was done says on the server how
+			// it went, for whoever missed its end.
+			s.finishOperation(ctx, a.Namespace, mc.Name, kindImport, nil, undo, err)
+		} else {
+			s.finishUnsaved(ctx, a.Namespace, mc.Name, kindImport, err)
+		}
+		if err == nil {
+			if replace {
+				s.audit(ctx, u, a.Org, "server.replace-world", mc.Name, "")
+			} else {
+				s.audit(ctx, u, a.Org, "server.import", mc.Name, "")
+			}
+		}
+		finished <- err
+	}()
+	select {
+	case <-received:
+		view := s.view(mc)
+		if fresh, err := s.fresh(r.Context(), mc); err == nil {
+			view = s.view(fresh)
+		}
+		writeJSON(w, http.StatusAccepted, view)
+		return nil
+	case err := <-finished:
+		if err != nil {
+			return err
+		}
 	}
-	if replace {
-		s.audit(ctx, u, a.Org, "server.replace-world", mc.Name, "")
-	} else {
-		s.audit(ctx, u, a.Org, "server.import", mc.Name, "")
-	}
-	fresh, err := s.fresh(ctx, mc)
+	fresh, err := s.fresh(context.WithoutCancel(r.Context()), mc)
 	if err != nil {
 		return err
 	}
@@ -263,8 +296,9 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 }
 
 // importInto returns the snapshot it took of what a world replaced, once there
-// is one, whether or not the rest then succeeded.
-func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation, replace bool, org, by string) (undo *backup.Snapshot, err error) {
+// is one, whether or not the rest then succeeded. received, if given, is
+// called once the archive is in.
+func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation, replace bool, org, by string, received func()) (undo *backup.Snapshot, err error) {
 	ctx := r.Context()
 	key := client.ObjectKeyFromObject(mc)
 	wasMarked := importUnfinished(mc)
@@ -346,13 +380,17 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 
 	// From here it is seen through even if whoever sent it has gone.
 	ctx = context.WithoutCancel(ctx)
+	if received != nil {
+		received()
+	}
 	if replace {
 		// What it replaces is kept first: nothing is touched if it cannot be.
 		s.setOperation(mc.Namespace, op, "Saving the current world first", 0)
 		undo, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerPreReplace, by)
 		if err != nil {
 			_ = sc.Remove(importArchive)
-			return nil, &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: fmt.Sprintf("The current world could not be saved first, so nothing was changed: %v", err)}
+			s.Log.Error("snapshot before replacing a world failed", "server", mc.Name, "error", err)
+			return nil, &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: sentence("the current world could not be saved first, so nothing was changed: " + plainly(err))}
 		}
 		// It is the way back until the world is in: not to be deleted before.
 		if !s.ops.carry(mc.Namespace, op, undo.ID) {

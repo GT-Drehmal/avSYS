@@ -617,7 +617,10 @@ expect "and not locked" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/conte
 # folders are replaced, and the snapshot puts the old one back.
 echo "kept" | call -X PUT --data-binary @- "$OWN/files/content?path=/kept.txt" >/dev/null
 expect "only a world replaces a world" "$(call -X PUT --data-binary "@$WORK/other.tar.gz" "$OWN/import?root=Other&replace=true" | field "d['code']")" invalid
-call -X PUT --data-binary "@$WORK/other.tar.gz" "$OWN/import?root=Other&world=true&replace=true&wait=true" >/dev/null
+# Answered once the archive is in; the panel sees the rest through.
+expect "a world sent to replace another is answered once it is in" "$(call -o /dev/null -w '%{http_code}' -X PUT --data-binary "@$WORK/other.tar.gz" "$OWN/import?root=Other&world=true&replace=true")" 202
+for _ in $(seq 1 120); do [ "$(call "$OWN/operation")" = null ] && break; sleep 1; done
+expect "and then replaced" "$(call "$OWN/operation")" null
 expect "a world is replaced" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" "200 404 404"
 expect "and the server's other files are kept" "$(call "$OWN/files/content?path=/kept.txt")" kept
 expect "and the server can start" "$(call "$OWN" | field "d['status'].get('message', '')")" ""
@@ -871,7 +874,11 @@ expect "and the picture that came with them, though it was asked for before" "$(
 copies="len([s for s in d['snapshots'] if s['trigger'] == 'copy'])"
 expect "it was made from a snapshot taken for it" "$(call "$SRV/snapshots" | field "$copies")" 1
 # A copy that differs from its original in what the request names, and in nothing else.
-second=$(call -d '{"name":"twin-2","fromServer":"probe","picture":null,"spec":{"state":"Stopped","properties":{"difficulty":"peaceful","motd":null},"autoWhitelist":"admin"}}' "$API/orgs/$ORG/servers?wait=true")
+# Answered at once, before its snapshot: the panel sees the rest through.
+second=$(call -d '{"name":"twin-2","fromServer":"probe","picture":null,"spec":{"state":"Stopped","properties":{"difficulty":"peaceful","motd":null},"autoWhitelist":"admin"}}' "$API/orgs/$ORG/servers")
+expect "a copy is answered with before its files are in" "$(call "$API/orgs/$ORG/servers/twin-2/operation" | field "d and d['kind']")" create
+for _ in $(seq 1 300); do [ "$(call "$API/orgs/$ORG/servers/twin-2/operation")" = null ] && break; sleep 1; done
+expect "and is then made" "$(call "$API/orgs/$ORG/servers/twin-2" | field "(d['status'].get('snapshots') or {}).get('error', '')")" ""
 expect "a second copy with nothing changed in the original needs no new one" "$(call "$SRV/snapshots" | field "$copies")" 1
 expect "a copy takes the settings it is asked to have" "$(echo "$second" | field "(d['spec']['properties'].get('difficulty'), 'motd' in d['spec']['properties'], d['spec']['autoWhitelist'])")" "('peaceful', False, 'admin')"
 expect "and no picture, when asked for none" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/twin-2/icon")" 404

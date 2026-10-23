@@ -8,7 +8,8 @@ Snapshots, restores, copies, moves, deletes, imports once the archive is in,
 and making a server from a snapshot are operations. The panel owns them: the
 request that starts one returns at once, and the operation shows on the
 server's page and its row in the list, with its stage and how far along it is.
-A toast says when it ends; one that failed also says so on the server's page.
+A toast says how it ended; one that failed also says so on the server's page. Work nobody started just then, such as
+the daily snapshots, shows only on the server's page and its row: no toast.
 While one runs, the server's actions it holds back are disabled the same way
 everywhere.
 
@@ -27,6 +28,9 @@ A file sent from this computer needs the browser to stay. Two cases:
 - **An upload on a page** (content, a resource pack, files in the file
   explorer). It shows how far it is, can be cancelled, and says that leaving
   the page stops it.
+  When the file is something the panel then works on, such as a world that
+  replaces a server's, the page is let go once the file is in: the rest is
+  an operation like any other.
 
 ## Never just stop spinning
 

@@ -382,20 +382,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const [keepCustom, setKeepCustom] = useState(custom);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // What a wait on Create is for, while the panel takes one.
-  const [stage, setStage] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
   const archiveInput = useRef<HTMLInputElement>(null);
   // The archive read last: one read earlier that ends later is not used.
   const reads = useRef(0);
-
-  // Closing the tab before the files are handed over would leave them unsent.
-  useEffect(() => {
-    if (!stage || !toUpload) return;
-    const ask = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", ask);
-    return () => window.removeEventListener("beforeunload", ask);
-  }, [stage, toUpload]);
 
   const name = v.customName ?? slugify(v.displayName);
   const bringingBack = !!source && !copying && name === source.name;
@@ -766,10 +756,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         // "auto" lets the panel choose for a copy of a server kept to some
         // nodes, which would otherwise be kept to them too.
         const placed = v.node === "auto" ? { spec: { ...copyRequest(), nodeSelector: {} } } : { ...(v.node ? { node: v.node } : {}), spec: copyRequest() };
-        // A copy of a server as it is now waits for a snapshot of it. Files
-        // to upload are not handed over until it is taken.
-        if (source.origin.kind === "server") setStage(`Taking a snapshot of ${source.live?.spec.displayName || source.origin.name}…`);
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed }).finally(() => setStage(null));
+        // Answered at once: the panel takes the snapshot of a server copied
+        // as it is now, and then puts the files in, which its page shows.
+        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files
         // are in. Files to upload join them after.
@@ -1402,12 +1391,6 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           </>
         )}
         {error && <Notice tone="danger">{error}</Notice>}
-        {stage && (
-          <p className="text-xs text-muted" role="status">
-            {stage}
-            {toUpload && " Closing this tab stops the files being sent."}
-          </p>
-        )}
         <div className="flex gap-2">
           <Button type="submit" variant="primary" loading={busy}>
             {!source ? "Create server" : duplicating ? "Duplicate" : "Create server"}

@@ -60,8 +60,10 @@ export function ServerActions({ server, compact }: { server: Server; compact?: b
         </Button>
       );
     }
+    // Held stopped while the panel puts its files in place, which it says.
+    const held = server.status.message || undefined;
     return (
-      <Button size={size} variant={compact ? "default" : "primary"} icon={<Play className="size-3.5" />} loading={pending === "start"} onClick={run("start")}>
+      <Button size={size} variant={compact ? "default" : "primary"} icon={<Play className="size-3.5" />} loading={pending === "start"} disabled={!!held} title={held} onClick={run("start")}>
         Start
       </Button>
     );

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"net"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -867,5 +869,64 @@ func TestACopysCPULimit(t *testing.T) {
 	given = map[string]json.RawMessage{"resources": json.RawMessage(`{"memory":"8Gi"}`)}
 	if got := fromSnapshot(&avsysv1.MinecraftServerSpec{}, recorded, given); got.Resources.CPU == nil {
 		t.Error("memory alone changed the CPU limit")
+	}
+}
+
+// dialHeld is a pod dialer that is never answered, until it is called off.
+type dialHeld struct{ dialed chan struct{} }
+
+func (d dialHeld) DialPod(ctx context.Context, _, _ string, _ int) (net.Conn, error) {
+	select {
+	case d.dialed <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// A copy of a server as it is now is made and answered with at once, held
+// while the snapshot its files come from is taken. Deleting it calls that
+// off, and lets the original go.
+func TestACopyIsAnsweredBeforeItsSnapshot(t *testing.T) {
+	p := newPanel(t)
+	p.srv.Backups.Restic = "true"
+	held := dialHeld{dialed: make(chan struct{}, 1)}
+	p.srv.Gateway = &sshgw.Gateway{Dialer: held}
+
+	if got, code := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"copy","fromServer":"world","spec":{"state":"Running"}}`); got != 201 {
+		t.Fatalf("copying a server: got %d %q, want 201 at once", got, code)
+	}
+	select {
+	case <-held.dialed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the original's files were never asked for")
+	}
+	copied := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: "mc-alpha", Name: "copy"}, copied); err != nil {
+		t.Fatal(err)
+	}
+	// Made stopped and held, whatever it is to be once its files are in.
+	if copied.Spec.State != avsysv1.StateStopped || copied.Annotations[avsysv1.AnnotationCreating] != snapshotNotYetTaken || !restoreUnfinished(copied) {
+		t.Errorf("the copy is not held while its snapshot is taken: %s %v", copied.Spec.State, copied.Annotations)
+	}
+	if op := p.srv.ops.current("mc-alpha", "copy"); op == nil || op.Kind != kindCreate || !strings.HasPrefix(op.Stage, "Taking a snapshot of") {
+		t.Errorf("the copy's page does not say what it waits for: %+v", op)
+	}
+	if op := p.srv.ops.current("mc-alpha", "world"); op == nil || op.Kind != kindSnapshot {
+		t.Errorf("the original is not held while it is snapshotted: %+v", op)
+	}
+	if got, code := p.do("owner", "POST", "/orgs/alpha/servers/copy/start", ""); got != 409 {
+		t.Errorf("starting a copy whose files are not in: got %d %q, want 409", got, code)
+	}
+
+	if got, code := p.do("owner", "DELETE", "/orgs/alpha/servers/copy", ""); got != 204 {
+		t.Fatalf("deleting the copy: got %d %q", got, code)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for p.srv.ops.current("mc-alpha", "world") != nil || p.srv.ops.current("mc-alpha", "copy") != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the original or the copy is still held after the copy was deleted")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
