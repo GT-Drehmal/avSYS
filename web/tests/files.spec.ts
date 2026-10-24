@@ -231,8 +231,22 @@ test("the tree is moved about with the keyboard", async ({ page }) => {
   await item(page, "config").focus();
   await page.keyboard.press("ArrowDown");
   await expect(item(page, "plugins")).toBeFocused();
+  // What is in plugins is held back, to press again while it is read.
+  let answer = () => {};
+  const held = new Promise<void>((r) => {
+    answer = r;
+  });
+  await page.route("**/api/v1/orgs/friends/servers/survival/files?path=%2Fplugins", async (route) => {
+    await held;
+    return route.fallback();
+  });
   await page.keyboard.press("ArrowRight");
   await expect(item(page, "plugins")).toHaveAttribute("aria-expanded", "true");
+  // It waits for what is in it, not going past it to the next folder.
+  await page.keyboard.press("ArrowRight");
+  await expect(item(page, "plugins")).toBeFocused();
+  answer();
+  await expect(item(page, "LuckPerms")).toBeVisible();
   await page.keyboard.press("ArrowRight");
   await expect(item(page, "LuckPerms")).toBeFocused();
   await page.keyboard.press("ArrowLeft");
