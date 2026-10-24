@@ -12,7 +12,8 @@ const joined = (stack: object[]) => ({ url: "https://panel.example/packs/c.zip",
  * off and adding one on top are answered as the panel would, and listed.
  */
 async function survival(page: Page, pack: any) {
-  const state = { pack, orders: [] as string[][], added: [] as any[] };
+  // hold: answers to orders wait for this; fail: the next order is refused.
+  const state = { pack, orders: [] as string[][], added: [] as any[], hold: null as Promise<void> | null, fail: false };
   const withPack = (s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, resourcePack: state.pack } } : s);
   const server = async () => withPack(await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json());
   await page.route("**/api/v1/orgs/friends/servers", async (route) => route.fulfill({ json: (await (await route.fetch()).json()).map(withPack) }));
@@ -23,6 +24,11 @@ async function survival(page: Page, pack: any) {
     if (req.method() === "PUT") {
       const { order } = req.postDataJSON();
       state.orders.push(order);
+      await state.hold;
+      if (state.fail) {
+        state.fail = false;
+        return route.fulfill({ status: 500, json: { code: "internal", message: "The packs could not be joined." } });
+      }
       const by = new Map(stackNow().map((p: any) => [p.sha1, p]));
       state.pack = order.length ? joined(order.map((sha: string) => by.get(sha))) : null;
     } else {
@@ -70,6 +76,57 @@ test.describe("as an owner", () => {
     await packs(page).nth(1).dragTo(packs(page).nth(0));
     await expect.poll(() => state.orders).toEqual([[sounds.sha1, faithful.sha1]]);
     await expect(packs(page).nth(0)).toContainText("Better Sounds");
+  });
+
+  test("a move shows before the panel answers, and those made meanwhile are saved together", async ({ page }) => {
+    const third = { sha1: "f".repeat(40), size: 9000, name: "Night Sky.zip" };
+    const state = await survival(page, joined([faithful, sounds, third]));
+    let answer = () => {};
+    state.hold = new Promise((r) => {
+      answer = r;
+    });
+    await page.goto("/o/friends/s/survival/content");
+    await page.getByRole("button", { name: "Move Night Sky up" }).click();
+    await expect(packs(page).nth(1)).toContainText("Night Sky");
+    await page.getByRole("button", { name: "Move Night Sky up" }).click();
+    await page.getByRole("button", { name: "Move Faithful 32x down" }).click();
+    await expect(packs(page)).toHaveText([/Night Sky/, /Better Sounds/, /Faithful 32x/]);
+    // One asked for, and the panel not yet answered.
+    expect(state.orders).toEqual([[faithful.sha1, third.sha1, sounds.sha1]]);
+    state.hold = null;
+    answer();
+    await expect.poll(() => state.orders).toEqual([
+      [faithful.sha1, third.sha1, sounds.sha1],
+      [third.sha1, sounds.sha1, faithful.sha1],
+    ]);
+    await expect(packs(page)).toHaveText([/Night Sky/, /Better Sounds/, /Faithful 32x/]);
+  });
+
+  test("a move the panel refuses goes back", async ({ page }) => {
+    const state = await survival(page, joined([faithful, sounds]));
+    state.fail = true;
+    await page.goto("/o/friends/s/survival/content");
+    await page.getByRole("button", { name: "Move Better Sounds up" }).click();
+    await expect(page.getByText("The packs could not be joined.")).toBeVisible();
+    await expect(packs(page)).toHaveText([/Faithful 32x/, /Better Sounds/]);
+  });
+
+  test("while one is dragged the others make room", async ({ page }) => {
+    const third = { sha1: "f".repeat(40), size: 9000, name: "Night Sky.zip" };
+    const state = await survival(page, joined([faithful, sounds, third]));
+    await page.goto("/o/friends/s/survival/content");
+    const rows = packs(page);
+    const [top, bottom] = [await rows.nth(0).boundingBox(), await rows.nth(2).boundingBox()];
+    if (!top || !bottom) throw new Error("no rows");
+    await page.mouse.move(bottom.x + 40, bottom.y + bottom.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bottom.x + 40, top.y + top.height / 2 - 2, { steps: 8 });
+    // Not saved, nor in another order, until it is let go.
+    expect(state.orders).toEqual([]);
+    await expect(rows.nth(0)).toHaveCSS("transform", /matrix\(1, 0, 0, 1, 0, \d/);
+    await page.mouse.up();
+    await expect(rows).toHaveText([/Night Sky/, /Faithful 32x/, /Better Sounds/]);
+    await expect.poll(() => state.orders).toEqual([[third.sha1, faithful.sha1, sounds.sha1]]);
   });
 
   test("a pack taken off leaves the others; the last one leaves none", async ({ page }) => {
@@ -121,5 +178,5 @@ test("a viewer sees the order, and cannot change it", async ({ page, as }) => {
   await expect(packs(page)).toHaveCount(2);
   await expect(page.getByRole("button", { name: /^Move / })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Remove / })).toHaveCount(0);
-  await expect(packs(page).nth(0)).toHaveAttribute("draggable", "false");
+  await expect(page.locator("[data-grip]")).toHaveCount(0);
 });

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, ExternalLink, GripVertical, Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, stackedTitle, type PickKind } from "../../components/Content";
 import { ProjectIcon } from "../../components/ModrinthSearch";
 import { Button, Chip, cx, Field, Input, Modal, Notice, Spinner, Toggle } from "../../components/ui";
@@ -279,7 +279,17 @@ function PackSection({
       ) : (
         <>
           {stack ? (
-            <PackStack stack={stack} canEdit={canEdit} busy={busy} onOrder={(shas) => order.mutate(shas, { onSuccess: (next) => applyServer(qc, next) })} />
+            <PackStack
+              stack={stack}
+              canEdit={canEdit}
+              busy={update.isPending || remove.isPending || looking}
+              onOrder={(shas) =>
+                order.mutateAsync(shas).then((next) => {
+                  applyServer(qc, next);
+                  return next;
+                })
+              }
+            />
           ) : (
           <PackCard pack={pack} showKind={false}>
             {pack.project && (
@@ -339,56 +349,150 @@ function PackSection({
 /**
  * The packs a server's pack is joined from, the top one first, as in the
  * game: where two change the same thing, the one higher up wins. Dragged, or
- * moved with their buttons, into another order.
+ * moved with their buttons, into another order. A move shows at once and is
+ * saved behind it; those made while one is saved are saved together next.
  */
-function PackStack({ stack, canEdit, busy, onOrder }: { stack: StackedPack[]; canEdit: boolean; busy: boolean; onOrder: (order: string[]) => void }) {
-  const [dragging, setDragging] = useState<number | null>(null);
-  const [over, setOver] = useState<number | null>(null);
-  const shas = stack.map((p) => p.sha1);
-  const move = (from: number, to: number) => {
-    if (from === to) return;
-    const next = shas.slice();
+function PackStack({ stack, canEdit, busy, onOrder }: { stack: StackedPack[]; canEdit: boolean; busy: boolean; onOrder: (order: string[]) => Promise<Server> }) {
+  const key = stack.map((p) => p.sha1).join(",");
+  const [order, setOrder] = useState(() => (key ? key.split(",") : []));
+  const saving = useRef(false);
+  const wanted = useRef<string[] | null>(null);
+  // The panel's order, gone back to if one is not saved.
+  const panel = useRef(order);
+  panel.current = key ? key.split(",") : [];
+  useEffect(() => {
+    if (!saving.current) setOrder(key ? key.split(",") : []);
+  }, [key]);
+  const save = async (next: string[]) => {
+    wanted.current = next;
+    if (saving.current) return;
+    saving.current = true;
+    try {
+      let now: Server | undefined;
+      for (let o: string[] | null = next; o; o = wanted.current) {
+        wanted.current = null;
+        now = await onOrder(o);
+      }
+      if (now) setOrder((now.spec.resourcePack?.stack ?? []).map((p) => p.sha1));
+    } catch {
+      wanted.current = null;
+      setOrder(panel.current);
+    } finally {
+      saving.current = false;
+    }
+  };
+
+  // Rows slide from where they were to where they are now.
+  const rows = useRef(new Map<string, HTMLLIElement>());
+  const was = useRef<Map<string, number> | null>(null);
+  const remember = () => {
+    was.current = new Map([...rows.current].map(([sha, el]) => [sha, el.getBoundingClientRect().top]));
+  };
+  useLayoutEffect(() => {
+    const tops = was.current;
+    if (!tops) return;
+    was.current = null;
+    for (const [sha, el] of rows.current) {
+      const by = (tops.get(sha) ?? 0) - el.getBoundingClientRect().top;
+      if (!tops.has(sha) || Math.abs(by) < 0.5) continue;
+      el.style.transition = "none";
+      el.style.transform = `translateY(${by}px)`;
+      el.getBoundingClientRect();
+      el.style.transition = "transform 180ms ease";
+      el.style.transform = "";
+    }
+  });
+  const move = (next: string[]) => {
+    remember();
+    setOrder(next);
+    void save(next);
+  };
+  const moveFrom = (from: number, to: number) => {
+    const next = order.slice();
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    onOrder(next);
+    move(next);
   };
+
+  // Dragged by the pointer: the row follows it, and the others make room.
+  type Held = { from: number; y: number; tops: number[]; heights: number[]; dy: number; to: number; moved: boolean };
+  const held = useRef<Held | null>(null);
+  const [drag, setDrag] = useState<Held | null>(null);
+  const canMove = canEdit && !busy;
+  const grab = (e: React.PointerEvent<HTMLLIElement>, from: number) => {
+    const target = e.target as HTMLElement;
+    if (!canMove || e.button !== 0 || target.closest("button, a")) return;
+    // A finger scrolls the page, but from the grip.
+    if (e.pointerType !== "mouse" && !target.closest("[data-grip]")) return;
+    const els = order.map((sha) => rows.current.get(sha));
+    if (els.some((el) => !el)) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    held.current = { from, y: e.clientY, tops: els.map((el) => el?.offsetTop ?? 0), heights: els.map((el) => el?.offsetHeight ?? 0), dy: 0, to: from, moved: false };
+  };
+  const pull = (e: React.PointerEvent) => {
+    const h = held.current;
+    if (!h) return;
+    const last = h.tops.length - 1;
+    const dy = Math.min(Math.max(e.clientY - h.y, -h.tops[h.from]), h.tops[last] + h.heights[last] - h.tops[h.from] - h.heights[h.from]);
+    if (!h.moved && Math.abs(dy) < 4) return;
+    const mid = h.tops[h.from] + h.heights[h.from] / 2 + dy;
+    const to = h.tops.filter((top, i) => i !== h.from && top + h.heights[i] / 2 < mid).length;
+    held.current = { ...h, dy, to, moved: true };
+    setDrag(held.current);
+  };
+  const drop = (keep: boolean) => {
+    const h = held.current;
+    held.current = null;
+    if (!h?.moved) return;
+    remember();
+    setDrag(null);
+    if (keep && h.to !== h.from) moveFrom(h.from, h.to);
+  };
+  const shift = (i: number) => {
+    if (!drag) return undefined;
+    if (i === drag.from) return drag.dy;
+    if (drag.from < i && i <= drag.to) return -drag.heights[drag.from];
+    if (drag.to <= i && i < drag.from) return drag.heights[drag.from];
+    return 0;
+  };
+
+  const by = new Map(stack.map((p) => [p.sha1, p]));
   const titleOf = (sha?: string) => {
-    const p = stack.find((p) => p.sha1 === sha);
+    const p = sha ? by.get(sha) : undefined;
     return p ? stackedTitle(p) : "another pack";
   };
-  const canMove = canEdit && !busy;
+  const shown = order.flatMap((sha) => by.get(sha) ?? []);
   return (
     <>
-      <ol aria-label="Packs, the top one first" className="overflow-hidden rounded-lg border border-line bg-surface">
-        {stack.map((p, i) => {
+      <ol aria-label="Packs, the top one first" className="relative overflow-hidden rounded-lg border border-line bg-surface">
+        {shown.map((p, i) => {
           const title = stackedTitle(p);
           const line = [p.project ? p.project.versionName : p.size ? bytes(p.size) : "", p.hidden ? `${p.hidden} ${p.hidden === 1 ? "file" : "files"} covered by ${titleOf(p.hiddenBy)}` : ""].filter(Boolean).join(" · ");
+          const dy = shift(i);
+          const lifted = drag?.from === i;
           return (
             <li
               key={p.sha1}
-              draggable={canMove}
-              onDragStart={(e) => {
-                setDragging(i);
-                e.dataTransfer.effectAllowed = "move";
+              ref={(el) => {
+                if (el) rows.current.set(p.sha1, el);
+                else rows.current.delete(p.sha1);
               }}
-              onDragOver={(e) => {
-                if (dragging === null) return;
-                e.preventDefault();
-                setOver(i);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (dragging !== null) move(dragging, i);
-                setDragging(null);
-                setOver(null);
-              }}
-              onDragEnd={() => {
-                setDragging(null);
-                setOver(null);
-              }}
-              className={cx("flex items-center gap-3 border-b border-line px-3 py-2.5 last:border-b-0", dragging === i && "opacity-50", over === i && dragging !== null && dragging !== i && "bg-raised")}
+              onPointerDown={(e) => grab(e, i)}
+              onPointerMove={pull}
+              onPointerUp={() => drop(true)}
+              onPointerCancel={() => drop(false)}
+              style={dy === undefined ? undefined : { transform: `translateY(${dy}px)`, transition: lifted ? "none" : "transform 150ms ease" }}
+              className={cx(
+                "relative flex items-center gap-3 border-b border-line bg-surface px-3 py-2.5 last:border-b-0",
+                canMove && "select-none",
+                lifted && "z-10 cursor-grabbing rounded-md shadow-lg ring-1 ring-line",
+              )}
             >
-              {canEdit && <GripVertical aria-hidden className={cx("size-4 shrink-0 text-faint", canMove && "cursor-grab")} />}
+              {canEdit && (
+                <span data-grip className={cx("-m-1 touch-none p-1", canMove && !lifted && "cursor-grab")}>
+                  <GripVertical aria-hidden className="size-4 shrink-0 text-faint" />
+                </span>
+              )}
               <ProjectIcon url={p.project?.iconUrl} size={32} kind="resourcepack" name={title} />
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-2 truncate text-[13px] font-medium">
@@ -403,9 +507,9 @@ function PackStack({ stack, canEdit, busy, onOrder }: { stack: StackedPack[]; ca
               </div>
               {canEdit && (
                 <div className="flex shrink-0 items-center">
-                  <Button size="sm" variant="ghost" icon={<ArrowUp className="size-4" />} aria-label={`Move ${title} up`} disabled={!canMove || i === 0} onClick={() => move(i, i - 1)} />
-                  <Button size="sm" variant="ghost" icon={<ArrowDown className="size-4" />} aria-label={`Move ${title} down`} disabled={!canMove || i === stack.length - 1} onClick={() => move(i, i + 1)} />
-                  <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${title}`} disabled={!canMove} onClick={() => onOrder(shas.filter((sha) => sha !== p.sha1))} />
+                  <Button size="sm" variant="ghost" icon={<ArrowUp className="size-4" />} aria-label={`Move ${title} up`} disabled={!canMove || i === 0} onClick={() => moveFrom(i, i - 1)} />
+                  <Button size="sm" variant="ghost" icon={<ArrowDown className="size-4" />} aria-label={`Move ${title} down`} disabled={!canMove || i === shown.length - 1} onClick={() => moveFrom(i, i + 1)} />
+                  <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${title}`} disabled={!canMove} onClick={() => move(order.filter((sha) => sha !== p.sha1))} />
                 </div>
               )}
             </li>
