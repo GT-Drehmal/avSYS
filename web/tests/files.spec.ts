@@ -512,6 +512,51 @@ test("a file is found by name anywhere, and opened where it is", async ({ page }
   await expect(tree(page)).toBeVisible();
 });
 
+test("a row's actions are on a right click and on the keyboard, and its ⋯ shows once it is chosen", async ({ page }) => {
+  await files(page);
+  const deleted: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files?*", (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    deleted.push(new URL(route.request().url()).searchParams.get("path") ?? "");
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  // Right click: the row's menu, where it was clicked.
+  const box = (await item(page, "eula.txt").boundingBox())!;
+  await item(page, "eula.txt").click({ button: "right", position: { x: 60, y: 10 } });
+  const menu = (await page.getByRole("menu").boundingBox())!;
+  expect(Math.abs(menu.x - (box.x + 60))).toBeLessThan(12);
+  expect(Math.abs(menu.y - (box.y + 10))).toBeLessThan(24);
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await page.getByRole("dialog", { name: "Delete eula.txt?" }).getByRole("button", { name: "Delete" }).click();
+  await expect.poll(() => deleted).toEqual(["/eula.txt"]);
+  // Chosen, its ⋯ shows without pointing at it.
+  await item(page, "plugins").click();
+  await page.mouse.move(0, 0);
+  await expect(page.getByRole("button", { name: "Actions for plugins" })).toHaveCSS("opacity", "1");
+  await expect(page.getByRole("button", { name: "Actions for config" })).toHaveCSS("opacity", "0");
+  // The keyboard: Delete asks to delete it, F2 to rename it.
+  await item(page, "plugins").focus();
+  await page.keyboard.press("Delete");
+  await expect(page.getByRole("dialog", { name: "Delete plugins?" })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  await item(page, "plugins").focus();
+  await page.keyboard.press("F2");
+  await expect(page.getByRole("dialog", { name: "Rename plugins" })).toBeVisible();
+});
+
+test("a long name is cut short, and its ⋯ is in sight", async ({ page }) => {
+  const long = `${"a-very-long-name-".repeat(6)}.json`;
+  await files(page, { "/": ["plugins/", long, "eula.txt"] });
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, long).click();
+  const actions = page.getByRole("button", { name: `Actions for ${long}` });
+  const pane = (await tree(page).locator("xpath=..").boundingBox())!;
+  const at = (await actions.boundingBox())!;
+  expect(at.x + at.width).toBeLessThanOrEqual(pane.x + pane.width + 1);
+  await expect(item(page, long)).toHaveAttribute("title", new RegExp(`^${long}`));
+});
+
 test("dragged past another folder's file and let go below the files, it goes to the top folder", async ({ page }) => {
   await files(page);
   const moves: string[] = [];
