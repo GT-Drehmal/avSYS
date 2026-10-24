@@ -412,6 +412,8 @@ export default function Files() {
   };
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  // The row whose menu is open, by its ⋯ or a right click.
+  const [menuFor, setMenuFor] = useState<string | null>(null);
   const { sending, send, cancel } = useUpload();
   const [dropOn, setDropOn] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -499,6 +501,10 @@ export default function Files() {
     } else if (e.key === "ArrowLeft" && row?.kind === "entry") {
       if (row.entry.dir && expanded.has(row.path)) toggle(row.path, false);
       else if (parentOf(row.path) !== "/") focusRow(parentOf(row.path));
+    } else if ((e.key === "Delete" || e.key === "Backspace") && row?.kind === "entry") {
+      setDialog({ kind: "delete", path: row.path, dir: row.entry.dir });
+    } else if (e.key === "F2" && row?.kind === "entry") {
+      setDialog({ kind: "rename", path: row.path, dir: row.entry.dir });
     } else if ((e.key === "Enter" || e.key === " ") && row) {
       if (row.kind === "entry") press(row);
       else setShown((s) => ({ ...s, [row.dir]: (s[row.dir] ?? pageSize) + pageSize }));
@@ -653,6 +659,13 @@ export default function Files() {
                     tabIndex={focused === path || (!focusable.some((r) => keyOf(r) === focused) && row === focusable[0]) ? 0 : -1}
                     onFocus={() => setFocused(path)}
                     onClick={() => press(row)}
+                    // Its menu, as a right click opens in a file manager.
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setSelected({ path, dir: entry.dir });
+                      setFocused(path);
+                      setMenuFor(path);
+                    }}
                     draggable
                     onDragStart={(e) => {
                       e.dataTransfer.setData("application/x-avsys-path", path);
@@ -694,7 +707,7 @@ export default function Files() {
                     )}
                     {/* Nothing done in its menu, which is drawn elsewhere, reaches the row. */}
                     <span className="contents" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                    <Menu>
+                    <Menu open={menuFor === path} onOpenChange={(o) => setMenuFor(o ? path : null)}>
                       <MenuTrigger asChild>
                         <Button
                           size="sm"
@@ -702,7 +715,7 @@ export default function Files() {
                           icon={<MoreHorizontal className="size-4" />}
                           aria-label={`Actions for ${entry.name}`}
                           tabIndex={-1}
-                          className="h-6 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+                          className={cx("h-6 group-hover:opacity-100 group-focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100", !current && "opacity-0")}
                           onClick={(e) => e.stopPropagation()}
                         />
                       </MenuTrigger>

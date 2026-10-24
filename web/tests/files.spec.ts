@@ -511,3 +511,32 @@ test("a file is found by name anywhere, and opened where it is", async ({ page }
   await page.getByLabel("Find a file by name").press("Escape");
   await expect(tree(page)).toBeVisible();
 });
+
+test("a row's actions are on a right click and on the keyboard, and its ⋯ shows once it is chosen", async ({ page }) => {
+  await files(page);
+  const deleted: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files?*", (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    deleted.push(new URL(route.request().url()).searchParams.get("path") ?? "");
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  // Right click: the row's menu.
+  await item(page, "eula.txt").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await page.getByRole("dialog", { name: "Delete eula.txt?" }).getByRole("button", { name: "Delete" }).click();
+  await expect.poll(() => deleted).toEqual(["/eula.txt"]);
+  // Chosen, its ⋯ shows without pointing at it.
+  await item(page, "plugins").click();
+  await page.mouse.move(0, 0);
+  await expect(page.getByRole("button", { name: "Actions for plugins" })).toHaveCSS("opacity", "1");
+  await expect(page.getByRole("button", { name: "Actions for config" })).toHaveCSS("opacity", "0");
+  // The keyboard: Delete asks to delete it, F2 to rename it.
+  await item(page, "plugins").focus();
+  await page.keyboard.press("Delete");
+  await expect(page.getByRole("dialog", { name: "Delete plugins?" })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  await item(page, "plugins").focus();
+  await page.keyboard.press("F2");
+  await expect(page.getByRole("dialog", { name: "Rename plugins" })).toBeVisible();
+});
