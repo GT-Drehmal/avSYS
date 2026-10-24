@@ -422,6 +422,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/servers/{server}/files/rename", s.authed(s.renameFile))
 	api("POST /orgs/{org}/servers/{server}/files/extract", s.authed(s.extractArchive))
 	api("GET /orgs/{org}/servers/{server}/files/archive", s.authed(s.downloadFolder))
+	api("GET /orgs/{org}/servers/{server}/files/search", s.authed(s.searchFiles))
 
 	api("GET /events", s.authed(s.streamEvents))
 	api("GET /orgs/{org}/presence", s.authed(s.getPresence))

@@ -181,3 +181,65 @@ func (s *Server) downloadFolder(w http.ResponseWriter, r *http.Request, u *store
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// searchLimit is how many files a search finds at most.
+const searchLimit = 200
+
+type found struct {
+	Path    string    `json:"path"`
+	Dir     bool      `json:"dir"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"modTime"`
+}
+
+// globSpecial are what find's -iname reads as a pattern rather than as
+// themselves.
+var globSpecial = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
+
+// searchFiles finds the files and folders of a server whose names have q in
+// them, whatever their case: the first searchLimit, by where they are.
+func (s *Server) searchFiles(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	a, server, _, _, err := s.files(r, u)
+	if err != nil {
+		return err
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" || len(q) > 100 || strings.ContainsAny(q, "/\x00\n") {
+		return errBadRequest("Enter part of a name, without /.")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	conn, err := s.Gateway.DialWorkspace(ctx, a.Namespace, server)
+	if err != nil {
+		return &Error{Status: http.StatusServiceUnavailable, Code: "workspace", Message: "The server's files are not reachable right now."}
+	}
+	defer conn.Close()
+	// One more than is shown, to say there are more.
+	cmd := fmt.Sprintf(`cd %s && find . -mindepth 1 -iname %s -printf '%%y\t%%s\t%%T@\t%%P\n' 2>/dev/null | sort -t "$(printf '\t')" -k4 | head -n %d`,
+		shellQuote(dataRoot), shellQuote("*"+globSpecial.Replace(q)+"*"), searchLimit+1)
+	var out bytes.Buffer
+	if err := s.runIn(ctx, conn, cmd, &out); err != nil {
+		if ctx.Err() != nil {
+			return &Error{Status: http.StatusGatewayTimeout, Code: "slow", Message: "Searching took too long. Try a longer name."}
+		}
+		return err
+	}
+	results := []found{}
+	for _, line := range strings.Split(out.String(), "\n") {
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) != 4 || parts[3] == "" {
+			continue
+		}
+		var size int64
+		var at float64
+		fmt.Sscan(parts[1], &size)
+		fmt.Sscan(parts[2], &at)
+		results = append(results, found{Path: "/" + parts[3], Dir: parts[0] == "d", Size: size, ModTime: time.Unix(int64(at), 0).UTC()})
+	}
+	more := len(results) > searchLimit
+	if more {
+		results = results[:searchLimit]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results, "more": more})
+	return nil
+}

@@ -281,6 +281,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST " + server + "/files/rename", "", `{"to":"/b"}`, store.RoleOperator, 0},
 		{"POST " + server + "/files/extract", "", "", store.RoleOperator, 0},
 		{"GET " + server + "/files/archive", "", "", store.RoleOperator, 0},
+		{"GET " + server + "/files/search", "", "", store.RoleOperator, 0},
 	}
 
 	// rootOnly are for those who run the install: members get 403 whatever

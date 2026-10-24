@@ -1,5 +1,5 @@
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Trash2, Upload, X } from "lucide-react";
+import { useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Search, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
@@ -254,6 +254,38 @@ const archive = /\.(zip|tar|tar\.gz|tgz|tar\.xz|txz|tar\.bz2|tbz2|7z|rar)$/i;
 
 const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name);
 
+type Found = FileEntry & { path: string };
+
+/** What a search found: a file's name, and the folder it is in. */
+function FoundList({ found, onPick }: { found: UseQueryResult<{ results: Found[]; more: boolean }>; onPick: (f: Found) => void }) {
+  if (found.isPending) {
+    return (
+      <div className="flex justify-center p-4">
+        <Spinner />
+      </div>
+    );
+  }
+  if (found.isError) return <p className="p-3 text-xs text-danger">{found.error.message}</p>;
+  const { results, more } = found.data;
+  if (results.length === 0) return <p className="p-3 text-xs text-muted">Nothing named like that.</p>;
+  return (
+    <>
+      <ul aria-label="Found" className="min-w-max">
+        {results.map((f) => (
+          <li key={f.path}>
+            <button type="button" onClick={() => onPick(f)} className="flex h-7 w-full items-center gap-1.5 px-2 text-left outline-none hover:bg-raised focus-visible:bg-raised">
+              {f.dir ? <Folder className="size-4 shrink-0 text-accent" /> : <File className="size-4 shrink-0 text-muted" />}
+              <span className="font-mono text-[13px]">{nameOf(f.path)}</span>
+              <span className="truncate font-mono text-xs text-faint">{parentOf(f.path) === "/" ? "" : parentOf(f.path).slice(1)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {more && <p className="px-2 py-2 text-xs text-faint">Showing the first {results.length}. Type more of the name to find fewer.</p>}
+    </>
+  );
+}
+
 /**
  * A server's files, as a tree of folders opened in place, with the file
  * being edited beside it. On a phone the file being edited takes the screen.
@@ -285,6 +317,27 @@ export default function Files() {
   const here = selected.dir ? selected.path : parentOf(selected.path);
   const [focused, setFocused] = useState<string>(selected.path);
   const [shown, setShown] = useState<Record<string, number>>({});
+
+  // Finding a file by name, anywhere in the server's files: asked as typing
+  // stops.
+  const [finding, setFinding] = useState(false);
+  const [query, setQuery] = useState("");
+  const [asked, setAsked] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setAsked(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+  const found = useQuery({
+    queryKey: ["file-search", base, asked],
+    queryFn: () => api.get<{ results: (FileEntry & { path: string })[]; more: boolean }>(`${base}/search?${qs({ q: asked })}`),
+    enabled: finding && asked !== "",
+    staleTime: 10_000,
+  });
+  const stopFinding = () => {
+    setFinding(false);
+    setQuery("");
+    setAsked("");
+  };
 
   // Each open folder whose folders are open too, read as it is opened.
   const visible = ["/", ...[...expanded].filter((d) => d !== "/" && foldersAbove(d).every((a) => expanded.has(a))).sort()];
@@ -482,6 +535,7 @@ export default function Files() {
           <Button size="sm" variant="ghost" icon={<FilePlus className="size-4" />} aria-label="New file" title="New file" onClick={() => setDialog({ kind: "file", in: here })} />
           <Button size="sm" variant="ghost" icon={<FolderPlus className="size-4" />} aria-label="New folder" title="New folder" onClick={() => setDialog({ kind: "folder", in: here })} />
           <Button size="sm" variant="ghost" icon={<Upload className="size-4" />} aria-label="Upload" title="Upload" disabled={!!sending} onClick={() => picker.current?.click()} />
+          <Button size="sm" variant="ghost" icon={<Search className="size-4" />} aria-label="Find a file" title="Find a file" aria-pressed={finding} onClick={() => (finding ? stopFinding() : setFinding(true))} />
           {/* All of them in VS Code, over SSH with a key from the account. */}
           {meta && (
             <a
@@ -502,6 +556,19 @@ export default function Files() {
             onChange={(e) => e.target.files?.length && upload(e.target.files, here).then(() => (e.target.value = ""))}
           />
         </div>
+        {finding && (
+          <div className="shrink-0 border-b border-line p-1.5">
+            <Input
+              autoFocus
+              aria-label="Find a file by name"
+              placeholder="Find a file by name"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && stopFinding()}
+              className="h-8 font-mono text-xs"
+            />
+          </div>
+        )}
         {sending && (
           <div className="shrink-0 border-b border-line px-3 py-2">
             <UploadProgress sending={sending} onCancel={cancel} />
@@ -528,7 +595,18 @@ export default function Files() {
             } else if (e.dataTransfer.files.length) upload(e.dataTransfer.files, into);
           }}
         >
-          {root?.isError ? (
+          {finding && asked !== "" ? (
+            <FoundList
+              found={found}
+              onPick={(f) => {
+                stopFinding();
+                setExpanded((was) => new Set([...was, ...foldersAbove(f.path), ...(f.dir ? [f.path] : [])]));
+                setSelected({ path: f.path, dir: f.dir });
+                setFocused(f.path);
+                if (!f.dir && f.path !== open) guard(() => openFile(isEditable(f) ? f.path : null));
+              }}
+            />
+          ) : root?.isError ? (
             <div className="p-4">
               <Empty title="Could not open the files">{root.error.message}</Empty>
             </div>
