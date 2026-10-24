@@ -34,6 +34,14 @@ async function request<T>(method: string, path: string, body?: unknown, raw?: Bo
   return (res.headers.get("Content-Type")?.includes("application/json") ? res.json() : res.text()) as Promise<T>;
 }
 
+/** Something done to a server, and who did it, if they are still known. */
+export interface Activity {
+  at: string;
+  action: string;
+  detail?: string;
+  user?: { id: string; name: string; avatarUrl?: string };
+}
+
 /** A file to edit: its text, and the tag a save sends back. */
 export interface EditedFile {
   text: string;

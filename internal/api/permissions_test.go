@@ -246,6 +246,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		// 409: allowed, and then refused because the server is not running.
 		{"POST " + server + "/console", "", `{"command":"list"}`, store.RoleOperator, 409},
 		{"GET " + server + "/console", "", "", store.RoleViewer, 0},
+		{"GET " + server + "/activity", "", "", store.RoleViewer, 200},
 		// 502: allowed, and this panel reaches no server's files. 400: allowed,
 		// and that is no log.
 		{"GET " + server + "/logs", "", "", store.RoleViewer, 502},

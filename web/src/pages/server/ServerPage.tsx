@@ -2,6 +2,7 @@ import { Camera, ChevronLeft, Code2, Copy, Plug } from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router";
 import { newFrom } from "../../lib/origin";
+import { ActivityLine } from "../../components/ActivityLine";
 import { Faces } from "../../components/Faces";
 import { Picture } from "../../components/Picture";
 import { ServerActions } from "../../components/ServerActions";
@@ -185,6 +186,9 @@ export function ServerPage() {
           </div>
         )}
       </header>
+      <div className="mt-1.5 sm:pl-[52px]">
+        <ActivityLine org={org} server={name} />
+      </div>
 
       <dl className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 rounded-lg border border-line bg-surface px-4 py-3.5 sm:grid-cols-4">
         <Fact label="Address">{status.address ? <CopyText value={status.address} /> : <span className="text-muted">Not set</span>}</Fact>
