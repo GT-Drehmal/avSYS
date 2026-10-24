@@ -545,6 +545,45 @@ test("a row's actions are on a right click and on the keyboard, and its ⋯ show
   await expect(page.getByRole("dialog", { name: "Rename plugins" })).toBeVisible();
 });
 
+test("leaving for another tab and coming back, the file open and what was typed are as they were", async ({ page }) => {
+  await files(page);
+  await open(page);
+  await expect(page.locator(".cm-content")).toContainText("motd=hello");
+  await edit(page, "pvp=false");
+  await page.getByRole("link", { name: "Terminal" }).click();
+  await expect(page).toHaveURL(/\/terminal/);
+  await page.getByRole("link", { name: "Files" }).click();
+  await expect(page).toHaveURL(/file=%2Fserver\.properties/);
+  await expect(page.locator(".cm-content")).toContainText("pvp=false");
+  await expect(page.getByText("unsaved")).toBeVisible();
+  // Saved, nothing is kept as typed; another file, and it is that one.
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("unsaved")).toHaveCount(0);
+  await item(page, "eula.txt").click();
+  await page.getByRole("link", { name: "Console" }).click();
+  await page.getByRole("link", { name: "Files" }).click();
+  await expect(page.locator(".cm-content")).toContainText("eula=true");
+  // Closed, none is open again.
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("link", { name: "Console" }).click();
+  await page.getByRole("link", { name: "Files" }).click();
+  await expect(page.getByText("Choose a file to edit.")).toBeVisible();
+});
+
+test("closing the page with typing not saved is asked first", async ({ page }) => {
+  await files(page);
+  await open(page);
+  await expect(page.locator(".cm-content")).toContainText("motd=hello");
+  await edit(page, "pvp=false");
+  // Kept even after leaving for another tab.
+  await page.getByRole("link", { name: "Console" }).click();
+  const asked = page.waitForEvent("dialog");
+  await page.close({ runBeforeUnload: true });
+  const dialog = await asked;
+  expect(dialog.type()).toBe("beforeunload");
+  await dialog.accept();
+});
+
 test("a long name is cut short, and its ⋯ is in sight", async ({ page }) => {
   const long = `${"a-very-long-name-".repeat(6)}.json`;
   await files(page, { "/": ["plugins/", long, "eula.txt"] });
