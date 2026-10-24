@@ -81,17 +81,19 @@ test("a picture still on its way is not stood in for by a letter, and one seen b
   await page.route("**/api/v1/orgs/friends/servers/creative/icon*", (route) => route.fulfill({ status: 404, json: { code: "not_found", message: "Not found." } }));
   await page.goto("/o/friends");
   const row = (name: string) => page.getByRole("link", { name: new RegExp(`^${name}`) }).first();
+  // The server's own picture: the faces of others on it may follow.
+  const tile = (name: string) => row(name).locator("span.relative.inline-flex").first();
   await expect(row("Creative")).toContainText("C");
   // While survival's is on its way, no letter is shown for it.
-  await expect(row("Survival").locator("span[aria-hidden]").first()).toHaveText("");
+  await expect(tile("Survival").locator("span[aria-hidden]")).toHaveText("");
   release();
-  await expect(row("Survival").locator("img")).toHaveCSS("opacity", "1");
+  await expect(tile("Survival").locator("img")).toHaveCSS("opacity", "1");
 
   // Away and back: shown at once, with no plain tile first.
   await page.getByRole("link", { name: "Members" }).click();
   await page.getByRole("link", { name: "Servers" }).click();
-  await expect(row("Survival").locator("img")).toBeVisible();
-  await expect(row("Survival").locator("span[aria-hidden]")).toHaveCount(0);
+  await expect(tile("Survival").locator("img")).toBeVisible();
+  await expect(tile("Survival").locator("span[aria-hidden]")).toHaveCount(0);
 });
 
 test("the console says a server is starting, and only a stopped one is not running", async ({ page, as }) => {
