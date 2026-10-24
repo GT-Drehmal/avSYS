@@ -54,10 +54,10 @@ export interface Progress {
  * PUT a file, as putRaw does, saying as it goes how much has been sent and
  * stopping when the signal aborts. fetch cannot say how far an upload is.
  */
-export function upload<T = void>(path: string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal): Promise<T> {
+export function upload<T = void>(path: string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal, method: "PUT" | "POST" = "PUT"): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", base + path);
+    xhr.open(method, base + path);
     xhr.setRequestHeader("X-Avsys", "1");
     xhr.upload.onprogress = (e) => onProgress({ sent: e.loaded, total: e.lengthComputable ? e.total : file.size });
     // All of it is sent: the rest is the panel's.
@@ -206,6 +206,20 @@ export interface ResourcePack {
   project?: PackProject | null;
   /** The pack formats it is made for, where known. */
   formats?: PackFormats | null;
+  /** Set for a pack the panel joined from several, the top one first. */
+  stack?: StackedPack[] | null;
+}
+
+/** One of the packs a server's resource pack is joined from. */
+export interface StackedPack {
+  sha1: string;
+  size: number;
+  name?: string;
+  project?: PackProject | null;
+  formats?: PackFormats | null;
+  /** How many of its files a pack higher up has too, and the one that hides most of them. */
+  hidden?: number;
+  hiddenBy?: string;
 }
 
 /** A range of resource pack formats, by their major number. */
