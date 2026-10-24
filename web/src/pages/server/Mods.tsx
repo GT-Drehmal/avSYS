@@ -426,6 +426,9 @@ function PackStack({ stack, canEdit, busy, onOrder }: { stack: StackedPack[]; ca
     if (e.pointerType !== "mouse" && !target.closest("[data-grip]")) return;
     const els = order.map((sha) => rows.current.get(sha));
     if (els.some((el) => !el)) return;
+    // Not the start of a text selection, nor of the browser's own drag,
+    // either of which takes the pointer away from the row.
+    e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     held.current = { from, y: e.clientY, tops: els.map((el) => el?.offsetTop ?? 0), heights: els.map((el) => el?.offsetHeight ?? 0), dy: 0, to: from, moved: false };
   };
@@ -485,6 +488,9 @@ function PackStack({ stack, canEdit, busy, onOrder }: { stack: StackedPack[]; ca
               onPointerMove={pull}
               onPointerUp={() => drop(true)}
               onPointerCancel={() => drop(false)}
+              // Should the row lose the pointer some other way, it is let go
+              // where it is, not left held.
+              onLostPointerCapture={() => drop(true)}
               style={dy === undefined ? undefined : { transform: `translateY(${dy}px)`, transition: lifted ? "none" : "transform 150ms ease" }}
               className={cx(
                 "relative flex items-center gap-3 border-b border-line bg-surface px-3 py-2.5 last:border-b-0",
