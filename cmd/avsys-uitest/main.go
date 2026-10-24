@@ -95,7 +95,8 @@ func run(listen, webDir, upstreamDir, readyFile string) error {
 	}
 	// Nothing runs, so nothing can be reached inside a server: asking is
 	// answered with an error, as a server whose pod is gone would be.
-	gateway := &sshgw.Gateway{Store: db, Dialer: noPods{}, Log: log}
+	// Nothing runs here to wait for: a server's files are not there at once.
+	gateway := &sshgw.Gateway{Store: db, Dialer: noPods{}, Log: log, WorkspaceTries: 1}
 	srv := &api.Server{
 		Config:  api.Config{NamespacePrefix: "mc-", PublicURL: "http://" + listen, SSHHost: "panel.test", SSHPort: 2222, RouterDomain: "play.test", Version: "uitest"},
 		Store:   db,
