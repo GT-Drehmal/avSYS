@@ -359,6 +359,13 @@ expect "into it" "$(call "$SRV/files?path=/e2e-configs")" '"b.yml"'
 call "$SRV/files/archive?path=/e2e-world" > "$WORK/folder.zip"
 python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "e2e-world/region/r.0.0.mca" in n, n' "$WORK/folder.zip" || fail "a folder downloaded is not a zip of it"
 echo "ok: a folder downloads as a zip of it"
+# One whose name bsdtar would read otherwise: as another archive, "@name".
+call -X POST "$SRV/files/mkdir?path=/@e2e-at" >/dev/null
+echo at | call -X PUT --data-binary @- "$SRV/files/content?path=/@e2e-at/x.txt" >/dev/null
+call "$SRV/files/archive?path=/@e2e-at" > "$WORK/at.zip"
+python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "@e2e-at/x.txt" in n, n' "$WORK/at.zip" || fail "a folder named @… is not zipped as itself"
+echo "ok: a folder named @… is zipped as itself"
+call -X DELETE "$SRV/files?path=/@e2e-at" >/dev/null
 call -X DELETE "$SRV/files?path=/e2e-world" >/dev/null
 call -X DELETE "$SRV/files?path=/e2e-configs" >/dev/null
 

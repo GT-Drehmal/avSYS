@@ -8,6 +8,9 @@ func TestArchiveTop(t *testing.T) {
 		{"world/level.dat\nworld/region/\n", "world"},
 		{"./world/\n./world/level.dat\n", "world"},
 		{"world/\n", "world"},
+		// A name's spaces are its own.
+		{" world/\n world/level.dat\n", " world"},
+		{"world /level.dat\r\n", "world "},
 		// What a Mac adds does not count.
 		{"world/\nworld/level.dat\n__MACOSX/\n__MACOSX/world/._level.dat\n", "world"},
 		// Not all in one folder.
