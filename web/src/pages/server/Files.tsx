@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Download, File, FilePlus, Folder, FolderPlus, MoreHorizontal, Pencil, Trash2, Upload, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button, Confirm, cx, Empty, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Spinner } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
-import { api, qs, serverPath, type FileEntry } from "../../lib/api";
+import { api, ApiError, qs, readFile, saveFile, serverPath, type EditedFile, type FileEntry } from "../../lib/api";
 import { ago, bytes } from "../../lib/format";
 import { useAction } from "../../lib/queries";
 import { toast } from "../../lib/toast";
@@ -21,14 +21,45 @@ const binary = /\.(jar|zip|gz|tgz|tar|7z|rar|png|jpe?g|gif|webp|ico|dat|dat_old|
 function FileEditor({ base, path, managed, onClose }: { base: string; path: string; managed: string[]; onClose: () => void }) {
   const name = path.slice(path.lastIndexOf("/") + 1);
   const url = `${base}/content?${qs({ path })}`;
-  const file = useQuery({ queryKey: ["file", base, path], queryFn: () => api.get<string>(url), staleTime: 0, gcTime: 0 });
+  // Read once, and again only on Reload: a draft is saved over what it was
+  // made from, not over what a read behind it found.
+  const file = useQuery({ queryKey: ["file", base, path], queryFn: () => readFile(url), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
+  // The file as the editor has it: as opened, reloaded or last saved. A
+  // save is written only over a file that is still this.
+  const [basis, setBasis] = useState<EditedFile | null>(null);
+  const opened = basis ?? file.data;
+  useEffect(() => {
+    if (file.data && !basis) setBasis(file.data);
+  }, [file.data, basis]);
   const [draft, setDraft] = useState<string | null>(null);
-  const dirty = draft !== null && draft !== file.data;
-  const save = useAction(async () => {
-    if (draft === null) return;
-    await api.putRaw(url, draft);
-    await file.refetch();
+  // Reloaded, the editor starts again from the file as it is now.
+  const [loads, setLoads] = useState(0);
+  // Why a save was refused: the file changed, or was removed, since.
+  const [refused, setRefused] = useState<ApiError | null>(null);
+  const dirty = draft !== null && draft !== opened?.text;
+  const save = useAction(async (anyway: boolean) => {
+    if (draft === null || !opened) return;
+    if (new Blob([draft]).size > maxEditable) throw new ApiError(413, "too_large", "Files over 2 MB can't be saved here. Upload the file instead.");
+    try {
+      const tag = await saveFile(url, draft, anyway ? null : opened.tag);
+      setBasis({ text: draft, tag });
+    } catch (e) {
+      if (e instanceof ApiError && (e.code === "changed" || e.code === "removed")) {
+        setRefused(e);
+        return;
+      }
+      throw e;
+    }
+    setRefused(null);
     toast.info(`Saved ${name}`);
+  });
+  // One that cannot be read now leaves the draft as it is.
+  const reload = useAction(async () => {
+    const now = await readFile(url);
+    setBasis(now);
+    setDraft(null);
+    setRefused(null);
+    setLoads((n) => n + 1);
   });
 
   return (
@@ -39,25 +70,40 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
           {dirty && <span className="ml-2 text-warn">unsaved</span>}
         </span>
         <div className="flex items-center gap-1.5">
-          <Button size="sm" variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(undefined)}>
+          <Button size="sm" variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(false)}>
             Save
           </Button>
           <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Close" onClick={onClose} />
         </div>
       </div>
+      {refused && (
+        <div role="alert" className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line bg-warn-wash px-4 py-2 text-xs text-warn">
+          <span>{refused.message}</span>
+          <div className="flex items-center gap-1.5">
+            {refused.code === "changed" && (
+              <Button size="sm" loading={reload.isPending} onClick={() => reload.mutate(undefined)}>
+                Reload
+              </Button>
+            )}
+            <Button size="sm" loading={save.isPending} onClick={() => save.mutate(true)}>
+              Save anyway
+            </Button>
+          </div>
+        </div>
+      )}
       {managed.length > 0 && (
         <p className="shrink-0 border-b border-line bg-warn-wash px-4 py-2 text-xs leading-relaxed text-warn">
           <span className="font-mono">{managed.join(", ")}</span> {managed.length === 1 ? "is" : "are"} set under Settings and rewritten from there every time the server starts. Change {managed.length === 1 ? "it" : "them"} there, or clear {managed.length === 1 ? "it" : "them"} there to manage {managed.length === 1 ? "it" : "them"} in this file.
         </p>
       )}
-      {file.isPending ? (
+      {!opened && file.isPending ? (
         <div className="flex flex-1 items-center justify-center">
           <Spinner />
         </div>
-      ) : file.isError ? (
-        <p className="p-4 text-[13px] text-danger">{file.error.message}</p>
+      ) : !opened ? (
+        <p className="p-4 text-[13px] text-danger">{file.error?.message}</p>
       ) : (
-        <Editor name={name} initial={file.data} onChange={setDraft} onSave={() => save.mutate(undefined)} />
+        <Editor key={loads} name={name} initial={opened.text} onChange={setDraft} onSave={() => save.mutate(false)} />
       )}
     </div>
   );

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -434,15 +437,66 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 	if fi.IsDir() {
 		return errBadRequest("That is a directory.")
 	}
-	if r.URL.Query().Has("download") {
+	download := r.URL.Query().Has("download")
+	if download {
 		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(path.Base(full)))
 	}
 	// Never let a file from a game server be interpreted as a web page on
 	// the panel's origin.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// The game and others change these files: always looked at again.
+	w.Header().Set("Cache-Control", "no-cache")
+	// One that can be edited is said by its hash, which a save sends back
+	// so as not to write over a change made since it was read.
+	if !download && fi.Size() <= maxEditable {
+		var b bytes.Buffer
+		if _, err := f.WriteTo(&b); err != nil {
+			return fileError(err)
+		}
+		w.Header().Set("ETag", fileTag(b.Bytes()))
+		http.ServeContent(w, r, "", fi.ModTime(), bytes.NewReader(b.Bytes()))
+		return nil
+	}
 	http.ServeContent(w, r, "", fi.ModTime(), f)
 	return nil
+}
+
+// maxEditable is the biggest file the editor opens.
+const maxEditable = 2 << 20
+
+// fileTag is what a file's contents are known by: their hash.
+func fileTag(data []byte) string {
+	sum := sha256.Sum256(data)
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
+}
+
+// tagNow is the tag of a file as it is now, or "" for one that is not there
+// or too big to edit.
+func tagNow(sc *sftp.Client, full string) (string, error) {
+	fi, err := sc.Stat(full)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if fi.IsDir() || fi.Size() > maxEditable {
+		return "", nil
+	}
+	f, err := sc.Open(full)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	var b bytes.Buffer
+	if _, err := f.WriteTo(&b); err != nil {
+		return "", err
+	}
+	return fileTag(b.Bytes()), nil
 }
 
 // maxUpload bounds a single file write. World archives can be large; anything
@@ -458,6 +512,26 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 	if full == dataRoot {
 		return errBadRequest("Name a file to write.")
 	}
+	// Saved from the editor, it is written only over the file it opened,
+	// and is no bigger than the editor opens: one that was would have no
+	// tag to be saved over next.
+	limit := int64(maxUpload)
+	if want := r.Header.Get("If-Match"); want != "" {
+		limit = maxEditable
+		lock, _ := s.saveLocks.LoadOrStore(a.Namespace+"/"+server, &sync.Mutex{})
+		lock.(*sync.Mutex).Lock()
+		defer lock.(*sync.Mutex).Unlock()
+		now, err := tagNow(sc, full)
+		if err != nil {
+			return fileError(err)
+		}
+		if now == "" {
+			return &Error{Status: http.StatusPreconditionFailed, Code: "removed", Message: "This file was removed since you opened it."}
+		}
+		if now != want {
+			return &Error{Status: http.StatusPreconditionFailed, Code: "changed", Message: "This file was changed since you opened it."}
+		}
+	}
 	// Written to a sibling temp file and renamed into place, so an upload
 	// that is cut off never leaves a half-written config behind.
 	tmp := full + ".avsys-upload"
@@ -466,7 +540,8 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 		return fileError(err)
 	}
 	// Many writes in flight at once, as the temp file is removed on failure.
-	_, err = f.ReadFromWithConcurrency(http.MaxBytesReader(w, r.Body, maxUpload), 0)
+	h := sha256.New()
+	n, err := f.ReadFromWithConcurrency(io.TeeReader(http.MaxBytesReader(w, r.Body, limit), h), 0)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -476,12 +551,20 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 	if err != nil {
 		_ = sc.Remove(tmp)
 		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) && limit == maxEditable {
+			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 MB can't be saved here. Upload the file instead."}
+		}
 		if errors.As(err, &tooLarge) {
 			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 GB must be copied over SSH, with scp or rsync."}
 		}
 		return fileError(err)
 	}
 	s.audit(r.Context(), u, a.Org, "files.write", server, relPath(full))
+	// The tag of what was written, for the editor's next save.
+	if n <= maxEditable {
+		sum := h.Sum(nil)
+		w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:16])+`"`)
+	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

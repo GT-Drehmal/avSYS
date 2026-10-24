@@ -13,26 +13,46 @@ export class ApiError extends Error {
 
 const base = "/api/v1";
 
-async function request<T>(method: string, path: string, body?: unknown, raw?: BodyInit): Promise<T> {
-  const headers: Record<string, string> = { "X-Avsys": "1" };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+/** Sends a request, throwing the panel's error for one refused. */
+async function send(method: string, path: string, init: { headers?: Record<string, string>; body?: BodyInit } = {}): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(base + path, {
-      method,
-      headers,
-      body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined),
-    });
+    res = await fetch(base + path, { method, headers: { "X-Avsys": "1", ...init.headers }, body: init.body });
   } catch {
     throw new ApiError(0, "network", "Could not reach the panel. Check your connection.");
   }
-  if (res.status === 204) return undefined as T;
-  const isJSON = res.headers.get("Content-Type")?.includes("application/json");
   if (!res.ok) {
-    const err = isJSON ? await res.json() : null;
+    const err = res.headers.get("Content-Type")?.includes("application/json") ? await res.json() : null;
     throw new ApiError(res.status, err?.code ?? "error", err?.message ?? `Request failed (${res.status}).`);
   }
-  return (isJSON ? res.json() : res.text()) as Promise<T>;
+  return res;
+}
+
+async function request<T>(method: string, path: string, body?: unknown, raw?: BodyInit): Promise<T> {
+  const res = await send(method, path, body !== undefined ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { body: raw });
+  if (res.status === 204) return undefined as T;
+  return (res.headers.get("Content-Type")?.includes("application/json") ? res.json() : res.text()) as Promise<T>;
+}
+
+/** A file to edit: its text, and the tag a save sends back. */
+export interface EditedFile {
+  text: string;
+  tag: string | null;
+}
+
+export async function readFile(path: string): Promise<EditedFile> {
+  const res = await send("GET", path);
+  return { text: await res.text(), tag: res.headers.get("ETag") };
+}
+
+/**
+ * Saves a file, only over the one of this tag, if one is given: the panel
+ * refuses, with "changed" or "removed", one changed since. Says the tag of
+ * what was saved.
+ */
+export async function saveFile(path: string, text: string, tag: string | null): Promise<string | null> {
+  const res = await send("PUT", path, { headers: tag ? { "If-Match": tag } : {}, body: text });
+  return res.headers.get("ETag");
 }
 
 export const api = {
