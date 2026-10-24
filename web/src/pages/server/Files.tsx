@@ -1,26 +1,54 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Download, File, FilePlus, Folder, FolderPlus, MoreHorizontal, Pencil, Trash2, Upload, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Trash2, Upload, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
 import { Button, Confirm, cx, Empty, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Spinner } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
 import { api, ApiError, qs, readFile, saveFile, serverPath, type EditedFile, type FileEntry } from "../../lib/api";
 import { ago, bytes } from "../../lib/format";
-import { useAction, useMe } from "../../lib/queries";
+import { useAction, useMe, useMeta } from "../../lib/queries";
+import { vscodeURL } from "../../lib/ssh";
 import { others, usePresence } from "../../lib/presence";
 import { toast } from "../../lib/toast";
 import { Editor } from "./Editor";
 import { useServerContext } from "./ServerPage";
 
 const join = (dir: string, name: string) => (dir === "/" ? `/${name}` : `${dir}/${name}`);
-const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
+const parentOf = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
+const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+/** The folders a path is in, outermost first, not counting the top one. */
+const foldersAbove = (path: string) => {
+  const parts = path.split("/").filter(Boolean);
+  return parts.slice(0, -1).map((_, i) => `/${parts.slice(0, i + 1).join("/")}`);
+};
+const within = (path: string, dir: string) => path === dir || path.startsWith(`${dir}/`);
 
 // Editing is for configuration, not for worlds and jars.
 const maxEditable = 2 * 1024 * 1024;
 const binary = /\.(jar|zip|gz|tgz|tar|7z|rar|png|jpe?g|gif|webp|ico|dat|dat_old|mca|mcr|nbt|db|sqlite|lock|ogg|mp3|wav|class|so|bin)$/i;
 
-function FileEditor({ base, path, managed, onClose }: { base: string; path: string; managed: string[]; onClose: () => void }) {
+/** What an editor has: the file as it opened it, and what was typed since. */
+type EditorState = { basis: EditedFile | null; draft: string | null };
+
+function FileEditor({
+  base,
+  path,
+  managed,
+  carry,
+  onClose,
+  onDirty,
+  onState,
+}: {
+  base: string;
+  path: string;
+  managed: string[];
+  /** What it had at another path, before the file was renamed or moved. */
+  carry?: EditorState;
+  onClose: () => void;
+  onDirty: (dirty: boolean) => void;
+  onState: (state: EditorState) => void;
+}) {
   const name = path.slice(path.lastIndexOf("/") + 1);
   const url = `${base}/content?${qs({ path })}`;
   const { org, server } = useParams();
@@ -32,17 +60,23 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
   const file = useQuery({ queryKey: ["file", base, path], queryFn: () => readFile(url), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
   // The file as the editor has it: as opened, reloaded or last saved. A
   // save is written only over a file that is still this.
-  const [basis, setBasis] = useState<EditedFile | null>(null);
+  const [basis, setBasis] = useState<EditedFile | null>(carry?.basis ?? null);
   const opened = basis ?? file.data;
   useEffect(() => {
     if (file.data && !basis) setBasis(file.data);
   }, [file.data, basis]);
-  const [draft, setDraft] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string | null>(carry?.draft ?? null);
   // Reloaded, the editor starts again from the file as it is now.
   const [loads, setLoads] = useState(0);
   // Why a save was refused: the file changed, or was removed, since.
   const [refused, setRefused] = useState<ApiError | null>(null);
   const dirty = draft !== null && draft !== opened?.text;
+  useEffect(() => {
+    onDirty(dirty);
+  }, [dirty, onDirty]);
+  useEffect(() => {
+    onState({ basis, draft });
+  }, [basis, draft, onState]);
   const save = useAction(async (anyway: boolean) => {
     if (draft === null || !opened) return;
     if (new Blob([draft]).size > maxEditable) throw new ApiError(413, "too_large", "Files over 2 MB can't be saved here. Upload the file instead.");
@@ -69,7 +103,7 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
   });
 
   return (
-    <div className="flex h-[calc(100dvh-330px)] min-h-80 flex-col overflow-hidden rounded-lg border border-line bg-bg">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-bg">
       <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface pr-2 pl-4">
         <span className="flex min-w-0 items-center gap-3">
           <span className="truncate font-mono text-xs text-muted">
@@ -87,7 +121,19 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
           <Button size="sm" variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(false)}>
             Save
           </Button>
-          <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Close" onClick={onClose} />
+          {/* On a phone, back to the files; beside them, closed. */}
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={
+              <>
+                <ArrowLeft className="size-4 md:hidden" />
+                <X className="size-4 max-md:hidden" />
+              </>
+            }
+            aria-label="Close"
+            onClick={onClose}
+          />
         </div>
       </div>
       {refused && (
@@ -117,7 +163,7 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
       ) : !opened ? (
         <p className="p-4 text-[13px] text-danger">{file.error?.message}</p>
       ) : (
-        <Editor key={loads} name={name} initial={opened.text} onChange={setDraft} onSave={() => save.mutate(false)} />
+        <Editor key={loads} name={name} initial={loads === 0 && draft !== null ? draft : opened.text} onChange={setDraft} onSave={() => save.mutate(false)} />
       )}
     </div>
   );
@@ -154,30 +200,155 @@ function NameDialog({ title, action, initial, onSubmit, onClose }: { title: stri
   );
 }
 
-type Dialog = { kind: "folder" } | { kind: "file" } | { kind: "rename"; entry: FileEntry } | { kind: "delete"; entry: FileEntry };
+type Dialog = { kind: "folder"; in: string } | { kind: "file"; in: string } | { kind: "rename"; path: string; dir: boolean } | { kind: "delete"; path: string; dir: boolean };
 
+/** One line of the tree: a file or folder, or what a folder says while it has none to show. */
+type Row =
+  | { kind: "entry"; path: string; entry: FileEntry; depth: number }
+  | { kind: "note"; dir: string; depth: number; text: string; error?: boolean }
+  | { kind: "more"; dir: string; depth: number; left: number };
+
+// A folder shows this many at first, and as many more each time it is asked.
+const pageSize = 300;
+
+function stored<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v ? (JSON.parse(v) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function store(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Not kept: the tree opens as it is.
+  }
+}
+
+const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name);
+
+/**
+ * A server's files, as a tree of folders opened in place, with the file
+ * being edited beside it. On a phone the file being edited takes the screen.
+ */
 export default function Files() {
   const { server } = useServerContext();
   const params = useParams();
   const [search, setSearch] = useSearchParams();
   const qc = useQueryClient();
+  const meta = useMeta().data;
   const base = `${serverPath(server.org, server.name)}/files`;
-  const root = `/o/${server.org}/s/${server.name}/files`;
-  const dir = "/" + (params["*"] ?? "").replace(/\/+$/, "");
   const open = search.get("file");
+  // A folder linked to, as files/plugins: opened, and where new things go.
+  const linked = `/${(params["*"] ?? "").replace(/\/+$/, "")}`;
+  const memory = `avsys.files.${server.org}/${server.name}`;
 
-  const listKey = ["files", base, dir];
-  const list = useQuery({ queryKey: listKey, queryFn: () => api.get<{ entries: FileEntry[] }>(`${base}?${qs({ path: dir })}`), staleTime: 0 });
-  const refresh = () => qc.invalidateQueries({ queryKey: listKey });
+  // Which folders are open, kept for the next visit.
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const at = new Set(stored<string[]>(`${memory}.open`, []));
+    for (const dir of [...foldersAbove(linked), ...(linked === "/" ? [] : [linked]), ...(open ? foldersAbove(open) : [])]) at.add(dir);
+    return at;
+  });
+  useEffect(() => store(`${memory}.open`, [...expanded]), [expanded, memory]);
+  const [width, setWidth] = useState(() => stored(`avsys.files.width`, 280));
+  useEffect(() => store("avsys.files.width", width), [width]);
+
+  // What was pressed last: new files and uploads go in it, or in its folder.
+  const [selected, setSelected] = useState<{ path: string; dir: boolean }>(() => (open ? { path: open, dir: false } : { path: linked, dir: true }));
+  const here = selected.dir ? selected.path : parentOf(selected.path);
+  const [focused, setFocused] = useState<string>(selected.path);
+  const [shown, setShown] = useState<Record<string, number>>({});
+
+  // Each open folder whose folders are open too, read as it is opened.
+  const visible = ["/", ...[...expanded].filter((d) => d !== "/" && foldersAbove(d).every((a) => expanded.has(a))).sort()];
+  const lists = useQueries({
+    queries: visible.map((dir) => ({
+      queryKey: ["files", base, dir],
+      queryFn: () => api.get<{ entries: FileEntry[] }>(`${base}?${qs({ path: dir })}`),
+      staleTime: 0,
+    })),
+  });
+  const byDir = new Map(visible.map((d, i) => [d, lists[i]]));
+  const rows: Row[] = [];
+  const walk = (dir: string, depth: number) => {
+    const list = byDir.get(dir);
+    if (!list || list.isPending) {
+      rows.push({ kind: "note", dir, depth, text: "Loading…" });
+      return;
+    }
+    if (list.isError) {
+      rows.push({ kind: "note", dir, depth, text: list.error.message, error: true });
+      return;
+    }
+    const entries = list.data.entries;
+    if (entries.length === 0) rows.push({ kind: "note", dir, depth, text: dir === "/" ? "No files yet. Drop files here to upload them." : "Empty" });
+    const limit = shown[dir] ?? pageSize;
+    for (const entry of entries.slice(0, limit)) {
+      const path = join(dir, entry.name);
+      rows.push({ kind: "entry", path, entry, depth });
+      if (entry.dir && expanded.has(path)) walk(path, depth + 1);
+    }
+    if (entries.length > limit) rows.push({ kind: "more", dir, depth, left: entries.length - limit });
+  };
+  walk("/", 0);
+  const refresh = (dir: string) => qc.invalidateQueries({ queryKey: ["files", base, dir] });
+
+  // The file being edited, and whether it has changes not saved: leaving it
+  // then is asked first.
+  const [dirty, setDirty] = useState(false);
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  const guard = (go: () => void) => (dirty ? setLeaving(() => go) : go());
+  // What the editor has, so that when the file is renamed, or a folder it is
+  // in, the editor at its new path starts with it: what was typed is not lost.
+  const editorState = useRef<EditorState>({ basis: null, draft: null });
+  const onState = useCallback((state: EditorState) => {
+    editorState.current = state;
+  }, []);
+  const [carried, setCarried] = useState<(EditorState & { path: string }) | null>(null);
+  // Only for the file it was carried to: another opened after it starts anew.
+  // Looked at as the file open changes, not as it is carried, which is
+  // before the file open is the one it was carried to.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the file open changes
+  useEffect(() => {
+    if (carried && carried.path !== open) setCarried(null);
+  }, [open]);
+  const openFile = (path: string | null) => {
+    setDirty(false);
+    setSearch(path ? { file: path } : {}, { replace: !!open && !!path });
+  };
+
+  const toggle = (dir: string, to?: boolean) =>
+    setExpanded((was) => {
+      const next = new Set(was);
+      if (to ?? !next.has(dir)) next.add(dir);
+      else next.delete(dir);
+      return next;
+    });
+  const press = (row: Extract<Row, { kind: "entry" }>) => {
+    setSelected({ path: row.path, dir: row.entry.dir });
+    setFocused(row.path);
+    if (row.entry.dir) toggle(row.path);
+    else if (row.path !== open) guard(() => openFile(isEditable(row.entry) ? row.path : null));
+  };
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const { sending, send, cancel } = useUpload();
-  const [dragging, setDragging] = useState(false);
+  const [dropOn, setDropOn] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const remove = useAction((entry: FileEntry) => api.del(`${base}?${qs({ path: join(dir, entry.name) })}`), [listKey]);
+  const remove = useAction(async ({ path, dir }: { path: string; dir: boolean }) => {
+    await api.del(`${base}?${qs({ path })}`);
+    await refresh(parentOf(path));
+    if (dir) setExpanded((was) => new Set([...was].filter((d) => !within(d, path))));
+    if (open && within(open, path)) openFile(null);
+    if (within(selected.path, path)) setSelected({ path: parentOf(path), dir: true });
+  });
 
-  const upload = async (files: FileList | File[]) => {
+  const upload = async (files: FileList | File[], dir: string) => {
     const all = Array.from(files);
+    if (dir !== "/") toggle(dir, true);
     try {
       for (const [i, file] of all.entries()) {
         await send(all.length > 1 ? `${file.name} (${i + 1} of ${all.length})` : file.name, `${base}/content?${qs({ path: join(dir, file.name) })}`, file);
@@ -185,126 +356,295 @@ export default function Files() {
     } catch (err) {
       if (!cancelled(err)) toast.error(err instanceof Error ? err.message : "Upload failed.");
     } finally {
-      refresh();
+      refresh(dir);
     }
   };
 
-  // The panel owns the server.properties entries that are set in Settings.
-  const managed = open === "/server.properties" ? Object.keys(server.spec.properties ?? {}).sort() : [];
-  if (open) return <FileEditor base={base} path={open} managed={managed} onClose={() => setSearch({})} />;
+  // Moving about the tree from the keyboard, as in a file manager.
+  const tree = useRef<HTMLUListElement>(null);
+  const focusable = rows.filter((r) => r.kind !== "note");
+  const keyOf = (r: Row) => (r.kind === "entry" ? r.path : `more:${r.dir}`);
+  const focusRow = (key: string) => {
+    setFocused(key);
+    tree.current?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus();
+  };
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const at = focusable.findIndex((r) => keyOf(r) === focused);
+    const row = focusable[at];
+    const go = (i: number) => focusable[i] && focusRow(keyOf(focusable[i]));
+    if (e.key === "ArrowDown") go(at + 1);
+    else if (e.key === "ArrowUp") go(Math.max(at - 1, 0));
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(focusable.length - 1);
+    else if (e.key === "ArrowRight" && row?.kind === "entry" && row.entry.dir) {
+      // Into it once what is in it is known, not past it while it is read.
+      const next = rows[rows.indexOf(row) + 1];
+      if (!expanded.has(row.path)) toggle(row.path, true);
+      else if (!(next?.kind === "note" && next.dir === row.path)) go(at + 1);
+    } else if (e.key === "ArrowLeft" && row?.kind === "entry") {
+      if (row.entry.dir && expanded.has(row.path)) toggle(row.path, false);
+      else if (parentOf(row.path) !== "/") focusRow(parentOf(row.path));
+    } else if ((e.key === "Enter" || e.key === " ") && row) {
+      if (row.kind === "entry") press(row);
+      else setShown((s) => ({ ...s, [row.dir]: (s[row.dir] ?? pageSize) + pageSize }));
+    } else return;
+    e.preventDefault();
+  };
 
-  const crumbs = dir === "/" ? [] : dir.slice(1).split("/");
+  // The divider between the tree and the file, dragged or moved with the arrow keys.
+  const resizing = useRef<{ x: number; width: number } | null>(null);
+  const clampWidth = (w: number) => Math.min(Math.max(w, 180), 560);
+
+  const root = byDir.get("/");
+  // A file chosen that cannot be edited: said so, with a way to download it.
+  const openEntry = open || selected.dir ? null : rows.find((r): r is Extract<Row, { kind: "entry" }> => r.kind === "entry" && r.path === selected.path && !isEditable(r.entry));
+  const managed = open === "/server.properties" ? Object.keys(server.spec.properties ?? {}).sort() : [];
+  const onDirty = useCallback((d: boolean) => setDirty(d), []);
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <nav className="flex min-w-0 flex-wrap items-center gap-1 font-mono text-[13px]">
-          <Link to={root} className={cx("rounded-sm px-1 hover:text-accent", crumbs.length ? "text-muted" : "text-fg")}>
-            data
-          </Link>
-          {crumbs.map((part, i) => (
-            <span key={i} className="flex items-center gap-1">
-              <ChevronRight className="size-3 text-faint" />
-              <Link to={`${root}/${encodePath(crumbs.slice(0, i + 1).join("/"))}`} className={cx("rounded-sm px-1 hover:text-accent", i === crumbs.length - 1 ? "text-fg" : "text-muted")}>
-                {part}
-              </Link>
-            </span>
-          ))}
-        </nav>
-        <div className="flex items-center gap-2">
-          {sending && <UploadProgress sending={sending} onCancel={cancel} />}
-          <Button size="sm" icon={<FilePlus className="size-3.5" />} onClick={() => setDialog({ kind: "file" })}>
-            New file
-          </Button>
-          <Button size="sm" icon={<FolderPlus className="size-3.5" />} onClick={() => setDialog({ kind: "folder" })}>
-            New folder
-          </Button>
-          <Button size="sm" icon={<Upload className="size-3.5" />} disabled={!!sending} onClick={() => picker.current?.click()}>
-            Upload
-          </Button>
-          <input ref={picker} type="file" multiple hidden onChange={(e) => e.target.files?.length && upload(e.target.files).then(() => (e.target.value = ""))} />
+    <div className="flex h-[calc(100dvh-330px)] min-h-80 overflow-hidden rounded-lg border border-line bg-surface">
+      <div className={cx("flex min-w-0 shrink-0 flex-col max-md:w-full! md:w-(--tree)", (open || openEntry) && "max-md:hidden")} style={{ "--tree": `${width}px` } as React.CSSProperties}>
+        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line pr-1.5 pl-3">
+          {/* Where new files and uploads go; "data" chooses the top folder. */}
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted" title="New files and uploads go here">
+            <button
+              type="button"
+              className={cx("rounded-sm hover:text-accent", here === "/" && "text-fg")}
+              aria-label="Choose the top folder"
+              onClick={() => setSelected({ path: "/", dir: true })}
+            >
+              data
+            </button>
+            {here !== "/" && here}
+          </span>
+          <Button size="sm" variant="ghost" icon={<FilePlus className="size-4" />} aria-label="New file" title="New file" onClick={() => setDialog({ kind: "file", in: here })} />
+          <Button size="sm" variant="ghost" icon={<FolderPlus className="size-4" />} aria-label="New folder" title="New folder" onClick={() => setDialog({ kind: "folder", in: here })} />
+          <Button size="sm" variant="ghost" icon={<Upload className="size-4" />} aria-label="Upload" title="Upload" disabled={!!sending} onClick={() => picker.current?.click()} />
+          {/* All of them in VS Code, over SSH with a key from the account. */}
+          {meta && (
+            <a
+              href={vscodeURL(server, meta)}
+              aria-label="Open in VS Code"
+              title="Open in VS Code"
+              className="inline-flex size-7 items-center justify-center rounded-md text-muted hover:bg-raised hover:text-fg"
+            >
+              <Code2 className="size-4" />
+            </a>
+          )}
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            aria-label="Files to upload"
+            onChange={(e) => e.target.files?.length && upload(e.target.files, here).then(() => (e.target.value = ""))}
+          />
+        </div>
+        {sending && (
+          <div className="shrink-0 border-b border-line px-3 py-2">
+            <UploadProgress sending={sending} onCancel={cancel} />
+          </div>
+        )}
+        <div
+          className={cx("min-h-0 flex-1 overflow-auto py-1", dropOn === "/" && "bg-accent-wash")}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDropOn((d) => d ?? "/");
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropOn(null);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            const into = dropOn ?? "/";
+            setDropOn(null);
+            if (e.dataTransfer.files.length) upload(e.dataTransfer.files, into);
+          }}
+        >
+          {root?.isError ? (
+            <div className="p-4">
+              <Empty title="Could not open the files">{root.error.message}</Empty>
+            </div>
+          ) : (
+            <ul ref={tree} role="tree" aria-label="Files" onKeyDown={onKeyDown} className="min-w-max">
+              {rows.map((row) => {
+                const indent = { paddingLeft: 8 + row.depth * 14 };
+                if (row.kind === "note") {
+                  return (
+                    <li key={`note:${row.dir}`} role="none" style={{ paddingLeft: 30 + row.depth * 14 }} className={cx("flex h-7 items-center pr-3 text-xs", row.error ? "text-danger" : "text-faint")}>
+                      {row.text === "Loading…" ? <Spinner className="size-3.5" /> : row.text}
+                    </li>
+                  );
+                }
+                if (row.kind === "more") {
+                  return (
+                    <li
+                      key={`more:${row.dir}`}
+                      role="treeitem"
+                      aria-level={row.depth + 1}
+                      aria-selected={false}
+                      data-key={`more:${row.dir}`}
+                      tabIndex={focused === `more:${row.dir}` ? 0 : -1}
+                      style={{ paddingLeft: 30 + row.depth * 14 }}
+                      className="flex h-7 cursor-pointer items-center pr-3 text-xs text-accent hover:underline"
+                      onClick={() => setShown((s) => ({ ...s, [row.dir]: (s[row.dir] ?? pageSize) + pageSize }))}
+                    >
+                      Show {Math.min(row.left, pageSize)} more of {row.left}
+                    </li>
+                  );
+                }
+                const { entry, path } = row;
+                const isOpen = entry.dir && expanded.has(path);
+                const current = path === (open ?? selected.path);
+                return (
+                  <li
+                    key={path}
+                    role="treeitem"
+                    aria-level={row.depth + 1}
+                    aria-expanded={entry.dir ? isOpen : undefined}
+                    aria-selected={current}
+                    aria-label={entry.name}
+                    data-key={path}
+                    tabIndex={focused === path || (!focusable.some((r) => keyOf(r) === focused) && row === focusable[0]) ? 0 : -1}
+                    onFocus={() => setFocused(path)}
+                    onClick={() => press(row)}
+                    onDragOver={(e) => {
+                      if (!entry.dir) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDropOn(path);
+                    }}
+                    onDragLeave={() => setDropOn((d) => (d === path ? null : d))}
+                    style={indent}
+                    title={entry.dir ? undefined : `${bytes(entry.size)} · changed ${ago(entry.modTime)}`}
+                    className={cx(
+                      "group flex h-7 cursor-pointer items-center gap-1.5 pr-1 outline-none select-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset",
+                      current && "bg-accent-wash hover:bg-accent-wash",
+                      dropOn === path && "bg-accent-wash ring-1 ring-accent ring-inset",
+                    )}
+                  >
+                    <ChevronRight className={cx("size-3.5 shrink-0 text-faint transition-transform", isOpen && "rotate-90", !entry.dir && "invisible")} />
+                    {entry.dir ? (
+                      isOpen ? <FolderOpen className="size-4 shrink-0 text-accent" /> : <Folder className="size-4 shrink-0 text-accent" />
+                    ) : (
+                      <File className={cx("size-4 shrink-0", isEditable(entry) ? "text-muted" : "text-faint")} />
+                    )}
+                    <span className={cx("min-w-0 flex-1 truncate pr-2 font-mono text-[13px]", !entry.dir && !isEditable(entry) && "text-muted")}>{entry.name}</span>
+                    {/* Nothing done in its menu, which is drawn elsewhere, reaches the row. */}
+                    <span className="contents" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                    <Menu>
+                      <MenuTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<MoreHorizontal className="size-4" />}
+                          aria-label={`Actions for ${entry.name}`}
+                          tabIndex={-1}
+                          className="h-6 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </MenuTrigger>
+                      <MenuContent>
+                        {!entry.dir && (
+                          <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/content?${qs({ path })}&download`)}>
+                            Download
+                          </MenuItem>
+                        )}
+                        <MenuItem icon={<Pencil />} onSelect={() => setDialog({ kind: "rename", path, dir: entry.dir })}>
+                          Rename
+                        </MenuItem>
+                        <MenuItem icon={<Trash2 />} danger onSelect={() => setDialog({ kind: "delete", path, dir: entry.dir })}>
+                          Delete
+                        </MenuItem>
+                      </MenuContent>
+                    </Menu>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       </div>
 
       <div
-        onDragOver={(e) => {
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Width of the file list"
+        aria-valuenow={width}
+        aria-valuemin={180}
+        aria-valuemax={560}
+        tabIndex={0}
+        className="w-1 shrink-0 cursor-col-resize touch-none border-l border-line outline-none hover:bg-accent/40 focus-visible:bg-accent/40 max-md:hidden"
+        onPointerDown={(e) => {
           e.preventDefault();
-          setDragging(true);
+          e.currentTarget.setPointerCapture(e.pointerId);
+          resizing.current = { x: e.clientX, width };
         }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
+        onPointerMove={(e) => resizing.current && setWidth(clampWidth(resizing.current.width + e.clientX - resizing.current.x))}
+        onPointerUp={() => (resizing.current = null)}
+        onLostPointerCapture={() => (resizing.current = null)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") setWidth((w) => clampWidth(w - 20));
+          else if (e.key === "ArrowRight") setWidth((w) => clampWidth(w + 20));
         }}
-        className={cx("overflow-hidden rounded-lg border bg-surface transition-colors", dragging ? "border-accent" : "border-line")}
-      >
-        {list.isPending ? (
-          <div className="flex h-40 items-center justify-center">
-            <Spinner />
+      />
+
+      <div className={cx("flex min-w-0 flex-1 flex-col", !open && !openEntry && "max-md:hidden")}>
+        {open ? (
+          <FileEditor
+            key={open}
+            base={base}
+            path={open}
+            managed={managed}
+            carry={carried?.path === open ? carried : undefined}
+            onDirty={onDirty}
+            onState={onState}
+            onClose={() => guard(() => openFile(null))}
+          />
+        ) : openEntry ? (
+          <div className="relative flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+            {/* On a phone, where it takes the screen. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<ArrowLeft className="size-4" />}
+              aria-label="Back to the files"
+              className="absolute top-2 left-2 md:hidden"
+              onClick={() => setSelected({ path: parentOf(openEntry.path), dir: true })}
+            />
+            <File className="size-8 text-faint" />
+            <div>
+              <p className="font-mono text-[13px]">{openEntry.entry.name}</p>
+              <p className="mt-1 text-xs text-muted">
+                {bytes(openEntry.entry.size)} · changed {ago(openEntry.entry.modTime)}
+              </p>
+            </div>
+            <p className="text-xs text-muted">{openEntry.entry.size > maxEditable ? "Files over 2 MB can't be edited here." : "This kind of file can't be edited here."}</p>
+            <Button size="sm" icon={<Download className="size-3.5" />} onClick={() => window.location.assign(`/api/v1${base}/content?${qs({ path: openEntry.path })}&download`)}>
+              Download
+            </Button>
           </div>
-        ) : list.isError ? (
-          <div className="p-4">
-            <Empty title="Could not open this folder">{list.error.message}</Empty>
-          </div>
-        ) : list.data.entries.length === 0 ? (
-          <p className="px-4 py-10 text-center text-[13px] text-muted">This folder is empty. Drop files here to upload them.</p>
         ) : (
-          <ul>
-            {list.data.entries.map((entry) => {
-              const path = join(dir, entry.name);
-              const editable = !entry.dir && entry.size <= maxEditable && !binary.test(entry.name);
-              const download = `/api/v1${base}/content?${qs({ path })}&download`;
-              const body = (
-                <>
-                  {entry.dir ? <Folder className="size-4 shrink-0 text-accent" /> : <File className="size-4 shrink-0 text-faint" />}
-                  <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{entry.name}</span>
-                  <span className="w-20 shrink-0 text-right font-mono text-xs text-faint tabular-nums max-sm:hidden">{entry.dir ? "" : bytes(entry.size)}</span>
-                  <span className="w-28 shrink-0 text-right text-xs text-faint max-sm:hidden">{ago(entry.modTime)}</span>
-                </>
-              );
-              const rowClass = "flex h-9 min-w-0 flex-1 items-center gap-3 pl-4";
-              return (
-                <li key={entry.name} className="flex items-center border-b border-line pr-2 last:border-b-0 hover:bg-raised">
-                  {entry.dir ? (
-                    <Link to={`${root}${encodePath(path)}`} className={rowClass}>
-                      {body}
-                    </Link>
-                  ) : editable ? (
-                    <button className={cx(rowClass, "text-left")} onClick={() => setSearch({ file: path })}>
-                      {body}
-                    </button>
-                  ) : (
-                    <a href={download} className={rowClass} title="Download">
-                      {body}
-                    </a>
-                  )}
-                  <Menu>
-                    <MenuTrigger asChild>
-                      <Button size="sm" variant="ghost" icon={<MoreHorizontal className="size-4" />} aria-label={`Actions for ${entry.name}`} className="ml-2" />
-                    </MenuTrigger>
-                    <MenuContent>
-                      {!entry.dir && (
-                        <MenuItem icon={<Download />} onSelect={() => window.location.assign(download)}>
-                          Download
-                        </MenuItem>
-                      )}
-                      <MenuItem icon={<Pencil />} onSelect={() => setDialog({ kind: "rename", entry })}>
-                        Rename
-                      </MenuItem>
-                      <MenuItem icon={<Trash2 />} danger onSelect={() => setDialog({ kind: "delete", entry })}>
-                        Delete
-                      </MenuItem>
-                    </MenuContent>
-                  </Menu>
-                </li>
-              );
-            })}
-          </ul>
+          <p className="flex flex-1 items-center justify-center p-6 text-[13px] text-muted">Choose a file to edit.</p>
         )}
       </div>
 
       {dialog?.kind === "folder" && (
-        <NameDialog title="New folder" action="Create" initial="" onClose={() => setDialog(null)} onSubmit={(name) => api.post(`${base}/mkdir?${qs({ path: join(dir, name) })}`).then(refresh)} />
+        <NameDialog
+          title="New folder"
+          action="Create"
+          initial=""
+          onClose={() => setDialog(null)}
+          onSubmit={async (name) => {
+            const path = join(dialog.in, name);
+            await api.post(`${base}/mkdir?${qs({ path })}`);
+            if (dialog.in !== "/") toggle(dialog.in, true);
+            await refresh(dialog.in);
+            setSelected({ path, dir: true });
+            setFocused(path);
+          }}
+        />
       )}
       {dialog?.kind === "file" && (
         <NameDialog
@@ -313,29 +653,58 @@ export default function Files() {
           initial=""
           onClose={() => setDialog(null)}
           onSubmit={async (name) => {
-            await api.putRaw(`${base}/content?${qs({ path: join(dir, name) })}`, "");
-            await refresh();
-            setSearch({ file: join(dir, name) });
+            const path = join(dialog.in, name);
+            await api.putRaw(`${base}/content?${qs({ path })}`, "");
+            if (dialog.in !== "/") toggle(dialog.in, true);
+            await refresh(dialog.in);
+            setSelected({ path, dir: false });
+            setFocused(path);
+            guard(() => openFile(path));
           }}
         />
       )}
       {dialog?.kind === "rename" && (
         <NameDialog
-          title={`Rename ${dialog.entry.name}`}
+          title={`Rename ${nameOf(dialog.path)}`}
           action="Rename"
-          initial={dialog.entry.name}
+          initial={nameOf(dialog.path)}
           onClose={() => setDialog(null)}
-          onSubmit={(name) => api.post(`${base}/rename?${qs({ path: join(dir, dialog.entry.name), to: join(dir, name) })}`).then(refresh)}
+          onSubmit={async (name) => {
+            const from = dialog.path;
+            const to = join(parentOf(from), name);
+            await api.post(`${base}/rename?${qs({ path: from, to })}`);
+            await refresh(parentOf(from));
+            const moved = (p: string) => (within(p, from) ? to + p.slice(from.length) : p);
+            if (dialog.dir) setExpanded((was) => new Set([...was].map(moved)));
+            setSelected((s) => ({ ...s, path: moved(s.path) }));
+            setFocused((f) => moved(f));
+            if (open && within(open, from)) {
+              setCarried({ path: moved(open), ...editorState.current });
+              setSearch({ file: moved(open) }, { replace: true });
+            }
+          }}
         />
       )}
       <Confirm
         open={dialog?.kind === "delete"}
         onOpenChange={() => setDialog(null)}
-        title={dialog?.kind === "delete" ? `Delete ${dialog.entry.name}?` : ""}
-        description={dialog?.kind === "delete" && dialog.entry.dir ? "The folder and everything in it will be deleted. This cannot be undone." : "This cannot be undone."}
+        title={dialog?.kind === "delete" ? `Delete ${nameOf(dialog.path)}?` : ""}
+        description={dialog?.kind === "delete" && dialog.dir ? "The folder and everything in it will be deleted. This cannot be undone." : "This cannot be undone."}
         action="Delete"
         loading={remove.isPending}
-        onConfirm={() => dialog?.kind === "delete" && remove.mutate(dialog.entry, { onSuccess: () => setDialog(null) })}
+        onConfirm={() => dialog?.kind === "delete" && remove.mutate({ path: dialog.path, dir: dialog.dir }, { onSuccess: () => setDialog(null) })}
+      />
+      <Confirm
+        open={!!leaving}
+        onOpenChange={() => setLeaving(null)}
+        title={open ? `Discard your changes to ${nameOf(open)}?` : "Discard your changes?"}
+        description="They have not been saved."
+        action="Discard"
+        onConfirm={() => {
+          const go = leaving;
+          setLeaving(null);
+          go?.();
+        }}
       />
     </div>
   );

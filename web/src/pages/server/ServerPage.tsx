@@ -9,10 +9,11 @@ import { ServerActions } from "../../components/ServerActions";
 import { holdsTheServer, OperationRow } from "../../components/Snapshots";
 import { useOrg } from "../../components/Shell";
 import { Button, CopyText, cx, Empty, Modal, Notice, Status, Loading } from "../../components/ui";
-import { api, atLeast, serverIcon, serverPath, type Meta, type Operation, type Role, type Server } from "../../lib/api";
+import { api, atLeast, serverIcon, serverPath, type Operation, type Role, type Server } from "../../lib/api";
 import { describeSoftware, displayName, quantity } from "../../lib/format";
 import { keys, useAction, useMe, useMeta, useRunning, useServer, useServerAction, useServerSnapshots } from "../../lib/queries";
 import { others, useHere, usePresence } from "../../lib/presence";
+import { sshCommand, vscodeURL } from "../../lib/ssh";
 import { toast } from "../../lib/toast";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 
@@ -23,24 +24,6 @@ export interface ServerContext {
 
 /** The server and the viewer's role, for the tabs rendered inside ServerPage. */
 export const useServerContext = () => useOutletContext<ServerContext>();
-
-const sshTarget = (server: Server) => `${server.name}.${server.org}`;
-
-function sshCommand(server: Server, meta: Meta) {
-  const port = meta.ssh.port === 22 ? "" : ` -p ${meta.ssh.port}`;
-  return `ssh ${sshTarget(server)}@${meta.ssh.host}${port}`;
-}
-
-/**
- * A link that opens the server directory in VS Code over Remote SSH. The host
- * is passed as hex-encoded JSON, the form Remote SSH accepts for hosts that
- * need a user and port.
- */
-function vscodeURL(server: Server, meta: Meta) {
-  const host = JSON.stringify({ hostName: meta.ssh.host, user: sshTarget(server), port: meta.ssh.port });
-  const hex = Array.from(new TextEncoder().encode(host), (b) => b.toString(16).padStart(2, "0")).join("");
-  return `vscode://vscode-remote/ssh-remote+${hex}/data`;
-}
 
 function ConnectDialog({ server, open, onOpenChange }: { server: Server; open: boolean; onOpenChange: (o: boolean) => void }) {
   const meta = useMeta().data;
