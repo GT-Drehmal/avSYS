@@ -129,6 +129,35 @@ test.describe("as an owner", () => {
     await expect.poll(() => state.orders).toEqual([[third.sha1, faithful.sha1, sounds.sha1]]);
   });
 
+  test("a pack is dragged to either end", async ({ page }) => {
+    const third = { sha1: "f".repeat(40), size: 9000, name: "Night Sky.zip" };
+    const state = await survival(page, joined([faithful, sounds, third]));
+    await page.goto("/o/friends/s/survival/content");
+    const rows = packs(page);
+    const box = async (i: number) => {
+      const b = await rows.nth(i).boundingBox();
+      if (!b) throw new Error("no row");
+      return b;
+    };
+    // Past the bottom, and past the top: as far as it goes.
+    let b = await box(0);
+    await page.mouse.move(b.x + 40, b.y + b.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + 40, b.y + 400, { steps: 10 });
+    await page.mouse.up();
+    await expect(rows).toHaveText([/Better Sounds/, /Night Sky/, /Faithful 32x/]);
+    b = await box(2);
+    await page.mouse.move(b.x + 40, b.y + b.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + 40, b.y - 400, { steps: 10 });
+    await page.mouse.up();
+    await expect(rows).toHaveText([/Faithful 32x/, /Better Sounds/, /Night Sky/]);
+    await expect.poll(() => state.orders).toEqual([
+      [sounds.sha1, third.sha1, faithful.sha1],
+      [faithful.sha1, sounds.sha1, third.sha1],
+    ]);
+  });
+
   test("a pack taken off leaves the others; the last one leaves none", async ({ page }) => {
     const state = await survival(page, joined([faithful, sounds]));
     await page.goto("/o/friends/s/survival/content");

@@ -435,8 +435,12 @@ function PackStack({ stack, canEdit, busy, onOrder }: { stack: StackedPack[]; ca
     const last = h.tops.length - 1;
     const dy = Math.min(Math.max(e.clientY - h.y, -h.tops[h.from]), h.tops[last] + h.heights[last] - h.tops[h.from] - h.heights[h.from]);
     if (!h.moved && Math.abs(dy) < 4) return;
-    const mid = h.tops[h.from] + h.heights[h.from] / 2 + dy;
-    const to = h.tops.filter((top, i) => i !== h.from && top + h.heights[i] / 2 < mid).length;
+    // It passes another once its edge is over that one's middle, so it can
+    // reach either end of the list.
+    const top = h.tops[h.from] + dy;
+    const bottom = top + h.heights[h.from];
+    const mids = h.tops.map((t, i) => t + h.heights[i] / 2);
+    const to = h.from - mids.filter((m, i) => i < h.from && top < m).length + mids.filter((m, i) => i > h.from && bottom > m).length;
     held.current = { ...h, dy, to, moved: true };
     setDrag(held.current);
   };
