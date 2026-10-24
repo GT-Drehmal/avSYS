@@ -306,3 +306,12 @@ test("a folder deleted takes the file open in it with it", async ({ page }) => {
   await expect(page.locator(".cm-content")).toHaveCount(0);
   await expect(page).not.toHaveURL(/file=/);
 });
+
+test("the files open in VS Code, all of them", async ({ page }) => {
+  await files(page);
+  await page.goto("/o/friends/s/survival/files");
+  const link = page.getByRole("link", { name: "Open in VS Code" });
+  await expect(link).toHaveAttribute("href", /^vscode:\/\/vscode-remote\/ssh-remote\+[0-9a-f]+\/data$/);
+  const host = JSON.parse(Buffer.from((await link.getAttribute("href"))!.match(/ssh-remote\+([0-9a-f]+)/)![1], "hex").toString());
+  expect(host.user).toBe("survival.friends");
+});

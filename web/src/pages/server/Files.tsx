@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Download, File, FilePlus, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
@@ -7,7 +7,8 @@ import { Button, Confirm, cx, Empty, Field, Input, Menu, MenuContent, MenuItem, 
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
 import { api, ApiError, qs, readFile, saveFile, serverPath, type EditedFile, type FileEntry } from "../../lib/api";
 import { ago, bytes } from "../../lib/format";
-import { useAction, useMe } from "../../lib/queries";
+import { useAction, useMe, useMeta } from "../../lib/queries";
+import { vscodeURL } from "../../lib/ssh";
 import { others, usePresence } from "../../lib/presence";
 import { toast } from "../../lib/toast";
 import { Editor } from "./Editor";
@@ -213,6 +214,7 @@ export default function Files() {
   const params = useParams();
   const [search, setSearch] = useSearchParams();
   const qc = useQueryClient();
+  const meta = useMeta().data;
   const base = `${serverPath(server.org, server.name)}/files`;
   const open = search.get("file");
   // A folder linked to, as files/plugins: opened, and where new things go.
@@ -367,6 +369,17 @@ export default function Files() {
           <Button size="sm" variant="ghost" icon={<FilePlus className="size-4" />} aria-label="New file" title="New file" onClick={() => setDialog({ kind: "file", in: here })} />
           <Button size="sm" variant="ghost" icon={<FolderPlus className="size-4" />} aria-label="New folder" title="New folder" onClick={() => setDialog({ kind: "folder", in: here })} />
           <Button size="sm" variant="ghost" icon={<Upload className="size-4" />} aria-label="Upload" title="Upload" disabled={!!sending} onClick={() => picker.current?.click()} />
+          {/* All of them in VS Code, over SSH with a key from the account. */}
+          {meta && (
+            <a
+              href={vscodeURL(server, meta)}
+              aria-label="Open in VS Code"
+              title="Open in VS Code"
+              className="inline-flex size-7 items-center justify-center rounded-md text-muted hover:bg-raised hover:text-fg"
+            >
+              <Code2 className="size-4" />
+            </a>
+          )}
           <input
             ref={picker}
             type="file"
