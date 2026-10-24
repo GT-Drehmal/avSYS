@@ -270,7 +270,7 @@ function FoundList({ found, onPick }: { found: UseQueryResult<{ results: Found[]
   if (results.length === 0) return <p className="p-3 text-xs text-muted">Nothing named like that.</p>;
   return (
     <>
-      <ul aria-label="Found" className="min-w-max">
+      <ul aria-label="Found">
         {results.map((f) => (
           <li key={f.path}>
             <button type="button" onClick={() => onPick(f)} className="flex h-7 w-full items-center gap-1.5 px-2 text-left outline-none hover:bg-raised focus-visible:bg-raised">
@@ -412,8 +412,36 @@ export default function Files() {
   };
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  // The row whose menu is open, by its ⋯ or a right click.
-  const [menuFor, setMenuFor] = useState<string | null>(null);
+  // A row's menu opened by a right click, where it was clicked.
+  const [pointed, setPointed] = useState<{ path: string; dir: boolean; x: number; y: number } | null>(null);
+  // What can be done to a file or folder: in its ⋯, and on a right click.
+  const actionsFor = (path: string, dir: boolean) => (
+    <>
+      {dir ? (
+        <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/archive?${qs({ path })}`)}>
+          Download as .zip
+        </MenuItem>
+      ) : (
+        <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/content?${qs({ path })}&download`)}>
+          Download
+        </MenuItem>
+      )}
+      {!dir && archive.test(path) && (
+        <MenuItem icon={<PackageOpen />} disabled={extract.isPending} onSelect={() => extract.mutate(path)}>
+          Extract here
+        </MenuItem>
+      )}
+      <MenuItem icon={<Pencil />} onSelect={() => setDialog({ kind: "rename", path, dir })}>
+        Rename
+      </MenuItem>
+      <MenuItem icon={<FolderInput />} onSelect={() => setDialog({ kind: "move", path, dir })}>
+        Move to…
+      </MenuItem>
+      <MenuItem icon={<Trash2 />} danger onSelect={() => setDialog({ kind: "delete", path, dir })}>
+        Delete
+      </MenuItem>
+    </>
+  );
   const { sending, send, cancel } = useUpload();
   const [dropOn, setDropOn] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -617,7 +645,7 @@ export default function Files() {
               <Empty title="Could not open the files">{root.error.message}</Empty>
             </div>
           ) : (
-            <ul ref={tree} role="tree" aria-label="Files" onKeyDown={onKeyDown} className="min-w-max">
+            <ul ref={tree} role="tree" aria-label="Files" onKeyDown={onKeyDown}>
               {rows.map((row) => {
                 const indent = { paddingLeft: 8 + row.depth * 14 };
                 if (row.kind === "note") {
@@ -664,7 +692,7 @@ export default function Files() {
                       e.preventDefault();
                       setSelected({ path, dir: entry.dir });
                       setFocused(path);
-                      setMenuFor(path);
+                      setPointed({ path, dir: entry.dir, x: e.clientX, y: e.clientY });
                     }}
                     draggable
                     onDragStart={(e) => {
@@ -686,7 +714,7 @@ export default function Files() {
                     }}
                     onDragLeave={() => setDropOn((d) => (d === path ? null : d))}
                     style={indent}
-                    title={entry.dir ? undefined : `${bytes(entry.size)} · changed ${ago(entry.modTime)}`}
+                    title={entry.dir ? entry.name : `${entry.name} · ${bytes(entry.size)} · changed ${ago(entry.modTime)}`}
                     className={cx(
                       "group flex h-7 cursor-pointer items-center gap-1.5 pr-1 outline-none select-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset",
                       current && "bg-accent-wash hover:bg-accent-wash",
@@ -707,7 +735,7 @@ export default function Files() {
                     )}
                     {/* Nothing done in its menu, which is drawn elsewhere, reaches the row. */}
                     <span className="contents" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                    <Menu open={menuFor === path} onOpenChange={(o) => setMenuFor(o ? path : null)}>
+                    <Menu>
                       <MenuTrigger asChild>
                         <Button
                           size="sm"
@@ -719,31 +747,7 @@ export default function Files() {
                           onClick={(e) => e.stopPropagation()}
                         />
                       </MenuTrigger>
-                      <MenuContent>
-                        {entry.dir ? (
-                          <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/archive?${qs({ path })}`)}>
-                            Download as .zip
-                          </MenuItem>
-                        ) : (
-                          <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/content?${qs({ path })}&download`)}>
-                            Download
-                          </MenuItem>
-                        )}
-                        {!entry.dir && archive.test(entry.name) && (
-                          <MenuItem icon={<PackageOpen />} disabled={extract.isPending} onSelect={() => extract.mutate(path)}>
-                            Extract here
-                          </MenuItem>
-                        )}
-                        <MenuItem icon={<Pencil />} onSelect={() => setDialog({ kind: "rename", path, dir: entry.dir })}>
-                          Rename
-                        </MenuItem>
-                        <MenuItem icon={<FolderInput />} onSelect={() => setDialog({ kind: "move", path, dir: entry.dir })}>
-                          Move to…
-                        </MenuItem>
-                        <MenuItem icon={<Trash2 />} danger onSelect={() => setDialog({ kind: "delete", path, dir: entry.dir })}>
-                          Delete
-                        </MenuItem>
-                      </MenuContent>
+                      <MenuContent>{actionsFor(path, entry.dir)}</MenuContent>
                     </Menu>
                     </span>
                   </li>
@@ -753,6 +757,14 @@ export default function Files() {
           )}
         </div>
       </div>
+
+      {/* A row's menu on a right click, at the pointer. */}
+      <Menu open={!!pointed} onOpenChange={(o) => !o && setPointed(null)}>
+        <MenuTrigger asChild>
+          <span aria-hidden className="pointer-events-none fixed size-0" style={{ left: pointed?.x ?? 0, top: pointed?.y ?? 0 }} />
+        </MenuTrigger>
+        <MenuContent align="start">{pointed && actionsFor(pointed.path, pointed.dir)}</MenuContent>
+      </Menu>
 
       <div
         role="separator"
