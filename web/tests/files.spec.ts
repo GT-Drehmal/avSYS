@@ -420,3 +420,45 @@ test("a folder is downloaded as a zip", async ({ page }) => {
   await page.getByRole("button", { name: "Actions for eula.txt" }).click();
   await expect(page.getByRole("menuitem", { name: "Download as .zip" })).toHaveCount(0);
 });
+
+test("a file or folder dragged onto a folder is moved into it, and never into itself", async ({ page }) => {
+  await files(page);
+  const moves: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/rename?*", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    moves.push(`${q.get("path")} -> ${q.get("to")}`);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "eula.txt").dragTo(item(page, "plugins"));
+  await expect.poll(() => moves).toEqual(["/eula.txt -> /plugins/eula.txt"]);
+  // The folder it went into is opened.
+  await expect(item(page, "LuckPerms")).toBeVisible();
+  // Onto a file: into its folder.
+  await item(page, "server.properties").dragTo(item(page, "EssentialsX.jar"));
+  await expect.poll(() => moves).toEqual(["/eula.txt -> /plugins/eula.txt", "/server.properties -> /plugins/server.properties"]);
+  // A folder into one in it, or where it already is: nothing.
+  await item(page, "plugins").dragTo(item(page, "LuckPerms"));
+  await item(page, "LuckPerms").dragTo(item(page, "EssentialsX.jar"));
+  await page.waitForTimeout(300);
+  expect(moves).toHaveLength(2);
+});
+
+test("a file is moved to a folder named, without dragging", async ({ page }) => {
+  await files(page);
+  const moves: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/rename?*", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    moves.push(`${q.get("path")} -> ${q.get("to")}`);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await page.getByRole("button", { name: "Actions for eula.txt" }).click();
+  await page.getByRole("menuitem", { name: "Move to…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Move eula.txt" });
+  await expect(dialog.getByLabel("To the folder")).toHaveValue("/");
+  await dialog.getByLabel("To the folder").fill("/world/");
+  await dialog.getByRole("button", { name: "Move" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(moves).toEqual(["/eula.txt -> /world/eula.txt"]);
+});
