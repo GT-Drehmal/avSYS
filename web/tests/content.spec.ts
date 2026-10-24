@@ -34,9 +34,9 @@ const sections = (page: Page) => page.getByRole("region").evaluateAll((all) => a
 
 test("which sections a server has follows what it runs", async ({ page }) => {
   for (const [software, want] of [
-    [{ loader: "vanilla" }, ["Datapacks", "Resource pack"]],
-    [{ loader: "fabric" }, ["Mods", "Datapacks", "Resource pack"]],
-    [{ loader: "paper" }, ["Plugins", "Datapacks", "Resource pack"]],
+    [{ loader: "vanilla" }, ["Datapacks", "Resource packs"]],
+    [{ loader: "fabric" }, ["Mods", "Datapacks", "Resource packs"]],
+    [{ loader: "paper" }, ["Plugins", "Datapacks", "Resource packs"]],
   ] as const) {
     await page.unrouteAll({ behavior: "wait" });
     await survival(page, software, []);
@@ -59,7 +59,7 @@ test("each kind is in its own section, without a chip saying what it is", async 
   await expect(page.getByText("curseforge:394468")).toBeVisible();
   await expect(page.getByText("mod", { exact: true })).toHaveCount(0);
   await expect(page.getByText("datapack", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Resource pack" }).getByText("None.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Resource packs" }).getByText("None.", { exact: false })).toBeVisible();
 });
 
 test("removing or changing one in a section changes that one in the server's list", async ({ page }) => {

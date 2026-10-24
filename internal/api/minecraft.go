@@ -550,6 +550,12 @@ func (s *Server) opsTick(ctx context.Context) {
 			s.finishContentLeft(ctx, &all.Items[i])
 		}
 	}
+	// Resource packs joined for another game version than their server's.
+	for i := range all.Items {
+		if s.stackOutdated(ctx, &all.Items[i]) {
+			go s.restackFor(context.WithoutCancel(ctx), client.ObjectKeyFromObject(&all.Items[i]))
+		}
+	}
 	running := map[string]bool{}
 	for i := range all.Items {
 		if all.Items[i].Status.Phase == avsysv1.PhaseRunning {

@@ -14,7 +14,8 @@ test.beforeEach(async ({ as }) => {
 
 /** Opens the picker for the resource pack, from its section. */
 async function choosePack(page: Page) {
-  await page.getByRole("region", { name: "Resource pack" }).getByRole("button", { name: /^(Add resource pack|Replace)$/ }).click();
+  // Replace where there is one; Add would put another on top of it.
+  await page.getByRole("region", { name: "Resource packs" }).getByRole("button", { name: /^(Add resource pack|Replace)$/ }).last().click();
 }
 
 /** A JSON merge patch, as the panel applies one. */
@@ -165,9 +166,12 @@ test("while a change to it is being saved, it is not replaced or removed", async
   await page.getByLabel("Prompt").press("Enter");
   await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Replace" })).toBeDisabled();
+  // Nor another put on top of it.
+  await expect(page.getByRole("button", { name: "Add resource pack" })).toBeDisabled();
   await expect.poll(() => answer).toBeDefined();
   answer?.();
   await expect(page.getByRole("button", { name: "Remove the resource pack" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Add resource pack" })).toBeEnabled();
   expect(state.sent).toEqual([{ resourcePack: { prompt: "For the map" } }]);
 
   // Nor is its prompt changed while whether it is required is saved: the two
