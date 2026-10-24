@@ -10,7 +10,7 @@ export function Faces({ people, label = "Also here", size = 22, max = 4, ring = 
   return (
     <span role="img" aria-label={`${label}: ${names}`} title={`${label}: ${names}`} className="flex shrink-0 items-center">
       {users.slice(0, more > 0 ? max - 1 : max).map((u) => (
-        <span key={u.id} className={`-ml-1.5 rounded-full ring-2 first:ml-0 ${ring}`}>
+        <span key={u.id} className={`-ml-1.5 flex rounded-full ring-2 first:ml-0 ${ring}`}>
           <Picture name={u.name} url={u.avatarUrl || undefined} size={size} shape="round" />
         </span>
       ))}
