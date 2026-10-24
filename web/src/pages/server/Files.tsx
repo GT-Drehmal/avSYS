@@ -47,7 +47,7 @@ function FileEditor({
   carry?: EditorState;
   onClose: () => void;
   onDirty: (dirty: boolean) => void;
-  onState: (state: EditorState) => void;
+  onState: (path: string, state: EditorState) => void;
 }) {
   const name = path.slice(path.lastIndexOf("/") + 1);
   const url = `${base}/content?${qs({ path })}`;
@@ -75,8 +75,8 @@ function FileEditor({
     onDirty(dirty);
   }, [dirty, onDirty]);
   useEffect(() => {
-    onState({ basis, draft });
-  }, [basis, draft, onState]);
+    onState(path, { basis, draft });
+  }, [path, basis, draft, onState]);
   const save = useAction(async (anyway: boolean) => {
     if (draft === null || !opened) return;
     if (new Blob([draft]).size > maxEditable) throw new ApiError(413, "too_large", "Files over 2 MB can't be saved here. Upload the file instead.");
@@ -287,6 +287,20 @@ function FoundList({ found, onPick }: { found: UseQueryResult<{ results: Found[]
 }
 
 /**
+ * What each server's Files tab was left with, by "org/server", while the
+ * panel is open: the file open, what was chosen, and what was typed and not
+ * saved, by file. Coming back from another tab, it is as it was.
+ */
+const left = new Map<string, { open: string | null; selected: { path: string; dir: boolean }; drafts: Map<string, EditorState> }>();
+
+// Typing not saved is lost with the page: leaving it is asked first.
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", (e) => {
+    if ([...left.values()].some((l) => l.drafts.size > 0)) e.preventDefault();
+  });
+}
+
+/**
  * A server's files, as a tree of folders opened in place, with the file
  * being edited beside it. On a phone the file being edited takes the screen.
  */
@@ -298,6 +312,8 @@ export default function Files() {
   const meta = useMeta().data;
   const base = `${serverPath(server.org, server.name)}/files`;
   const open = search.get("file");
+  const was = left.get(`${server.org}/${server.name}`);
+  const drafts = useRef(was?.drafts ?? new Map<string, EditorState>()).current;
   // A folder linked to, as files/plugins: opened, and where new things go.
   const linked = `/${(params["*"] ?? "").replace(/\/+$/, "")}`;
   const memory = `avsys.files.${server.org}/${server.name}`;
@@ -313,7 +329,17 @@ export default function Files() {
   useEffect(() => store("avsys.files.width", width), [width]);
 
   // What was pressed last: new files and uploads go in it, or in its folder.
-  const [selected, setSelected] = useState<{ path: string; dir: boolean }>(() => (open ? { path: open, dir: false } : { path: linked, dir: true }));
+  const [selected, setSelected] = useState<{ path: string; dir: boolean }>(() =>
+    open ? { path: open, dir: false } : linked === "/" && was ? was.selected : { path: linked, dir: true },
+  );
+  // Come back to from another tab, the file that was open is again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only as the tab opens
+  useEffect(() => {
+    if (!open && linked === "/" && was?.open) setSearch({ file: was.open }, { replace: true });
+  }, []);
+  useEffect(() => {
+    left.set(`${server.org}/${server.name}`, { open, selected, drafts });
+  }, [server.org, server.name, open, selected, drafts]);
   const here = selected.dir ? selected.path : parentOf(selected.path);
   const [focused, setFocused] = useState<string>(selected.path);
   const [shown, setShown] = useState<Record<string, number>>({});
@@ -381,9 +407,14 @@ export default function Files() {
   // What the editor has, so that when the file is renamed, or a folder it is
   // in, the editor at its new path starts with it: what was typed is not lost.
   const editorState = useRef<EditorState>({ basis: null, draft: null });
-  const onState = useCallback((state: EditorState) => {
-    editorState.current = state;
-  }, []);
+  const onState = useCallback(
+    (path: string, state: EditorState) => {
+      editorState.current = state;
+      if (state.basis && state.draft !== null && state.draft !== state.basis.text) drafts.set(path, state);
+      else drafts.delete(path);
+    },
+    [drafts],
+  );
   const [carried, setCarried] = useState<(EditorState & { path: string }) | null>(null);
   // Only for the file it was carried to: another opened after it starts anew.
   // Looked at as the file open changes, not as it is carried, which is
@@ -424,6 +455,12 @@ export default function Files() {
     if (dir) setExpanded((was) => new Set([...was].map(moved)));
     setSelected((s) => ({ ...s, path: moved(s.path) }));
     setFocused((f) => moved(f));
+    for (const [path, state] of [...drafts]) {
+      if (within(path, from)) {
+        drafts.delete(path);
+        drafts.set(moved(path), state);
+      }
+    }
     if (open && within(open, from)) {
       setCarried({ path: moved(open), ...editorState.current });
       setSearch({ file: moved(open) }, { replace: true });
@@ -447,6 +484,7 @@ export default function Files() {
     await api.del(`${base}?${qs({ path })}`);
     await refresh(parentOf(path));
     if (dir) setExpanded((was) => new Set([...was].filter((d) => !within(d, path))));
+    for (const p of [...drafts.keys()]) if (within(p, path)) drafts.delete(p);
     if (open && within(open, path)) openFile(null);
     if (within(selected.path, path)) setSelected({ path: parentOf(path), dir: true });
   });
@@ -784,7 +822,7 @@ export default function Files() {
             base={base}
             path={open}
             managed={managed}
-            carry={carried?.path === open ? carried : undefined}
+            carry={carried?.path === open ? carried : drafts.get(open)}
             onDirty={onDirty}
             onState={onState}
             onClose={() => guard(() => openFile(null))}
@@ -894,6 +932,7 @@ export default function Files() {
         onConfirm={() => {
           const go = leaving;
           setLeaving(null);
+          if (open) drafts.delete(open);
           go?.();
         }}
       />
