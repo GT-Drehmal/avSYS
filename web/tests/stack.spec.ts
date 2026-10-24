@@ -141,17 +141,20 @@ test.describe("as an owner", () => {
       if (!b) throw new Error("no row");
       return b;
     };
-    // Past the bottom, and past the top: as far as it goes.
+    // Past the bottom, and past the top: as far as it goes. Only just past,
+    // as the pointer outside the window is not followed.
     let b = await box(0);
+    const end = await box(2);
     await page.mouse.move(b.x + 40, b.y + b.height / 2);
     await page.mouse.down();
-    await page.mouse.move(b.x + 40, b.y + 400, { steps: 10 });
+    await page.mouse.move(b.x + 40, end.y + end.height + 30, { steps: 10 });
     await page.mouse.up();
     await expect(rows).toHaveText([/Better Sounds/, /Night Sky/, /Faithful 32x/]);
     b = await box(2);
+    const start = await box(0);
     await page.mouse.move(b.x + 40, b.y + b.height / 2);
     await page.mouse.down();
-    await page.mouse.move(b.x + 40, b.y - 400, { steps: 10 });
+    await page.mouse.move(b.x + 40, start.y - 30, { steps: 10 });
     await page.mouse.up();
     await expect(rows).toHaveText([/Faithful 32x/, /Better Sounds/, /Night Sky/]);
     await expect.poll(() => state.orders).toEqual([
