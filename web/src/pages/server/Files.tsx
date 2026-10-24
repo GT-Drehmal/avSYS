@@ -385,8 +385,21 @@ export default function Files() {
   const move = useAction(({ from, into, dir }: { from: string; into: string; dir: boolean }) => moveTo(from, into, dir));
   // What is being dragged within the tree, to be moved: never into itself,
   // nor where it is.
-  const [moving, setMoving] = useState<{ path: string; dir: boolean } | null>(null);
-  const canDropInto = (dir: string) => !moving || (!within(dir, moving.path) && parentOf(moving.path) !== dir);
+  // Kept as they happen, not as the page is drawn: a drop can come before
+  // the page is drawn again after the drag began.
+  const movingRef = useRef<{ path: string; dir: boolean } | null>(null);
+  const dropRef = useRef<string | null>(null);
+  const grab = (m: { path: string; dir: boolean } | null) => {
+    movingRef.current = m;
+  };
+  const aim = (into: string | null) => {
+    dropRef.current = into;
+    setDropOn(into);
+  };
+  const canDropInto = (dir: string) => {
+    const m = movingRef.current;
+    return !m || (!within(dir, m.path) && parentOf(m.path) !== dir);
+  };
 
   const remove = useAction(async ({ path, dir }: { path: string; dir: boolean }) => {
     await api.del(`${base}?${qs({ path })}`);
@@ -512,19 +525,21 @@ export default function Files() {
           onDragOver={(e) => {
             if (!canDropInto("/")) return;
             e.preventDefault();
-            setDropOn((d) => d ?? "/");
+            if (dropRef.current === null) aim("/");
           }}
           onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropOn(null);
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) aim(null);
           }}
           onDrop={(e) => {
             e.preventDefault();
-            const into = dropOn ?? "/";
-            setDropOn(null);
+            const into = dropRef.current ?? "/";
+            const m = movingRef.current;
+            aim(null);
             // From the tree, moved; from the computer, uploaded.
-            if (moving) {
-              setMoving(null);
-              if (canDropInto(into)) move.mutate({ from: moving.path, into, dir: moving.dir });
+            if (m) {
+              const ok = canDropInto(into);
+              grab(null);
+              if (ok) move.mutate({ from: m.path, into, dir: m.dir });
             } else if (e.dataTransfer.files.length) upload(e.dataTransfer.files, into);
           }}
         >
@@ -579,11 +594,11 @@ export default function Files() {
                     onDragStart={(e) => {
                       e.dataTransfer.setData("application/x-avsys-path", path);
                       e.dataTransfer.effectAllowed = "move";
-                      setMoving({ path, dir: entry.dir });
+                      grab({ path, dir: entry.dir });
                     }}
                     onDragEnd={() => {
-                      setMoving(null);
-                      setDropOn(null);
+                      grab(null);
+                      aim(null);
                     }}
                     // Into a folder, or the folder of a file.
                     onDragOver={(e) => {
@@ -591,9 +606,9 @@ export default function Files() {
                       e.stopPropagation();
                       if (!canDropInto(into)) return;
                       e.preventDefault();
-                      setDropOn(into);
+                      if (dropRef.current !== into) aim(into);
                     }}
-                    onDragLeave={() => setDropOn((d) => (d === path ? null : d))}
+                    onDragLeave={() => dropRef.current === path && aim(null)}
                     style={indent}
                     title={entry.dir ? undefined : `${bytes(entry.size)} · changed ${ago(entry.modTime)}`}
                     className={cx(
