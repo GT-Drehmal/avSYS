@@ -8,18 +8,45 @@ test.beforeEach(async ({ as }) => {
 });
 
 /**
- * survival's files: server.properties, as the panel would serve it, with a
- * tag for what it holds. Saves are kept, with the tag each was sent with;
- * one sent with another tag than the file's is refused, as the panel does.
+ * survival's files, as the panel would serve them: server.properties with a
+ * tag for what it holds, and a few folders. Saves are kept, with the tag
+ * each was sent with; one sent with another tag than the file's is refused,
+ * as the panel does. Folders are listed as they are asked for.
  */
-async function files(page: Page) {
-  const state = { text: "motd=hello\n", gone: false, saves: [] as { text: string; tag: string | null }[] };
+async function files(page: Page, more: Record<string, string[]> = {}) {
+  const state = { text: "motd=hello\n", gone: false, saves: [] as { text: string; tag: string | null }[], listed: [] as string[], made: [] as string[] };
   const tagOf = (text: string) => `"${text.length}-${[...text].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)}"`;
-  await page.route("**/api/v1/orgs/friends/servers/survival/files?*", (route) =>
-    route.fulfill({ json: { path: "/", entries: [{ name: "server.properties", size: state.text.length, dir: false, modTime: new Date().toISOString() }] } }),
-  );
+  // Folders end in "/".
+  const tree: Record<string, string[]> = {
+    "/": ["config/", "plugins/", "world/", "eula.txt", "server.jar", "server.properties"],
+    "/config": [],
+    "/plugins": ["LuckPerms/", "EssentialsX.jar"],
+    "/plugins/LuckPerms": ["config.yml"],
+    "/world": ["level.dat"],
+    ...more,
+  };
+  const texts: Record<string, string> = { "/eula.txt": "eula=true\n", "/plugins/LuckPerms/config.yml": "storage-method: h2\n" };
+  await page.route("**/api/v1/orgs/friends/servers/survival/files?*", (route) => {
+    const dir = new URL(route.request().url()).searchParams.get("path") ?? "/";
+    state.listed.push(dir);
+    const names = tree[dir];
+    if (!names) return route.fulfill({ status: 404, json: { code: "not_found", message: "No such folder." } });
+    const entries = names
+      .filter((n) => !(dir === "/" && n === "server.properties" && state.gone))
+      .map((n) => ({ name: n.replace(/\/$/, ""), dir: n.endsWith("/"), size: n.endsWith(".jar") ? 9_000_000 : 20, modTime: new Date().toISOString() }));
+    return route.fulfill({ json: { path: dir, entries } });
+  });
   await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*", async (route) => {
     const req = route.request();
+    const path = new URL(req.url()).searchParams.get("path") ?? "";
+    if (path !== "/server.properties") {
+      if (req.method() === "PUT") {
+        state.made.push(path);
+        return route.fulfill({ status: 204, headers: { ETag: tagOf("") } });
+      }
+      const text = texts[path] ?? "";
+      return route.fulfill({ body: text, headers: { "Content-Type": "application/octet-stream", ETag: tagOf(text) } });
+    }
     if (req.method() === "GET") {
       if (state.gone) return route.fulfill({ status: 404, json: { code: "not_found", message: "No such file." } });
       return route.fulfill({ body: state.text, headers: { "Content-Type": "application/octet-stream", ETag: tagOf(state.text) } });
@@ -136,4 +163,146 @@ test("a reload that fails keeps what was typed", async ({ page }) => {
   await page.getByRole("button", { name: "Save anyway" }).click();
   await expect(page.getByText("unsaved")).toHaveCount(0);
   expect(state.text).toBe("motd=hello\npvp=false");
+});
+
+const tree = (page: Page) => page.getByRole("tree", { name: "Files" });
+const item = (page: Page, name: string) => tree(page).getByRole("treeitem", { name, exact: true });
+
+test("folders open in place, and a file opens beside them", async ({ page }) => {
+  await files(page);
+  await page.goto("/o/friends/s/survival/files");
+  await expect(page.getByText("Choose a file to edit.")).toBeVisible();
+  await item(page, "plugins").click();
+  await expect(item(page, "plugins")).toHaveAttribute("aria-expanded", "true");
+  await expect(item(page, "LuckPerms")).toHaveAttribute("aria-level", "2");
+  await item(page, "LuckPerms").click();
+  await item(page, "config.yml").click();
+  // The file beside the tree, which is as it was.
+  await expect(page.locator(".cm-content")).toContainText("storage-method: h2");
+  await expect(page).toHaveURL(/file=%2Fplugins%2FLuckPerms%2Fconfig\.yml/);
+  await expect(item(page, "config.yml")).toHaveAttribute("aria-selected", "true");
+  await expect(item(page, "EssentialsX.jar")).toBeVisible();
+  // Another, and the folder closed again.
+  await item(page, "eula.txt").click();
+  await expect(page.locator(".cm-content")).toContainText("eula=true");
+  await item(page, "plugins").click();
+  await expect(item(page, "LuckPerms")).toHaveCount(0);
+});
+
+test("a file linked to opens with its folders open, and folders stay open for the next visit", async ({ page }) => {
+  await files(page);
+  await page.goto("/o/friends/s/survival/files?file=%2Fplugins%2FLuckPerms%2Fconfig.yml");
+  await expect(item(page, "config.yml")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".cm-content")).toContainText("storage-method: h2");
+  await item(page, "world").click();
+  await page.goto("/o/friends/s/survival/files");
+  await expect(item(page, "level.dat")).toBeVisible();
+  await expect(item(page, "config.yml")).toBeVisible();
+  // An old link to a folder opens it.
+  await page.evaluate(() => localStorage.clear());
+  await page.goto("/o/friends/s/survival/files/plugins");
+  await expect(item(page, "LuckPerms")).toBeVisible();
+  await expect(page.getByText("data/plugins", { exact: true })).toBeVisible();
+});
+
+test("leaving a file with changes not saved is asked first", async ({ page }) => {
+  await files(page);
+  await open(page);
+  await expect(page.locator(".cm-content")).toContainText("motd=hello");
+  await edit(page, "pvp=false");
+  await item(page, "eula.txt").click();
+  const ask = page.getByRole("dialog", { name: "Discard your changes to server.properties?" });
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.locator(".cm-content")).toContainText("pvp=false");
+  await item(page, "eula.txt").click();
+  await ask.getByRole("button", { name: "Discard" }).click();
+  await expect(page.locator(".cm-content")).toContainText("eula=true");
+  // Saved, it is left without asking.
+  await edit(page, "\n# ok");
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect(page.getByText("unsaved")).toHaveCount(0);
+  await item(page, "server.properties").click();
+  await expect(page.locator(".cm-content")).toContainText("motd=hello");
+});
+
+test("the tree is moved about with the keyboard", async ({ page }) => {
+  await files(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "config").focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(item(page, "plugins")).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(item(page, "plugins")).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("ArrowRight");
+  await expect(item(page, "LuckPerms")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(item(page, "plugins")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(item(page, "LuckPerms")).toHaveCount(0);
+  await page.keyboard.press("End");
+  await expect(item(page, "server.properties")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".cm-content")).toContainText("motd=hello");
+});
+
+test("a file that cannot be edited offers to be downloaded", async ({ page }) => {
+  await files(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "server.jar").click();
+  await expect(page.getByText("Files over 2 MB can't be edited here.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+});
+
+test("new files and uploads go in the folder chosen", async ({ page }) => {
+  const { state } = await files(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "plugins").click();
+  await page.getByRole("button", { name: "New file" }).click();
+  await page.getByRole("dialog").getByLabel("Name").fill("notes.txt");
+  await page.getByRole("dialog").getByRole("button", { name: "Create" }).click();
+  await expect.poll(() => state.made).toEqual(["/plugins/notes.txt"]);
+  await expect(page).toHaveURL(/file=%2Fplugins%2Fnotes\.txt/);
+  // A file chosen: its folder.
+  await item(page, "EssentialsX.jar").click();
+  await expect(page.getByText("data/plugins", { exact: true })).toBeVisible();
+  await page.getByLabel("Files to upload").setInputFiles({ name: "extra.yml", mimeType: "text/yaml", buffer: Buffer.from("a: 1") });
+  await expect.poll(() => state.made).toEqual(["/plugins/notes.txt", "/plugins/extra.yml"]);
+});
+
+test("a big folder shows its first files, and more when asked", async ({ page }) => {
+  await files(page, { "/world": Array.from({ length: 350 }, (_, i) => `r.${i}.mca`) });
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "world").click();
+  await expect(item(page, "r.299.mca")).toBeVisible();
+  await expect(item(page, "r.300.mca")).toHaveCount(0);
+  await tree(page).getByRole("treeitem", { name: "Show 50 more of 50" }).click();
+  await expect(item(page, "r.349.mca")).toBeVisible();
+});
+
+test("on a phone the file takes the screen, and closing it goes back to the folders as they were", async ({ page }) => {
+  await files(page);
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "plugins").click();
+  await item(page, "LuckPerms").click();
+  await item(page, "config.yml").click();
+  await expect(page.locator(".cm-content")).toContainText("storage-method: h2");
+  await expect(tree(page)).toBeHidden();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(item(page, "config.yml")).toBeVisible();
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+});
+
+test("a folder deleted takes the file open in it with it", async ({ page }) => {
+  await files(page);
+  await page.route("**/api/v1/orgs/friends/servers/survival/files?path=%2Fplugins", (route) => (route.request().method() === "DELETE" ? route.fulfill({ status: 204 }) : route.fallback()));
+  await page.goto("/o/friends/s/survival/files?file=%2Fplugins%2FLuckPerms%2Fconfig.yml");
+  await expect(page.locator(".cm-content")).toContainText("storage-method: h2");
+  await item(page, "plugins").hover();
+  await page.getByRole("button", { name: "Actions for plugins" }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+  await expect(page).not.toHaveURL(/file=/);
 });
