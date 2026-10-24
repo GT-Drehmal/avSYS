@@ -189,6 +189,7 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 		// The original's uploaded pack, made required or given a prompt:
 		// still the one that comes in its files.
 		rp.SHA1, rp.Uploaded, rp.Project, rp.Formats = was.SHA1, was.Uploaded, nil, was.Formats
+		rp.Stack = was.DeepCopy().Stack
 	}
 	// What its mods listen on goes with them. The public ports given out
 	// to the original are its own, and the copy gets ports of its own.
@@ -748,11 +749,7 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 		// Its original's uploaded pack came with its files: gone, if the
 		// new server was given another or none.
 		if droppedPackFile(&created.Spec, original) != "" {
-			keep := ""
-			if rp := created.Spec.ResourcePack; rp != nil && rp.Uploaded != nil {
-				keep = rp.SHA1
-			}
-			s.dropPacks(ctx, files, nil, key, keep, original.ResourcePack)
+			s.dropPacks(ctx, files, nil, key, keptPacks(created.Spec.ResourcePack), original.ResourcePack)
 		}
 		// As with a new server's picture, the server is never held back over it.
 		if err := s.placePicture(files, key.Namespace, key.Name, picture); err != nil {

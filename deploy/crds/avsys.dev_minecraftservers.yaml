@@ -614,6 +614,82 @@ spec:
                     description: SHA1 of the pack. The panel fills this in when it
                       can fetch the URL.
                     type: string
+                  stack:
+                    description: |-
+                      Stack is set for a pack the panel joined from several, the top one
+                      first, as in the game's own list of packs. Uploaded is set too: the
+                      pack joined is kept and served as an uploaded one is, and so is each
+                      of these, in the server's files, so that it can be joined again.
+                    items:
+                      description: StackedPack is one of the packs a server's resource
+                        pack is joined from.
+                      properties:
+                        formats:
+                          description: |-
+                            PackFormats are the resource pack formats a pack says it is made for,
+                            by their major number: a game version reads one format, and the pack
+                            fits the versions whose format is in this range.
+                          properties:
+                            max:
+                              format: int32
+                              minimum: 1
+                              type: integer
+                            min:
+                              format: int32
+                              minimum: 1
+                              type: integer
+                          required:
+                          - max
+                          - min
+                          type: object
+                        hidden:
+                          description: |-
+                            Hidden is how many of its files a pack higher up has too, and are
+                            used from there, and which pack that is, by its SHA1: the one that
+                            hides the most.
+                          format: int32
+                          type: integer
+                        hiddenBy:
+                          type: string
+                        name:
+                          description: Name is the file's name as it was uploaded,
+                            or its address.
+                          type: string
+                        project:
+                          description: Project is set for a pack picked from Modrinth.
+                          properties:
+                            iconUrl:
+                              type: string
+                            id:
+                              description: ID is the project's slug or ID there.
+                              type: string
+                            source:
+                              enum:
+                              - modrinth
+                              type: string
+                            title:
+                              type: string
+                            version:
+                              type: string
+                            versionName:
+                              type: string
+                          required:
+                          - id
+                          - source
+                          type: object
+                        sha1:
+                          description: SHA1 is of its file, which is kept in the server's
+                            files by it.
+                          type: string
+                        size:
+                          format: int64
+                          type: integer
+                      required:
+                      - sha1
+                      - size
+                      type: object
+                    maxItems: 32
+                    type: array
                   uploaded:
                     description: |-
                       Uploaded is set for a pack uploaded to the panel. It is kept in the
