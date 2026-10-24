@@ -266,6 +266,9 @@ func TestOrganizationRoutes(t *testing.T) {
 		// 400: allowed, and that is no zip. 200: allowed, and it had none.
 		{"PUT " + server + "/resource-pack", "", "not a zip", store.RoleAdmin, 400},
 		{"DELETE " + server + "/resource-pack", "", "", store.RoleAdmin, 200},
+		{"POST " + server + "/resource-packs", "", "not a zip", store.RoleAdmin, 400},
+		{"POST " + server + "/resource-packs/url", "", `{"url":"ftp://x"}`, store.RoleAdmin, 400},
+		{"PUT " + server + "/resource-packs", "", `{"order":[]}`, store.RoleAdmin, 400},
 		{"GET " + server + "/terminal", "", "", store.RoleOperator, 0},
 		{"PUT " + server + "/content", "", "x", store.RoleAdmin, 0},
 		// 409: allowed, and then refused because the server is running.

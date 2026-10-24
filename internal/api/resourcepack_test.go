@@ -366,7 +366,7 @@ func TestRemoveOtherPacks(t *testing.T) {
 		}
 		f.Close()
 	}
-	if err := removeOtherPacks(sc, keep); err != nil {
+	if err := removeOtherPacks(sc, []string{keep}); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := sc.ReadDir(packDir)
@@ -384,7 +384,7 @@ func TestRemoveOtherPacks(t *testing.T) {
 		t.Errorf("left %v, want %v", left, want)
 	}
 	// None there at all is nothing to do.
-	if err := removeOtherPacks(memFiles(t), ""); err != nil {
+	if err := removeOtherPacks(memFiles(t), nil); err != nil {
 		t.Errorf("no folder: %v", err)
 	}
 }

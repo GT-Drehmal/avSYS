@@ -318,7 +318,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
                       {spec.resourcePack.project || spec.resourcePack.uploaded ? (
                         <>
                           {packTitle(spec.resourcePack)}
-                          <span className="text-muted">{spec.resourcePack.uploaded ? " · uploaded" : ` · ${spec.resourcePack.project?.versionName ?? "Modrinth"}`}</span>
+                          <span className="text-muted">{spec.resourcePack.stack?.length ? " · joined" : spec.resourcePack.uploaded ? " · uploaded" : ` · ${spec.resourcePack.project?.versionName ?? "Modrinth"}`}</span>
                         </>
                       ) : (
                         <span className="font-mono text-xs break-all">{spec.resourcePack.url}</span>
