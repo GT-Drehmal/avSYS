@@ -106,6 +106,8 @@ export function useLiveServers() {
       // A move may have finished unheard.
       qc.invalidateQueries({ queryKey: ["placement"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
+      // Who came and went.
+      qc.invalidateQueries({ queryKey: ["presence"] });
       qc.invalidateQueries({ queryKey: ["nodes"] });
     };
     const source = new EventSource(`/api/v1/events?tab=${tab}`);

@@ -415,6 +415,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/servers/{server}/files/rename", s.authed(s.renameFile))
 
 	api("GET /events", s.authed(s.streamEvents))
+	api("GET /orgs/{org}/presence", s.authed(s.getPresence))
 	api("PUT /orgs/{org}/presence", s.authed(s.putPresence))
 
 	api("GET /catalog/minecraft/versions", s.authed(s.minecraftVersions))

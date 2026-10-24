@@ -260,13 +260,15 @@ type Activity struct {
 }
 
 // ServerActivity is what was done to one of an organization's servers since
-// it was made, newest first: the actions on it, of these kinds.
+// it was made, newest first: the actions on it, of these kinds. One deleted
+// before it with the same name is not it: nothing from before the last
+// server of that name was deleted is.
 func (s *Store) ServerActivity(ctx context.Context, orgID, server string, since time.Time, kinds []string, limit int) ([]Activity, error) {
 	if len(kinds) == 0 {
 		return []Activity{}, nil
 	}
 	like := make([]string, len(kinds))
-	args := []any{orgID, server, since.Unix()}
+	args := []any{orgID, server, since.Unix(), orgID, server}
 	for i, k := range kinds {
 		like[i] = "a.action LIKE ?"
 		args = append(args, k+"%")
@@ -274,7 +276,9 @@ func (s *Store) ServerActivity(ctx context.Context, orgID, server string, since 
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT a.at, a.action, a.detail, u.id, u.username, u.display_name, u.avatar_url
 		FROM audit a LEFT JOIN users u ON u.id = a.user_id
-		WHERE a.org_id = ? AND a.target = ? AND a.at >= ? AND (`+strings.Join(like, " OR ")+`)
+		WHERE a.org_id = ? AND a.target = ? AND a.at >= ?
+		AND a.id > COALESCE((SELECT MAX(id) FROM audit WHERE org_id = ? AND target = ? AND action = 'server.delete'), 0)
+		AND (`+strings.Join(like, " OR ")+`)
 		ORDER BY a.id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err

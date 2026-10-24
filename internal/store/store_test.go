@@ -172,4 +172,15 @@ func TestServerActivity(t *testing.T) {
 	if got, _ := s.ServerActivity(ctx, "o1", "world", time.Unix(0, 0), []string{"server."}, 1); len(got) != 1 || got[0].Action != "server.stop" {
 		t.Errorf("the newest one: %+v", got)
 	}
+	// Deleted and made again in the same second: only the new one's.
+	add(300, alex.ID, "o1", "server.restart", "world")
+	add(300, alex.ID, "o1", "server.delete", "world")
+	add(300, alex.ID, "o1", "server.create", "world")
+	got, err = s.ServerActivity(ctx, "o1", "world", time.Unix(300, 0), []string{"server."}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Action != "server.create" {
+		t.Errorf("made again: %+v", got)
+	}
 }

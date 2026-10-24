@@ -43,9 +43,9 @@ func (s *Server) serverActivity(w http.ResponseWriter, r *http.Request, u *store
 	if a.Role.AtLeast(store.RoleOperator) {
 		kinds = append(append([]string(nil), activityKinds...), fileKinds...)
 	}
-	// Its making is noted just after it is made, in whole seconds.
-	since := mc.CreationTimestamp.Add(-5 * time.Second)
-	list, err := s.Store.ServerActivity(r.Context(), a.Org.ID, mc.Name, since, kinds, 50)
+	// Its making is noted just after it is made; the server of its name
+	// before it, if any, is told apart by its deletion.
+	list, err := s.Store.ServerActivity(r.Context(), a.Org.ID, mc.Name, mc.CreationTimestamp.Time, kinds, 50)
 	if err != nil {
 		return err
 	}

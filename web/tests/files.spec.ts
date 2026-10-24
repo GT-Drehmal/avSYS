@@ -103,3 +103,37 @@ test("a file removed since it was opened is said so, and can be saved again", as
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(state.gone).toBe(false);
 });
+
+test("a file read again behind the editor, as on reconnecting, is not what a save is checked against", async ({ page }) => {
+  const { state, tagOf } = await files(page);
+  await open(page);
+  await expect(page.locator(".cm-content")).toContainText("motd=hello");
+  state.text = "motd=from a friend\n";
+  await page.context().setOffline(true);
+  await page.context().setOffline(false);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await edit(page, "pvp=false");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("This file was changed since you opened it.");
+  expect(state.saves[0].tag).toBe(tagOf("motd=hello\n"));
+  expect(state.text).toBe("motd=from a friend\n");
+});
+
+test("a reload that fails keeps what was typed", async ({ page }) => {
+  const { state } = await files(page);
+  await open(page);
+  await expect(page.locator(".cm-content")).toContainText("motd=hello");
+  state.text = "motd=from a friend\n";
+  await edit(page, "pvp=false");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  // Then removed too, before it is reloaded.
+  state.gone = true;
+  await page.getByRole("button", { name: "Reload" }).click();
+  await expect(page.getByText("No such file.")).toBeVisible();
+  await expect(page.locator(".cm-content")).toContainText("pvp=false");
+  await expect(page.getByText("unsaved")).toBeVisible();
+  await page.getByRole("button", { name: "Save anyway" }).click();
+  await expect(page.getByText("unsaved")).toHaveCount(0);
+  expect(state.text).toBe("motd=hello\npvp=false");
+});

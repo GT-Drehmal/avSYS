@@ -107,8 +107,9 @@ export function ServerPage() {
   const { pathname } = useLocation();
   const { org = "", server: name = "" } = useParams();
   const [search] = useSearchParams();
-  // Here, with the file open in its editor, if one is.
-  useHere(org, name, pathname.endsWith("/files") ? (search.get("file") ?? "") : "");
+  // Here, with the file open in its editor, if one is: on its Files tab,
+  // in whichever folder.
+  useHere(org, name, pathname.split("/")[5] === "files" ? (search.get("file") ?? "") : "");
   const here = others(usePresence(org), useMe().data?.user.id, name);
   const membership = useOrg();
   const { data: server, isPending } = useServer(org, name);

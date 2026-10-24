@@ -49,8 +49,12 @@ export function useHere(org: string, server: string, file = "") {
   }, [org, server, file]);
 }
 
-/** Who is on an organization's servers, as its event stream says. */
-export const usePresence = (org: string) => useQuery({ queryKey: presenceKey(org), queryFn: () => [] as Present[], enabled: false, staleTime: Infinity }).data ?? [];
+/**
+ * Who is on an organization's servers: asked for once, then kept current by
+ * its event stream, and asked for again when the stream may have missed some.
+ */
+export const usePresence = (org: string) =>
+  useQuery({ queryKey: presenceKey(org), queryFn: () => api.get<Present[]>(`/orgs/${org}/presence`), enabled: !!org, staleTime: Infinity }).data ?? [];
 
 /** Those other than me on a server, and, with a file, on that file. */
 export const others = (people: Present[], me: string | undefined, server: string, file?: string) =>
