@@ -1,4 +1,4 @@
-import { test as base, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { test as base, expect, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -24,6 +24,8 @@ interface Fixtures {
    * a test that changes things has ones nobody else is looking at.
    */
   org: (servers: string[]) => Promise<string>;
+  /** A page in another browser, as someone else: for what one sees of another. */
+  pageAs: (who: Role | "outsider") => Promise<Page>;
   /** Errors a page threw. A test fails on any, unless it empties this itself. */
   pageErrors: string[];
   password: string;
@@ -92,6 +94,16 @@ export const test = base.extend<Fixtures>({
     await use(async (who) => {
       await context.setExtraHTTPHeaders({ Authorization: `Bearer ${info().tokens[who]}` });
     });
+  },
+
+  pageAs: async ({ browser }, use, testInfo) => {
+    const contexts: BrowserContext[] = [];
+    await use(async (who) => {
+      const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, extraHTTPHeaders: { Authorization: `Bearer ${info().tokens[who]}` } });
+      contexts.push(context);
+      return context.newPage();
+    });
+    for (const c of contexts) await c.close();
   },
 
   api: async ({ request }, use) => {

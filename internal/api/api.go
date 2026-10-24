@@ -115,6 +115,8 @@ type Server struct {
 	usage usage
 	// reach is whether the cluster can be reached.
 	reach reach
+	// presence is which servers members have open.
+	presence presence
 	// routes lists what Handler registered, as "METHOD /path". Tests use it
 	// to check that no route is left without a decision on who may call it.
 	routes []string
@@ -404,6 +406,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/servers/{server}/files/rename", s.authed(s.renameFile))
 
 	api("GET /events", s.authed(s.streamEvents))
+	api("PUT /orgs/{org}/presence", s.authed(s.putPresence))
 
 	api("GET /catalog/minecraft/versions", s.authed(s.minecraftVersions))
 	api("GET /catalog/minecraft/pack-formats", s.authed(s.packFormats))

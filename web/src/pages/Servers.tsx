@@ -3,13 +3,15 @@ import { Camera, Copy, Play, Plus, RotateCw, Square, Trash2 } from "lucide-react
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { BackupMark, scheduleOf } from "../components/BackupSchedule";
+import { Faces } from "../components/Faces";
 import { Picture } from "../components/Picture";
 import { ServerActions } from "../components/ServerActions";
 import { useOrg } from "../components/Shell";
 import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, SelectionBar, StatusDot, Loading, Toggle } from "../components/ui";
 import { api, ApiError, atLeast, serverIcon, serverPath, type Server } from "../lib/api";
 import { describeSoftware, displayName } from "../lib/format";
-import { keys, useBackupPolicy, useMeta, useServers } from "../lib/queries";
+import { keys, useBackupPolicy, useMe, useMeta, useServers } from "../lib/queries";
+import { others, usePresence } from "../lib/presence";
 import { newFrom } from "../lib/origin";
 import { useSelection } from "../lib/selection";
 import { toast } from "../lib/toast";
@@ -150,6 +152,8 @@ export function Servers() {
   const policy = useBackupPolicy(org);
   const canCreate = atLeast(membership?.role, "admin");
   const canOperate = atLeast(membership?.role, "operator");
+  const people = usePresence(org);
+  const me = useMe().data?.user.id;
   const selection = useSelection(servers.data?.map((s) => s.name) ?? [], org);
   const chosen = servers.data?.filter((s) => selection.has(s.name)) ?? [];
 
@@ -203,7 +207,10 @@ export function Servers() {
                     <StatusDot phase={s.status.phase} />
                     <Picture name={displayName(s)} url={serverIcon(s)} size={32} retryKey={`${s.status.phase}|${s.status.message ?? ""}`} />
                     <span className="min-w-0">
-                      <span className="block truncate font-medium">{displayName(s)}</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-medium">{displayName(s)}</span>
+                        <Faces people={others(people, me, s.name)} label="On it now" size={18} ring="ring-surface" />
+                      </span>
                       <span className="block truncate text-xs text-muted">
                         {phaseWords[s.status.phase ?? "Stopped"]}
                         {s.status.pendingRestart && <span className="text-warn"> · restart to apply changes</span>}

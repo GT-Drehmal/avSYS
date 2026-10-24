@@ -407,7 +407,7 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
   await as("owner");
   // Answered once the archive is in; the panel says later how it went.
   let ended = "";
-  await page.route("**/api/v1/events", (route) =>
+  await page.route("**/api/v1/events?*", (route) =>
     route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
   );
   // Not while it runs.
@@ -447,7 +447,7 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
 test("a world that could not be put in place after it was sent says so when the panel is done", async ({ page, as }) => {
   await as("owner");
   let ended = "";
-  await page.route("**/api/v1/events", (route) =>
+  await page.route("**/api/v1/events?*", (route) =>
     route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
   );
   await page.goto("/o/friends/s/creative/settings");
@@ -462,7 +462,7 @@ test("a world that could not be put in place after it was sent says so when the 
   await expect(dialog).toHaveCount(0);
   // Another tab, or a page that did not send it, says nothing of it.
   const other = await page.context().newPage();
-  await other.route("**/api/v1/events", (route) =>
+  await other.route("**/api/v1/events?*", (route) =>
     route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: ended ? `event: operation.done\ndata: ${ended}\n\n` : "event: waiting\ndata: null\n\n" }),
   );
   await other.goto("/o/friends/s/creative");
@@ -494,7 +494,7 @@ test("a replaced world whose end is heard before the panel's answer is still tol
   const done = JSON.stringify({ kind: "import", org: "friends", server: "creative" });
   // The end is said on every stream from the start, as for an import by
   // someone else a moment ago: not told of, as nothing here waits on it.
-  await page.route("**/api/v1/events", (route) =>
+  await page.route("**/api/v1/events?*", (route) =>
     route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: `event: operation.done\ndata: ${done}\n\n` }),
   );
   await page.goto("/o/friends/s/creative/settings");

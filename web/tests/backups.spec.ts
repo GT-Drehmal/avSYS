@@ -228,7 +228,7 @@ test("a server is snapshotted from its header on any tab, and its Backups tab ha
 test("the header's Snapshot waits while one is being taken, as the event stream says, on any tab", async ({ page }) => {
   const op = { kind: "snapshot", org: "friends", server: "survival", stage: "Copying files", percent: 40, startedAt: new Date().toISOString() };
   let running = false;
-  await page.route("**/api/v1/events", (route) =>
+  await page.route("**/api/v1/events?*", (route) =>
     route.fulfill({
       status: 200,
       headers: { "Content-Type": "text/event-stream" },
@@ -250,7 +250,7 @@ test("a snapshot deleted while one is being taken does not end it; its own end d
   const deleted = { kind: "delete", org: "friends", server: "survival" };
   const done = { kind: "snapshot", org: "friends", server: "survival" };
   let body = `event: operation.progress\ndata: ${JSON.stringify(op)}\n\nevent: operation.done\ndata: ${JSON.stringify(deleted)}\n\n`;
-  await page.route("**/api/v1/events", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body }));
+  await page.route("**/api/v1/events?*", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body }));
   // The panel's own record says the same as the stream.
   await page.route("**/api/v1/orgs/friends/servers/survival/operation", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(body.includes("progress") ? op : null) }));
   await page.goto("/o/friends/s/survival");
@@ -283,7 +283,7 @@ test("a snapshot shown as running on a tab left earlier is let go of when the st
     return route.fulfill({ json: { ...list, operations: running ? [op] : [] } });
   });
   // Each time the stream is opened it ends at once, and is opened again.
-  await page.route("**/api/v1/events", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: waiting\ndata: null\n\n" }));
+  await page.route("**/api/v1/events?*", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: waiting\ndata: null\n\n" }));
   await page.goto("/o/friends/s/survival/backups");
   const snapshot = page.getByRole("button", { name: "Snapshot", exact: true });
   await expect(snapshot).toBeDisabled();
@@ -317,7 +317,7 @@ test("coming back to a server's page asks again what is being done to it", async
 test("a scheduled snapshot that failed is shown on the server, not popped up", async ({ page }) => {
   const scheduled = { kind: "snapshot", org: "friends", server: "survival", scheduled: true, error: "the server's files are not reachable" };
   const byHand = { kind: "snapshot", org: "friends", server: "creative", error: "the game did not finish writing its world out" };
-  await page.route("**/api/v1/events", (route) =>
+  await page.route("**/api/v1/events?*", (route) =>
     route.fulfill({
       status: 200,
       headers: { "Content-Type": "text/event-stream" },

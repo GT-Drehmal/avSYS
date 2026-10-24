@@ -92,20 +92,28 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, u *store.U
 	// Membership is re-read periodically so a stream opened before someone
 	// was removed from an organization stops carrying its events.
 	allowed := map[string]bool{}
+	// What files others have open is only for those who can open them.
+	seesFiles := map[string]bool{}
+	slugs := map[string]string{}
 	refresh := func() error {
 		orgs, err := s.Store.OrgsForUser(ctx, u)
 		if err != nil {
 			return err
 		}
 		clear(allowed)
+		clear(seesFiles)
+		clear(slugs)
 		for _, o := range orgs {
-			allowed[s.Namespace(o.Slug)] = true
+			ns := s.Namespace(o.Slug)
+			allowed[ns], seesFiles[ns], slugs[ns] = true, o.Role.AtLeast(store.RoleOperator), o.Slug
 		}
 		return nil
 	}
 	if err := refresh(); err != nil {
 		return err
 	}
+	// The tab it is for is there while it is open.
+	defer s.streamOpened(u, r.URL.Query().Get("tab"))()
 
 	ch := s.Events.subscribe()
 	defer s.Events.unsubscribe(ch)
@@ -114,6 +122,16 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, u *store.U
 	// again may have missed its change.
 	if err := send("cluster", s.reach.view()); err != nil {
 		return nil
+	}
+	// Who is on its organizations' servers, as it may have missed them come
+	// and go.
+	for _, v := range s.presenceOf(slugs) {
+		if !seesFiles[s.Namespace(v.Org)] {
+			v = v.withoutFiles()
+		}
+		if err := send("presence", v); err != nil {
+			return nil
+		}
 	}
 	heartbeat := time.NewTicker(20 * time.Second)
 	defer heartbeat.Stop()
@@ -127,6 +145,9 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, u *store.U
 		case e := <-ch:
 			if e.Namespace != "" && !allowed[e.Namespace] {
 				continue
+			}
+			if v, ok := e.Data.(presenceView); ok && !seesFiles[e.Namespace] {
+				e.Data = v.withoutFiles()
 			}
 			if err := send(e.Type, e.Data); err != nil {
 				return nil

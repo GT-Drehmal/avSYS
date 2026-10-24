@@ -1,7 +1,8 @@
 import { Camera, ChevronLeft, Code2, Copy, Plug } from "lucide-react";
 import { useState } from "react";
-import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from "react-router";
+import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router";
 import { newFrom } from "../../lib/origin";
+import { Faces } from "../../components/Faces";
 import { Picture } from "../../components/Picture";
 import { ServerActions } from "../../components/ServerActions";
 import { holdsTheServer, OperationRow } from "../../components/Snapshots";
@@ -10,6 +11,7 @@ import { Button, CopyText, cx, Empty, Modal, Notice, Status, Loading } from "../
 import { api, atLeast, serverIcon, serverPath, type Meta, type Operation, type Role, type Server } from "../../lib/api";
 import { describeSoftware, displayName, quantity } from "../../lib/format";
 import { keys, useAction, useMe, useMeta, useRunning, useServer, useServerAction, useServerSnapshots } from "../../lib/queries";
+import { others, useHere, usePresence } from "../../lib/presence";
 import { toast } from "../../lib/toast";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 
@@ -103,6 +105,10 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 export function ServerPage() {
   const { pathname } = useLocation();
   const { org = "", server: name = "" } = useParams();
+  const [search] = useSearchParams();
+  // Here, with the file open in its editor, if one is.
+  useHere(org, name, pathname.endsWith("/files") ? (search.get("file") ?? "") : "");
+  const here = others(usePresence(org), useMe().data?.user.id, name);
   const membership = useOrg();
   const { data: server, isPending } = useServer(org, name);
   const action = useServerAction(org, name);
@@ -150,6 +156,7 @@ export function ServerPage() {
           <Picture name={displayName(server)} url={serverIcon(server)} size={36} retryKey={`${status.phase}|${status.message ?? ""}`} />
           <h1 className="truncate text-xl font-semibold tracking-tight">{displayName(server)}</h1>
           <Status phase={status.phase} />
+          <Faces people={here} />
         </div>
         {canOperate && (
           <div className="flex flex-wrap items-center gap-2">
