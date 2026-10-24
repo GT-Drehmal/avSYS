@@ -215,7 +215,8 @@ func (s *Server) searchFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	defer conn.Close()
 	// One more than is shown, to say there are more.
-	cmd := fmt.Sprintf(`cd %s && find . -mindepth 1 -iname %s -printf '%%y\t%%s\t%%T@\t%%P\n' 2>/dev/null | sort -t "$(printf '\t')" -k4 | head -n %d`,
+	// Not in the workspace's own home and caches, nor the panel's own files.
+	cmd := fmt.Sprintf(`cd %s && find . -mindepth 1 \( -path ./.workspace -o -path ./.avsys \) -prune -o -iname %s -printf '%%y\t%%s\t%%T@\t%%P\n' 2>/dev/null | sort -t "$(printf '\t')" -k4 | head -n %d`,
 		shellQuote(dataRoot), shellQuote("*"+globSpecial.Replace(q)+"*"), searchLimit+1)
 	var out bytes.Buffer
 	if err := s.runIn(ctx, conn, cmd, &out); err != nil {
