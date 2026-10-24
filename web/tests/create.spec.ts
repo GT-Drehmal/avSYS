@@ -892,7 +892,9 @@ test("signing out stops what was being sent, and its card goes", async ({ page, 
   // Signed in here by a header, which signing out does not end: the panel
   // is made to answer as it would once it has.
   await page.route("**/api/v1/me", (route) => route.fulfill({ status: 401, json: { code: "unauthorized", message: "Sign in." } }));
-  await page.getByRole("button", { name: /^Owner/ }).click();
+  // The account's menu: what was done to the server, under its name, may
+  // start with the same name.
+  await page.getByRole("button", { name: /^Owner\s*owner$/ }).click();
   await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login/);
   await expect(setup).toHaveCount(0);
