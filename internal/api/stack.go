@@ -294,7 +294,7 @@ func (s *Server) joinStack(ctx context.Context, sc *sftp.Client, stack []avsysv1
 		if err != nil {
 			return nil, fmt.Errorf("the file of %s is not in the server's files: %w", stackedName(p), fileError(err))
 		}
-		size, sha, err := copyHashed(local, src, packLimit(""))
+		size, sha, err := readPackFile(local, src, packLimit(""))
 		src.Close()
 		if err != nil {
 			return nil, fileError(err)
@@ -459,6 +459,22 @@ func (s *Server) packTemp(pattern string) (*os.File, error) {
 		return nil, err
 	}
 	return os.CreateTemp(s.Config.PackDir, pattern)
+}
+
+// readPackFile copies a pack out of a server's files, with many reads in
+// flight at once rather than one round trip at a time, and says its size
+// and SHA-1. One over the limit is not read, and has no SHA-1.
+func readPackFile(to io.Writer, f *sftp.File, limit int64) (int64, string, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return 0, "", err
+	}
+	if info.Size() > limit {
+		return info.Size(), "", nil
+	}
+	h := sha1.New()
+	n, err := f.WriteTo(io.MultiWriter(to, h))
+	return n, hex.EncodeToString(h.Sum(nil)), err
 }
 
 // copyHashed copies up to limit+1 bytes, and says how many and their SHA-1.
