@@ -512,8 +512,12 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 	if full == dataRoot {
 		return errBadRequest("Name a file to write.")
 	}
-	// Saved from the editor, it is written only over the file it opened.
+	// Saved from the editor, it is written only over the file it opened,
+	// and is no bigger than the editor opens: one that was would have no
+	// tag to be saved over next.
+	limit := int64(maxUpload)
 	if want := r.Header.Get("If-Match"); want != "" {
+		limit = maxEditable
 		lock, _ := s.saveLocks.LoadOrStore(a.Namespace+"/"+server, &sync.Mutex{})
 		lock.(*sync.Mutex).Lock()
 		defer lock.(*sync.Mutex).Unlock()
@@ -537,7 +541,7 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	// Many writes in flight at once, as the temp file is removed on failure.
 	h := sha256.New()
-	n, err := f.ReadFromWithConcurrency(io.TeeReader(http.MaxBytesReader(w, r.Body, maxUpload), h), 0)
+	n, err := f.ReadFromWithConcurrency(io.TeeReader(http.MaxBytesReader(w, r.Body, limit), h), 0)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -547,6 +551,9 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 	if err != nil {
 		_ = sc.Remove(tmp)
 		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) && limit == maxEditable {
+			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 MB can't be saved here. Upload the file instead."}
+		}
 		if errors.As(err, &tooLarge) {
 			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 GB must be copied over SSH, with scp or rsync."}
 		}
