@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
@@ -228,6 +228,9 @@ function store(key: string, value: unknown) {
   }
 }
 
+// What the panel can open in place, as the workspace's bsdtar reads.
+const archive = /\.(zip|tar|tar\.gz|tgz|tar\.xz|txz|tar\.bz2|tbz2|7z|rar)$/i;
+
 const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name);
 
 /**
@@ -344,6 +347,18 @@ export default function Files() {
     if (dir) setExpanded((was) => new Set([...was].filter((d) => !within(d, path))));
     if (open && within(open, path)) openFile(null);
     if (within(selected.path, path)) setSelected({ path: parentOf(path), dir: true });
+  });
+
+  // An archive opened where it is, into the folder it makes: that is opened
+  // and chosen.
+  const extract = useAction(async (path: string) => {
+    const made = await api.post<{ path: string }>(`${base}/extract?${qs({ path })}`);
+    await refresh(parentOf(path));
+    if (parentOf(made.path) !== "/") toggle(parentOf(made.path), true);
+    toggle(made.path, true);
+    setSelected({ path: made.path, dir: true });
+    setFocused(made.path);
+    toast.info(`Extracted ${nameOf(path)} to ${nameOf(made.path)}`);
   });
 
   const upload = async (files: FileList | File[], dir: string) => {
@@ -530,6 +545,11 @@ export default function Files() {
                       <File className={cx("size-4 shrink-0", isEditable(entry) ? "text-muted" : "text-faint")} />
                     )}
                     <span className={cx("min-w-0 flex-1 truncate pr-2 font-mono text-[13px]", !entry.dir && !isEditable(entry) && "text-muted")}>{entry.name}</span>
+                    {extract.isPending && extract.variables === path && (
+                      <span role="status" aria-label={`Extracting ${entry.name}`}>
+                        <Spinner className="size-3.5" />
+                      </span>
+                    )}
                     {/* Nothing done in its menu, which is drawn elsewhere, reaches the row. */}
                     <span className="contents" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                     <Menu>
@@ -545,9 +565,18 @@ export default function Files() {
                         />
                       </MenuTrigger>
                       <MenuContent>
-                        {!entry.dir && (
+                        {entry.dir ? (
+                          <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/archive?${qs({ path })}`)}>
+                            Download as .zip
+                          </MenuItem>
+                        ) : (
                           <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/content?${qs({ path })}&download`)}>
                             Download
+                          </MenuItem>
+                        )}
+                        {!entry.dir && archive.test(entry.name) && (
+                          <MenuItem icon={<PackageOpen />} disabled={extract.isPending} onSelect={() => extract.mutate(path)}>
+                            Extract here
                           </MenuItem>
                         )}
                         <MenuItem icon={<Pencil />} onSelect={() => setDialog({ kind: "rename", path, dir: entry.dir })}>
