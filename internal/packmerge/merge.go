@@ -126,6 +126,19 @@ func Merge(w io.Writer, packs []Pack, format int) (*Result, error) {
 			}
 			continue
 		}
+		// The packs' icons are shown together.
+		if name == "pack.png" && len(have) > 1 {
+			icons := make([]*zip.File, len(have))
+			for i, e := range have {
+				icons[i] = e.file
+			}
+			if icon := joinIcons(icons); icon != nil {
+				if err := writeFile(out, name, icon); err != nil {
+					return nil, err
+				}
+				continue
+			}
+		}
 		if len(have) == 1 || name == "pack.png" {
 			if err := copyFile(out, name, have[0].file); err != nil {
 				return nil, err
