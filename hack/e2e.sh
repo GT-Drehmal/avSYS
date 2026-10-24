@@ -366,8 +366,12 @@ call "$SRV/files/archive?path=/@e2e-at" > "$WORK/at.zip"
 python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "@e2e-at/x.txt" in n, n' "$WORK/at.zip" || fail "a folder named @… is not zipped as itself"
 echo "ok: a folder named @… is zipped as itself"
 call -X DELETE "$SRV/files?path=/@e2e-at" >/dev/null
-call -X DELETE "$SRV/files?path=/e2e-world" >/dev/null
-call -X DELETE "$SRV/files?path=/e2e-configs" >/dev/null
+# Moved into another folder, and not into itself.
+expect "a folder is moved into another" "$(call -o /dev/null -w '%{http_code}' -X POST "$SRV/files/rename?path=/e2e-configs&to=/e2e-world/e2e-configs")" 204
+expect "with what is in it" "$(call "$SRV/files?path=/e2e-world/e2e-configs")" '"a.yml"'
+expect "a folder is not moved into itself" "$(call -X POST "$SRV/files/rename?path=/e2e-world&to=/e2e-world/e2e-configs/e2e-world")" "into itself"
+expect "nor into a folder that is not there" "$(call -X POST "$SRV/files/rename?path=/e2e-world.zip&to=/no-such/e2e-world.zip")" "There is no folder"
+for p in /e2e-world /e2e-world.zip /e2e-configs.zip; do call -X DELETE "$SRV/files?path=$p" >/dev/null; done
 
 step "datapacks"
 # restarted asks for a restart and waits it out: down first, then up.

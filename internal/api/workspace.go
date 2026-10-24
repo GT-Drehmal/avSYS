@@ -595,8 +595,15 @@ func (s *Server) renameFile(w http.ResponseWriter, r *http.Request, u *store.Use
 	if from == dataRoot || to == dataRoot {
 		return errBadRequest("The server directory itself cannot be moved.")
 	}
+	if strings.HasPrefix(to, from+"/") {
+		return errBadRequest("A folder cannot be moved into itself.")
+	}
 	if _, err := sc.Lstat(to); err == nil {
 		return &Error{Status: http.StatusConflict, Code: "exists", Message: "Something with that name already exists."}
+	}
+	// Moved into a folder, the folder is there.
+	if fi, err := sc.Stat(path.Dir(to)); err != nil || !fi.IsDir() {
+		return errBadRequest("There is no folder %s.", relPath(path.Dir(to)))
 	}
 	if err := sc.Rename(from, to); err != nil {
 		return fileError(err)

@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
@@ -169,7 +169,23 @@ function FileEditor({
   );
 }
 
-function NameDialog({ title, action, initial, onSubmit, onClose }: { title: string; action: string; initial: string; onSubmit: (name: string) => Promise<unknown>; onClose: () => void }) {
+function NameDialog({
+  title,
+  action,
+  initial,
+  label = "Name",
+  pattern = "[^/]+",
+  onSubmit,
+  onClose,
+}: {
+  title: string;
+  action: string;
+  initial: string;
+  label?: string;
+  pattern?: string;
+  onSubmit: (name: string) => Promise<unknown>;
+  onClose: () => void;
+}) {
   const [name, setName] = useState(initial);
   const [busy, setBusy] = useState(false);
   return (
@@ -188,7 +204,7 @@ function NameDialog({ title, action, initial, onSubmit, onClose }: { title: stri
           }
         }}
       >
-        <Field label="Name">{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} pattern="[^/]+" className="font-mono" />}</Field>
+        <Field label={label}>{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} pattern={pattern} className="font-mono" />}</Field>
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" loading={busy}>
@@ -200,7 +216,12 @@ function NameDialog({ title, action, initial, onSubmit, onClose }: { title: stri
   );
 }
 
-type Dialog = { kind: "folder"; in: string } | { kind: "file"; in: string } | { kind: "rename"; path: string; dir: boolean } | { kind: "delete"; path: string; dir: boolean };
+type Dialog =
+  | { kind: "folder"; in: string }
+  | { kind: "file"; in: string }
+  | { kind: "rename"; path: string; dir: boolean }
+  | { kind: "move"; path: string; dir: boolean }
+  | { kind: "delete"; path: string; dir: boolean };
 
 /** One line of the tree: a file or folder, or what a folder says while it has none to show. */
 type Row =
@@ -341,6 +362,46 @@ export default function Files() {
   const { sending, send, cancel } = useUpload();
   const [dropOn, setDropOn] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
+  // After a file or folder is renamed or moved: what was open in it, chosen
+  // or being edited is so at its new place, and what was typed is kept.
+  const afterMove = (from: string, to: string, dir: boolean) => {
+    const moved = (p: string) => (within(p, from) ? to + p.slice(from.length) : p);
+    if (dir) setExpanded((was) => new Set([...was].map(moved)));
+    setSelected((s) => ({ ...s, path: moved(s.path) }));
+    setFocused((f) => moved(f));
+    if (open && within(open, from)) {
+      setCarried({ path: moved(open), ...editorState.current });
+      setSearch({ file: moved(open) }, { replace: true });
+    }
+  };
+  const moveTo = async (from: string, into: string, dir: boolean) => {
+    const to = join(into, nameOf(from));
+    if (to === from) return;
+    await api.post(`${base}/rename?${qs({ path: from, to })}`);
+    await Promise.all([refresh(parentOf(from)), refresh(into)]);
+    // Where it went is opened, and the folders it is in.
+    if (into !== "/") setExpanded((was) => new Set([...was, ...foldersAbove(into), into]));
+    afterMove(from, to, dir);
+  };
+  const move = useAction(({ from, into, dir }: { from: string; into: string; dir: boolean }) => moveTo(from, into, dir));
+  // What is being dragged within the tree, to be moved: never into itself,
+  // nor where it is.
+  // Kept as they happen, not as the page is drawn: a drop can come before
+  // the page is drawn again after the drag began.
+  const movingRef = useRef<{ path: string; dir: boolean } | null>(null);
+  const dropRef = useRef<string | null>(null);
+  const grab = (m: { path: string; dir: boolean } | null) => {
+    movingRef.current = m;
+  };
+  const aim = (into: string | null) => {
+    dropRef.current = into;
+    setDropOn(into);
+  };
+  const canDropInto = (dir: string) => {
+    const m = movingRef.current;
+    return !m || (!within(dir, m.path) && parentOf(m.path) !== dir);
+  };
+
   const remove = useAction(async ({ path, dir }: { path: string; dir: boolean }) => {
     await api.del(`${base}?${qs({ path })}`);
     await refresh(parentOf(path));
@@ -463,17 +524,28 @@ export default function Files() {
         <div
           className={cx("min-h-0 flex-1 overflow-auto py-1", dropOn === "/" && "bg-accent-wash")}
           onDragOver={(e) => {
+            // Not over a row, which says where itself: below them, the top folder.
+            if (!canDropInto("/")) {
+              if (dropRef.current !== null) aim(null);
+              return;
+            }
             e.preventDefault();
-            setDropOn((d) => d ?? "/");
+            if (dropRef.current !== "/") aim("/");
           }}
           onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropOn(null);
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) aim(null);
           }}
           onDrop={(e) => {
             e.preventDefault();
-            const into = dropOn ?? "/";
-            setDropOn(null);
-            if (e.dataTransfer.files.length) upload(e.dataTransfer.files, into);
+            const into = dropRef.current ?? "/";
+            const m = movingRef.current;
+            aim(null);
+            // From the tree, moved; from the computer, uploaded.
+            if (m) {
+              const ok = canDropInto(into);
+              grab(null);
+              if (ok) move.mutate({ from: m.path, into, dir: m.dir });
+            } else if (e.dataTransfer.files.length) upload(e.dataTransfer.files, into);
           }}
         >
           {root?.isError ? (
@@ -523,13 +595,28 @@ export default function Files() {
                     tabIndex={focused === path || (!focusable.some((r) => keyOf(r) === focused) && row === focusable[0]) ? 0 : -1}
                     onFocus={() => setFocused(path)}
                     onClick={() => press(row)}
-                    onDragOver={(e) => {
-                      if (!entry.dir) return;
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setDropOn(path);
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("application/x-avsys-path", path);
+                      e.dataTransfer.effectAllowed = "move";
+                      grab({ path, dir: entry.dir });
                     }}
-                    onDragLeave={() => setDropOn((d) => (d === path ? null : d))}
+                    onDragEnd={() => {
+                      grab(null);
+                      aim(null);
+                    }}
+                    // Into a folder, or the folder of a file.
+                    onDragOver={(e) => {
+                      const into = entry.dir ? path : parentOf(path);
+                      e.stopPropagation();
+                      if (!canDropInto(into)) {
+                        if (dropRef.current !== null) aim(null);
+                        return;
+                      }
+                      e.preventDefault();
+                      if (dropRef.current !== into) aim(into);
+                    }}
+                    onDragLeave={() => dropRef.current === path && aim(null)}
                     style={indent}
                     title={entry.dir ? undefined : `${bytes(entry.size)} · changed ${ago(entry.modTime)}`}
                     className={cx(
@@ -581,6 +668,9 @@ export default function Files() {
                         )}
                         <MenuItem icon={<Pencil />} onSelect={() => setDialog({ kind: "rename", path, dir: entry.dir })}>
                           Rename
+                        </MenuItem>
+                        <MenuItem icon={<FolderInput />} onSelect={() => setDialog({ kind: "move", path, dir: entry.dir })}>
+                          Move to…
                         </MenuItem>
                         <MenuItem icon={<Trash2 />} danger onSelect={() => setDialog({ kind: "delete", path, dir: entry.dir })}>
                           Delete
@@ -703,15 +793,19 @@ export default function Files() {
             const to = join(parentOf(from), name);
             await api.post(`${base}/rename?${qs({ path: from, to })}`);
             await refresh(parentOf(from));
-            const moved = (p: string) => (within(p, from) ? to + p.slice(from.length) : p);
-            if (dialog.dir) setExpanded((was) => new Set([...was].map(moved)));
-            setSelected((s) => ({ ...s, path: moved(s.path) }));
-            setFocused((f) => moved(f));
-            if (open && within(open, from)) {
-              setCarried({ path: moved(open), ...editorState.current });
-              setSearch({ file: moved(open) }, { replace: true });
-            }
+            afterMove(from, to, dialog.dir);
           }}
+        />
+      )}
+      {dialog?.kind === "move" && (
+        <NameDialog
+          title={`Move ${nameOf(dialog.path)}`}
+          action="Move"
+          label="To the folder"
+          pattern="/.*"
+          initial={parentOf(dialog.path)}
+          onClose={() => setDialog(null)}
+          onSubmit={(to) => moveTo(dialog.path, to.replace(/\/+$/, "") || "/", dialog.dir)}
         />
       )}
       <Confirm
