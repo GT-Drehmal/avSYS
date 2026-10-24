@@ -379,7 +379,8 @@ export default function Files() {
     if (to === from) return;
     await api.post(`${base}/rename?${qs({ path: from, to })}`);
     await Promise.all([refresh(parentOf(from)), refresh(into)]);
-    if (into !== "/") toggle(into, true);
+    // Where it went is opened, and the folders it is in.
+    if (into !== "/") setExpanded((was) => new Set([...was, ...foldersAbove(into), into]));
     afterMove(from, to, dir);
   };
   const move = useAction(({ from, into, dir }: { from: string; into: string; dir: boolean }) => moveTo(from, into, dir));
@@ -523,9 +524,13 @@ export default function Files() {
         <div
           className={cx("min-h-0 flex-1 overflow-auto py-1", dropOn === "/" && "bg-accent-wash")}
           onDragOver={(e) => {
-            if (!canDropInto("/")) return;
+            // Not over a row, which says where itself: below them, the top folder.
+            if (!canDropInto("/")) {
+              if (dropRef.current !== null) aim(null);
+              return;
+            }
             e.preventDefault();
-            if (dropRef.current === null) aim("/");
+            if (dropRef.current !== "/") aim("/");
           }}
           onDragLeave={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node)) aim(null);
@@ -604,7 +609,10 @@ export default function Files() {
                     onDragOver={(e) => {
                       const into = entry.dir ? path : parentOf(path);
                       e.stopPropagation();
-                      if (!canDropInto(into)) return;
+                      if (!canDropInto(into)) {
+                        if (dropRef.current !== null) aim(null);
+                        return;
+                      }
                       e.preventDefault();
                       if (dropRef.current !== into) aim(into);
                     }}

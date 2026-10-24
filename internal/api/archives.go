@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -38,7 +39,9 @@ func archiveStem(name string) string {
 func archiveTop(listing string) string {
 	top := ""
 	for _, line := range strings.Split(listing, "\n") {
-		name := strings.TrimPrefix(strings.TrimSpace(line), "./")
+		// A name is as it is, spaces and all: only the line's end is not
+		// part of it.
+		name := strings.TrimPrefix(strings.TrimSuffix(line, "\r"), "./")
 		if name == "" || name == "." || macJunk(name) {
 			continue
 		}
@@ -57,7 +60,8 @@ func macJunk(name string) bool { return name == "__MACOSX" || strings.HasPrefix(
 // runIn runs a command in a server's workspace, as its user, giving what it
 // wrote to stdout into out, and failing with what it wrote to stderr.
 func (s *Server) runIn(ctx context.Context, conn *ssh.Client, command string, out io.Writer) error {
-	session, err := conn.NewSession()
+	// The panel's own: a plain sh, with nothing from the home directory.
+	session, err := backup.CommandSession(conn)
 	if err != nil {
 		return err
 	}
@@ -136,7 +140,8 @@ func (s *Server) extractArchive(w http.ResponseWriter, r *http.Request, u *store
 	}
 	// Never outside where it is opened: no absolute names, no "..", and no
 	// file written through a link. Owned by the workspace's user.
-	cmd := "bsdtar -xf " + shellQuote(full) + " -C " + shellQuote(into) + " --no-same-owner --no-same-permissions --exclude __MACOSX"
+	// And no file that is there already is written over (-k).
+	cmd := "bsdtar -xkf " + shellQuote(full) + " -C " + shellQuote(into) + " --no-same-owner --no-same-permissions --exclude __MACOSX"
 	if err := s.runIn(ctx, conn, cmd, io.Discard); err != nil {
 		_ = sc.RemoveAll(made)
 		return errBadRequest("The archive could not be opened: %s", err)
@@ -168,14 +173,25 @@ func (s *Server) downloadFolder(w http.ResponseWriter, r *http.Request, u *store
 	defer conn.Close()
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name+".zip"))
-	cmd := "cd " + shellQuote(path.Dir(full)) + " && bsdtar -cf - --format zip " + shellQuote(path.Base(full))
+	// "./" before its name, so that bsdtar takes it as a folder whatever it
+	// is called (not "@a" as another archive, nor "-a" as an option), and
+	// the "./" taken off the names in the zip.
+	cmd := "cd " + shellQuote(path.Dir(full)) + " && bsdtar -cf - --format zip -s ',^\\./,,' " + shellQuote("./"+path.Base(full))
 	if full == dataRoot {
-		cmd = "cd " + shellQuote(dataRoot) + " && bsdtar -cf - --format zip ."
+		cmd = "cd " + shellQuote(dataRoot) + " && bsdtar -cf - --format zip -s ',^\\./,,' ."
 	}
-	// Once it has begun there is no other answer to give: one cut short is
-	// not a whole zip, which the browser says.
-	if err := s.runIn(r.Context(), conn, cmd, w); err != nil {
-		s.Log.Warn("folder download cut short", "server", server, "path", relPath(full), "error", err)
+	sent := &countWriter{}
+	if err := s.runIn(r.Context(), conn, cmd, io.MultiWriter(w, sent)); err != nil {
+		s.Log.Warn("folder download failed", "server", server, "path", relPath(full), "error", err)
+		// Nothing sent yet: said so. Once it has begun, the download is cut
+		// off, so that the browser says it failed rather than keep a zip
+		// without some of the files.
+		if sent.n == 0 {
+			w.Header().Del("Content-Disposition")
+			w.Header().Del("Content-Type")
+			return errBadRequest("The folder could not be zipped: %s", err)
+		}
+		panic(http.ErrAbortHandler)
 	}
 	return nil
 }

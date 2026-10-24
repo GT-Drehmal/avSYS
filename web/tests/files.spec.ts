@@ -476,3 +476,38 @@ test("a file is moved to a folder named, without dragging", async ({ page }) => 
   await expect(dialog).toHaveCount(0);
   expect(moves).toEqual(["/eula.txt -> /world/eula.txt"]);
 });
+
+test("dragged past another folder's file and let go below the files, it goes to the top folder", async ({ page }) => {
+  await files(page);
+  const moves: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/rename?*", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    moves.push(`${q.get("path")} -> ${q.get("to")}`);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files?file=%2Fplugins%2FLuckPerms%2Fconfig.yml");
+  await expect(item(page, "config.yml")).toBeVisible();
+  const pane = (await tree(page).locator("xpath=..").boundingBox())!;
+  await item(page, "config.yml").hover();
+  await page.mouse.down();
+  // Over a file in plugins: into plugins, as it stands.
+  await item(page, "EssentialsX.jar").hover();
+  await expect(item(page, "plugins")).toHaveClass(/ring-accent/);
+  // Then below the files.
+  await page.mouse.move(pane.x + 60, pane.y + pane.height - 10, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(() => moves).toEqual(["/plugins/LuckPerms/config.yml -> /config.yml"]);
+});
+
+test("moved to a folder within a closed one, where it went is opened", async ({ page }) => {
+  await files(page);
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/rename?*", (route) => route.fulfill({ status: 204 }));
+  await page.goto("/o/friends/s/survival/files");
+  await expect(item(page, "plugins")).toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "Actions for eula.txt" }).click();
+  await page.getByRole("menuitem", { name: "Move to…" }).click();
+  await page.getByRole("dialog").getByLabel("To the folder").fill("/plugins/LuckPerms");
+  await page.getByRole("dialog").getByRole("button", { name: "Move" }).click();
+  await expect(item(page, "LuckPerms")).toHaveAttribute("aria-expanded", "true");
+  await expect(item(page, "config.yml")).toBeVisible();
+});
