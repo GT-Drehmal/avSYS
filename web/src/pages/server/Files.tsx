@@ -28,7 +28,27 @@ const within = (path: string, dir: string) => path === dir || path.startsWith(`$
 const maxEditable = 2 * 1024 * 1024;
 const binary = /\.(jar|zip|gz|tgz|tar|7z|rar|png|jpe?g|gif|webp|ico|dat|dat_old|mca|mcr|nbt|db|sqlite|lock|ogg|mp3|wav|class|so|bin)$/i;
 
-function FileEditor({ base, path, managed, onClose, onDirty }: { base: string; path: string; managed: string[]; onClose: () => void; onDirty: (dirty: boolean) => void }) {
+/** What an editor has: the file as it opened it, and what was typed since. */
+type EditorState = { basis: EditedFile | null; draft: string | null };
+
+function FileEditor({
+  base,
+  path,
+  managed,
+  carry,
+  onClose,
+  onDirty,
+  onState,
+}: {
+  base: string;
+  path: string;
+  managed: string[];
+  /** What it had at another path, before the file was renamed or moved. */
+  carry?: EditorState;
+  onClose: () => void;
+  onDirty: (dirty: boolean) => void;
+  onState: (state: EditorState) => void;
+}) {
   const name = path.slice(path.lastIndexOf("/") + 1);
   const url = `${base}/content?${qs({ path })}`;
   const { org, server } = useParams();
@@ -40,18 +60,23 @@ function FileEditor({ base, path, managed, onClose, onDirty }: { base: string; p
   const file = useQuery({ queryKey: ["file", base, path], queryFn: () => readFile(url), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
   // The file as the editor has it: as opened, reloaded or last saved. A
   // save is written only over a file that is still this.
-  const [basis, setBasis] = useState<EditedFile | null>(null);
+  const [basis, setBasis] = useState<EditedFile | null>(carry?.basis ?? null);
   const opened = basis ?? file.data;
   useEffect(() => {
     if (file.data && !basis) setBasis(file.data);
   }, [file.data, basis]);
-  const [draft, setDraft] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string | null>(carry?.draft ?? null);
   // Reloaded, the editor starts again from the file as it is now.
   const [loads, setLoads] = useState(0);
   // Why a save was refused: the file changed, or was removed, since.
   const [refused, setRefused] = useState<ApiError | null>(null);
   const dirty = draft !== null && draft !== opened?.text;
-  useEffect(() => onDirty(dirty), [dirty, onDirty]);
+  useEffect(() => {
+    onDirty(dirty);
+  }, [dirty, onDirty]);
+  useEffect(() => {
+    onState({ basis, draft });
+  }, [basis, draft, onState]);
   const save = useAction(async (anyway: boolean) => {
     if (draft === null || !opened) return;
     if (new Blob([draft]).size > maxEditable) throw new ApiError(413, "too_large", "Files over 2 MB can't be saved here. Upload the file instead.");
@@ -138,7 +163,7 @@ function FileEditor({ base, path, managed, onClose, onDirty }: { base: string; p
       ) : !opened ? (
         <p className="p-4 text-[13px] text-danger">{file.error?.message}</p>
       ) : (
-        <Editor key={loads} name={name} initial={opened.text} onChange={setDraft} onSave={() => save.mutate(false)} />
+        <Editor key={loads} name={name} initial={loads === 0 && draft !== null ? draft : opened.text} onChange={setDraft} onSave={() => save.mutate(false)} />
       )}
     </div>
   );
@@ -279,14 +304,20 @@ export default function Files() {
   const [dirty, setDirty] = useState(false);
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
   const guard = (go: () => void) => (dirty ? setLeaving(() => go) : go());
-  // The editor stays as it is while the file it has is renamed, or a folder
-  // it is in: what was typed is not lost. Any other file is opened anew.
-  const renamedTo = useRef<string | null>(null);
-  const editing = useRef({ path: open, key: 0 });
-  if (open !== editing.current.path) {
-    editing.current = { path: open, key: open && renamedTo.current === open ? editing.current.key : editing.current.key + 1 };
-    renamedTo.current = null;
-  }
+  // What the editor has, so that when the file is renamed, or a folder it is
+  // in, the editor at its new path starts with it: what was typed is not lost.
+  const editorState = useRef<EditorState>({ basis: null, draft: null });
+  const onState = useCallback((state: EditorState) => {
+    editorState.current = state;
+  }, []);
+  const [carried, setCarried] = useState<(EditorState & { path: string }) | null>(null);
+  // Only for the file it was carried to: another opened after it starts anew.
+  // Looked at as the file open changes, not as it is carried, which is
+  // before the file open is the one it was carried to.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the file open changes
+  useEffect(() => {
+    if (carried && carried.path !== open) setCarried(null);
+  }, [open]);
   const openFile = (path: string | null) => {
     setDirty(false);
     setSearch(path ? { file: path } : {}, { replace: !!open && !!path });
@@ -361,8 +392,10 @@ export default function Files() {
     else if (e.key === "Home") go(0);
     else if (e.key === "End") go(focusable.length - 1);
     else if (e.key === "ArrowRight" && row?.kind === "entry" && row.entry.dir) {
+      // Into it once what is in it is known, not past it while it is read.
+      const next = rows[rows.indexOf(row) + 1];
       if (!expanded.has(row.path)) toggle(row.path, true);
-      else go(at + 1);
+      else if (!(next?.kind === "note" && next.dir === row.path)) go(at + 1);
     } else if (e.key === "ArrowLeft" && row?.kind === "entry") {
       if (row.entry.dir && expanded.has(row.path)) toggle(row.path, false);
       else if (parentOf(row.path) !== "/") focusRow(parentOf(row.path));
@@ -588,7 +621,16 @@ export default function Files() {
 
       <div className={cx("flex min-w-0 flex-1 flex-col", !open && !openEntry && "max-md:hidden")}>
         {open ? (
-          <FileEditor key={editing.current.key} base={base} path={open} managed={managed} onDirty={onDirty} onClose={() => guard(() => openFile(null))} />
+          <FileEditor
+            key={open}
+            base={base}
+            path={open}
+            managed={managed}
+            carry={carried?.path === open ? carried : undefined}
+            onDirty={onDirty}
+            onState={onState}
+            onClose={() => guard(() => openFile(null))}
+          />
         ) : openEntry ? (
           <div className="relative flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
             {/* On a phone, where it takes the screen. */}
@@ -666,7 +708,7 @@ export default function Files() {
             setSelected((s) => ({ ...s, path: moved(s.path) }));
             setFocused((f) => moved(f));
             if (open && within(open, from)) {
-              renamedTo.current = moved(open);
+              setCarried({ path: moved(open), ...editorState.current });
               setSearch({ file: moved(open) }, { replace: true });
             }
           }}
