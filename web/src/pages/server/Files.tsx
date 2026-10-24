@@ -877,7 +877,17 @@ export default function Files() {
                     onDragStart={(e) => {
                       e.dataTransfer.setData("application/x-avsys-path", path);
                       e.dataTransfer.effectAllowed = "move";
-                      grab(itemsAt(path, entry.dir));
+                      const items = itemsAt(path, entry.dir);
+                      grab(items);
+                      // Several: said how many, under the pointer.
+                      if (items.length > 1) {
+                        const badge = document.createElement("div");
+                        badge.textContent = `${items.length} items`;
+                        badge.className = "fixed -top-20 left-0 rounded-md border border-line bg-surface px-2 py-1 font-mono text-xs text-fg";
+                        document.body.append(badge);
+                        e.dataTransfer.setDragImage(badge, -8, -8);
+                        setTimeout(() => badge.remove());
+                      }
                     }}
                     onDragEnd={() => {
                       grab(null);
