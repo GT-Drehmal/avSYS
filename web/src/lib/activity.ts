@@ -1,33 +1,33 @@
 import type { Activity } from "./api";
 
-/** What was done, as said after who did it: "restarted it". */
+/** What was done, as said after who did it: "restarted the server". */
 export function didWhat(a: Activity): string {
   const d = a.detail ?? "";
   switch (a.action) {
     case "server.start":
-      return "started it";
+      return "started the server";
     case "server.stop":
-      return "stopped it";
+      return "stopped the server";
     case "server.restart":
-      return "restarted it";
+      return "restarted the server";
     case "server.update":
-      return "changed its settings";
+      return "changed the settings";
     case "server.create":
-      if (d.startsWith("copy of ")) return `made it as a copy of ${d.slice(8)}`;
-      if (d.startsWith("from snapshot")) return "made it from a snapshot";
-      return "made it";
+      if (d.startsWith("copy of ")) return `created the server as a copy of ${d.slice(8)}`;
+      if (d.startsWith("from snapshot")) return "created the server from a snapshot";
+      return "created the server";
     case "server.copy":
-      return `copied it to ${d.replace(/^to /, "")}`;
+      return `copied the server to ${d.replace(/^to /, "")}`;
     case "server.move":
-      return `moved it to ${d.replace(/^to /, "")}`;
+      return `moved the server to ${d.replace(/^to /, "")}`;
     case "server.import":
-      return "brought it in";
+      return "imported the server";
     case "server.replace-world":
-      return "replaced its world";
+      return "replaced the world";
     case "server.icon":
-      return "changed its picture";
+      return "changed the picture";
     case "server.resource-pack":
-      return d === "removed" ? "removed its resource pack" : "changed its resource pack";
+      return d === "removed" ? "removed the resource pack" : "changed the resource pack";
     case "content.upload":
       return `uploaded ${d}`;
     case "snapshot.create":
