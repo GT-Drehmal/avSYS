@@ -582,6 +582,7 @@ test("closing the page with typing not saved is asked first", async ({ page }) =
   const dialog = await asked;
   expect(dialog.type()).toBe("beforeunload");
   await dialog.accept();
+});
 
 test("a long name is cut short, and its ⋯ is in sight", async ({ page }) => {
   const long = `${"a-very-long-name-".repeat(6)}.json`;
