@@ -137,3 +137,50 @@ func TestAPIToken(t *testing.T) {
 		t.Errorf("wrong token: err = %v, want ErrNotFound", err)
 	}
 }
+
+// A server's activity is of it, of the kinds asked, since it was made, and
+// says who did each while they are still known.
+func TestServerActivity(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	alex := user(t, s, "alex")
+	add := func(at int64, userID, org, action, target string) {
+		t.Helper()
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO audit (at, user_id, org_id, action, target, detail) VALUES (?, ?, ?, ?, ?, '')`, at, userID, org, action, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(100, alex.ID, "o1", "server.start", "world")   // before it was made
+	add(200, alex.ID, "o1", "server.stop", "world")    //
+	add(201, alex.ID, "o2", "server.stop", "world")    // another organization's
+	add(202, alex.ID, "o1", "org.icon", "world")       // not of a kind asked
+	add(203, "gone", "o1", "console.command", "world") // by someone since removed
+	add(204, alex.ID, "o1", "server.start", "other")   // another server
+	got, err := s.ServerActivity(ctx, "o1", "world", time.Unix(150, 0), []string{"server.", "console."}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Action != "console.command" || got[1].Action != "server.stop" {
+		t.Fatalf("activity: %+v", got)
+	}
+	if got[0].User != nil {
+		t.Errorf("one removed is still said: %+v", got[0].User)
+	}
+	if got[1].User == nil || got[1].User.Username != "alex" || !got[1].At.Equal(time.Unix(200, 0)) {
+		t.Errorf("who stopped it, and when: %+v", got[1])
+	}
+	if got, _ := s.ServerActivity(ctx, "o1", "world", time.Unix(0, 0), []string{"server."}, 1); len(got) != 1 || got[0].Action != "server.stop" {
+		t.Errorf("the newest one: %+v", got)
+	}
+	// Deleted and made again in the same second: only the new one's.
+	add(300, alex.ID, "o1", "server.restart", "world")
+	add(300, alex.ID, "o1", "server.delete", "world")
+	add(300, alex.ID, "o1", "server.create", "world")
+	got, err = s.ServerActivity(ctx, "o1", "world", time.Unix(300, 0), []string{"server."}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Action != "server.create" {
+		t.Errorf("made again: %+v", got)
+	}
+}

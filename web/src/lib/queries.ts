@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type BackupPolicy, type Cluster, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
+import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
 import { presenceKey, tab, tellAgain, type Present } from "./presence";
 import { toast } from "./toast";
 
@@ -29,6 +29,7 @@ export const keys = {
   running: (org: string, server: string) => ["running", org, server] as const,
   backupPolicy: (org: string) => ["backup-policy", org] as const,
   offsite: (org: string) => ["offsite", org] as const,
+  activity: (org: string, server: string) => ["activity", org, server] as const,
 };
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
@@ -104,6 +105,7 @@ export function useLiveServers() {
       qc.invalidateQueries({ queryKey: ["offsite"] });
       // A move may have finished unheard.
       qc.invalidateQueries({ queryKey: ["placement"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
       // Who came and went.
       qc.invalidateQueries({ queryKey: ["presence"] });
       qc.invalidateQueries({ queryKey: ["nodes"] });
@@ -117,6 +119,10 @@ export function useLiveServers() {
       // A panel that restarted, or forgot this tab, is told where it is.
       tellAgain();
     };
+    source.addEventListener("activity", (e) => {
+      const v: { org: string; server: string } = JSON.parse(e.data);
+      qc.invalidateQueries({ queryKey: keys.activity(v.org, v.server) });
+    });
     source.addEventListener("presence", (e) => {
       const v: { org: string; people: Present[] } = JSON.parse(e.data);
       qc.setQueryData(presenceKey(v.org), v.people);
@@ -198,6 +204,10 @@ function applyOperation(qc: QueryClient, op: Operation) {
  */
 export const useRunning = (org: string, server: string) =>
   useQuery({ queryKey: keys.running(org, server), queryFn: () => api.get<Operation | null>(`${serverPath(org, server)}/operation`), refetchOnMount: "always" }).data ?? null;
+
+/** What was last done to a server, newest first, kept current by the event stream. */
+export const useActivity = (org: string, server: string) =>
+  useQuery({ queryKey: keys.activity(org, server), queryFn: () => api.get<Activity[]>(`${serverPath(org, server)}/activity`) });
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });

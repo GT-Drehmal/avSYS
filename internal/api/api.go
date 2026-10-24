@@ -297,6 +297,11 @@ func (s *Server) audit(ctx context.Context, u *store.User, org *store.Org, actio
 	}
 	if err := s.Store.Audit(context.WithoutCancel(ctx), e); err != nil {
 		s.Log.Error("writing audit entry", "action", action, "error", err)
+		return
+	}
+	// Pages that show what was done to the server look again.
+	if org != nil && target != "" && isActivity(action) {
+		s.Events.Publish(Event{Type: "activity", Namespace: s.Namespace(org.Slug), Data: map[string]string{"org": org.Slug, "server": target}})
 	}
 }
 
@@ -387,6 +392,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/servers/{server}/{action}", s.authed(s.serverAction))
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
 	api("PUT /orgs/{org}/servers/{server}/import", s.authed(s.importFiles))
+	api("GET /orgs/{org}/servers/{server}/activity", s.authed(s.serverActivity))
 	api("GET /orgs/{org}/servers/{server}/console", s.authed(s.streamConsole))
 	api("POST /orgs/{org}/servers/{server}/console", s.authed(s.runCommand))
 	api("GET /orgs/{org}/servers/{server}/logs", s.authed(s.listLogs))
