@@ -5,7 +5,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
 import { Button, Confirm, cx, Empty, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Spinner } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
-import { api, qs, serverPath, type FileEntry } from "../../lib/api";
+import { api, ApiError, qs, readFile, saveFile, serverPath, type EditedFile, type FileEntry } from "../../lib/api";
 import { ago, bytes } from "../../lib/format";
 import { useAction, useMe } from "../../lib/queries";
 import { others, usePresence } from "../../lib/presence";
@@ -27,15 +27,36 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
   const me = useMe().data?.user.id;
   // Each once, if in two tabs.
   const alsoOpen = [...new Map(others(usePresence(org ?? ""), me, server ?? "", path).map((p) => [p.user.id, p])).values()];
-  const file = useQuery({ queryKey: ["file", base, path], queryFn: () => api.get<string>(url), staleTime: 0, gcTime: 0 });
+  const qc = useQueryClient();
+  const key = ["file", base, path];
+  const file = useQuery({ queryKey: key, queryFn: () => readFile(url), staleTime: 0, gcTime: 0 });
   const [draft, setDraft] = useState<string | null>(null);
-  const dirty = draft !== null && draft !== file.data;
-  const save = useAction(async () => {
-    if (draft === null) return;
-    await api.putRaw(url, draft);
-    await file.refetch();
+  // Opened again, the editor starts from the file as it is now.
+  const [opened, setOpened] = useState(0);
+  // Why a save was refused: the file changed, or was removed, since.
+  const [refused, setRefused] = useState<ApiError | null>(null);
+  const dirty = draft !== null && draft !== file.data?.text;
+  const save = useAction(async (anyway: boolean) => {
+    if (draft === null || !file.data) return;
+    try {
+      const tag = await saveFile(url, draft, anyway ? null : file.data.tag);
+      qc.setQueryData<EditedFile>(key, { text: draft, tag });
+    } catch (e) {
+      if (e instanceof ApiError && (e.code === "changed" || e.code === "removed")) {
+        setRefused(e);
+        return;
+      }
+      throw e;
+    }
+    setRefused(null);
     toast.info(`Saved ${name}`);
   });
+  const reload = async () => {
+    await file.refetch();
+    setDraft(null);
+    setRefused(null);
+    setOpened((n) => n + 1);
+  };
 
   return (
     <div className="flex h-[calc(100dvh-330px)] min-h-80 flex-col overflow-hidden rounded-lg border border-line bg-bg">
@@ -53,12 +74,27 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
           )}
         </span>
         <div className="flex items-center gap-1.5">
-          <Button size="sm" variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(undefined)}>
+          <Button size="sm" variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(false)}>
             Save
           </Button>
           <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Close" onClick={onClose} />
         </div>
       </div>
+      {refused && (
+        <div role="alert" className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line bg-warn-wash px-4 py-2 text-xs text-warn">
+          <span>{refused.message}</span>
+          <div className="flex items-center gap-1.5">
+            {refused.code === "changed" && (
+              <Button size="sm" onClick={reload}>
+                Reload
+              </Button>
+            )}
+            <Button size="sm" loading={save.isPending} onClick={() => save.mutate(true)}>
+              Save anyway
+            </Button>
+          </div>
+        </div>
+      )}
       {managed.length > 0 && (
         <p className="shrink-0 border-b border-line bg-warn-wash px-4 py-2 text-xs leading-relaxed text-warn">
           <span className="font-mono">{managed.join(", ")}</span> {managed.length === 1 ? "is" : "are"} set under Settings and rewritten from there every time the server starts. Change {managed.length === 1 ? "it" : "them"} there, or clear {managed.length === 1 ? "it" : "them"} there to manage {managed.length === 1 ? "it" : "them"} in this file.
@@ -71,7 +107,7 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
       ) : file.isError ? (
         <p className="p-4 text-[13px] text-danger">{file.error.message}</p>
       ) : (
-        <Editor name={name} initial={file.data} onChange={setDraft} onSave={() => save.mutate(undefined)} />
+        <Editor key={opened} name={name} initial={file.data.text} onChange={setDraft} onSave={() => save.mutate(false)} />
       )}
     </div>
   );

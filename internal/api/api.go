@@ -73,6 +73,9 @@ type Server struct {
 	packsPruned time.Time
 	// contentLocks holds a lock per server, by namespace/name: see lockContent.
 	contentLocks sync.Map
+	// saveLocks holds a lock per server, by namespace/name, for a file saved
+	// from the editor: looked at and written as one.
+	saveLocks sync.Map
 	// hostnames holds the panel to one change at a time of who may have
 	// which hostname: a domain claimed, or a server given a name. A claim
 	// and a server taking a name under it then cannot pass each other.
