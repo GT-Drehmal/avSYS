@@ -363,12 +363,19 @@ export default function Files() {
     const entries = list.data.entries;
     if (entries.length === 0) rows.push({ kind: "note", dir, depth, text: dir === "/" ? "No files yet. Drop files here to upload them." : "Empty" });
     const limit = shown[dir] ?? pageSize;
-    for (const entry of entries.slice(0, limit)) {
+    // Past the first ones, what is chosen or open is shown too, and the
+    // folders it is in, as when it was found by a search.
+    const wanted = (e: FileEntry) => {
+      const path = join(dir, e.name);
+      return within(selected.path, path) || (!!open && within(open, path));
+    };
+    const showing = entries.filter((e, i) => i < limit || wanted(e));
+    for (const entry of showing) {
       const path = join(dir, entry.name);
       rows.push({ kind: "entry", path, entry, depth });
       if (entry.dir && expanded.has(path)) walk(path, depth + 1);
     }
-    if (entries.length > limit) rows.push({ kind: "more", dir, depth, left: entries.length - limit });
+    if (entries.length > showing.length) rows.push({ kind: "more", dir, depth, left: entries.length - showing.length });
   };
   walk("/", 0);
   const refresh = (dir: string) => qc.invalidateQueries({ queryKey: ["files", base, dir] });
@@ -432,7 +439,8 @@ export default function Files() {
     if (to === from) return;
     await api.post(`${base}/rename?${qs({ path: from, to })}`);
     await Promise.all([refresh(parentOf(from)), refresh(into)]);
-    if (into !== "/") toggle(into, true);
+    // Where it went is opened, and the folders it is in.
+    if (into !== "/") setExpanded((was) => new Set([...was, ...foldersAbove(into), into]));
     afterMove(from, to, dir);
   };
   const move = useAction(({ from, into, dir }: { from: string; into: string; dir: boolean }) => moveTo(from, into, dir));
@@ -590,9 +598,13 @@ export default function Files() {
         <div
           className={cx("min-h-0 flex-1 overflow-auto py-1", dropOn === "/" && "bg-accent-wash")}
           onDragOver={(e) => {
-            if (!canDropInto("/")) return;
+            // Not over a row, which says where itself: below them, the top folder.
+            if (!canDropInto("/")) {
+              if (dropRef.current !== null) aim(null);
+              return;
+            }
             e.preventDefault();
-            if (dropRef.current === null) aim("/");
+            if (dropRef.current !== "/") aim("/");
           }}
           onDragLeave={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node)) aim(null);
@@ -618,7 +630,7 @@ export default function Files() {
                 setExpanded((was) => new Set([...was, ...foldersAbove(f.path), ...(f.dir ? [f.path] : [])]));
                 setSelected({ path: f.path, dir: f.dir });
                 setFocused(f.path);
-                if (!f.dir && f.path !== open) guard(() => openFile(isEditable(f) ? f.path : null));
+                if (!f.dir && f.path !== open) guard(() => openFile(isEditable({ ...f, name: nameOf(f.path) }) ? f.path : null));
               }}
             />
           ) : root?.isError ? (
@@ -682,7 +694,10 @@ export default function Files() {
                     onDragOver={(e) => {
                       const into = entry.dir ? path : parentOf(path);
                       e.stopPropagation();
-                      if (!canDropInto(into)) return;
+                      if (!canDropInto(into)) {
+                        if (dropRef.current !== null) aim(null);
+                        return;
+                      }
                       e.preventDefault();
                       if (dropRef.current !== into) aim(into);
                     }}
