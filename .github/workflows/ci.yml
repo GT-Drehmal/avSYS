@@ -104,7 +104,7 @@ jobs:
   # repository. What needs a real server running is the job above.
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -127,15 +127,22 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      # A slow package mirror once took the whole of the job's time here, so
+      # each try has a few minutes, and what one fetched is kept for the next.
       - name: Browsers
         working-directory: web
         run: |
           if [ "${{ steps.browsers.outputs.cache-hit }}" = true ]; then
             # Only what they need from the system, which is not kept.
-            bunx playwright install-deps chromium webkit
+            install=(install-deps chromium webkit)
           else
-            bunx playwright install --with-deps chromium webkit
+            install=(install --with-deps chromium webkit)
           fi
+          for try in 1 2 3; do
+            timeout 240 bunx playwright "${install[@]}" && exit 0
+            echo "::warning::installing the browsers did not finish (try $try of 3)"
+          done
+          exit 1
       # Built first, so that the tests' time limit for the panel coming up
       # is not spent compiling it.
       - name: Test panel
