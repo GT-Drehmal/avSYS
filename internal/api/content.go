@@ -852,9 +852,10 @@ func (s *Server) lockContent(key client.ObjectKey) (unlock func()) {
 // the panel would remove: stored uploads and installed datapacks.
 func installedFiles(spec *avsysv1.MinecraftServerSpec) map[string]bool {
 	out := map[string]bool{}
-	// Its uploaded resource pack, which may be one taken off and put back.
-	if rp := spec.ResourcePack; rp != nil && rp.Uploaded != nil {
-		out[packFile(rp.SHA1)] = true
+	// Its uploaded resource pack, which may be one taken off and put back,
+	// and those it is joined from.
+	for _, sha := range keptPacks(spec.ResourcePack) {
+		out[packFile(sha)] = true
 	}
 	level := levelOf(spec)
 	for _, m := range spec.Mods {

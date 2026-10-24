@@ -77,8 +77,12 @@ for (const place of places) {
 test("a server's Content tab has a section for plugins, datapacks and the resource pack, each added from Modrinth, a URL or this computer", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/s/survival/content");
-  for (const kind of ["Plugins", "Datapacks", "Resource pack"]) {
-    const section = page.getByRole("region", { name: kind, exact: true });
+  for (const [region, kind] of [
+    ["Plugins", "Plugins"],
+    ["Datapacks", "Datapacks"],
+    ["Resource packs", "Resource pack"],
+  ]) {
+    const section = page.getByRole("region", { name: region, exact: true });
     await section.getByRole("button", { name: `Add ${kind.toLowerCase()}` }).click();
     // The picker is for that kind alone.
     const dialog = page.getByRole("dialog");

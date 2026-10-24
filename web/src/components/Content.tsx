@@ -1,6 +1,6 @@
 import { ExternalLink, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { api, qs, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
+import { api, qs, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec, type StackedPack } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { packFormatsOf, useGameFormat, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
@@ -98,7 +98,9 @@ export interface PackPicker {
   /** Makes it this one, from Modrinth or a URL; settled once it is saved. */
   onPick: (pack: ResourcePack) => Promise<unknown>;
   /** Where one is uploaded, for a server that exists, and what to do with the server after. */
-  upload?: { path: string; onDone: (next: Server) => void };
+  upload?: { path: string; method?: "PUT" | "POST"; onDone: (next: Server) => void };
+  /** The one chosen goes on top of those there are, rather than replacing them. */
+  onTop?: boolean;
   /** For a server not made yet: keeps the file chosen, to upload once it is. */
   keep?: (file: File) => void;
 }
@@ -273,7 +275,11 @@ export function fileOf(url: string) {
   }
 }
 
-export const packTitle = (p: ResourcePack) => p.project?.title || p.project?.id || (p.uploaded?.name && withoutExtension(p.uploaded.name)) || fileOf(p.url);
+export const packTitle = (p: ResourcePack) =>
+  p.stack?.length ? p.stack.map(stackedTitle).join(", ") : p.project?.title || p.project?.id || (p.uploaded?.name && withoutExtension(p.uploaded.name)) || fileOf(p.url);
+
+/** What one of the packs a server's pack is joined from is called. */
+export const stackedTitle = (p: StackedPack) => p.project?.title || p.project?.id || (p.name && withoutExtension(p.name)) || p.sha1.slice(0, 8);
 
 /** A file's name as shown: "Better Leaves", not "Better Leaves.zip". */
 const withoutExtension = (name: string) => name.replace(/\.(jar|zip)$/i, "");
@@ -317,8 +323,8 @@ function PackPane({
     }
     if (!pack.upload) return;
     try {
-      pack.upload.onDone(await send<Server>(file.name, `${pack.upload.path}?name=${encodeURIComponent(file.name)}`, file));
-      toast.info(`${file.name} is the resource pack now`);
+      pack.upload.onDone(await send<Server>(file.name, `${pack.upload.path}?name=${encodeURIComponent(file.name)}`, file, pack.upload.method));
+      toast.info(pack.onTop ? `${file.name} was added` : `${file.name} is the resource pack now`);
       onClose();
     } catch (err) {
       if (!cancelled(err)) toast.error(err instanceof Error ? err.message : "Upload failed.");
@@ -326,16 +332,16 @@ function PackPane({
   };
   return (
     <div className="flex flex-col gap-3">
-      {current && <Notice tone="info">This replaces {packTitle(current)}.</Notice>}
+      {current && !pack.onTop && <Notice tone="info">This replaces {packTitle(current)}.</Notice>}
       {tab === "modrinth" ? (
         <div className="h-[min(56vh,520px)]">
           <ModrinthSearch
             type="resourcepack"
             {...filters}
             fits={fits}
-            picked={new Set(current?.project ? [current.project.id] : [])}
+            picked={new Set([current?.project?.id, ...(current?.stack ?? []).map((p) => p.project?.id)].filter((id): id is string => !!id))}
             busy={pending || waiting}
-            pickLabels={["Use this pack", "In use"]}
+            pickLabels={pack.onTop ? ["Add", "Added"] : ["Use this pack", "In use"]}
             placeholder="Search resource packs on Modrinth"
             onPick={(hit) => pick(() => newestPack(projectOf(hit), filters.gameVersion))}
           />
@@ -399,7 +405,7 @@ function PackPane({
           </Field>
           <div className="flex justify-end">
             <Button type="submit" variant="primary" loading={busy} disabled={!!sending}>
-              Use this pack
+              {pack.onTop ? "Add" : "Use this pack"}
             </Button>
           </div>
         </form>

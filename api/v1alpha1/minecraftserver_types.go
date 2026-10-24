@@ -187,6 +187,29 @@ type ResourcePackSpec struct {
 	// versions it is listed for. Only for saying when it does not fit the
 	// server's game version.
 	Formats *PackFormats `json:"formats,omitempty"`
+	// Stack is set for a pack the panel joined from several, the top one
+	// first, as in the game's own list of packs. Uploaded is set too: the
+	// pack joined is kept and served as an uploaded one is, and so is each
+	// of these, in the server's files, so that it can be joined again.
+	// +kubebuilder:validation:MaxItems=32
+	Stack []StackedPack `json:"stack,omitempty"`
+}
+
+// StackedPack is one of the packs a server's resource pack is joined from.
+type StackedPack struct {
+	// SHA1 is of its file, which is kept in the server's files by it.
+	SHA1 string `json:"sha1"`
+	Size int64  `json:"size"`
+	// Name is the file's name as it was uploaded, or its address.
+	Name string `json:"name,omitempty"`
+	// Project is set for a pack picked from Modrinth.
+	Project *PackProject `json:"project,omitempty"`
+	Formats *PackFormats `json:"formats,omitempty"`
+	// Hidden is how many of its files a pack higher up has too, and are
+	// used from there, and which pack that is, by its SHA1: the one that
+	// hides the most.
+	Hidden   int32  `json:"hidden,omitempty"`
+	HiddenBy string `json:"hiddenBy,omitempty"`
 }
 
 // PackProject is the project a resource pack was picked from, and which
