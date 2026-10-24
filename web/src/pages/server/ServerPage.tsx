@@ -156,9 +156,15 @@ export function ServerPage() {
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 items-center gap-4">
           <Picture name={displayName(server)} url={serverIcon(server)} size={36} retryKey={`${status.phase}|${status.message ?? ""}`} />
-          <h1 className="truncate text-xl font-semibold tracking-tight">{displayName(server)}</h1>
-          <Status phase={status.phase} />
-          <Faces people={here} />
+          {/* What was last done to it, under its name. */}
+          <div className="flex min-w-0 flex-col">
+            <div className="flex min-w-0 items-center gap-4">
+              <h1 className="truncate text-xl font-semibold tracking-tight">{displayName(server)}</h1>
+              <Status phase={status.phase} />
+              <Faces people={here} />
+            </div>
+            <ActivityLine org={org} server={name} />
+          </div>
         </div>
         {canOperate && (
           <div className="flex flex-wrap items-center gap-2">
@@ -187,9 +193,6 @@ export function ServerPage() {
           </div>
         )}
       </header>
-      <div className="mt-1.5 sm:pl-[52px]">
-        <ActivityLine org={org} server={name} />
-      </div>
 
       <dl className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 rounded-lg border border-line bg-surface px-4 py-3.5 sm:grid-cols-4">
         <Fact label="Address">{status.address ? <CopyText value={status.address} /> : <span className="text-muted">Not set</span>}</Fact>
