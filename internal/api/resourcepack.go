@@ -608,14 +608,14 @@ func (s *Server) copyPackFrom(ctx context.Context, mc *avsysv1.MinecraftServer, 
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
-	h := sha1.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(src, packLimit("")+1)); err != nil {
+	_, got, err := readPackFile(tmp, src, packLimit(""))
+	if err != nil {
 		return err
 	}
 	// The server's files are anyone's with a shell there: what is served at
 	// a hash is only ever what has it.
-	if got := hex.EncodeToString(h.Sum(nil)); got != sha {
-		return fmt.Errorf("its pack has changed since it was uploaded (now %s)", got[:8])
+	if got != sha {
+		return errors.New("its pack has changed since it was uploaded")
 	}
 	if err := tmp.Close(); err != nil {
 		return err
