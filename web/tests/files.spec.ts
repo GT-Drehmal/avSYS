@@ -393,3 +393,44 @@ test("on a phone a file that cannot be edited shows, with a way back", async ({ 
   await page.getByRole("button", { name: "Back to the files" }).click();
   await expect(item(page, "server.jar")).toBeVisible();
 });
+
+test("an archive is opened where it is, into the folder it makes", async ({ page }) => {
+  const root = ["plugins/", "world.zip", "server.properties"];
+  const { state } = await files(page, { "/": root, "/world": ["level.dat"] });
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/extract?*", async (route) => {
+    asked.push(new URL(route.request().url()).searchParams.get("path") ?? "");
+    root.splice(1, 0, "world/");
+    return route.fulfill({ json: { path: "/world" } });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "world.zip").click();
+  await page.getByRole("button", { name: "Actions for world.zip" }).click();
+  await page.getByRole("menuitem", { name: "Extract here" }).click();
+  await expect(page.getByText("Extracted world.zip to world")).toBeVisible();
+  expect(asked).toEqual(["/world.zip"]);
+  expect(state.listed.filter((d) => d === "/").length).toBeGreaterThan(1);
+  // The folder it made is chosen, and open.
+  await expect(page.getByTitle("New files and uploads go here")).toHaveText("data/world");
+  await expect(item(page, "level.dat")).toBeVisible();
+  // Only archives offer it.
+  await page.getByRole("button", { name: "Actions for server.properties" }).click();
+  await expect(page.getByRole("menuitem", { name: "Download" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Extract here" })).toHaveCount(0);
+});
+
+test("a folder is downloaded as a zip", async ({ page }) => {
+  await files(page);
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/archive?*", (route) =>
+    route.fulfill({ body: "PK", headers: { "Content-Type": "application/zip", "Content-Disposition": "attachment; filename=plugins.zip" } }),
+  );
+  await page.goto("/o/friends/s/survival/files");
+  await page.getByRole("button", { name: "Actions for plugins" }).click();
+  // What is asked for: WebKit does not tell of a download answered here.
+  const asked = page.waitForRequest("**/files/archive?*");
+  await page.getByRole("menuitem", { name: "Download as .zip" }).click();
+  expect(new URL((await asked).url()).searchParams.get("path")).toBe("/plugins");
+  // A file is downloaded as it is.
+  await page.getByRole("button", { name: "Actions for eula.txt" }).click();
+  await expect(page.getByRole("menuitem", { name: "Download as .zip" })).toHaveCount(0);
+});

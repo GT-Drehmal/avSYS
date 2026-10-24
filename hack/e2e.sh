@@ -337,6 +337,38 @@ big=$(head -c 2200000 /dev/zero | tr '\0' x | call -o /dev/null -w '%{http_code}
 expect "a save from the editor over 2 MB is refused" "$big" 413
 expect "and the file is as it was" "$(call "$SRV/files/content?path=/e2e-editor.txt")" "saved from the editor"
 
+step "archives"
+# A zip with all in one folder, as a world is, and one with what a Mac adds:
+# opened where it is, into that folder.
+zipped() { python3 -c '
+import io, sys, zipfile
+b = io.BytesIO()
+with zipfile.ZipFile(b, "w") as z:
+    for name in sys.argv[1:]:
+        z.writestr(name, "x" if not name.endswith("/") else "")
+sys.stdout.buffer.write(b.getvalue())' "$@"; }
+zipped e2e-world/ e2e-world/level.dat e2e-world/region/r.0.0.mca __MACOSX/e2e-world/._level.dat | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e-world.zip" >/dev/null
+expect "an archive in one folder is opened into it" "$(call -X POST "$SRV/files/extract?path=/e2e-world.zip")" '"/e2e-world"'
+expect "what was in it is there" "$(call "$SRV/files?path=/e2e-world/region")" '"r.0.0.mca"'
+case "$(call "$SRV/files?path=/")" in *__MACOSX*) fail "what a Mac adds was opened too" ;; esac
+expect "opened again, it is not written over" "$(call -o /dev/null -w '%{http_code}' -X POST "$SRV/files/extract?path=/e2e-world.zip")" 409
+zipped a.yml b.yml | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e-configs.zip" >/dev/null
+expect "loose files are opened into a folder named after it" "$(call -X POST "$SRV/files/extract?path=/e2e-configs.zip")" '"/e2e-configs"'
+expect "into it" "$(call "$SRV/files?path=/e2e-configs")" '"b.yml"'
+# A folder, downloaded as a zip.
+call "$SRV/files/archive?path=/e2e-world" > "$WORK/folder.zip"
+python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "e2e-world/region/r.0.0.mca" in n, n' "$WORK/folder.zip" || fail "a folder downloaded is not a zip of it"
+echo "ok: a folder downloads as a zip of it"
+# One whose name bsdtar would read otherwise: as another archive, "@name".
+call -X POST "$SRV/files/mkdir?path=/@e2e-at" >/dev/null
+echo at | call -X PUT --data-binary @- "$SRV/files/content?path=/@e2e-at/x.txt" >/dev/null
+call "$SRV/files/archive?path=/@e2e-at" > "$WORK/at.zip"
+python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "@e2e-at/x.txt" in n, n' "$WORK/at.zip" || fail "a folder named @… is not zipped as itself"
+echo "ok: a folder named @… is zipped as itself"
+call -X DELETE "$SRV/files?path=/@e2e-at" >/dev/null
+call -X DELETE "$SRV/files?path=/e2e-world" >/dev/null
+call -X DELETE "$SRV/files?path=/e2e-configs" >/dev/null
+
 step "datapacks"
 # restarted asks for a restart and waits it out: down first, then up.
 restarted() {

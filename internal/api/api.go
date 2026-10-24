@@ -420,6 +420,8 @@ func (s *Server) Handler() http.Handler {
 	api("PUT /orgs/{org}/servers/{server}/files/content", s.authed(s.writeFile))
 	api("POST /orgs/{org}/servers/{server}/files/mkdir", s.authed(s.makeDir))
 	api("POST /orgs/{org}/servers/{server}/files/rename", s.authed(s.renameFile))
+	api("POST /orgs/{org}/servers/{server}/files/extract", s.authed(s.extractArchive))
+	api("GET /orgs/{org}/servers/{server}/files/archive", s.authed(s.downloadFolder))
 
 	api("GET /events", s.authed(s.streamEvents))
 	api("GET /orgs/{org}/presence", s.authed(s.getPresence))
