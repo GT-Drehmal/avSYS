@@ -35,3 +35,28 @@ func TestArchiveName(t *testing.T) {
 		}
 	}
 }
+
+func TestZipCommand(t *testing.T) {
+	for _, tc := range []struct {
+		fulls     []string
+		cmd, name string
+	}{
+		{[]string{"/data"}, `cd '/data' && bsdtar -cf - --format zip -s ',^\./,,' .`, "survival"},
+		{[]string{"/data/world"}, `cd '/data' && bsdtar -cf - --format zip -s ',^\./,,' './world'`, "world"},
+		{[]string{"/data/a.yml", "/data/@b"}, `cd '/data' && bsdtar -cf - --format zip -s ',^\./,,' './@b' './a.yml'`, "survival"},
+		// What is in a folder also picked is zipped with it, once.
+		{[]string{"/data/world/region", "/data/world"}, `cd '/data' && bsdtar -cf - --format zip -s ',^\./,,' './world'`, "world"},
+		// By their paths from the folder they are all in.
+		{[]string{"/data/plugins/a/x.yml", "/data/plugins/b"}, `cd '/data/plugins' && bsdtar -cf - --format zip -s ',^\./,,' './a/x.yml' './b'`, "plugins"},
+		{[]string{"/data/it's", "/data/plugins/b"}, `cd '/data' && bsdtar -cf - --format zip -s ',^\./,,' './it'\''s' './plugins/b'`, "survival"},
+		// Not taken for another folder whose name starts the same.
+		{[]string{"/data/ab", "/data/a"}, `cd '/data' && bsdtar -cf - --format zip -s ',^\./,,' './a' './ab'`, "survival"},
+		{[]string{"/data/a/x", "/data/a.yml", "/data/a"}, `cd '/data' && bsdtar -cf - --format zip -s ',^\./,,' './a' './a.yml'`, "survival"},
+		{[]string{"/data", "/data/a"}, `cd '/data' && bsdtar -cf - --format zip -s ',^\./,,' .`, "survival"},
+	} {
+		cmd, name := zipCommand(tc.fulls, "survival")
+		if cmd != tc.cmd || name != tc.name {
+			t.Errorf("%v:\n got %s (%s)\nwant %s (%s)", tc.fulls, cmd, name, tc.cmd, tc.name)
+		}
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -157,15 +158,27 @@ func (s *Server) downloadFolder(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return err
 	}
-	if fi, err := sc.Stat(full); err != nil {
-		return fileError(err)
-	} else if !fi.IsDir() {
-		return errBadRequest("That is not a folder.")
+	// One folder, or several files and folders picked together.
+	asked := r.URL.Query()["path"]
+	if len(asked) > maxZipped {
+		return errBadRequest("Pick at most %d to download at once.", maxZipped)
 	}
-	name := path.Base(full)
-	if full == dataRoot {
-		name = server
+	fulls := []string{full}
+	for _, p := range asked[1:] {
+		f, err := dataPath(p)
+		if err != nil {
+			return err
+		}
+		fulls = append(fulls, f)
 	}
+	for _, f := range fulls {
+		if fi, err := sc.Stat(f); err != nil {
+			return fileError(err)
+		} else if len(fulls) == 1 && !fi.IsDir() {
+			return errBadRequest("That is not a folder.")
+		}
+	}
+	cmd, name := zipCommand(fulls, server)
 	conn, err := s.Gateway.DialWorkspace(r.Context(), a.Namespace, server)
 	if err != nil {
 		return &Error{Status: http.StatusServiceUnavailable, Code: "workspace", Message: "The server's files are not reachable right now."}
@@ -173,13 +186,6 @@ func (s *Server) downloadFolder(w http.ResponseWriter, r *http.Request, u *store
 	defer conn.Close()
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name+".zip"))
-	// "./" before its name, so that bsdtar takes it as a folder whatever it
-	// is called (not "@a" as another archive, nor "-a" as an option), and
-	// the "./" taken off the names in the zip.
-	cmd := "cd " + shellQuote(path.Dir(full)) + " && bsdtar -cf - --format zip -s ',^\\./,,' " + shellQuote("./"+path.Base(full))
-	if full == dataRoot {
-		cmd = "cd " + shellQuote(dataRoot) + " && bsdtar -cf - --format zip -s ',^\\./,,' ."
-	}
 	sent := &countWriter{}
 	if err := s.runIn(r.Context(), conn, cmd, io.MultiWriter(w, sent)); err != nil {
 		s.Log.Warn("folder download failed", "server", server, "path", relPath(full), "error", err)
@@ -194,6 +200,60 @@ func (s *Server) downloadFolder(w http.ResponseWriter, r *http.Request, u *store
 		panic(http.ErrAbortHandler)
 	}
 	return nil
+}
+
+// maxZipped is how many files and folders are downloaded together at most.
+const maxZipped = 500
+
+// zipCommand is the command that writes a zip of the files and folders at
+// fulls, each by its path from the folder they are all in, and the name the
+// zip is given. What is in another of them is zipped once, with it.
+func zipCommand(fulls []string, server string) (cmd, name string) {
+	sorted := slices.Clone(fulls)
+	slices.Sort(sorted)
+	var tops []string
+	for _, f := range sorted {
+		if !slices.ContainsFunc(tops, func(t string) bool { return inside(f, t) }) {
+			tops = append(tops, f)
+		}
+	}
+	if tops[0] == dataRoot {
+		return "cd " + shellQuote(dataRoot) + " && bsdtar -cf - --format zip -s ',^\\./,,' .", server
+	}
+	base := path.Dir(tops[0])
+	for !all(tops, func(f string) bool { return inside(f, base) }) {
+		base = path.Dir(base)
+	}
+	switch {
+	case len(tops) == 1:
+		name = path.Base(tops[0])
+	case base == dataRoot:
+		name = server
+	default:
+		name = path.Base(base)
+	}
+	// "./" before each, so that bsdtar takes it as a file whatever it is
+	// called (not "@a" as another archive, nor "-a" as an option), and the
+	// "./" taken off the names in the zip.
+	cmd = "cd " + shellQuote(base) + " && bsdtar -cf - --format zip -s ',^\\./,,'"
+	for _, f := range tops {
+		cmd += " " + shellQuote("./"+strings.TrimPrefix(f, base+"/"))
+	}
+	return cmd, name
+}
+
+// inside is whether the path f is dir or in it.
+func inside(f, dir string) bool {
+	return f == dir || strings.HasPrefix(f, strings.TrimSuffix(dir, "/")+"/")
+}
+
+func all(fs []string, ok func(string) bool) bool {
+	for _, f := range fs {
+		if !ok(f) {
+			return false
+		}
+	}
+	return true
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

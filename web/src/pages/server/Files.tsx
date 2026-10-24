@@ -216,12 +216,19 @@ function NameDialog({
   );
 }
 
+/** A file or folder. */
+type Item = { path: string; dir: boolean };
+/** Those not in another of them: what is in a folder goes with it. */
+const tops = (items: Item[]) => items.filter((i) => !items.some((o) => o !== i && o.dir && within(i.path, o.path)));
+/** What the items are called, in a title. */
+const called = (items: Item[]) => (items.length === 1 ? nameOf(items[0].path) : `${items.length} items`);
+
 type Dialog =
   | { kind: "folder"; in: string }
   | { kind: "file"; in: string }
   | { kind: "rename"; path: string; dir: boolean }
-  | { kind: "move"; path: string; dir: boolean }
-  | { kind: "delete"; path: string; dir: boolean };
+  | { kind: "move"; items: Item[] }
+  | { kind: "delete"; items: Item[] };
 
 /** One line of the tree: a file or folder, or what a folder says while it has none to show. */
 type Row =
@@ -342,6 +349,10 @@ export default function Files() {
   }, [server.org, server.name, open, selected, drafts]);
   const here = selected.dir ? selected.path : parentOf(selected.path);
   const [focused, setFocused] = useState<string>(selected.path);
+  // Several picked together, with ⌘ or Ctrl and Shift, to be deleted, moved
+  // or downloaded at once; and the one a range of them is from.
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const anchor = useRef<string | null>(null);
   const [shown, setShown] = useState<Record<string, number>>({});
 
   // Finding a file by name, anywhere in the server's files: asked as typing
@@ -404,6 +415,27 @@ export default function Files() {
     if (entries.length > showing.length) rows.push({ kind: "more", dir, depth, left: entries.length - showing.length });
   };
   walk("/", 0);
+  const entries = rows.filter((r): r is Extract<Row, { kind: "entry" }> => r.kind === "entry");
+  // Those picked that are shown: one in a folder closed since is not.
+  const many: Item[] = entries.filter((r) => picked.has(r.path)).map((r) => ({ path: r.path, dir: r.entry.dir }));
+  const multi = many.length > 1;
+  const unpick = () => {
+    setPicked(new Set());
+    anchor.current = null;
+  };
+  /** The rows from the one a range is from to path, picked. */
+  const pickTo = (path: string) => {
+    const from = anchor.current ?? (open ?? selected.path);
+    const a = entries.findIndex((r) => r.path === from);
+    const b = entries.findIndex((r) => r.path === path);
+    if (a < 0 || b < 0) {
+      anchor.current = path;
+      setPicked(new Set([path]));
+      return;
+    }
+    anchor.current = from;
+    setPicked(new Set(entries.slice(Math.min(a, b), Math.max(a, b) + 1).map((r) => r.path)));
+  };
   const refresh = (dir: string) => qc.invalidateQueries({ queryKey: ["files", base, dir] });
 
   // The file being edited, and whether it has changes not saved: leaving it
@@ -443,43 +475,82 @@ export default function Files() {
       return next;
     });
   const press = (row: Extract<Row, { kind: "entry" }>) => {
+    unpick();
+    anchor.current = row.path;
     setSelected({ path: row.path, dir: row.entry.dir });
     setFocused(row.path);
     if (row.entry.dir) toggle(row.path);
     else if (row.path !== open) guard(() => openFile(isEditable(row.entry) ? row.path : null));
   };
+  // With Shift, a range is picked; with ⌘ or Ctrl, one more, or one fewer.
+  const click = (row: Extract<Row, { kind: "entry" }>, e: React.MouseEvent) => {
+    if (e.shiftKey) pickTo(row.path);
+    else if (e.metaKey || e.ctrlKey) {
+      const current = open ?? selected.path;
+      setPicked((was) => {
+        const next = new Set(was.size > 0 || !entries.some((r) => r.path === current) ? was : [current]);
+        if (next.has(row.path)) next.delete(row.path);
+        else next.add(row.path);
+        return next;
+      });
+      anchor.current = row.path;
+    } else return press(row);
+    setFocused(row.path);
+  };
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
   // A row's menu opened by a right click, where it was clicked.
-  const [pointed, setPointed] = useState<{ path: string; dir: boolean; x: number; y: number } | null>(null);
-  // What can be done to a file or folder: in its ⋯, and on a right click.
-  const actionsFor = (path: string, dir: boolean) => (
-    <>
-      {dir ? (
-        <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/archive?${qs({ path })}`)}>
-          Download as .zip
+  const [pointed, setPointed] = useState<{ items: Item[]; x: number; y: number } | null>(null);
+  // What a row's menu is for: those picked, if it is one of them.
+  const itemsAt = (path: string, dir: boolean) => (multi && picked.has(path) ? tops(many) : [{ path, dir }]);
+  const zipOf = (items: Item[]) => `/api/v1${base}/archive?${items.map(({ path }) => qs({ path })).join("&")}`;
+  // What can be done to a file or folder, or several: in a row's ⋯, and on
+  // a right click.
+  const actionsFor = (items: Item[]) => {
+    if (items.length > 1) {
+      return (
+        <>
+          <MenuItem icon={<Download />} onSelect={() => window.location.assign(zipOf(items))}>
+            Download as .zip
+          </MenuItem>
+          <MenuItem icon={<FolderInput />} onSelect={() => setDialog({ kind: "move", items })}>
+            Move to…
+          </MenuItem>
+          <MenuItem icon={<Trash2 />} danger onSelect={() => setDialog({ kind: "delete", items })}>
+            Delete {items.length} items
+          </MenuItem>
+        </>
+      );
+    }
+    const [{ path, dir }] = items;
+    return (
+      <>
+        {dir ? (
+          <MenuItem icon={<Download />} onSelect={() => window.location.assign(zipOf(items))}>
+            Download as .zip
+          </MenuItem>
+        ) : (
+          <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/content?${qs({ path })}&download`)}>
+            Download
+          </MenuItem>
+        )}
+        {!dir && archive.test(path) && (
+          <MenuItem icon={<PackageOpen />} disabled={extract.isPending} onSelect={() => extract.mutate(path)}>
+            Extract here
+          </MenuItem>
+        )}
+        <MenuItem icon={<Pencil />} onSelect={() => setDialog({ kind: "rename", path, dir })}>
+          Rename
         </MenuItem>
-      ) : (
-        <MenuItem icon={<Download />} onSelect={() => window.location.assign(`/api/v1${base}/content?${qs({ path })}&download`)}>
-          Download
+        <MenuItem icon={<FolderInput />} onSelect={() => setDialog({ kind: "move", items })}>
+          Move to…
         </MenuItem>
-      )}
-      {!dir && archive.test(path) && (
-        <MenuItem icon={<PackageOpen />} disabled={extract.isPending} onSelect={() => extract.mutate(path)}>
-          Extract here
+        <MenuItem icon={<Trash2 />} danger onSelect={() => setDialog({ kind: "delete", items })}>
+          Delete
         </MenuItem>
-      )}
-      <MenuItem icon={<Pencil />} onSelect={() => setDialog({ kind: "rename", path, dir })}>
-        Rename
-      </MenuItem>
-      <MenuItem icon={<FolderInput />} onSelect={() => setDialog({ kind: "move", path, dir })}>
-        Move to…
-      </MenuItem>
-      <MenuItem icon={<Trash2 />} danger onSelect={() => setDialog({ kind: "delete", path, dir })}>
-        Delete
-      </MenuItem>
-    </>
-  );
+      </>
+    );
+  };
   const { sending, send, cancel } = useUpload();
   const [dropOn, setDropOn] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -490,6 +561,7 @@ export default function Files() {
     if (dir) setExpanded((was) => new Set([...was].map(moved)));
     setSelected((s) => ({ ...s, path: moved(s.path) }));
     setFocused((f) => moved(f));
+    setPicked((was) => new Set([...was].map(moved)));
     for (const [path, state] of [...drafts]) {
       if (within(path, from)) {
         drafts.delete(path);
@@ -510,14 +582,18 @@ export default function Files() {
     if (into !== "/") setExpanded((was) => new Set([...was, ...foldersAbove(into), into]));
     afterMove(from, to, dir);
   };
-  const move = useAction(({ from, into, dir }: { from: string; into: string; dir: boolean }) => moveTo(from, into, dir));
+  // Each, one after another, but those already there.
+  const moveAll = async (items: Item[], into: string) => {
+    for (const { path, dir } of tops(items)) if (parentOf(path) !== into) await moveTo(path, into, dir);
+  };
+  const move = useAction(({ items, into }: { items: Item[]; into: string }) => moveAll(items, into));
   // What is being dragged within the tree, to be moved: never into itself,
   // nor where it is.
   // Kept as they happen, not as the page is drawn: a drop can come before
   // the page is drawn again after the drag began.
-  const movingRef = useRef<{ path: string; dir: boolean } | null>(null);
+  const movingRef = useRef<Item[] | null>(null);
   const dropRef = useRef<string | null>(null);
-  const grab = (m: { path: string; dir: boolean } | null) => {
+  const grab = (m: Item[] | null) => {
     movingRef.current = m;
   };
   const aim = (into: string | null) => {
@@ -526,16 +602,24 @@ export default function Files() {
   };
   const canDropInto = (dir: string) => {
     const m = movingRef.current;
-    return !m || (!within(dir, m.path) && parentOf(m.path) !== dir);
+    return !m || (m.every((i) => !within(dir, i.path)) && m.some((i) => parentOf(i.path) !== dir));
   };
 
-  const remove = useAction(async ({ path, dir }: { path: string; dir: boolean }) => {
-    await api.del(`${base}?${qs({ path })}`);
-    await refresh(parentOf(path));
-    if (dir) setExpanded((was) => new Set([...was].filter((d) => !within(d, path))));
-    for (const p of [...drafts.keys()]) if (within(p, path)) drafts.delete(p);
-    if (open && within(open, path)) openFile(null);
-    if (within(selected.path, path)) setSelected({ path: parentOf(path), dir: true });
+  // Each, one after another; what is in those deleted is forgotten.
+  const remove = useAction(async (items: Item[]) => {
+    const gone = tops(items);
+    try {
+      for (const { path, dir } of gone) {
+        await api.del(`${base}?${qs({ path })}`);
+        if (dir) setExpanded((was) => new Set([...was].filter((d) => !within(d, path))));
+        for (const p of [...drafts.keys()]) if (within(p, path)) drafts.delete(p);
+        if (open && within(open, path)) openFile(null);
+        setSelected((s) => (within(s.path, path) ? { path: parentOf(path), dir: true } : s));
+        setPicked((was) => new Set([...was].filter((p) => !within(p, path))));
+      }
+    } finally {
+      await Promise.all([...new Set(gone.map((i) => parentOf(i.path)))].map(refresh));
+    }
   });
 
   // An archive opened where it is, into the folder it makes: that is opened
@@ -576,7 +660,21 @@ export default function Files() {
     const at = focusable.findIndex((r) => keyOf(r) === focused);
     const row = focusable[at];
     const go = (i: number) => focusable[i] && focusRow(keyOf(focusable[i]));
-    if (e.key === "ArrowDown") go(at + 1);
+    // With Shift, picked on the way, from where it began.
+    const extend = (i: number) => {
+      const to = focusable[i];
+      if (to?.kind !== "entry") return;
+      if (!anchor.current && row?.kind === "entry") anchor.current = row.path;
+      focusRow(to.path);
+      pickTo(to.path);
+    };
+    if (e.shiftKey && e.key === "ArrowDown") extend(at + 1);
+    else if (e.shiftKey && e.key === "ArrowUp") extend(Math.max(at - 1, 0));
+    else if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+      anchor.current = null;
+      setPicked(new Set(entries.map((r) => r.path)));
+    } else if (e.key === "Escape" && picked.size > 0) unpick();
+    else if (e.key === "ArrowDown") go(at + 1);
     else if (e.key === "ArrowUp") go(Math.max(at - 1, 0));
     else if (e.key === "Home") go(0);
     else if (e.key === "End") go(focusable.length - 1);
@@ -589,7 +687,7 @@ export default function Files() {
       if (row.entry.dir && expanded.has(row.path)) toggle(row.path, false);
       else if (parentOf(row.path) !== "/") focusRow(parentOf(row.path));
     } else if ((e.key === "Delete" || e.key === "Backspace") && row?.kind === "entry") {
-      setDialog({ kind: "delete", path: row.path, dir: row.entry.dir });
+      setDialog({ kind: "delete", items: itemsAt(row.path, row.entry.dir) });
     } else if (e.key === "F2" && row?.kind === "entry") {
       setDialog({ kind: "rename", path: row.path, dir: row.entry.dir });
     } else if ((e.key === "Enter" || e.key === " ") && row) {
@@ -614,17 +712,26 @@ export default function Files() {
       <div className={cx("flex min-w-0 shrink-0 flex-col max-md:w-full! md:w-(--tree)", (open || openEntry) && "max-md:hidden")} style={{ "--tree": `${width}px` } as React.CSSProperties}>
         <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line pr-1.5 pl-3">
           {/* Where new files and uploads go; "data" chooses the top folder. */}
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted" title="New files and uploads go here">
-            <button
-              type="button"
-              className={cx("rounded-sm hover:text-accent", here === "/" && "text-fg")}
-              aria-label="Choose the top folder"
-              onClick={() => setSelected({ path: "/", dir: true })}
-            >
-              data
-            </button>
-            {here !== "/" && here}
-          </span>
+          {multi ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted">
+              {many.length} selected
+              <button type="button" aria-label="Clear the selection" title="Clear the selection" className="rounded-sm p-0.5 hover:text-fg" onClick={unpick}>
+                <X className="size-3.5" />
+              </button>
+            </span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted" title="New files and uploads go here">
+              <button
+                type="button"
+                className={cx("rounded-sm hover:text-accent", here === "/" && "text-fg")}
+                aria-label="Choose the top folder"
+                onClick={() => setSelected({ path: "/", dir: true })}
+              >
+                data
+              </button>
+              {here !== "/" && here}
+            </span>
+          )}
           <Button size="sm" variant="ghost" icon={<FilePlus className="size-4" />} aria-label="New file" title="New file" onClick={() => setDialog({ kind: "file", in: here })} />
           <Button size="sm" variant="ghost" icon={<FolderPlus className="size-4" />} aria-label="New folder" title="New folder" onClick={() => setDialog({ kind: "folder", in: here })} />
           <Button size="sm" variant="ghost" icon={<Upload className="size-4" />} aria-label="Upload" title="Upload" disabled={!!sending} onClick={() => picker.current?.click()} />
@@ -690,7 +797,7 @@ export default function Files() {
             if (m) {
               const ok = canDropInto(into);
               grab(null);
-              if (ok) move.mutate({ from: m.path, into, dir: m.dir });
+              if (ok) move.mutate({ items: m, into });
             } else if (e.dataTransfer.files.length) upload(e.dataTransfer.files, into);
           }}
         >
@@ -699,6 +806,7 @@ export default function Files() {
               found={found}
               onPick={(f) => {
                 stopFinding();
+                unpick();
                 setExpanded((was) => new Set([...was, ...foldersAbove(f.path), ...(f.dir ? [f.path] : [])]));
                 setSelected({ path: f.path, dir: f.dir });
                 setFocused(f.path);
@@ -710,7 +818,7 @@ export default function Files() {
               <Empty title="Could not open the files">{root.error.message}</Empty>
             </div>
           ) : (
-            <ul ref={tree} role="tree" aria-label="Files" onKeyDown={onKeyDown}>
+            <ul ref={tree} role="tree" aria-label="Files" aria-multiselectable onKeyDown={onKeyDown}>
               {rows.map((row) => {
                 const indent = { paddingLeft: 8 + row.depth * 14 };
                 if (row.kind === "note") {
@@ -739,7 +847,8 @@ export default function Files() {
                 }
                 const { entry, path } = row;
                 const isOpen = entry.dir && expanded.has(path);
-                const current = path === (open ?? selected.path);
+                // The one chosen, or those picked.
+                const current = many.length > 0 ? picked.has(path) : path === (open ?? selected.path);
                 return (
                   <li
                     key={path}
@@ -751,19 +860,24 @@ export default function Files() {
                     data-key={path}
                     tabIndex={focused === path || (!focusable.some((r) => keyOf(r) === focused) && row === focusable[0]) ? 0 : -1}
                     onFocus={() => setFocused(path)}
-                    onClick={() => press(row)}
-                    // Its menu, as a right click opens in a file manager.
+                    onClick={(e) => click(row, e)}
+                    // Its menu, as a right click opens in a file manager: for
+                    // those picked, if it is one of them.
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      setSelected({ path, dir: entry.dir });
+                      const items = itemsAt(path, entry.dir);
+                      if (items.length === 1) {
+                        unpick();
+                        setSelected({ path, dir: entry.dir });
+                      }
                       setFocused(path);
-                      setPointed({ path, dir: entry.dir, x: e.clientX, y: e.clientY });
+                      setPointed({ items, x: e.clientX, y: e.clientY });
                     }}
                     draggable
                     onDragStart={(e) => {
                       e.dataTransfer.setData("application/x-avsys-path", path);
                       e.dataTransfer.effectAllowed = "move";
-                      grab({ path, dir: entry.dir });
+                      grab(itemsAt(path, entry.dir));
                     }}
                     onDragEnd={() => {
                       grab(null);
@@ -815,7 +929,7 @@ export default function Files() {
                           onClick={(e) => e.stopPropagation()}
                         />
                       </MenuTrigger>
-                      <MenuContent>{actionsFor(path, entry.dir)}</MenuContent>
+                      <MenuContent>{actionsFor(itemsAt(path, entry.dir))}</MenuContent>
                     </Menu>
                     </span>
                   </li>
@@ -831,7 +945,7 @@ export default function Files() {
         <MenuTrigger asChild>
           <span aria-hidden className="pointer-events-none fixed size-0" style={{ left: pointed?.x ?? 0, top: pointed?.y ?? 0 }} />
         </MenuTrigger>
-        <MenuContent align="start">{pointed && actionsFor(pointed.path, pointed.dir)}</MenuContent>
+        <MenuContent align="start">{pointed && actionsFor(pointed.items)}</MenuContent>
       </Menu>
 
       <div
@@ -947,23 +1061,29 @@ export default function Files() {
       )}
       {dialog?.kind === "move" && (
         <NameDialog
-          title={`Move ${nameOf(dialog.path)}`}
+          title={`Move ${called(dialog.items)}`}
           action="Move"
           label="To the folder"
           pattern="/.*"
-          initial={parentOf(dialog.path)}
+          initial={parentOf(dialog.items[0].path)}
           onClose={() => setDialog(null)}
-          onSubmit={(to) => moveTo(dialog.path, to.replace(/\/+$/, "") || "/", dialog.dir)}
+          onSubmit={(to) => moveAll(dialog.items, to.replace(/\/+$/, "") || "/")}
         />
       )}
       <Confirm
         open={dialog?.kind === "delete"}
         onOpenChange={() => setDialog(null)}
-        title={dialog?.kind === "delete" ? `Delete ${nameOf(dialog.path)}?` : ""}
-        description={dialog?.kind === "delete" && dialog.dir ? "The folder and everything in it will be deleted. This cannot be undone." : "This cannot be undone."}
+        title={dialog?.kind === "delete" ? `Delete ${called(dialog.items)}?` : ""}
+        description={
+          dialog?.kind !== "delete" || !dialog.items.some((i) => i.dir)
+            ? "This cannot be undone."
+            : dialog.items.length === 1
+              ? "The folder and everything in it will be deleted. This cannot be undone."
+              : "Everything in the folders will be deleted too. This cannot be undone."
+        }
         action="Delete"
         loading={remove.isPending}
-        onConfirm={() => dialog?.kind === "delete" && remove.mutate({ path: dialog.path, dir: dialog.dir }, { onSuccess: () => setDialog(null) })}
+        onConfirm={() => dialog?.kind === "delete" && remove.mutate(dialog.items, { onSuccess: () => setDialog(null) })}
       />
       <Confirm
         open={!!leaving}

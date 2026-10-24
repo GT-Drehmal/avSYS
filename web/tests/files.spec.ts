@@ -661,3 +661,100 @@ test("a file found that cannot be edited is shown with Download, even past the f
   await expect(item(page, "r.320.mca")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
 });
+
+test("several are picked with ⌘ or Ctrl and with Shift, and deleted together", async ({ page }) => {
+  await files(page);
+  const deleted: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files?*", (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    deleted.push(new URL(route.request().url()).searchParams.get("path") ?? "");
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  const picked = page.locator('[role="treeitem"][aria-selected="true"]');
+  await item(page, "eula.txt").click();
+  await item(page, "server.jar").click({ modifiers: ["ControlOrMeta"] });
+  await expect(page.getByText("2 selected")).toBeVisible();
+  await expect(picked).toHaveText(["eula.txt", "server.jar"]);
+  // A range, from the one picked last.
+  await item(page, "config").click({ modifiers: ["Shift"] });
+  await expect(picked).toHaveText(["config", "plugins", "world", "eula.txt", "server.jar"]);
+  // One fewer.
+  await item(page, "world").click({ modifiers: ["ControlOrMeta"] });
+  await expect(page.getByText("4 selected")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByText(/selected$/)).toHaveCount(0);
+  // A plain click picks one again.
+  await item(page, "eula.txt").click({ modifiers: ["ControlOrMeta"] });
+  await item(page, "server.jar").click();
+  await expect(picked).toHaveText(["server.jar"]);
+  // A folder and a file, deleted together.
+  await item(page, "world").click({ modifiers: ["ControlOrMeta"] });
+  await item(page, "world").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete 2 items" }).click();
+  const dialog = page.getByRole("dialog", { name: "Delete 2 items?" });
+  await expect(dialog).toContainText("Everything in the folders");
+  await dialog.getByRole("button", { name: "Delete" }).click();
+  await expect.poll(() => deleted).toEqual(["/world", "/server.jar"]);
+  await expect(page.getByText(/selected$/)).toHaveCount(0);
+  // A right click on one not picked is for it alone.
+  await item(page, "eula.txt").click();
+  await item(page, "config").click({ modifiers: ["ControlOrMeta"] });
+  await item(page, "plugins").click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByText(/selected$/)).toHaveCount(0);
+});
+
+test("several picked are dragged, downloaded and moved together", async ({ page }) => {
+  await files(page);
+  const moves: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/rename?*", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    moves.push(`${q.get("path")} -> ${q.get("to")}`);
+    return route.fulfill({ status: 204 });
+  });
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/archive?*", (route) =>
+    route.fulfill({ body: "PK", headers: { "Content-Type": "application/zip", "Content-Disposition": "attachment; filename=survival.zip" } }),
+  );
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "eula.txt").click();
+  await item(page, "server.properties").click({ modifiers: ["ControlOrMeta"] });
+  await item(page, "eula.txt").dragTo(item(page, "world"));
+  await expect.poll(() => moves).toEqual(["/eula.txt -> /world/eula.txt", "/server.properties -> /world/server.properties"]);
+  // A folder and what is in it: the folder, once.
+  await item(page, "plugins").click();
+  await expect(item(page, "LuckPerms")).toBeVisible();
+  await item(page, "world").click({ modifiers: ["Shift"] });
+  await expect(page.getByText("4 selected")).toBeVisible();
+  await page.getByRole("button", { name: "Actions for world" }).click();
+  const asked = page.waitForRequest("**/files/archive?*");
+  await page.getByRole("menuitem", { name: "Download as .zip" }).click();
+  expect(new URL((await asked).url()).searchParams.getAll("path")).toEqual(["/plugins", "/world"]);
+  await page.getByRole("button", { name: "Actions for world" }).click();
+  await page.getByRole("menuitem", { name: "Move to…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Move 2 items" });
+  await dialog.getByLabel("To the folder").fill("/config");
+  await dialog.getByRole("button", { name: "Move" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(moves.slice(2)).toEqual(["/plugins -> /config/plugins", "/world -> /config/world"]);
+});
+
+test("several are picked from the keyboard", async ({ page }) => {
+  await files(page);
+  await page.goto("/o/friends/s/survival/files");
+  const picked = page.locator('[role="treeitem"][aria-selected="true"]');
+  await item(page, "config").focus();
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+ArrowDown");
+  await expect(picked).toHaveText(["config", "plugins", "world"]);
+  await page.keyboard.press("Shift+ArrowUp");
+  await expect(picked).toHaveText(["config", "plugins"]);
+  await page.keyboard.press("ControlOrMeta+a");
+  await expect(page.getByText("6 selected")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByText(/selected$/)).toHaveCount(0);
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Delete");
+  await expect(page.getByRole("dialog", { name: "Delete 2 items?" })).toBeVisible();
+});

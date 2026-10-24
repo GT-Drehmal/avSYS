@@ -365,6 +365,10 @@ echo at | call -X PUT --data-binary @- "$SRV/files/content?path=/@e2e-at/x.txt" 
 call "$SRV/files/archive?path=/@e2e-at" > "$WORK/at.zip"
 python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "@e2e-at/x.txt" in n, n' "$WORK/at.zip" || fail "a folder named @… is not zipped as itself"
 echo "ok: a folder named @… is zipped as itself"
+# Several picked together, in one zip.
+call "$SRV/files/archive?path=/@e2e-at&path=/e2e-world.zip" > "$WORK/many.zip"
+python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "@e2e-at/x.txt" in n and "e2e-world.zip" in n, n' "$WORK/many.zip" || fail "several downloaded are not one zip of them"
+echo "ok: several download as one zip"
 call -X DELETE "$SRV/files?path=/@e2e-at" >/dev/null
 # Moved into another folder, and not into itself.
 expect "a folder is moved into another" "$(call -o /dev/null -w '%{http_code}' -X POST "$SRV/files/rename?path=/e2e-configs&to=/e2e-world/e2e-configs")" 204
