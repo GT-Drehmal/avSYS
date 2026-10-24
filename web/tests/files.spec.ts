@@ -477,6 +477,41 @@ test("a file is moved to a folder named, without dragging", async ({ page }) => 
   expect(moves).toEqual(["/eula.txt -> /world/eula.txt"]);
 });
 
+test("a file is found by name anywhere, and opened where it is", async ({ page }) => {
+  await files(page);
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/search?*", (route) => {
+    const q = new URL(route.request().url()).searchParams.get("q") ?? "";
+    asked.push(q);
+    const now = new Date().toISOString();
+    const all = [
+      { path: "/config", name: "config", dir: true, size: 0, modTime: now },
+      { path: "/plugins/LuckPerms/config.yml", name: "config.yml", dir: false, size: 20, modTime: now },
+    ];
+    return route.fulfill({ json: { results: all.filter((f) => f.path.toLowerCase().includes(q.toLowerCase())), more: q === "c" } });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await page.getByRole("button", { name: "Find a file" }).click();
+  await page.getByLabel("Find a file by name").fill("CONF");
+  const results = page.getByRole("list", { name: "Found" }).getByRole("button");
+  await expect(results).toHaveCount(2);
+  await expect(results.nth(1)).toContainText("config.ymlplugins/LuckPerms");
+  // Asked once typing stopped, not for each letter.
+  expect(asked).toEqual(["CONF"]);
+  await results.nth(1).click();
+  await expect(page.locator(".cm-content")).toContainText("storage-method: h2");
+  await expect(item(page, "config.yml")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("Find a file by name")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Find a file" }).click();
+  await page.getByLabel("Find a file by name").fill("zzz");
+  await expect(page.getByText("Nothing named like that.")).toBeVisible();
+  await page.getByLabel("Find a file by name").fill("c");
+  await expect(page.getByText(/^Showing the first 2\./)).toBeVisible();
+  await page.getByLabel("Find a file by name").press("Escape");
+  await expect(tree(page)).toBeVisible();
+});
+
 test("dragged past another folder's file and let go below the files, it goes to the top folder", async ({ page }) => {
   await files(page);
   const moves: string[] = [];
@@ -510,4 +545,35 @@ test("moved to a folder within a closed one, where it went is opened", async ({ 
   await page.getByRole("dialog").getByRole("button", { name: "Move" }).click();
   await expect(item(page, "LuckPerms")).toHaveAttribute("aria-expanded", "true");
   await expect(item(page, "config.yml")).toBeVisible();
+});
+
+test("a file found that cannot be edited is shown with Download, even past the first of its folder", async ({ page }) => {
+  await files(page, { "/world": ["level.dat", ...Array.from({ length: 350 }, (_, i) => `r.${i}.mca`)] });
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/search?*", (route) => {
+    const now = new Date().toISOString();
+    // As the panel answers.
+    return route.fulfill({
+      json: {
+        results: [
+          { name: "level.dat", path: "/world/level.dat", dir: false, size: 20, modTime: now },
+          { name: "r.340.mca", path: "/world/r.340.mca", dir: false, size: 20, modTime: now },
+        ],
+        more: false,
+      },
+    });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await page.getByRole("button", { name: "Find a file" }).click();
+  await page.getByLabel("Find a file by name").fill("e");
+  // Small, but not a text file: not opened in the editor.
+  await page.getByRole("list", { name: "Found" }).getByRole("button").first().click();
+  await expect(page.getByText("This kind of file can't be edited here.")).toBeVisible();
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+  // The 341st in its folder: shown, chosen, with Download.
+  await page.getByRole("button", { name: "Find a file" }).click();
+  await page.getByLabel("Find a file by name").fill("r.340");
+  await page.getByRole("list", { name: "Found" }).getByRole("button").last().click();
+  await expect(item(page, "r.340.mca")).toHaveAttribute("aria-selected", "true");
+  await expect(item(page, "r.320.mca")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
 });
