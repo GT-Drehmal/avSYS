@@ -226,6 +226,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET /orgs/{org}/offsite/snapshots", "", "", store.RoleViewer, 503},
 		{"POST /orgs/{org}/offsite/fetch", "", "", store.RoleViewer, 503},
 		{"GET /orgs/{org}/snapshots", "", "", store.RoleViewer, 200},
+		{"GET /orgs/{org}/presence", "", "", store.RoleViewer, 200},
+		{"PUT /orgs/{org}/presence", "", `{"tab":"tab-of-{who}","server":"survival"}`, store.RoleViewer, 204},
 		// 503 below: allowed, and then told that this panel has no restic.
 		{"GET /orgs/{org}/snapshots/{id}", "", "", store.RoleViewer, 503},
 		{"GET /orgs/{org}/snapshots/{id}/icon", "", "", store.RoleViewer, 503},
@@ -609,8 +611,9 @@ func TestEventsStayInsideTheOrganization(t *testing.T) {
 	lines := bufio.NewScanner(res.Body)
 	for lines.Scan() {
 		data, ok := strings.CutPrefix(lines.Text(), "data: ")
-		// The first says whether the cluster can be reached, to everyone.
-		if !ok || strings.HasPrefix(data, `{"reachable"`) {
+		// The first say whether the cluster can be reached, to everyone,
+		// and who is on its own organization's servers.
+		if !ok || strings.HasPrefix(data, `{"reachable"`) || strings.HasPrefix(data, `{"org":"alpha"`) {
 			continue
 		}
 		if data != `"from alpha"` {

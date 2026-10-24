@@ -9,7 +9,7 @@ test("a cluster that cannot be reached is said on every page, until it can again
   await as("viewer");
   const since = new Date(2026, 9, 21, 14, 27).toISOString();
   let body = stream({ reachable: false, since });
-  await page.route("**/api/v1/events", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body }));
+  await page.route("**/api/v1/events?*", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body }));
   await page.goto("/o/friends");
   const notice = page.getByRole("alert").filter({ hasText: "Can't reach the cluster" });
   await expect(notice).toHaveText("Can't reach the cluster since 2:27 PM. Servers may not be as shown.");

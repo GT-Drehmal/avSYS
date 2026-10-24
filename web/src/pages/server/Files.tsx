@@ -2,11 +2,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Download, File, FilePlus, Folder, FolderPlus, MoreHorizontal, Pencil, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
+import { Faces } from "../../components/Faces";
 import { Button, Confirm, cx, Empty, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Spinner } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
 import { api, ApiError, qs, readFile, saveFile, serverPath, type EditedFile, type FileEntry } from "../../lib/api";
 import { ago, bytes } from "../../lib/format";
-import { useAction } from "../../lib/queries";
+import { useAction, useMe } from "../../lib/queries";
+import { others, usePresence } from "../../lib/presence";
 import { toast } from "../../lib/toast";
 import { Editor } from "./Editor";
 import { useServerContext } from "./ServerPage";
@@ -21,6 +23,10 @@ const binary = /\.(jar|zip|gz|tgz|tar|7z|rar|png|jpe?g|gif|webp|ico|dat|dat_old|
 function FileEditor({ base, path, managed, onClose }: { base: string; path: string; managed: string[]; onClose: () => void }) {
   const name = path.slice(path.lastIndexOf("/") + 1);
   const url = `${base}/content?${qs({ path })}`;
+  const { org, server } = useParams();
+  const me = useMe().data?.user.id;
+  // Each once, if in two tabs.
+  const alsoOpen = [...new Map(others(usePresence(org ?? ""), me, server ?? "", path).map((p) => [p.user.id, p])).values()];
   // Read once, and again only on Reload: a draft is saved over what it was
   // made from, not over what a read behind it found.
   const file = useQuery({ queryKey: ["file", base, path], queryFn: () => readFile(url), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
@@ -65,9 +71,17 @@ function FileEditor({ base, path, managed, onClose }: { base: string; path: stri
   return (
     <div className="flex h-[calc(100dvh-330px)] min-h-80 flex-col overflow-hidden rounded-lg border border-line bg-bg">
       <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface pr-2 pl-4">
-        <span className="truncate font-mono text-xs text-muted">
-          {path}
-          {dirty && <span className="ml-2 text-warn">unsaved</span>}
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="truncate font-mono text-xs text-muted">
+            {path}
+            {dirty && <span className="ml-2 text-warn">unsaved</span>}
+          </span>
+          {alsoOpen.length > 0 && (
+            <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted max-sm:hidden">
+              <Faces people={alsoOpen} label="Also has it open" size={18} ring="ring-surface" />
+              {alsoOpen.length === 1 ? `${alsoOpen[0].user.name} also has it open` : "Others also have it open"}
+            </span>
+          )}
         </span>
         <div className="flex items-center gap-1.5">
           <Button size="sm" variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(false)}>

@@ -1,6 +1,7 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { api, ApiError, serverPath, type BackupPolicy, type Cluster, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
+import { presenceKey, tab, tellAgain, type Present } from "./presence";
 import { toast } from "./toast";
 
 export const queryClient = new QueryClient({
@@ -103,15 +104,23 @@ export function useLiveServers() {
       qc.invalidateQueries({ queryKey: ["offsite"] });
       // A move may have finished unheard.
       qc.invalidateQueries({ queryKey: ["placement"] });
+      // Who came and went.
+      qc.invalidateQueries({ queryKey: ["presence"] });
       qc.invalidateQueries({ queryKey: ["nodes"] });
     };
-    const source = new EventSource("/api/v1/events");
+    const source = new EventSource(`/api/v1/events?tab=${tab}`);
     let opened = false;
     source.onopen = () => {
       // Anything that changed while disconnected was missed, so refetch.
       if (opened) refetchAll();
       opened = true;
+      // A panel that restarted, or forgot this tab, is told where it is.
+      tellAgain();
     };
+    source.addEventListener("presence", (e) => {
+      const v: { org: string; people: Present[] } = JSON.parse(e.data);
+      qc.setQueryData(presenceKey(v.org), v.people);
+    });
     source.addEventListener("cluster", (e) => qc.setQueryData<Cluster>(keys.cluster, JSON.parse(e.data)));
     source.addEventListener("server.updated", (e) => applyServer(qc, JSON.parse(e.data)));
     source.addEventListener("server.deleted", (e) => {

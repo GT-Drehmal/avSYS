@@ -30,7 +30,8 @@ test("a server that has not run says so", async ({ page }) => {
   await usage(page, { available: true, limit: 4 * gib, every: 30, samples: [] });
   await page.goto("/o/friends/s/survival/usage");
   await expect(page.getByText("Usage shows here while the server runs.")).toBeVisible();
-  await expect(page.getByRole("img")).toHaveCount(0);
+  // No charts. Others' faces may be on the page: survival is shared.
+  await expect(page.getByRole("region", { name: /^(Memory|CPU|Players)$/ })).toHaveCount(0);
 });
 
 test("a cluster that does not report memory and CPU still shows players", async ({ page }) => {

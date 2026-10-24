@@ -118,6 +118,8 @@ type Server struct {
 	usage usage
 	// reach is whether the cluster can be reached.
 	reach reach
+	// presence is which servers members have open.
+	presence presence
 	// restacking holds the servers whose resource packs are being joined
 	// again for their game version.
 	restacking sync.Map
@@ -414,6 +416,8 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/servers/{server}/files/rename", s.authed(s.renameFile))
 
 	api("GET /events", s.authed(s.streamEvents))
+	api("GET /orgs/{org}/presence", s.authed(s.getPresence))
+	api("PUT /orgs/{org}/presence", s.authed(s.putPresence))
 
 	api("GET /catalog/minecraft/versions", s.authed(s.minecraftVersions))
 	api("GET /catalog/minecraft/pack-formats", s.authed(s.packFormats))
