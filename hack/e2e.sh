@@ -323,17 +323,19 @@ step "files"
 echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
 expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "managed server.properties" "$(call "$SRV/files/content?path=/server.properties")" "motd=e2e probe"
-# A save from the editor is written only over the file it opened.
-tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e.txt" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')
+# A save from the editor is written only over the file it opened. A file
+# of its own: e2e.txt is looked for as it is later.
+echo "opened in the editor" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e-editor.txt" >/dev/null
+tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-editor.txt" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')
 [ -n "$tag" ] || fail "a file that can be edited has no tag"
-saved() { echo "$1" | call -o /dev/null -w '%{http_code}' -X PUT -H "If-Match: $tag" --data-binary @- "$SRV/files/content?path=/e2e.txt"; }
+saved() { echo "$1" | call -o /dev/null -w '%{http_code}' -X PUT -H "If-Match: $tag" --data-binary @- "$SRV/files/content?path=/e2e-editor.txt"; }
 expect "a save over the file it opened" "$(saved "saved from the editor")" 204
 expect "a save over a file changed since it was opened" "$(saved "saved over a change")" 412
-expect "the change is kept" "$(call "$SRV/files/content?path=/e2e.txt")" "saved from the editor"
-tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e.txt" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')
-big=$(head -c 2200000 /dev/zero | tr '\0' x | call -o /dev/null -w '%{http_code}' -X PUT -H "If-Match: $tag" --data-binary @- "$SRV/files/content?path=/e2e.txt")
+expect "the change is kept" "$(call "$SRV/files/content?path=/e2e-editor.txt")" "saved from the editor"
+tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-editor.txt" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')
+big=$(head -c 2200000 /dev/zero | tr '\0' x | call -o /dev/null -w '%{http_code}' -X PUT -H "If-Match: $tag" --data-binary @- "$SRV/files/content?path=/e2e-editor.txt")
 expect "a save from the editor over 2 MB is refused" "$big" 413
-expect "and the file is as it was" "$(call "$SRV/files/content?path=/e2e.txt")" "saved from the editor"
+expect "and the file is as it was" "$(call "$SRV/files/content?path=/e2e-editor.txt")" "saved from the editor"
 
 step "datapacks"
 # restarted asks for a restart and waits it out: down first, then up.
