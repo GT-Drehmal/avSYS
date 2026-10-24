@@ -38,3 +38,28 @@ test("members on a server see each other there, and the file each has open", asy
   await friend.close();
   await expect(page.getByRole("img", { name: /^Also here/ })).toHaveCount(0);
 });
+
+test("a file open in a folder is said too", async ({ page, as, api, org, pageAs }) => {
+  const slug = await org(["alpha"]);
+  const invite = await api("owner").post<{ token: string }>(`/orgs/${slug}/invites`, { role: "operator" });
+  await api("operator").post(`/invites/${invite.token}/accept`);
+  await as("owner");
+  const friend = await pageAs("operator");
+  await friend.goto(`/o/${slug}/s/alpha/files/plugins?file=%2Fplugins%2Fconfig.yml`);
+  await page.goto(`/o/${slug}/s/alpha/files/plugins?file=%2Fplugins%2Fconfig.yml`);
+  await expect(page.getByText(/also has it open$/)).toBeVisible();
+});
+
+test("after the stream may have missed some, who is here is asked for again", async ({ page, as }) => {
+  await as("owner");
+  let asked = 0;
+  const friend = { user: { id: "friend-id", name: "Friend" }, server: "survival" };
+  await page.route("**/api/v1/orgs/friends/presence", (route) => {
+    asked++;
+    return route.fulfill({ json: asked > 1 ? [friend] : [] });
+  });
+  // The stream says only that it fell behind.
+  await page.route("**/api/v1/events?*", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: resync\ndata: null\n\n" }));
+  await page.goto("/o/friends/s/survival");
+  await expect(page.getByRole("img", { name: "Also here: Friend" })).toBeVisible();
+});

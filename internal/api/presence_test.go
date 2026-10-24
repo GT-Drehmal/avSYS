@@ -3,10 +3,13 @@ package api
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -140,5 +143,64 @@ func TestViewersAreNotToldFiles(t *testing.T) {
 	}
 	if got := told(viewer); strings.Contains(got, "ops.json") {
 		t.Errorf("the viewer was told %s", got)
+	}
+}
+
+// Told as it changes, from many tabs at once, what is told last is what is
+// so: none told after another that was newer.
+func TestPresenceToldInOrder(t *testing.T) {
+	p := newPanel(t)
+	ch := p.srv.Events.subscribe()
+	defer p.srv.Events.unsubscribe(ch)
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tab := fmt.Sprintf(`"tab":"operator-tab-%02d"`, i)
+			// Each with a file of its own, so each is listed.
+			p.do("operator", "PUT", "/orgs/alpha/presence", fmt.Sprintf(`{%s,"server":"survival","file":"/f-%02d"}`, tab, i))
+			if i%2 == 0 {
+				p.do("operator", "PUT", "/orgs/alpha/presence", `{`+tab+`,"server":""}`)
+			}
+		}()
+	}
+	wg.Wait()
+	var last *presenceView
+	for {
+		select {
+		case e := <-ch:
+			if v, ok := e.Data.(presenceView); ok {
+				last = &v
+			}
+			continue
+		default:
+		}
+		break
+	}
+	if last == nil {
+		t.Fatal("nothing was told")
+	}
+	if now := p.srv.presenceOf(map[string]string{"mc-alpha": "alpha"})[0]; !reflect.DeepEqual(*last, now) {
+		t.Errorf("told last %+v, but now it is %+v", *last, now)
+	}
+}
+
+// Asked for, it is who is there now; to a viewer, without files.
+func TestGetPresence(t *testing.T) {
+	p := newPanel(t)
+	p.do("operator", "PUT", "/orgs/alpha/presence", `{"tab":"operator-tab","server":"survival","file":"/ops.json"}`)
+	for who, file := range map[string]string{"operator": "/ops.json", "viewer": ""} {
+		req := httptest.NewRequest("GET", "/api/v1/orgs/alpha/presence", nil)
+		req.Header.Set("Authorization", "Bearer "+p.tokens[who])
+		rec := httptest.NewRecorder()
+		p.h.ServeHTTP(rec, req)
+		var people []Present
+		if err := json.Unmarshal(rec.Body.Bytes(), &people); err != nil || len(people) != 1 {
+			t.Fatalf("%s: %d %s", who, rec.Code, rec.Body)
+		}
+		if people[0].Server != "survival" || people[0].File != file {
+			t.Errorf("%s was told %+v", who, people[0])
+		}
 	}
 }

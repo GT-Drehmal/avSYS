@@ -21,6 +21,9 @@ const presenceFor = time.Minute
 type presence struct {
 	mu   sync.Mutex
 	tabs map[string]*tabPlace // by user ID and the tab's own ID
+	// told is held from looking at who is where to telling it, so that
+	// what is told last is what is so now.
+	told sync.Mutex
 }
 
 type tabPlace struct {
@@ -113,6 +116,8 @@ func dedupe(people []Present) []Present {
 
 // publish tells an organization's members who is on its servers now.
 func (s *Server) publishPresence(org, ns string) {
+	s.presence.told.Lock()
+	defer s.presence.told.Unlock()
 	s.presence.mu.Lock()
 	v := s.presence.view(org, ns)
 	s.presence.mu.Unlock()
@@ -162,6 +167,21 @@ func (s *Server) presenceOf(orgs map[string]string) []presenceView {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Org < out[j].Org })
 	return out
+}
+
+// getPresence is who is on an organization's servers now, for a page that
+// may have missed them come and go.
+func (s *Server) getPresence(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	a, err := s.org(r, u, store.RoleViewer)
+	if err != nil {
+		return err
+	}
+	v := s.presenceOf(map[string]string{a.Namespace: a.Org.Slug})[0]
+	if !a.Role.AtLeast(store.RoleOperator) {
+		v = v.withoutFiles()
+	}
+	writeJSON(w, http.StatusOK, v.People)
+	return nil
 }
 
 // putPresence notes which of an organization's servers, and which file of
