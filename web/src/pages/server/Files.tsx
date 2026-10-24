@@ -276,6 +276,14 @@ export default function Files() {
   const [dirty, setDirty] = useState(false);
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
   const guard = (go: () => void) => (dirty ? setLeaving(() => go) : go());
+  // The editor stays as it is while the file it has is renamed, or a folder
+  // it is in: what was typed is not lost. Any other file is opened anew.
+  const renamedTo = useRef<string | null>(null);
+  const editing = useRef({ path: open, key: 0 });
+  if (open !== editing.current.path) {
+    editing.current = { path: open, key: open && renamedTo.current === open ? editing.current.key : editing.current.key + 1 };
+    renamedTo.current = null;
+  }
   const openFile = (path: string | null) => {
     setDirty(false);
     setSearch(path ? { file: path } : {}, { replace: !!open && !!path });
@@ -355,16 +363,26 @@ export default function Files() {
   const clampWidth = (w: number) => Math.min(Math.max(w, 180), 560);
 
   const root = byDir.get("/");
-  const openEntry = open ? null : selected.dir ? null : rows.find((r): r is Extract<Row, { kind: "entry" }> => r.kind === "entry" && r.path === selected.path);
+  // A file chosen that cannot be edited: said so, with a way to download it.
+  const openEntry = open || selected.dir ? null : rows.find((r): r is Extract<Row, { kind: "entry" }> => r.kind === "entry" && r.path === selected.path && !isEditable(r.entry));
   const managed = open === "/server.properties" ? Object.keys(server.spec.properties ?? {}).sort() : [];
   const onDirty = useCallback((d: boolean) => setDirty(d), []);
 
   return (
     <div className="flex h-[calc(100dvh-330px)] min-h-80 overflow-hidden rounded-lg border border-line bg-surface">
-      <div className={cx("flex min-w-0 shrink-0 flex-col max-md:w-full! md:w-(--tree)", open && "max-md:hidden")} style={{ "--tree": `${width}px` } as React.CSSProperties}>
+      <div className={cx("flex min-w-0 shrink-0 flex-col max-md:w-full! md:w-(--tree)", (open || openEntry) && "max-md:hidden")} style={{ "--tree": `${width}px` } as React.CSSProperties}>
         <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line pr-1.5 pl-3">
+          {/* Where new files and uploads go; "data" chooses the top folder. */}
           <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted" title="New files and uploads go here">
-            {here === "/" ? "data" : `data${here}`}
+            <button
+              type="button"
+              className={cx("rounded-sm hover:text-accent", here === "/" && "text-fg")}
+              aria-label="Choose the top folder"
+              onClick={() => setSelected({ path: "/", dir: true })}
+            >
+              data
+            </button>
+            {here !== "/" && here}
           </span>
           <Button size="sm" variant="ghost" icon={<FilePlus className="size-4" />} aria-label="New file" title="New file" onClick={() => setDialog({ kind: "file", in: here })} />
           <Button size="sm" variant="ghost" icon={<FolderPlus className="size-4" />} aria-label="New folder" title="New folder" onClick={() => setDialog({ kind: "folder", in: here })} />
@@ -479,6 +497,8 @@ export default function Files() {
                       <File className={cx("size-4 shrink-0", isEditable(entry) ? "text-muted" : "text-faint")} />
                     )}
                     <span className={cx("min-w-0 flex-1 truncate pr-2 font-mono text-[13px]", !entry.dir && !isEditable(entry) && "text-muted")}>{entry.name}</span>
+                    {/* Nothing done in its menu, which is drawn elsewhere, reaches the row. */}
+                    <span className="contents" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                     <Menu>
                       <MenuTrigger asChild>
                         <Button
@@ -505,6 +525,7 @@ export default function Files() {
                         </MenuItem>
                       </MenuContent>
                     </Menu>
+                    </span>
                   </li>
                 );
               })}
@@ -536,11 +557,20 @@ export default function Files() {
         }}
       />
 
-      <div className={cx("flex min-w-0 flex-1 flex-col", !open && "max-md:hidden")}>
+      <div className={cx("flex min-w-0 flex-1 flex-col", !open && !openEntry && "max-md:hidden")}>
         {open ? (
-          <FileEditor key={open} base={base} path={open} managed={managed} onDirty={onDirty} onClose={() => guard(() => openFile(null))} />
+          <FileEditor key={editing.current.key} base={base} path={open} managed={managed} onDirty={onDirty} onClose={() => guard(() => openFile(null))} />
         ) : openEntry ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+          <div className="relative flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+            {/* On a phone, where it takes the screen. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<ArrowLeft className="size-4" />}
+              aria-label="Back to the files"
+              className="absolute top-2 left-2 md:hidden"
+              onClick={() => setSelected({ path: parentOf(openEntry.path), dir: true })}
+            />
             <File className="size-8 text-faint" />
             <div>
               <p className="font-mono text-[13px]">{openEntry.entry.name}</p>
@@ -606,7 +636,10 @@ export default function Files() {
             if (dialog.dir) setExpanded((was) => new Set([...was].map(moved)));
             setSelected((s) => ({ ...s, path: moved(s.path) }));
             setFocused((f) => moved(f));
-            if (open && within(open, from)) setSearch({ file: moved(open) }, { replace: true });
+            if (open && within(open, from)) {
+              renamedTo.current = moved(open);
+              setSearch({ file: moved(open) }, { replace: true });
+            }
           }}
         />
       )}
