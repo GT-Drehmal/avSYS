@@ -359,6 +359,13 @@ expect "into it" "$(call "$SRV/files?path=/e2e-configs")" '"b.yml"'
 call "$SRV/files/archive?path=/e2e-world" > "$WORK/folder.zip"
 python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "e2e-world/region/r.0.0.mca" in n, n' "$WORK/folder.zip" || fail "a folder downloaded is not a zip of it"
 echo "ok: a folder downloads as a zip of it"
+# One whose name bsdtar would read otherwise: as another archive, "@name".
+call -X POST "$SRV/files/mkdir?path=/@e2e-at" >/dev/null
+echo at | call -X PUT --data-binary @- "$SRV/files/content?path=/@e2e-at/x.txt" >/dev/null
+call "$SRV/files/archive?path=/@e2e-at" > "$WORK/at.zip"
+python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert "@e2e-at/x.txt" in n, n' "$WORK/at.zip" || fail "a folder named @… is not zipped as itself"
+echo "ok: a folder named @… is zipped as itself"
+call -X DELETE "$SRV/files?path=/@e2e-at" >/dev/null
 # Moved into another folder, and not into itself.
 expect "a folder is moved into another" "$(call -o /dev/null -w '%{http_code}' -X POST "$SRV/files/rename?path=/e2e-configs&to=/e2e-world/e2e-configs")" 204
 expect "with what is in it" "$(call "$SRV/files?path=/e2e-world/e2e-configs")" '"a.yml"'
@@ -367,6 +374,7 @@ expect "nor into a folder that is not there" "$(call -X POST "$SRV/files/rename?
 # Found by name, whatever its case, anywhere; what a name can say is only
 # looked for, not read as a pattern.
 expect "a file is found by name" "$(call "$SRV/files/search?q=R.0.0")" '"/e2e-world/region/r.0.0.mca"'
+expect "and says its name" "$(call "$SRV/files/search?q=R.0.0")" '"name":"r.0.0.mca"'
 expect "a pattern is only looked for" "$(call "$SRV/files/search?q=*")" '"results":[]'
 for p in /e2e-world /e2e-world.zip /e2e-configs.zip; do call -X DELETE "$SRV/files?path=$p" >/dev/null; done
 

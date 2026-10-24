@@ -595,3 +595,69 @@ test("a long name is cut short, and its ⋯ is in sight", async ({ page }) => {
   expect(at.x + at.width).toBeLessThanOrEqual(pane.x + pane.width + 1);
   await expect(item(page, long)).toHaveAttribute("title", new RegExp(`^${long}`));
 });
+
+test("dragged past another folder's file and let go below the files, it goes to the top folder", async ({ page }) => {
+  await files(page);
+  const moves: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/rename?*", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    moves.push(`${q.get("path")} -> ${q.get("to")}`);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files?file=%2Fplugins%2FLuckPerms%2Fconfig.yml");
+  await expect(item(page, "config.yml")).toBeVisible();
+  const pane = (await tree(page).locator("xpath=..").boundingBox())!;
+  await item(page, "config.yml").hover();
+  await page.mouse.down();
+  // Over a file in plugins: into plugins, as it stands.
+  await item(page, "EssentialsX.jar").hover();
+  await expect(item(page, "plugins")).toHaveClass(/ring-accent/);
+  // Then below the files.
+  await page.mouse.move(pane.x + 60, pane.y + pane.height - 10, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(() => moves).toEqual(["/plugins/LuckPerms/config.yml -> /config.yml"]);
+});
+
+test("moved to a folder within a closed one, where it went is opened", async ({ page }) => {
+  await files(page);
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/rename?*", (route) => route.fulfill({ status: 204 }));
+  await page.goto("/o/friends/s/survival/files");
+  await expect(item(page, "plugins")).toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "Actions for eula.txt" }).click();
+  await page.getByRole("menuitem", { name: "Move to…" }).click();
+  await page.getByRole("dialog").getByLabel("To the folder").fill("/plugins/LuckPerms");
+  await page.getByRole("dialog").getByRole("button", { name: "Move" }).click();
+  await expect(item(page, "LuckPerms")).toHaveAttribute("aria-expanded", "true");
+  await expect(item(page, "config.yml")).toBeVisible();
+});
+
+test("a file found that cannot be edited is shown with Download, even past the first of its folder", async ({ page }) => {
+  await files(page, { "/world": ["level.dat", ...Array.from({ length: 350 }, (_, i) => `r.${i}.mca`)] });
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/search?*", (route) => {
+    const now = new Date().toISOString();
+    // As the panel answers.
+    return route.fulfill({
+      json: {
+        results: [
+          { name: "level.dat", path: "/world/level.dat", dir: false, size: 20, modTime: now },
+          { name: "r.340.mca", path: "/world/r.340.mca", dir: false, size: 20, modTime: now },
+        ],
+        more: false,
+      },
+    });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await page.getByRole("button", { name: "Find a file" }).click();
+  await page.getByLabel("Find a file by name").fill("e");
+  // Small, but not a text file: not opened in the editor.
+  await page.getByRole("list", { name: "Found" }).getByRole("button").first().click();
+  await expect(page.getByText("This kind of file can't be edited here.")).toBeVisible();
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+  // The 341st in its folder: shown, chosen, with Download.
+  await page.getByRole("button", { name: "Find a file" }).click();
+  await page.getByLabel("Find a file by name").fill("r.340");
+  await page.getByRole("list", { name: "Found" }).getByRole("button").last().click();
+  await expect(item(page, "r.340.mca")).toHaveAttribute("aria-selected", "true");
+  await expect(item(page, "r.320.mca")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
+});
