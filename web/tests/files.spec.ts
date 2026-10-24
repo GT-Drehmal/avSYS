@@ -758,3 +758,42 @@ test("several are picked from the keyboard", async ({ page }) => {
   await page.keyboard.press("Delete");
   await expect(page.getByRole("dialog", { name: "Delete 2 items?" })).toBeVisible();
 });
+
+test("Delete is for those picked, even one, whichever row is focused", async ({ page }) => {
+  await files(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "eula.txt").click();
+  await item(page, "server.jar").click({ modifiers: ["ControlOrMeta"] });
+  await item(page, "eula.txt").click({ modifiers: ["ControlOrMeta"] });
+  await expect(item(page, "eula.txt")).toBeFocused();
+  await page.keyboard.press("Delete");
+  await expect(page.getByRole("dialog", { name: "Delete server.jar?" })).toBeVisible();
+});
+
+test("several moved, one failing: trying again is for those left", async ({ page }) => {
+  await files(page);
+  const moves: string[] = [];
+  let failed = false;
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/rename?*", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    if (q.get("path") === "/server.jar" && !failed) {
+      failed = true;
+      return route.fulfill({ status: 503, json: { code: "workspace", message: "The server's files are not reachable right now." } });
+    }
+    moves.push(`${q.get("path")} -> ${q.get("to")}`);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "eula.txt").click();
+  await item(page, "server.jar").click({ modifiers: ["ControlOrMeta"] });
+  await item(page, "server.jar").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move to…" }).click();
+  await page.getByRole("dialog", { name: "Move 2 items" }).getByLabel("To the folder").fill("/world");
+  await page.getByRole("dialog").getByRole("button", { name: "Move" }).click();
+  // The one moved is not moved again.
+  const left = page.getByRole("dialog", { name: "Move server.jar" });
+  await expect(left).toBeVisible();
+  await left.getByRole("button", { name: "Move" }).click();
+  await expect(left).toHaveCount(0);
+  expect(moves).toEqual(["/eula.txt -> /world/eula.txt", "/server.jar -> /world/server.jar"]);
+});

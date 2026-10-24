@@ -582,9 +582,19 @@ export default function Files() {
     if (into !== "/") setExpanded((was) => new Set([...was, ...foldersAbove(into), into]));
     afterMove(from, to, dir);
   };
+  // One done of several in a dialog: taken out of it, so that if a later one
+  // fails, trying again is for those left.
+  const done = (item: Item) =>
+    setDialog((d) => {
+      const left = d && "items" in d ? d.items.filter((i) => i.path !== item.path) : [];
+      return d && "items" in d && left.length > 0 ? { ...d, items: left } : d;
+    });
   // Each, one after another, but those already there.
   const moveAll = async (items: Item[], into: string) => {
-    for (const { path, dir } of tops(items)) if (parentOf(path) !== into) await moveTo(path, into, dir);
+    for (const item of tops(items)) {
+      if (parentOf(item.path) !== into) await moveTo(item.path, into, item.dir);
+      done(item);
+    }
   };
   const move = useAction(({ items, into }: { items: Item[]; into: string }) => moveAll(items, into));
   // What is being dragged within the tree, to be moved: never into itself,
@@ -609,8 +619,10 @@ export default function Files() {
   const remove = useAction(async (items: Item[]) => {
     const gone = tops(items);
     try {
-      for (const { path, dir } of gone) {
+      for (const item of gone) {
+        const { path, dir } = item;
         await api.del(`${base}?${qs({ path })}`);
+        done(item);
         if (dir) setExpanded((was) => new Set([...was].filter((d) => !within(d, path))));
         for (const p of [...drafts.keys()]) if (within(p, path)) drafts.delete(p);
         if (open && within(open, path)) openFile(null);
@@ -687,7 +699,8 @@ export default function Files() {
       if (row.entry.dir && expanded.has(row.path)) toggle(row.path, false);
       else if (parentOf(row.path) !== "/") focusRow(parentOf(row.path));
     } else if ((e.key === "Delete" || e.key === "Backspace") && row?.kind === "entry") {
-      setDialog({ kind: "delete", items: itemsAt(row.path, row.entry.dir) });
+      // Those picked, even one, whichever row is focused.
+      setDialog({ kind: "delete", items: many.length > 0 ? tops(many) : [{ path: row.path, dir: row.entry.dir }] });
     } else if (e.key === "F2" && row?.kind === "entry") {
       setDialog({ kind: "rename", path: row.path, dir: row.entry.dir });
     } else if ((e.key === "Enter" || e.key === " ") && row) {

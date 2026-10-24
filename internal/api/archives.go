@@ -163,8 +163,9 @@ func (s *Server) downloadFolder(w http.ResponseWriter, r *http.Request, u *store
 	if len(asked) > maxZipped {
 		return errBadRequest("Pick at most %d to download at once.", maxZipped)
 	}
+	// No path is the top folder, as for the other files requests.
 	fulls := []string{full}
-	for _, p := range asked[1:] {
+	for _, p := range asked[min(len(asked), 1):] {
 		f, err := dataPath(p)
 		if err != nil {
 			return err
