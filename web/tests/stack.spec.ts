@@ -135,6 +135,8 @@ test.describe("as an owner", () => {
     await page.goto("/o/friends/s/survival/content");
     const rows = packs(page);
     const box = async (i: number) => {
+      // Where it is once the rows have slid into place.
+      for (let j = 0; j < 3; j++) await expect(rows.nth(j)).toHaveCSS("transform", "none");
       const b = await rows.nth(i).boundingBox();
       if (!b) throw new Error("no row");
       return b;
