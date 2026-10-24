@@ -323,6 +323,13 @@ step "files"
 echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
 expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "managed server.properties" "$(call "$SRV/files/content?path=/server.properties")" "motd=e2e probe"
+# A save from the editor is written only over the file it opened.
+tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e.txt" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')
+[ -n "$tag" ] || fail "a file that can be edited has no tag"
+saved() { echo "$1" | call -o /dev/null -w '%{http_code}' -X PUT -H "If-Match: $tag" --data-binary @- "$SRV/files/content?path=/e2e.txt"; }
+expect "a save over the file it opened" "$(saved "saved from the editor")" 204
+expect "a save over a file changed since it was opened" "$(saved "saved over a change")" 412
+expect "the change is kept" "$(call "$SRV/files/content?path=/e2e.txt")" "saved from the editor"
 
 step "datapacks"
 # restarted asks for a restart and waits it out: down first, then up.
