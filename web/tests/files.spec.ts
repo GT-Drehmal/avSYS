@@ -521,8 +521,12 @@ test("a row's actions are on a right click and on the keyboard, and its ⋯ show
     return route.fulfill({ status: 204 });
   });
   await page.goto("/o/friends/s/survival/files");
-  // Right click: the row's menu.
-  await item(page, "eula.txt").click({ button: "right" });
+  // Right click: the row's menu, where it was clicked.
+  const box = (await item(page, "eula.txt").boundingBox())!;
+  await item(page, "eula.txt").click({ button: "right", position: { x: 60, y: 10 } });
+  const menu = (await page.getByRole("menu").boundingBox())!;
+  expect(Math.abs(menu.x - (box.x + 60))).toBeLessThan(12);
+  expect(Math.abs(menu.y - (box.y + 10))).toBeLessThan(24);
   await page.getByRole("menuitem", { name: "Delete" }).click();
   await page.getByRole("dialog", { name: "Delete eula.txt?" }).getByRole("button", { name: "Delete" }).click();
   await expect.poll(() => deleted).toEqual(["/eula.txt"]);
@@ -578,4 +582,15 @@ test("closing the page with typing not saved is asked first", async ({ page }) =
   const dialog = await asked;
   expect(dialog.type()).toBe("beforeunload");
   await dialog.accept();
+
+test("a long name is cut short, and its ⋯ is in sight", async ({ page }) => {
+  const long = `${"a-very-long-name-".repeat(6)}.json`;
+  await files(page, { "/": ["plugins/", long, "eula.txt"] });
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, long).click();
+  const actions = page.getByRole("button", { name: `Actions for ${long}` });
+  const pane = (await tree(page).locator("xpath=..").boundingBox())!;
+  const at = (await actions.boundingBox())!;
+  expect(at.x + at.width).toBeLessThanOrEqual(pane.x + pane.width + 1);
+  await expect(item(page, long)).toHaveAttribute("title", new RegExp(`^${long}`));
 });
