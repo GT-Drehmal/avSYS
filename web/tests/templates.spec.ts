@@ -277,3 +277,23 @@ test("the new-server form offers no templates where there are none", async ({ pa
   await expect(page.getByRole("button", { name: "Import" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Template", exact: true })).toHaveCount(0);
 });
+
+test("a pack joined from several shows each of them in the form, the top one first", async ({ page, as }) => {
+  await as("owner");
+  const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+  const v = version("b".repeat(64), new Date().toISOString());
+  const pack = (n: number, title: string) => ({ sha1: String(n).repeat(40), size: 1 << 20, name: `${title}.zip`, project: { source: "modrinth", id: title.toLowerCase().replace(/ /g, "-"), version: "v", versionName: `${title} 1.0`, title } });
+  const template = { id: "t1", name: "Lobby", description: "", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: v, versions: [v], settingsOnly: false };
+  const resourcePack = { url: "http://panel.test/packs/joined.zip", sha1: "9".repeat(40), uploaded: { size: 3 << 20, time: v.time }, stack: [pack(1, "Colorful Grasses"), pack(2, "Dark Mode"), pack(3, "Fresh Animations")] };
+  await page.route(/\/api\/v1\/orgs\/friends\/templates(\/.*)?$/, (route) =>
+    route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/templates") ? [template] : { ...template, spec: { ...survival.spec, resourcePack } } }),
+  );
+  await page.goto("/o/friends/new?from=template:t1");
+  const packs = page.getByRole("list", { name: "Packs, the top one first" }).getByRole("listitem");
+  await expect(packs).toHaveCount(3);
+  await expect(packs.nth(0)).toContainText("Colorful Grasses");
+  await expect(packs.nth(0)).toContainText("Colorful Grasses 1.0");
+  await expect(packs.nth(2)).toContainText("Fresh Animations");
+  await expect(page.getByText("3 packs joined into one · 3.0 MB")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
+});
