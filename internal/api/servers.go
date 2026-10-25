@@ -363,6 +363,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// FromServer makes the server a copy of another in the organization,
 		// as that one is now.
 		FromServer string `json:"fromServer"`
+		// FromTemplate makes it from a template: from the version of it that
+		// servers are made from, as FromSnapshot does.
+		FromTemplate string `json:"fromTemplate"`
 		// Node is the node to put it on, rather than the one the panel would
 		// choose. Its world lives on that node's disk.
 		Node string `json:"node"`
@@ -373,6 +376,14 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	if err := decode(r, &raw); err != nil {
 		return err
+	}
+	if raw.FromTemplate != "" {
+		if raw.FromSnapshot != "" || raw.FromServer != "" {
+			return errBadRequest("A server is made from one template, snapshot or server.")
+		}
+		if raw.FromSnapshot, err = s.templateVersionToMake(r.Context(), a, raw.FromTemplate); err != nil {
+			return err
+		}
 	}
 	in := struct {
 		Name string
@@ -533,7 +544,7 @@ func (s *Server) nameIsFree(ctx context.Context, a *access, name string) error {
 		return nil
 	}
 	for _, snap := range list {
-		if snap.Server == name {
+		if snap.Server == name && !isTemplate(&snap) {
 			return errNameHasHistory(name)
 		}
 	}

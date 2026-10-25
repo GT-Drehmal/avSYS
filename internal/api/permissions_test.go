@@ -226,6 +226,15 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET /orgs/{org}/offsite/snapshots", "", "", store.RoleViewer, 503},
 		{"POST /orgs/{org}/offsite/fetch", "", "", store.RoleViewer, 503},
 		{"GET /orgs/{org}/snapshots", "", "", store.RoleViewer, 200},
+		// 503: allowed, and there are no snapshots to save to. 404: allowed,
+		// and there is no such template.
+		{"GET /orgs/{org}/templates", "", "", store.RoleViewer, 200},
+		{"POST /orgs/{org}/templates", "", `{"name":"Lobby","server":"world"}`, store.RoleAdmin, 503},
+		{"GET /orgs/{org}/templates/{template}", "/orgs/alpha/templates/nope", "", store.RoleViewer, 404},
+		{"PATCH /orgs/{org}/templates/{template}", "/orgs/alpha/templates/nope", `{"name":"Hub"}`, store.RoleAdmin, 404},
+		{"DELETE /orgs/{org}/templates/{template}", "/orgs/alpha/templates/nope", "", store.RoleAdmin, 404},
+		{"POST /orgs/{org}/templates/{template}/versions", "/orgs/alpha/templates/nope/versions", `{"server":"world"}`, store.RoleAdmin, 404},
+		{"DELETE /orgs/{org}/templates/{template}/versions/{id}", "/orgs/alpha/templates/nope/versions/aaaa1111", "", store.RoleAdmin, 404},
 		{"GET /orgs/{org}/presence", "", "", store.RoleViewer, 200},
 		{"PUT /orgs/{org}/presence", "", `{"tab":"tab-of-{who}","server":"survival"}`, store.RoleViewer, 204},
 		// 503 below: allowed, and then told that this panel has no restic.
