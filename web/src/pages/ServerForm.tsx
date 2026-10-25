@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive as ArchiveIcon, ChevronLeft, X } from "lucide-react";
+import { Archive as ArchiveIcon, ChevronLeft, Undo2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit, packTitle, type PickKind, type Software } from "../components/Content";
@@ -1347,13 +1347,14 @@ export function ServerForm({
           </>
         )}
         {source && (modsChanged || packsChanged || packSettingsChanged || v.uploads.length > 0) && (
-          <button
-            type="button"
-            className="w-fit text-xs text-muted hover:text-fg"
+          <Button
+            size="sm"
+            icon={<Undo2 className="size-3.5" />}
+            className="w-fit"
             onClick={() => setValues((was) => ({ ...was, mods: start.mods, uploads: [], packs: start.packs, packRequired: start.packRequired, packPrompt: start.packPrompt }))}
           >
             Undo changes
-          </button>
+          </Button>
         )}
         {addingMods && software && (
           <AddContentDialog
