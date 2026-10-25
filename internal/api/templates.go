@@ -266,9 +266,6 @@ func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 		// Not a snapshot of the server's own: what it says of its
 		// snapshots stays as it was.
 		s.finishUnsaved(ctx, a.Namespace, mc.Name, kindTemplate, err)
-		if err == nil {
-			s.Events.Publish(Event{Type: "templates", Namespace: a.Namespace, Data: map[string]string{"org": a.Org.Slug, "template": t.ID}})
-		}
 		return err
 	}
 	if r.URL.Query().Get("wait") == "true" {
