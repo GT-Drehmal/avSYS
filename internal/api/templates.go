@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -32,6 +33,24 @@ const kindTemplate = "template"
 // errTemplateVersion is for a template's snapshot asked to be deleted as if
 // it were a server's.
 var errTemplateVersion = &Error{Status: http.StatusConflict, Code: "template", Message: "That snapshot is a version of a template. Delete it on the Templates page."}
+
+// errTemplateBusy is for a template a version is being saved to or deleted
+// from, which is let finish first.
+var errTemplateBusy = &Error{Status: http.StatusConflict, Code: "busy", Message: "This template is being saved or deleted. Try again when that has finished."}
+
+// templatesBusy holds, by organization ID and template ID, the templates a
+// version is being saved to or deleted from, one at a time: a version saved
+// is never left without its template, nor deleted as it is saved.
+var templatesBusy sync.Map
+
+// claimTemplate holds a template for one save or deletion.
+func claimTemplate(a *access, id string) (release func(), err error) {
+	key := a.Org.ID + "/" + id
+	if _, busy := templatesBusy.LoadOrStore(key, true); busy {
+		return nil, errTemplateBusy
+	}
+	return func() { templatesBusy.Delete(key) }, nil
+}
 
 // templateHost is what a template's snapshots are taken under.
 func templateHost(id string) string { return "template-" + id }
@@ -238,8 +257,14 @@ func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 			}
 		}
 	}
+	unclaim, err := claimTemplate(a, t.ID)
+	if err != nil {
+		forget(r.Context())
+		return err
+	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindTemplate, "")
 	if !ok {
+		unclaim()
 		forget(r.Context())
 		if running := s.ops.current(a.Namespace, mc.Name); running != nil {
 			return heldBy(running.Kind)
@@ -248,13 +273,20 @@ func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 	}
 	started := *op
 	work := func(ctx context.Context) error {
+		defer unclaim()
 		ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 		defer cancel()
 		snap, err := s.takeSnapshotAs(ctx, a.Org.Slug, mc, op, backup.TriggerTemplate, u.Username, templateHost(t.ID))
 		if err == nil {
-			// The newest is the one servers are made from.
+			// The newest is the one servers are made from. Only that is
+			// changed: a name given meanwhile stays.
 			t.Current = ""
-			err = s.Store.UpdateTemplate(ctx, t)
+			if err = s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, ""); err != nil {
+				// Saved for a template that is not there: not left behind.
+				if derr := s.Backups.Delete(context.WithoutCancel(ctx), a.Org.Slug, snap.ID); derr != nil {
+					s.Log.Error("could not remove a template's version saved for nothing", "template", t.ID, "snapshot", snap.ID, "error", derr)
+				}
+			}
 		}
 		if err != nil {
 			forget(context.WithoutCancel(ctx))
@@ -372,6 +404,11 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return err
 	}
+	unclaim, err := claimTemplate(a, t.ID)
+	if err != nil {
+		return err
+	}
+	defer unclaim()
 	if len(v.Versions) > 0 {
 		release, err := s.claimToDelete(r.Context(), a, v.Versions)
 		if err != nil {
@@ -412,6 +449,11 @@ func (s *Server) deleteTemplateVersion(w http.ResponseWriter, r *http.Request, u
 	if len(v.Versions) == 1 {
 		return &Error{Status: http.StatusConflict, Code: "last_version", Message: "This is the template's only version. Delete the template instead."}
 	}
+	unclaim, err := claimTemplate(a, t.ID)
+	if err != nil {
+		return err
+	}
+	defer unclaim()
 	release, err := s.claimToDelete(r.Context(), a, []backup.Snapshot{*snap})
 	if err != nil {
 		return err
@@ -422,8 +464,7 @@ func (s *Server) deleteTemplateVersion(w http.ResponseWriter, r *http.Request, u
 	}
 	// The one used is gone: the newest is used.
 	if t.Current == snap.Lineage {
-		t.Current = ""
-		if err := s.Store.UpdateTemplate(r.Context(), t); err != nil {
+		if err := s.Store.SetTemplateCurrent(r.Context(), a.Org.ID, t.ID, ""); err != nil {
 			return err
 		}
 	}

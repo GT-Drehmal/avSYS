@@ -278,8 +278,9 @@ var (
 // changing admits a request that changes a server. While a restore owns the
 // server nothing else may touch it: starting the game would run it on a
 // half-restored world, and most other changes replace the pod the restore is
-// working through. A snapshot only needs the game not to be started or
-// restarted under it, which callers ask for with alsoDuringSnapshot.
+// working through. A snapshot, a template's too, only needs the game not to
+// be started or restarted under it, which callers ask for with
+// alsoDuringSnapshot.
 //
 // The caller must call release once its change has been made.
 func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
@@ -300,7 +301,7 @@ func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) 
 func (s *Server) admit(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
 	kinds := []string{kindRestore, kindCreate, kindDeleteServer, kindMove, kindImport}
 	if alsoDuringSnapshot {
-		kinds = append(kinds, kindSnapshot)
+		kinds = append(kinds, kindSnapshot, kindTemplate)
 	}
 	release, blocker := s.ops.change(mc.Namespace, mc.Name, kinds...)
 	if blocker == nil {

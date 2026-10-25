@@ -94,6 +94,19 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *Template) error {
 	return nil
 }
 
+// SetTemplateCurrent says which version servers are made from, leaving the
+// rest of the template as it is now.
+func (s *Store) SetTemplateCurrent(ctx context.Context, orgID, id, current string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE templates SET current = ?, updated_at = ? WHERE org_id = ? AND id = ?`, current, time.Now().Unix(), orgID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteTemplate forgets a template. Its snapshots are the caller's to
 // delete.
 func (s *Store) DeleteTemplate(ctx context.Context, orgID, id string) error {

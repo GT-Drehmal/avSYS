@@ -69,3 +69,31 @@ func TestTemplateWords(t *testing.T) {
 		}
 	}
 }
+
+func TestOneSaveOrDeletionOfATemplateAtATime(t *testing.T) {
+	a := &access{Org: &store.Org{ID: "o1"}}
+	release, err := claimTemplate(a, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := claimTemplate(a, "t1"); err != errTemplateBusy {
+		t.Errorf("claimed twice: %v", err)
+	}
+	// Another template, or another organization's, is not held up.
+	if r, err := claimTemplate(a, "t2"); err != nil {
+		t.Errorf("another template: %v", err)
+	} else {
+		r()
+	}
+	if r, err := claimTemplate(&access{Org: &store.Org{ID: "o2"}}, "t1"); err != nil {
+		t.Errorf("another organization's: %v", err)
+	} else {
+		r()
+	}
+	release()
+	if r, err := claimTemplate(a, "t1"); err != nil {
+		t.Errorf("once let go: %v", err)
+	} else {
+		r()
+	}
+}
