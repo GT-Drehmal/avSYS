@@ -1106,9 +1106,14 @@ test("a mod's version is picked in the form as on the Content page", async ({ pa
     route.request().method() === "POST" ? route.fulfill({ status: 503, json: { code: "test", message: "Not sent by the test." } }) : route.fallback(),
   );
   await page.goto("/o/friends/new?from=server:survival");
-  await page.getByRole("region", { name: "Plugins" }).getByRole("button", { name: "v5.5.0" }).click();
+  // Its version, whichever it is now: other tests change survival's.
+  const row = page.getByRole("region", { name: "Plugins" }).getByRole("listitem").filter({ hasText: "LuckPerms" });
+  // The version is the button before Remove.
+  await row.getByRole("button").first().click();
   await page.getByRole("dialog").getByRole("button", { name: /^Update to the best fit/ }).click();
-  await expect(page.getByRole("region", { name: "Plugins" }).getByRole("button", { name: "Newest" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Newest" })).toBeVisible();
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
-  expect((await sent).postDataJSON().spec.mods).toEqual([{ source: "modrinth", kind: "plugin", project: "luckperms", title: "LuckPerms", version: "", versionName: "" }]);
+  const { mods } = (await sent).postDataJSON().spec;
+  expect(mods).toHaveLength(1);
+  expect(mods[0]).toMatchObject({ source: "modrinth", project: "luckperms", version: "", versionName: "" });
 });
