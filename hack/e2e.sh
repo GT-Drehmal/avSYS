@@ -371,6 +371,11 @@ expect "a folder is moved into another" "$(call -o /dev/null -w '%{http_code}' -
 expect "with what is in it" "$(call "$SRV/files?path=/e2e-world/e2e-configs")" '"a.yml"'
 expect "a folder is not moved into itself" "$(call -X POST "$SRV/files/rename?path=/e2e-world&to=/e2e-world/e2e-configs/e2e-world")" "into itself"
 expect "nor into a folder that is not there" "$(call -X POST "$SRV/files/rename?path=/e2e-world.zip&to=/no-such/e2e-world.zip")" "There is no folder"
+# Found by name, whatever its case, anywhere; what a name can say is only
+# looked for, not read as a pattern.
+expect "a file is found by name" "$(call "$SRV/files/search?q=R.0.0")" '"/e2e-world/region/r.0.0.mca"'
+expect "and says its name" "$(call "$SRV/files/search?q=R.0.0")" '"name":"r.0.0.mca"'
+expect "a pattern is only looked for" "$(call "$SRV/files/search?q=*")" '"results":[]'
 for p in /e2e-world /e2e-world.zip /e2e-configs.zip; do call -X DELETE "$SRV/files?path=$p" >/dev/null; done
 
 step "datapacks"
