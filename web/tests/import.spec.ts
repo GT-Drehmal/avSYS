@@ -1,5 +1,34 @@
 import { gzipSync } from "node:zlib";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./panel";
+
+/**
+ * The parts of archives sent to servers, as the panel keeps them: each put
+ * after the one before, by server. An archive is imported from them after.
+ */
+async function parts(page: Page) {
+  const got = new Map<string, Buffer>();
+  const offsets: number[] = [];
+  await page.route(/\/api\/v1\/orgs\/[^/]+\/servers\/[^/]+\/import\/upload/, async (route) => {
+    const url = new URL(route.request().url());
+    const server = url.pathname.replace(/\/import\/upload$/, "");
+    const had = got.get(server) ?? Buffer.alloc(0);
+    if (route.request().method() === "GET") return route.fulfill({ json: { received: had.length } });
+    const offset = Number(url.searchParams.get("offset"));
+    offsets.push(offset);
+    if (offset !== 0 && offset !== had.length) return route.fulfill({ status: 409, json: { code: "offset", message: "This part is not the next one.", received: had.length } });
+    // WebKit does not show a test what it sends: as long as it says.
+    const body = route.request().postDataBuffer() ?? Buffer.alloc(Number(url.searchParams.get("length")));
+    const next = Buffer.concat([offset === 0 ? Buffer.alloc(0) : had, body]);
+    got.set(server, next);
+    return route.fulfill({ json: { received: next.length } });
+  });
+  return { got: (server: string) => [...got].find(([k]) => k.endsWith(`/servers/${server}`))?.[1], offsets };
+}
+
+test.beforeEach(async ({ page }) => {
+  await parts(page);
+});
 
 // Archives are made here, byte by byte, as a server's folder would be packed
 // on another host: the page reads them itself, before anything is sent.
@@ -268,6 +297,40 @@ test("an import the panel turns down takes its server away again, and says why",
   expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
   // Its page, where the form went on to, says it is gone.
   await expect(page.getByText(/It may have been deleted/)).toBeVisible();
+});
+
+test("an archive is sent in parts, and a part lost on the way is sent again from where it got to", async ({ page, as, org, browserName }) => {
+  test.setTimeout(60_000);
+  const slug = await org([]);
+  await as("owner");
+  const sent = await parts(page);
+  // Larger than a part.
+  const archive = zip({ "server.properties": "motd=Big\n", "world/level.dat": levelDat("1.21.4"), "world/region/r.0.0.mca": Buffer.alloc(40 << 20, 7), "server.jar": "jar" });
+  // The second part is lost once, its answer never heard.
+  let lost = false;
+  await page.route(/\/servers\/big\/import\/upload\?offset=[1-9]/, (route) => {
+    if (lost) return route.fallback();
+    lost = true;
+    return route.abort("connectionreset");
+  });
+  let imported: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/big/import?*`, async (route) => {
+    imported = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await (await page.request.get(`/api/v1/orgs/${slug}/servers/big`)).json() });
+  });
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByLabel("Server archive").setInputFiles({ name: "big.zip", mimeType: "application/zip", buffer: archive });
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
+  await expect.poll(() => imported?.get("from") ?? null, { timeout: 20_000 }).toBe("upload");
+  expect(imported!.get("size")).toBe(String(archive.length));
+  expect(lost).toBe(true);
+  expect(sent.got("big")?.length).toBe(archive.length);
+  if (browserName === "chromium") expect(sent.got("big")?.equals(archive)).toBe(true);
+  expect(sent.offsets).toEqual([0, 32 << 20]);
 });
 
 test("what is not an archive is turned down before anything is sent", async ({ page, as, org }) => {

@@ -112,6 +112,57 @@ export function upload<T = void>(path: string, file: Blob, onProgress: (p: Progr
   });
 }
 
+/** How large each part of a file sent in parts is. */
+const partSize = 32 << 20;
+
+/** Waits ms, or until the signal aborts. */
+const pause = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new ApiError(0, "aborted", "Upload cancelled."));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => (clearTimeout(t), reject(new ApiError(0, "aborted", "Upload cancelled."))), { once: true });
+  });
+
+/**
+ * Sends an archive to a server in parts, to `${server}/import/upload`, each
+ * written after the one before: one lost on the way is sent again from where
+ * the panel says it got to, and a file larger than a request can carry
+ * still goes. The first, with wait, waits for a server made a moment ago.
+ * Gives up once the panel has not been reached for a few minutes.
+ */
+export async function uploadParts(server: string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal, wait = false): Promise<void> {
+  let at = 0;
+  let failing = 0;
+  while (at < file.size) {
+    const from = at;
+    const part = file.slice(from, Math.min(from + partSize, file.size));
+    try {
+      const got = await upload<{ received: number }>(
+        `${server}/import/upload?${qs({ offset: from, length: part.size, wait: wait && from === 0 ? "true" : undefined })}`,
+        part,
+        (p) => onProgress({ sent: from + p.sent, total: file.size }),
+        signal,
+      );
+      // Taken, and no further: as one lost.
+      if (got.received <= from) throw new ApiError(0, "lost", "The part did not arrive.");
+      at = got.received;
+      failing = 0;
+    } catch (err) {
+      // Lost on the way, or the panel or the server's files out of reach
+      // for a moment: again, from where it got to. Turned down: not.
+      const lost = err instanceof ApiError && (err.status === 0 || err.status >= 502 || err.code === "offset") && err.code !== "aborted";
+      if (!lost || ++failing > 10) throw err;
+      onProgress({ sent: from, total: file.size });
+      await pause(Math.min(30_000, 500 * 2 ** failing), signal);
+      try {
+        at = (await request<{ received: number }>("GET", `${server}/import/upload`)).received;
+      } catch {
+        // Asked again on the next try.
+      }
+    }
+  }
+}
+
 export const qs = (params: Record<string, string | number | undefined>) => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") p.set(k, String(v));

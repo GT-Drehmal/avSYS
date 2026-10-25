@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -357,25 +358,42 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 	}
 
-	s.setOperation(mc.Namespace, op, "Uploading", 0)
-	if err := sc.MkdirAll(path.Dir(importArchive)); err != nil {
-		return undo, fileError(err)
-	}
-	f, err := sc.Create(importArchive)
-	if err != nil {
-		return undo, fileError(err)
-	}
-	_, err = f.ReadFromWithConcurrency(http.MaxBytesReader(w, r.Body, maxUpload), 0)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		_ = sc.Remove(importArchive)
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			return undo, &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Archives over 2 GB must be copied over SSH."}
+	if r.URL.Query().Get("from") == "upload" {
+		// Sent before in parts: all of it, as large as the page said.
+		fi, err := sc.Stat(importUpload)
+		if errors.Is(err, os.ErrNotExist) {
+			return undo, errBadRequest("Nothing was uploaded to import.")
+		} else if err != nil {
+			return undo, fileError(err)
 		}
-		return undo, errBadRequest("The upload did not complete: %v.", err)
+		if size := r.URL.Query().Get("size"); size != strconv.FormatInt(fi.Size(), 10) {
+			return undo, errBadRequest("Only %s of the archive arrived. Send it again.", sizeOf(fi.Size()))
+		}
+		_ = sc.Remove(importArchive)
+		if err := sc.Rename(importUpload, importArchive); err != nil {
+			return undo, fileError(err)
+		}
+	} else {
+		s.setOperation(mc.Namespace, op, "Uploading", 0)
+		if err := sc.MkdirAll(path.Dir(importArchive)); err != nil {
+			return undo, fileError(err)
+		}
+		f, err := sc.Create(importArchive)
+		if err != nil {
+			return undo, fileError(err)
+		}
+		_, err = f.ReadFromWithConcurrency(http.MaxBytesReader(w, r.Body, maxUpload), 0)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			_ = sc.Remove(importArchive)
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return undo, &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Archives over 2 GB are sent in parts."}
+			}
+			return undo, errBadRequest("The upload did not complete: %v.", err)
+		}
 	}
 
 	// From here it is seen through even if whoever sent it has gone.

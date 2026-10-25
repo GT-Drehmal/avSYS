@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { ApiError, qs, serverPath, type Server } from "../lib/api";
+import { api, ApiError, qs, serverPath, type Server } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { bytes } from "../lib/format";
 import { keys, watchReplace } from "../lib/queries";
@@ -21,7 +21,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
   const [world, setWorld] = useState<FoundWorld | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { sending, send, cancel } = useUpload();
+  const { sending, sendParts, cancel } = useUpload();
   const reads = useRef(0);
   const stopped = server.spec.state === "Stopped" && server.status.phase === "Stopped";
   // Stopped, but held while the panel works on its files, which it says.
@@ -60,7 +60,8 @@ export function ReplaceWorld({ server }: { server: Server }) {
     // server's page shows, and this tab says how it went.
     const watch = watchReplace(server.org, server.name, server.spec.displayName || server.name);
     try {
-      await send<Server>(file.name, `${serverPath(server.org, server.name)}/import?${qs({ root: world.root, world: "true", replace: "true" })}`, file);
+      const path = serverPath(server.org, server.name);
+      await sendParts<Server>(file.name, path, file, () => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", from: "upload", size: file.size })}`, {}));
       watch.taken();
       setBusy(false);
       close(false);
