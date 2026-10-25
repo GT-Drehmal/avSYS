@@ -15,6 +15,10 @@
 # it last exited, given the organization and the server as $1 and $2. The
 # panel's console shows the game that is running, which after an exit is the
 # next one; why the last one stopped is only in its own log.
+# AVSYS_E2E_PART runs one part of it: content, lifecycle or history. Each
+# makes its own server, so that the parts can run side by side, each on a
+# cluster of its own, as CI runs them. Unset, all of them run, one after
+# another, on one server.
 set -eu
 
 : "${AVSYS_URL:?set AVSYS_URL to the panel address}"
@@ -35,6 +39,23 @@ field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.ar
 step() { printf '\n== %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 expect() { case "$2" in *"$3"*) printf 'ok: %s\n' "$1" ;; *) fail "$1: expected to find '$3' in: $2" ;; esac; }
+PART=${AVSYS_E2E_PART:-all}
+case "$PART" in all|content|lifecycle|history) ;; *) fail "AVSYS_E2E_PART is content, lifecycle or history, not $PART" ;; esac
+part() { [ "$PART" = all ] || [ "$PART" = "$1" ]; }
+# A datapack from a URL, and a resource pack made here: put on the probe
+# and, later, on a server made with files from this computer.
+PACK=https://cdn.modrinth.com/data/OhduvhIc/versions/8cEJouzY/Veinminer-1.2.4.zip
+make_packs() {
+  python3 - "$WORK/pack.zip" "$WORK/nested.zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e"}}')
+    z.writestr("assets/minecraft/lang/en_us.json", '{"menu.singleplayer":"e2e"}')
+with zipfile.ZipFile(sys.argv[2], "w") as z:
+    z.writestr("E2E Pack/pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e"}}')
+PY
+  PACK_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack.zip")
+}
 # set_spec BODY [SERVER]: changes a server's settings, failing with the panel's
 # answer if it refused. Its answer is not otherwise needed, and a change
 # that was refused would show only later, as something else.
@@ -269,6 +290,9 @@ else
   echo "skipped: the game's own container log is not available to this run"
 fi
 
+# What a server is given, and shows: its console, files, content.
+if part content; then
+
 step "console"
 plugins=$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")
 expect "LuckPerms is loaded" "$plugins" LuckPerms
@@ -394,7 +418,6 @@ restarted() {
 }
 # One from a URL, which the image only ever adds: taking it off has to take
 # its file away too, or the game goes on loading it.
-PACK=https://cdn.modrinth.com/data/OhduvhIc/versions/8cEJouzY/Veinminer-1.2.4.zip
 mods=$(call "$SRV" | field "__import__('json').dumps(d['spec']['mods'])")
 with=$(python3 -c 'import json, sys; m = json.loads(sys.argv[1]); m.append({"source": "url", "kind": "datapack", "project": sys.argv[2]}); print(json.dumps({"spec": {"mods": m}}))' "$mods" "$PACK")
 set_spec "$with"
@@ -409,17 +432,9 @@ expect "and the game no longer has it" "$(call -d '{"command":"datapack list"}' 
 step "resource pack"
 # A pack uploaded to the panel is kept in the server's files and served to
 # players' games, which fetch it with no session, at its hash.
-python3 - "$WORK/pack.zip" "$WORK/nested.zip" <<'PY'
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1], "w") as z:
-    z.writestr("pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e"}}')
-    z.writestr("assets/minecraft/lang/en_us.json", '{"menu.singleplayer":"e2e"}')
-with zipfile.ZipFile(sys.argv[2], "w") as z:
-    z.writestr("E2E Pack/pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e"}}')
-PY
+make_packs
 packed=$(call -X PUT --data-binary @"$WORK/pack.zip" "$SRV/resource-pack?name=e2e-pack.zip")
 PACK_URL=$(echo "$packed" | field "d['spec']['resourcePack']['url']") || fail "no pack was taken: $packed"
-PACK_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack.zip")
 expect "an uploaded pack is the server's, at its hash" "$(echo "$packed" | field "(d['spec']['resourcePack']['sha1'], d['spec']['resourcePack']['uploaded']['name'])")" "('$PACK_SHA', 'e2e-pack.zip')"
 expect "and is made for the formats its pack.mcmeta says" "$(echo "$packed" | field "d['spec']['resourcePack'].get('formats')")" "{'min': 46, 'max': 46}"
 expect "and served to anyone, as a game fetches it" "$(curl -sS "$PACK_URL" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
@@ -462,6 +477,11 @@ picked=$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://cdn.modrinth.
 expect "a pack picked from Modrinth says which" "$(echo "$picked" | field "(d['spec']['resourcePack']['project']['id'], d['spec']['resourcePack']['project']['versionName'])")" "('e2e-pack', '1.0')"
 expect "given another address, it is no longer the project's" "$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://example.org/pack.zip"}}}' "$SRV" | field "d['spec']['resourcePack'].get('project')")" None
 call -X DELETE "$SRV/resource-pack" >/dev/null
+
+fi
+
+# What people do to it: starting, stopping and restarting, at any moment.
+if part lifecycle; then
 
 step "a stop while the game loads"
 # Restarted, and stopped while it is coming up again. Told to stop while it
@@ -554,6 +574,18 @@ act restart
 for _ in $(seq 1 90); do [ "$(phase_now)" != Running ] && break; sleep 1; done
 wait_phase Running
 game_clean "and the game read them"
+
+fi
+
+# What is kept of it: snapshots, copies, moves, and the server deleted and
+# brought back.
+if part history; then
+
+# Run by itself, what the parts before would have left.
+if [ "$PART" = history ]; then
+  echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
+  make_packs
+fi
 
 step "snapshots"
 snap=$(call -X POST "$SRV/snapshots?wait=true")
@@ -1033,3 +1065,5 @@ case "$again" in *'"spec"'*) ;; *) fail "the server was not brought back straigh
 wait_phase Running
 expect "brought back straight after a delete, it keeps its files once it runs" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "and its plugins" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit
+
+fi
