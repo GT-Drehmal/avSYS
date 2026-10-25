@@ -6,7 +6,7 @@ import { Picture } from "../components/Picture";
 import { SaveTemplate } from "../components/SaveTemplate";
 import { useOrg } from "../components/Shell";
 import { software } from "../components/Snapshots";
-import { Button, Chip, Confirm, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, Spinner, Textarea } from "../components/ui";
+import { Button, Chip, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, Spinner, Textarea } from "../components/ui";
 import { api, ApiError, atLeast, snapshotIcon, type Template } from "../lib/api";
 import { ago, bytes } from "../lib/format";
 import { newFrom } from "../lib/origin";
@@ -68,7 +68,7 @@ export function Templates() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium">{t.name}</p>
                 {t.description && <p className="line-clamp-2 text-xs text-muted">{t.description}</p>}
-                <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-faint">
+                <p className={cx("mt-0.5 text-xs text-faint", !t.current && "flex items-center gap-1.5")}>
                   {t.current ? (
                     [software(t.current), bytes(t.current.size), `saved ${ago(t.current.time)}`, t.versions.length > 1 && `${t.versions.length} versions`].filter(Boolean).join(" · ")
                   ) : (
