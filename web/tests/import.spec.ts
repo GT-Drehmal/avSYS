@@ -251,6 +251,32 @@ test("a server run by Fabric's launcher is known by the game jar it keeps", asyn
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
 });
 
+test("a server's jar with a plain name says inside which game and software it is", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  const type = page.getByRole("group", { name: "Server type" });
+  // Mojang's, as its versions.list says.
+  const vanilla = zip({ "META-INF/versions.list": "abc\t1.21.4\t1.21.4/server-1.21.4.jar\n", "version.json": '{"id":"1.21.4"}' });
+  await page.getByLabel("Server archive").setInputFiles({ name: "plain.zip", mimeType: "application/zip", buffer: zip({ "srv/server.properties": "motd=Plain\n", "srv/server.jar": vanilla }) });
+  await expect(page.getByTestId("archive-summary")).toBeVisible();
+  await expect(type.getByRole("button", { name: /^Vanilla/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  // Paper's, renamed: Paper, of the game it holds.
+  await page.getByRole("button", { name: "Remove the archive" }).click();
+  const paper = zip({ "META-INF/versions.list": "abc\t1.21.3\t1.21.3/paper-1.21.3.jar\n" });
+  await page.getByLabel("Server archive").setInputFiles({ name: "renamed.zip", mimeType: "application/zip", buffer: zip({ "srv/server.properties": "motd=Renamed\n", "srv/server.jar": paper }) });
+  await expect(type.getByRole("button", { name: /^Paper/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.3");
+  // An older one of Mojang's, with only its version.json.
+  await page.getByRole("button", { name: "Remove the archive" }).click();
+  const old = zip({ "version.json": '{"id":"1.16.5","name":"1.16.5"}' });
+  await page.getByLabel("Server archive").setInputFiles({ name: "old.tar.gz", mimeType: "application/gzip", buffer: gzipSync(tar({ "server.properties": "motd=Old\n", "minecraft.jar": old })) });
+  await expect(type.getByRole("button", { name: /^Vanilla/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Game version")).toHaveValue("1.16.5");
+});
+
 test("an import the panel turns down takes its server away again, and says why", async ({ page, as, org, api }) => {
   const slug = await org([]);
   await as("owner");
