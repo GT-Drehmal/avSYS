@@ -46,6 +46,16 @@ func TestTemplates(t *testing.T) {
 	if got, err := s.Template(ctx, a.ID, lobby.ID); err != nil || got.Name != "Hub" || got.Current != "abc" {
 		t.Errorf("updated: %+v, %v", got, err)
 	}
+	// The version used is set alone: a name given meanwhile stays.
+	if err := s.SetTemplateCurrent(ctx, a.ID, lobby.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Template(ctx, a.ID, lobby.ID); err != nil || got.Name != "Hub" || got.Current != "" {
+		t.Errorf("version set alone: %+v, %v", got, err)
+	}
+	if err := s.SetTemplateCurrent(ctx, b.ID, lobby.ID, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("set in another organization: %v", err)
+	}
 	arena.Name = "HUB"
 	if err := s.UpdateTemplate(ctx, arena); !errors.Is(err, ErrTemplateNameTaken) {
 		t.Errorf("renamed to another's name: %v", err)
