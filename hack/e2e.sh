@@ -693,20 +693,25 @@ call -X DELETE "$IMPORTED?snapshot=false" >/dev/null
 # with its Nether beside it, where Paper keeps one.
 OWN=$API/orgs/$ORG/servers/own-world
 call -d '{"name":"own-world","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
-# Sent in parts, as the page sends it: the first waits for its volume, a
-# part out of turn is turned down with how much is there, and a part cut
-# short is taken off again.
+# Sent in parts, as the page sends it, under a name of its own: the first
+# waits for its volume, a part out of turn is turned down with how much is
+# there, a part cut short is taken off again, and another upload cannot
+# write over this one.
+UP=e2e-upload-one
 size=$(wc -c < "$WORK/save.tar.gz" | tr -d ' ')
 half=$((size / 2))
 head -c "$half" "$WORK/save.tar.gz" > "$WORK/save.1"
 tail -c +$((half + 1)) "$WORK/save.tar.gz" > "$WORK/save.2"
-expect "a first part is taken" "$(call -X PUT --data-binary "@$WORK/save.1" "$OWN/import/upload?offset=0&length=$half&wait=true")" "\"received\":$half"
-expect "a part out of turn says how much is there" "$(call -X PUT --data-binary "@$WORK/save.2" "$OWN/import/upload?offset=$size" | field "(d.get('code'), d.get('received'))")" "('offset', $half)"
-expect "a part cut short is turned down" "$(call -o /dev/null -w '%{http_code}' -X PUT --data-binary "@$WORK/save.2" "$OWN/import/upload?offset=$half&length=$((size * 2))")" 400
-expect "and taken off again" "$(call "$OWN/import/upload")" "\"received\":$half"
-expect "the last part is taken" "$(call -X PUT --data-binary "@$WORK/save.2" "$OWN/import/upload?offset=$half&length=$((size - half))")" "\"received\":$size"
-expect "an import of less than was sent is turned down" "$(call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&size=$((size + 1))&wait=true" | field "d['code']")" invalid
-call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&size=$size&wait=true" >/dev/null
+expect "a first part is taken" "$(call -X PUT --data-binary "@$WORK/save.1" "$OWN/import/upload?upload=$UP&offset=0&length=$half&wait=true")" "\"received\":$half"
+expect "a part out of turn says how much is there" "$(call -X PUT --data-binary "@$WORK/save.2" "$OWN/import/upload?upload=$UP&offset=$size" | field "(d.get('code'), d.get('received'))")" "('offset', $half)"
+expect "another upload cannot begin over it" "$(call -X PUT --data-binary "@$WORK/save.1" "$OWN/import/upload?upload=e2e-upload-two&offset=0" | field "d['code']")" uploading
+expect "nor is told of it" "$(call "$OWN/import/upload?upload=e2e-upload-two")" '"received":0'
+expect "a part cut short is turned down" "$(call -o /dev/null -w '%{http_code}' -X PUT --data-binary "@$WORK/save.2" "$OWN/import/upload?upload=$UP&offset=$half&length=$((size * 2))")" 400
+expect "and taken off again" "$(call "$OWN/import/upload?upload=$UP")" "\"received\":$half"
+expect "the last part is taken" "$(call -X PUT --data-binary "@$WORK/save.2" "$OWN/import/upload?upload=$UP&offset=$half&length=$((size - half))")" "\"received\":$size"
+expect "an import of less than was sent is turned down" "$(call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$UP&size=$((size + 1))&wait=true" | field "d['code']")" invalid
+expect "as is one of another upload" "$(call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=e2e-upload-two&size=$size&wait=true" | field "d['code']")" invalid
+call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$UP&size=$size&wait=true" >/dev/null
 expect "a world of one's own is the server's" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat")" 200
 expect "with its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" 200
 expect "and not locked" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/session.lock")" 404

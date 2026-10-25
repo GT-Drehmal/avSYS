@@ -128,9 +128,15 @@ const pause = (ms: number, signal?: AbortSignal) =>
  * written after the one before: one lost on the way is sent again from where
  * the panel says it got to, and a file larger than a request can carry
  * still goes. The first, with wait, waits for a server made a moment ago.
- * Gives up once the panel has not been reached for a few minutes.
+ * Gives up once the panel has not been reached for a few minutes. Resolves
+ * to the upload's name, which the import is asked for by.
  */
-export async function uploadParts(server: string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal, wait = false): Promise<void> {
+export async function uploadParts(server: string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal, wait = false): Promise<string> {
+  // Named, so that its parts are never mixed with another's.
+  const name = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const stopped = () => {
+    if (signal?.aborted) throw new ApiError(0, "aborted", "Upload cancelled.");
+  };
   let at = 0;
   let failing = 0;
   while (at < file.size) {
@@ -138,7 +144,7 @@ export async function uploadParts(server: string, file: Blob, onProgress: (p: Pr
     const part = file.slice(from, Math.min(from + partSize, file.size));
     try {
       const got = await upload<{ received: number }>(
-        `${server}/import/upload?${qs({ offset: from, length: part.size, wait: wait && from === 0 ? "true" : undefined })}`,
+        `${server}/import/upload?${qs({ upload: name, offset: from, length: part.size, wait: wait && from === 0 ? "true" : undefined })}`,
         part,
         (p) => onProgress({ sent: from + p.sent, total: file.size }),
         signal,
@@ -155,12 +161,15 @@ export async function uploadParts(server: string, file: Blob, onProgress: (p: Pr
       onProgress({ sent: from, total: file.size });
       await pause(Math.min(30_000, 500 * 2 ** failing), signal);
       try {
-        at = (await request<{ received: number }>("GET", `${server}/import/upload`)).received;
+        at = (await request<{ received: number }>("GET", `${server}/import/upload?${qs({ upload: name })}`)).received;
       } catch {
         // Asked again on the next try.
       }
+      stopped();
     }
   }
+  stopped();
+  return name;
 }
 
 export const qs = (params: Record<string, string | number | undefined>) => {

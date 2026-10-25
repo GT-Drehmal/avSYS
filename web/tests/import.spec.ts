@@ -9,10 +9,13 @@ import { expect, test } from "./panel";
 async function parts(page: Page) {
   const got = new Map<string, Buffer>();
   const offsets: number[] = [];
+  // Which upload each part and question was of.
+  const names: string[] = [];
   await page.route(/\/api\/v1\/orgs\/[^/]+\/servers\/[^/]+\/import\/upload/, async (route) => {
     const url = new URL(route.request().url());
     const server = url.pathname.replace(/\/import\/upload$/, "");
     const had = got.get(server) ?? Buffer.alloc(0);
+    names.push(url.searchParams.get("upload") ?? "");
     if (route.request().method() === "GET") return route.fulfill({ json: { received: had.length } });
     const offset = Number(url.searchParams.get("offset"));
     offsets.push(offset);
@@ -23,7 +26,7 @@ async function parts(page: Page) {
     got.set(server, next);
     return route.fulfill({ json: { received: next.length } });
   });
-  return { got: (server: string) => [...got].find(([k]) => k.endsWith(`/servers/${server}`))?.[1], offsets };
+  return { got: (server: string) => [...got].find(([k]) => k.endsWith(`/servers/${server}`))?.[1], offsets, names };
 }
 
 test.beforeEach(async ({ page }) => {
@@ -308,7 +311,7 @@ test("an archive is sent in parts, and a part lost on the way is sent again from
   const archive = zip({ "server.properties": "motd=Big\n", "world/level.dat": levelDat("1.21.4"), "world/region/r.0.0.mca": Buffer.alloc(40 << 20, 7), "server.jar": "jar" });
   // The second part is lost once, its answer never heard.
   let lost = false;
-  await page.route(/\/servers\/big\/import\/upload\?offset=[1-9]/, (route) => {
+  await page.route(/\/servers\/big\/import\/upload\?.*offset=[1-9]/, (route) => {
     if (lost) return route.fallback();
     lost = true;
     return route.abort("connectionreset");
@@ -331,6 +334,46 @@ test("an archive is sent in parts, and a part lost on the way is sent again from
   expect(sent.got("big")?.length).toBe(archive.length);
   if (browserName === "chromium") expect(sent.got("big")?.equals(archive)).toBe(true);
   expect(sent.offsets).toEqual([0, 32 << 20]);
+  // All of one upload, which is the one imported.
+  expect(new Set(sent.names).size).toBe(1);
+  expect(sent.names[0]).toMatch(/^[0-9a-f]{32}$/);
+  expect(imported!.get("upload")).toBe(sent.names[0]);
+});
+
+test("cancelled while the panel is asked how far it got, nothing is imported", async ({ page, as }) => {
+  await as("owner");
+  // The part arrives, but its answer is lost; the question after it is
+  // answered only once Cancel has been pressed.
+  let asking: () => void = () => {};
+  const asked = new Promise<void>((r) => (asking = r));
+  let answer: () => void = () => {};
+  const answered = new Promise<void>((r) => (answer = r));
+  let size = 0;
+  await page.route(/\/servers\/creative\/import\/upload/, async (route) => {
+    if (route.request().method() === "PUT") {
+      size = Number(new URL(route.request().url()).searchParams.get("length"));
+      return route.abort("connectionreset");
+    }
+    asking();
+    await answered;
+    return route.fulfill({ json: { received: size } });
+  });
+  let imported = false;
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", (route) => {
+    imported = true;
+    return route.fulfill({ status: 202, json: {} });
+  });
+  await page.goto("/o/friends/s/creative/settings");
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "Map/level.dat": levelDat("1.21.4", "Map"), "Map/region/r.0.0.mca": "x" }) });
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  await asked;
+  await dialog.getByRole("status").getByRole("button", { name: "Cancel" }).click();
+  answer();
+  await expect(dialog.getByText("The upload was stopped. Nothing was changed.")).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(imported).toBe(false);
 });
 
 test("what is not an archive is turned down before anything is sent", async ({ page, as, org }) => {

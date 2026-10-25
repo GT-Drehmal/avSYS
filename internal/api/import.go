@@ -359,20 +359,23 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	}
 
 	if r.URL.Query().Get("from") == "upload" {
-		// Sent before in parts: all of it, as large as the page said.
-		fi, err := sc.Stat(importUpload)
-		if errors.Is(err, os.ErrNotExist) {
-			return undo, errBadRequest("Nothing was uploaded to import.")
-		} else if err != nil {
+		// Sent before in parts, by this upload: all of it, as large as the
+		// page said.
+		owner, size, _, err := uploadOf(sc)
+		if err != nil {
 			return undo, fileError(err)
 		}
-		if size := r.URL.Query().Get("size"); size != strconv.FormatInt(fi.Size(), 10) {
-			return undo, errBadRequest("Only %s of the archive arrived. Send it again.", sizeOf(fi.Size()))
+		if owner == "" || owner != r.URL.Query().Get("upload") {
+			return undo, errBadRequest("Nothing was uploaded to import.")
+		}
+		if want := r.URL.Query().Get("size"); want != strconv.FormatInt(size, 10) {
+			return undo, errBadRequest("Only %s of the archive arrived. Send it again.", sizeOf(size))
 		}
 		_ = sc.Remove(importArchive)
 		if err := sc.Rename(importUpload, importArchive); err != nil {
 			return undo, fileError(err)
 		}
+		_ = sc.Remove(importUploadID)
 	} else {
 		s.setOperation(mc.Namespace, op, "Uploading", 0)
 		if err := sc.MkdirAll(path.Dir(importArchive)); err != nil {

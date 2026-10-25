@@ -61,7 +61,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
     const watch = watchReplace(server.org, server.name, server.spec.displayName || server.name);
     try {
       const path = serverPath(server.org, server.name);
-      await sendParts<Server>(file.name, path, file, () => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", from: "upload", size: file.size })}`, {}));
+      await sendParts<Server>(file.name, path, file, (upload) => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", from: "upload", upload, size: file.size })}`, {}));
       watch.taken();
       setBusy(false);
       close(false);

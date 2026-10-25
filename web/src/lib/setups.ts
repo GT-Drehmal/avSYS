@@ -30,7 +30,7 @@ export interface SetupWork {
   say: (stage: string, stoppable?: boolean) => void;
   send: <T>(label: string, path: string, file: Blob) => Promise<T>;
   /** Sends an archive to a server in parts, then asks for what finish does. */
-  sendParts: <T>(label: string, server: string, file: Blob, finish: () => Promise<T>) => Promise<T>;
+  sendParts: <T>(label: string, server: string, file: Blob, finish: (upload: string) => Promise<T>) => Promise<T>;
   signal: AbortSignal;
 }
 
@@ -85,15 +85,16 @@ export function startSetup(org: string, server: string, title: string, work: (w:
         update(id, { progress: null, stoppable: false });
       }
     },
-    sendParts: async <T>(label: string, server: string, file: Blob, finish: () => Promise<T>) => {
+    sendParts: async <T>(label: string, server: string, file: Blob, finish: (upload: string) => Promise<T>) => {
       update(id, { stage: label, progress: { sent: 0, total: file.size }, stoppable: true });
+      let upload: string;
       try {
-        await uploadParts(server, file, (progress) => update(id, { progress }), ctl.signal, true);
+        upload = await uploadParts(server, file, (progress) => update(id, { progress }), ctl.signal, true);
       } finally {
         update(id, { progress: null, stoppable: false });
       }
       update(id, { stage: "Unpacking" });
-      return finish();
+      return finish(upload);
     },
     signal: ctl.signal,
   };

@@ -607,9 +607,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     try {
       // In parts, so that a connection lost for a moment does not lose what
       // was sent, and an archive of any size goes.
-      await w.sendParts(`Sending ${toImport.file.name}`, path, toImport.file, () =>
+      await w.sendParts(`Sending ${toImport.file.name}`, path, toImport.file, (upload) =>
         api.put<Server>(
-          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), from: "upload", size: toImport.file.size, wait: "true" })}`,
+          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), from: "upload", upload, size: toImport.file.size, wait: "true" })}`,
           {},
         ),
       );

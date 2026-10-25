@@ -36,11 +36,8 @@ export function useUpload() {
   };
   const send = <T,>(label: string, path: string, file: Blob, method?: "PUT" | "POST") => run<T>(label, file, (p, signal) => upload<T>(path, file, p, signal, method));
   /** Sends an archive to a server in parts, then asks for what finish does. */
-  const sendParts = <T,>(label: string, server: string, file: Blob, finish: () => Promise<T>) =>
-    run<T>(label, file, async (p, signal) => {
-      await uploadParts(server, file, p, signal);
-      return finish();
-    });
+  const sendParts = <T,>(label: string, server: string, file: Blob, finish: (upload: string) => Promise<T>) =>
+    run<T>(label, file, async (p, signal) => finish(await uploadParts(server, file, p, signal)));
   return { sending, send, sendParts, cancel: () => stop.current?.abort() };
 }
 
