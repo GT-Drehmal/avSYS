@@ -9,15 +9,16 @@ import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines
 import { Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type ResourcePack, type Server, type ServerSpec } from "../lib/api";
+import { api, ApiError, qs, serverIcon, serverPath, snapshotIcon, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type ResourcePack, type Server, type ServerSpec, type Template } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
-import type { Origin } from "../lib/origin";
+import { newFrom, type Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
-import { keys, useMe } from "../lib/queries";
+import { keys, useMe, useTemplates } from "../lib/queries";
 import { type Found, type FoundWorld, inspectServer, inspectWorld } from "../lib/serverImport";
 import { SetupFailed, type SetupWork, startSetup } from "../lib/setups";
+import { ready, templateSummary } from "../lib/templates";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
 
@@ -52,6 +53,13 @@ export interface Source {
   live?: Server;
   /** The snapshot its files come from, where it is a template's: its picture is that one's. */
   snapshot?: string;
+}
+
+/** A template of settings alone, which a new server is made with: there are no files to copy. */
+export interface Preset {
+  id: string;
+  name: string;
+  spec: ServerSpec;
 }
 
 /** An archive of an existing server's folder, and what it says about the server. */
@@ -306,6 +314,18 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
   };
 }
 
+/** The form filled in with a template's settings, under the given name. */
+function presetValues(p: Preset, name: string | null): Values {
+  return {
+    ...valuesOf({ origin: { kind: "template", id: p.id }, name: p.name, spec: p.spec, size: 0 }, name ?? "", false, 1),
+    displayName: p.name,
+    customName: name,
+    picture: { kind: "none" },
+    // Set in the panel by an admin, not written by a server.
+    extraFlags: launchOf(p.spec).extraFlags,
+  };
+}
+
 /** The server.properties the form's values come to. An empty value is one the panel does not set. */
 function propertiesOf(v: Values): Record<string, string> {
   const properties: Record<string, string> = { ...parseProperties(v.otherProperties) };
@@ -334,9 +354,26 @@ function propertiesOf(v: Values): Record<string, string> {
 /**
  * The form for making a server, every way one is made: from nothing, or out
  * of a server or a snapshot, which fill it in to start with. Whatever it
- * starts with can be changed before the server is made.
+ * starts with can be changed before the server is made. A template's
+ * settings fill in a new one. For a template of settings alone, it is the
+ * form for those, without what is a server's own.
  */
-export function ServerForm({ org, source, taken, history }: { org: string; source?: Source; taken: Set<string>; history: Set<string> }) {
+export function ServerForm({
+  org,
+  source,
+  preset,
+  templating,
+  taken,
+  history,
+}: {
+  org: string;
+  source?: Source;
+  preset?: Preset;
+  /** Making a template of settings alone, or changing the one given. */
+  templating?: { template: Template | null };
+  taken: Set<string>;
+  history: Set<string>;
+}) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const me = useMe().data;
@@ -353,7 +390,22 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   // One that is gone is brought back under its own name, and its history goes
   // on. A copy is a new server, and takes a name no server or snapshot has.
   const startingName = source ? (templated ? freeName(source.name, new Set([...taken, ...history])) : copying ? freeName(`${source.name}-copy`, new Set([...taken, ...history])) : source.name) : "";
-  const [start] = useState(() => (source ? valuesOf(source, startingName, copying && !templated, leastStorage) : fresh));
+  const forTemplate = !!templating;
+  const editing = templating?.template;
+  const [start] = useState(() =>
+    source
+      ? valuesOf(source, startingName, copying && !templated, leastStorage)
+      : preset
+        ? presetValues(preset, freeName(slugify(preset.name) || "server", new Set([...taken, ...history])))
+        : editing?.spec
+          ? presetValues({ id: editing.id, name: editing.name, spec: editing.spec }, null)
+          : fresh,
+  );
+  const [description, setDescription] = useState(editing?.description ?? "");
+  // A new server can start from one of the organization's templates.
+  const templates = useTemplates(org);
+  const choosable = !source && !preset && !forTemplate && (templates.data?.length ?? 0) > 0;
+  const [pickingTemplate, setPickingTemplate] = useState(false);
   const [v, setValues] = useState(start);
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
@@ -745,6 +797,26 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     navigate(`/o/${org}/s/${server}`);
   };
 
+  /** Keeps the settings as a template, or as the one being changed. What is a server's own is left out. */
+  const saveTemplate = async () => {
+    setBusy(true);
+    setError(null);
+    const spec = newRequest();
+    delete spec.eula;
+    delete spec.state;
+    delete spec.displayName;
+    const body = { name: v.displayName.trim(), description: description.trim(), spec };
+    try {
+      if (editing) await api.patch(`/orgs/${org}/templates/${editing.id}`, body);
+      else await api.post(`/orgs/${org}/templates`, body);
+      await qc.invalidateQueries({ queryKey: keys.templates(org) });
+      navigate(`/o/${org}/templates`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save the template.");
+      setBusy(false);
+    }
+  };
+
   const submit = async (e?: React.FormEvent, sure = false) => {
     e?.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
@@ -755,6 +827,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
+    if (forTemplate) return saveTemplate();
     if (ask && !sure) return setAskOpen(true);
     setAskOpen(false);
     setBusy(true);
@@ -873,13 +946,19 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   return (
     <>
     <form onSubmit={submit}>
-      <Link to={`/o/${org}`} className="mb-3 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
+      <Link to={forTemplate ? `/o/${org}/templates` : `/o/${org}`} className="mb-3 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
         <ChevronLeft className="size-3.5" />
-        Servers
+        {forTemplate ? "Templates" : "Servers"}
       </Link>
       <PageHeader
         title={
-          !source
+          forTemplate
+            ? editing
+              ? `Edit ${editing.name}`
+              : "New template"
+            : preset
+              ? `New server from ${preset.name}`
+              : !source
             ? "New server"
             : duplicating
               ? `Duplicate ${source.name}`
@@ -914,8 +993,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
             <button
               type="button"
-              className={segment(v.kind === "game")}
+              className={segment(v.kind === "game" && !pickingTemplate)}
               onClick={() => {
+                setPickingTemplate(false);
                 if (v.kind === "game") return;
                 reads.current++;
                 setReading(false);
@@ -926,8 +1006,9 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             </button>
             <button
               type="button"
-              className={segment(v.kind === "modpack")}
+              className={segment(v.kind === "modpack" && !pickingTemplate)}
               onClick={() => {
+                setPickingTemplate(false);
                 if (v.kind === "modpack") return;
                 reads.current++;
                 setReading(false);
@@ -936,10 +1017,45 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             >
               Modpack
             </button>
-            <button type="button" className={segment(importing)} onClick={() => !importing && changeSoftware({ kind: "import" })}>
-              Import
-            </button>
+            {choosable && (
+              <button type="button" className={segment(pickingTemplate)} onClick={() => setPickingTemplate(true)}>
+                Template
+              </button>
+            )}
+            {!forTemplate && (
+              <button
+                type="button"
+                className={segment(importing && !pickingTemplate)}
+                onClick={() => {
+                  setPickingTemplate(false);
+                  if (!importing) changeSoftware({ kind: "import" });
+                }}
+              >
+                Import
+              </button>
+            )}
           </div>
+          {pickingTemplate ? (
+            <ul aria-label="Templates" className="flex flex-col divide-y divide-line rounded-md border border-line">
+              {templates.data?.map((t) => (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    disabled={!ready(t)}
+                    onClick={() => navigate(newFrom(org, { kind: "template", id: t.id }))}
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-hover disabled:opacity-50 disabled:hover:bg-transparent"
+                  >
+                    <Picture name={t.name} url={t.current ? snapshotIcon(org, t.current.id) : undefined} size={32} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium">{t.name}</span>
+                      <span className="block truncate text-xs text-muted">{templateSummary(t) ?? "Saving"}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+          <>
           {importing && (
             <>
               <input
@@ -1040,15 +1156,25 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               />
             </div>
           )}
+          </>
+          )}
         </Section>
       )}
 
-      <Section title="Name and picture">
-        <PictureChange name={v.displayName || source?.name || ""} current={brought} value={v.picture} onChange={(change) => set("picture", change)} />
-        <Field label="Display name">{(id) => <Input id={id} required value={v.displayName} onChange={(e) => set("displayName", e.target.value)} />}</Field>
-        <Field label="Short name" hint={nameHint}>
-          {(id) => <Input id={id} required value={name} onChange={(e) => set("customName", e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
+      {/* Picking a template goes on to its own form: the rest is not filled in here. */}
+      <div className={pickingTemplate ? "hidden" : "contents"}>
+      <Section title={forTemplate ? "Name" : "Name and picture"}>
+        {!forTemplate && <PictureChange name={v.displayName || source?.name || ""} current={brought} value={v.picture} onChange={(change) => set("picture", change)} />}
+        <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from it are called this." : undefined}>
+          {(id) => <Input id={id} required maxLength={forTemplate ? 60 : undefined} value={v.displayName} onChange={(e) => set("displayName", e.target.value)} />}
         </Field>
+        {forTemplate ? (
+          <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
+        ) : (
+          <Field label="Short name" hint={nameHint}>
+            {(id) => <Input id={id} required value={name} onChange={(e) => set("customName", e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
+          </Field>
+        )}
         <Field label="Message of the day" hint="Shown under the name in the server list.">
           {(id) => <Input id={id} value={v.motd} onChange={(e) => set("motd", e.target.value)} placeholder="A Minecraft Server" />}
         </Field>
@@ -1115,16 +1241,23 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             description="Downloaded when the server first starts."
             onAdd={(ref) => setValues((was) => ({ ...was, mods: [...was.mods, ref] }))}
             // Kept here until the server is made, then uploaded before it first starts.
-            onUpload={async (file, kind) => {
-              setValues((was) => ({ ...was, uploads: [...was.uploads.filter((u) => u.file.name !== file.name), { file, kind }] }));
-              toast.info(`${file.name} will be uploaded when the server is created`);
-            }}
+            // A template of settings alone has nowhere to keep files.
+            onUpload={
+              forTemplate
+                ? undefined
+                : async (file, kind) => {
+                    setValues((was) => ({ ...was, uploads: [...was.uploads.filter((u) => u.file.name !== file.name), { file, kind }] }));
+                    toast.info(`${file.name} will be uploaded when the server is created`);
+                  }
+            }
             uploadNote="Uploaded after the server is created."
             start={addingMods}
             pack={{
               current: v.pack,
               onPick: async (pack) => setValues((was) => ({ ...was, packFile: null, pack: { ...pack, enforce: !!was.pack?.enforce, prompt: was.pack?.prompt ?? "" } })),
-              keep: (file) =>
+              keep: forTemplate
+                ? undefined
+                : (file) =>
                     setValues((was) => ({
                       ...was,
                       packFile: file,
@@ -1146,7 +1279,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
               : undefined
         }
       >
-        {!source && v.kind === "game" && (
+        {!source && !forTemplate && v.kind === "game" && (
           <>
             <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
               <button
@@ -1322,12 +1455,13 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
           <Field label="Memory (GB)">{(id) => <Input id={id} type="number" required min={0.5} step={0.5} value={v.memory} onChange={(e) => set("memory", e.target.value)} />}</Field>
           <Field label="Storage (GB)">{(id) => <Input id={id} type="number" required min={least} step={1} value={v.storage} onChange={(e) => set("storage", e.target.value)} />}</Field>
         </div>
-        <NodeChoice memory={v.memory} value={v.node} kept={source?.origin.kind === "server" ? source.live?.spec.nodeSelector : undefined} onChange={(node) => set("node", node)} />
+        {!forTemplate && <NodeChoice memory={v.memory} value={v.node} kept={source?.origin.kind === "server" ? source.live?.spec.nodeSelector : undefined} onChange={(node) => set("node", node)} />}
         <More label="Launch flags" changed={(v.aikar !== start.aikar ? 1 : 0) + (v.extraFlags !== start.extraFlags ? 1 : 0)} open={moreLaunch} onToggle={() => setMoreLaunch(!moreLaunch)} />
         {moreLaunch && <LaunchFlags aikar={v.aikar} extra={v.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} fromSnapshot={source?.origin.kind === "snapshot"} />}
       </Section>
 
       <Section title="Network">
+        {!forTemplate && (
         <Field
           label="Hostname"
           hint={[
@@ -1339,6 +1473,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         >
           {(id) => <Input id={id} value={v.hostname} disabled={v.exposeType === "None"} onChange={(e) => set("hostname", e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
         </Field>
+        )}
         <More label="How it is reached, and sleep" changed={networkChanged} open={moreNetwork} onToggle={() => setMoreNetwork(!moreNetwork)} />
         {moreNetwork && (
           <>
@@ -1377,8 +1512,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         </Field>
       </Section>
 
-      <Section title={!source ? "Minecraft EULA" : duplicating ? "Duplicate" : "Create"}>
-        {!source ? (
+      <Section title={forTemplate ? "Save" : !source ? "Minecraft EULA" : duplicating ? "Duplicate" : "Create"}>
+        {forTemplate ? null : !source ? (
           <label className="flex items-start gap-2.5 text-[13px] leading-relaxed">
             <input type="checkbox" required checked={eula} onChange={(e) => setEula(e.target.checked)} className="mt-1 size-3.5 accent-(--color-accent)" />
             <span>
@@ -1418,16 +1553,17 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         {error && <Notice tone="danger">{error}</Notice>}
         <div className="flex gap-2">
           <Button type="submit" variant="primary" loading={busy}>
-            {!source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
+            {forTemplate ? (editing ? "Save" : "Create template") : !source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
           </Button>
           <Link
-            to={source?.live ? `/o/${org}/s/${source.live.name}` : source ? `/o/${org}/backups` : `/o/${org}`}
+            to={forTemplate || templated || preset ? `/o/${org}/templates` : source?.live ? `/o/${org}/s/${source.live.name}` : source ? `/o/${org}/backups` : `/o/${org}`}
             className="inline-flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-muted hover:bg-raised hover:text-fg"
           >
             Cancel
           </Link>
         </div>
       </Section>
+      </div>
     </form>
       <Confirm
         open={askOpen}

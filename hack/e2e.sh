@@ -1059,6 +1059,13 @@ expect "a template's version is not deleted as a server's snapshot" "$(call -X D
 call -X DELETE "$FROM?snapshot=false" >/dev/null
 expect "a template is deleted, its versions with it" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/templates/$TPL")" 204
 expect "and is gone" "$(call "$API/orgs/$ORG/templates" | field 'len(d)')" 0
+# One of settings alone has no server behind it, until one is saved into it.
+set=$(call -d '{"name":"E2E Settings","spec":{"loader":"fabric","version":"LATEST","resources":{"memory":"2Gi"},"storage":{"size":"2Gi"},"expose":{"type":"Router","hostname":"not-kept.test"}}}' "$API/orgs/$ORG/templates")
+SET=$(echo "$set" | field "d['id']") || fail "no template of settings alone was made: $set"
+expect "a template of settings alone is made, without what is a server's own" "$(echo "$set" | field "(d['settingsOnly'], d['spec']['loader'], d['spec']['version'], d['spec']['expose'].get('hostname'))")" "(True, 'fabric', 'LATEST', None)"
+expect "no server is copied from it" "$(call -d "{\"name\":\"from-settings\",\"fromTemplate\":\"$SET\"}" "$API/orgs/$ORG/servers" | field "d['code']")" settings_only
+expect "a server saved into it gives it a version, which it is made from then" "$(call -d '{"server":"probe"}' "$API/orgs/$ORG/templates/$SET/versions?wait=true" | field "(d['settingsOnly'], len(d['versions']), 'spec' in d)")" "(False, 1, False)"
+expect "and it is deleted with that" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/templates/$SET")" 204
 call -X DELETE "$SRV/files?path=/template.txt" >/dev/null
 for _ in $(seq 1 30); do
   [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break

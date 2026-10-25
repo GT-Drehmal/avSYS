@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 )
 
@@ -65,5 +67,57 @@ func TestTemplates(t *testing.T) {
 	}
 	if err := s.DeleteTemplate(ctx, a.ID, lobby.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deleted twice: %v", err)
+	}
+}
+
+// A table of templates from before they could be made of settings alone
+// gets the column; settings given a version are dropped.
+func TestTemplateSettingsAdded(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "templates.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := &Org{Slug: "old", Name: "Old"}
+	if err := s.CreateOrg(ctx, org, user(t, s, "owner").ID); err != nil {
+		t.Fatal(err)
+	}
+	old := &Template{OrgID: org.ID, Name: "Old"}
+	if err := s.CreateTemplate(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE templates DROP COLUMN settings`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	for range 2 {
+		if s, err = Open(path); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.Template(ctx, org.ID, old.ID); err != nil || got.Settings != "" {
+			t.Errorf("after opening: %+v %v", got, err)
+		}
+		s.Close()
+	}
+	s, _ = Open(path)
+	defer s.Close()
+	made := &Template{OrgID: org.ID, Name: "Settings", Settings: `{"loader":"paper"}`}
+	if err := s.CreateTemplate(ctx, made); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Template(ctx, org.ID, made.ID); got.Settings != made.Settings {
+		t.Errorf("settings not kept: %q", got.Settings)
+	}
+	if err := s.SetTemplateCurrent(ctx, org.ID, made.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Template(ctx, org.ID, made.ID); got.Settings != "" {
+		t.Errorf("settings kept with a version: %q", got.Settings)
 	}
 }
