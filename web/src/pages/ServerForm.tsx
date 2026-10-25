@@ -3,6 +3,7 @@ import { Archive as ArchiveIcon, ChevronLeft, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit, packTitle, type PickKind, type Software } from "../components/Content";
+import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
 import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
@@ -16,7 +17,7 @@ import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
 import { newFrom, type Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
-import { keys, useMe, useTemplates } from "../lib/queries";
+import { keys, useBackupPolicy, useMe, useTemplates } from "../lib/queries";
 import { type Found, type FoundWorld, inspectServer, inspectWorld } from "../lib/serverImport";
 import { SetupFailed, type SetupWork, startSetup } from "../lib/setups";
 import { ready, templateSummary } from "../lib/templates";
@@ -238,6 +239,8 @@ interface Values {
   sleep: boolean;
   idleMinutes: string;
   schedule: Schedule;
+  /** What a schedule of its own sets; the organization's for the rest. */
+  ownSchedule: BackupOverride | null;
 }
 
 /** The server.properties entries the form has a control of its own for. The rest are "other properties". */
@@ -287,6 +290,7 @@ const fresh: Values = {
   sleep: false,
   idleMinutes: "15",
   schedule: "org",
+  ownSchedule: null,
 };
 
 /** The form filled in with what a server or snapshot has. */
@@ -344,6 +348,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     sleep: !!spec.sleep?.enabled,
     idleMinutes: String(spec.sleep?.idleMinutes || 15),
     schedule: !spec.backups ? "org" : spec.backups.enabled === false ? "off" : "own",
+    ownSchedule: spec.backups && spec.backups.enabled !== false ? spec.backups : null,
   };
 }
 
@@ -414,6 +419,8 @@ export function ServerForm({
   const me = useMe().data;
   // A hostname under another organization's domain is refused; its own are said here.
   const domains = useQuery({ queryKey: ["domains", org], queryFn: () => api.get<{ domains: string[] }>(`/orgs/${org}/domains`) });
+  // The organization's snapshots: what "the same" is, and where a schedule of its own starts from.
+  const policy = useBackupPolicy(org);
   const spec = source?.spec;
   const duplicating = source?.origin.kind === "server";
   // Made from a template, it is a new server, under a name of its own.
@@ -641,6 +648,12 @@ export function ServerForm({
     }
   };
 
+  /** A schedule of its own, every part of it named, as the server's settings save one. */
+  const ownBackups = (): BackupOverride => {
+    const own = policy.data ? scheduleOf(policy.data, v.ownSchedule) : null;
+    return { enabled: true, minute: own?.minute ?? v.ownSchedule?.minute ?? null, keep: own?.keep ?? v.ownSchedule?.keep ?? null };
+  };
+
   /** A new server's request: everything chosen, and nothing else. */
   const newRequest = (): Partial<ServerSpec> => {
     const properties = propertiesOf(v);
@@ -662,7 +675,7 @@ export function ServerForm({
       ...(lines(v.whitelist).length > 0 ? { whitelist: lines(v.whitelist) } : {}),
       ...(lines(v.ops).length > 0 ? { ops: lines(v.ops) } : {}),
       ...(v.sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(v.idleMinutes) || 15 } } : {}),
-      ...(v.schedule === "off" ? { backups: { enabled: false } } : {}),
+      ...(v.schedule === "off" ? { backups: { enabled: false } } : v.schedule === "own" ? { backups: ownBackups() } : {}),
       jvm: { aikarFlags: v.aikar, extraFlags: v.extraFlags },
       // The game looks for its picture and its files when it starts, so a
       // server given any is made stopped and started once they are there.
@@ -695,7 +708,9 @@ export function ServerForm({
     if (v.ops !== start.ops) changes.ops = lines(v.ops);
     const sleeps = v.sleep && routed;
     if (sleeps !== start.sleep || (sleeps && v.idleMinutes !== start.idleMinutes)) changes.sleep = { enabled: sleeps, idleMinutes: Number(v.idleMinutes) || 15 };
-    if (v.schedule !== start.schedule) changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : null;
+    if (v.schedule !== start.schedule || (v.schedule === "own" && JSON.stringify(v.ownSchedule) !== JSON.stringify(start.ownSchedule))) {
+      changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : v.schedule === "own" ? ownBackups() : null;
+    }
     if (modsChanged) changes.mods = v.mods;
     // Left out, the original's comes with it, an uploaded one in its files.
     // Given again only made required or with another prompt, it keeps its
@@ -1636,15 +1651,24 @@ export function ServerForm({
       </Section>
 
       <Section title="Backups">
-        <Field label="Scheduled snapshots" hint={source ? undefined : v.schedule === "org" ? "Taken daily." : "Only taken by hand."}>
+        <Field label="Scheduled snapshots" hint={v.schedule === "org" ? (policy.data ? describe(policy.data) : undefined) : v.schedule === "off" ? "Only taken by hand." : undefined}>
           {(id) => (
             <Select id={id} value={v.schedule} onChange={(e) => set("schedule", e.target.value as Schedule)}>
               <option value="org">Same as the organization</option>
-              {start.schedule === "own" && <option value="own">Its own, as {source?.name} has</option>}
+              <option value="own">Its own schedule</option>
               <option value="off">Off</option>
             </Select>
           )}
         </Field>
+        {/* As in the server's settings. */}
+        {v.schedule === "own" && policy.data && (
+          <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
+            <ScheduleFields
+              value={scheduleOf(policy.data, v.ownSchedule)}
+              onChange={(patch) => setValues((was) => ({ ...was, ownSchedule: { enabled: true, ...(policy.data ? scheduleOf(policy.data, was.ownSchedule) : {}), ...patch } }))}
+            />
+          </div>
+        )}
       </Section>
 
       <Section title={forTemplate ? "Save" : !source ? "Minecraft EULA" : duplicating ? "Duplicate" : "Create"}>
