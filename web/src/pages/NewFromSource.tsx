@@ -4,7 +4,7 @@ import { Link } from "react-router";
 import { Loading, Notice, PageHeader } from "../components/ui";
 import { api, ApiError, type SnapshotDetail, type Template } from "../lib/api";
 import type { Origin } from "../lib/origin";
-import { useOrgSnapshots, useServers } from "../lib/queries";
+import { keys, useOrgSnapshots, useServers } from "../lib/queries";
 import { ServerForm, slugify, type Source } from "./ServerForm";
 
 /**
@@ -22,10 +22,14 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
     retry: false,
   });
   const template = useQuery({
-    queryKey: ["template", org, origin.kind === "template" ? origin.id : ""],
+    // Under the list's key: whatever changes the list asks for it again too.
+    queryKey: keys.template(org, origin.kind === "template" ? origin.id : ""),
     queryFn: () => api.get<Template>(`/orgs/${org}/templates/${origin.kind === "template" ? origin.id : ""}`),
     enabled: origin.kind === "template",
     retry: false,
+    // The form is filled in once: from the version used now, not one
+    // remembered from before another was picked.
+    refetchOnMount: "always",
   });
   const back = (
     <Link to={`/o/${org}`} className="mb-3 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
@@ -33,7 +37,7 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
       Servers
     </Link>
   );
-  if (servers.isPending || snapshots.isPending || (origin.kind === "snapshot" && snapshot.isPending) || (origin.kind === "template" && template.isPending)) return <Loading />;
+  if (servers.isPending || snapshots.isPending || (origin.kind === "snapshot" && snapshot.isPending) || (origin.kind === "template" && template.isFetching)) return <Loading />;
   // Without the list of servers it cannot be said which names are taken, or
   // whether the original still exists: nothing is guessed from its absence.
   if (!servers.data) {

@@ -30,7 +30,9 @@ export const keys = {
   backupPolicy: (org: string) => ["backup-policy", org] as const,
   offsite: (org: string) => ["offsite", org] as const,
   activity: (org: string, server: string) => ["activity", org, server] as const,
+  /** An organization's templates, and under it each one asked for alone. */
   templates: (org: string) => ["templates", org] as const,
+  template: (org: string, id: string) => ["templates", org, id] as const,
 };
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
@@ -107,6 +109,8 @@ export function useLiveServers() {
       // A move may have finished unheard.
       qc.invalidateQueries({ queryKey: ["placement"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
+      // A template's version may have been saved unheard.
+      qc.invalidateQueries({ queryKey: ["templates"] });
       // Who came and went.
       qc.invalidateQueries({ queryKey: ["presence"] });
       qc.invalidateQueries({ queryKey: ["nodes"] });

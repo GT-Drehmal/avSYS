@@ -132,3 +132,51 @@ test("with no templates the page says how to make one", async ({ page, as }) => 
   await expect(page.getByText("No templates yet")).toBeVisible();
   await expect(page.getByRole("button", { name: "Save a server" })).toBeEnabled();
 });
+
+test("the form from a template shows the version used now, after another was picked", async ({ page, as }) => {
+  await as("owner");
+  const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+  const newer = version("b".repeat(64), new Date().toISOString());
+  const older = { ...version("a".repeat(64), new Date(Date.now() - 86_400_000).toISOString()), version: "1.21.1" };
+  let used = newer;
+  const template = () => ({ id: "t1", name: "Lobby", description: "", createdBy: "owner", createdAt: older.time, updatedAt: newer.time, current: used, versions: [newer, older] });
+  await page.route(/\/api\/v1\/orgs\/friends\/templates(\/.*)?$/, async (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (req.method() === "PATCH") {
+      used = older;
+      return route.fulfill({ json: template() });
+    }
+    if (path.endsWith("/templates")) return route.fulfill({ json: [template()] });
+    return route.fulfill({ json: { ...template(), spec: { ...survival.spec, version: used.version } } });
+  });
+  await page.goto("/o/friends/templates");
+  const row = page.getByRole("listitem", { name: "Lobby" });
+  await row.getByRole("button", { name: "New server" }).click();
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  await page.goBack();
+  await row.getByRole("button", { name: "Actions for Lobby" }).click();
+  await page.getByRole("menuitem", { name: "Versions" }).click();
+  await page.getByRole("dialog").getByRole("listitem").nth(1).getByRole("button", { name: "Use" }).click();
+  await expect(page.getByRole("dialog").getByRole("listitem").nth(1)).toContainText("used");
+  await page.keyboard.press("Escape");
+  await row.getByRole("button", { name: "New server" }).click();
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.1");
+});
+
+test("a template saved while the event stream was away is shown once it is back", async ({ page, as }) => {
+  await as("owner");
+  let saved = false;
+  const template = () => ({ id: "t1", name: "Lobby", description: "", createdBy: "owner", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), current: saved ? version("b".repeat(64), new Date().toISOString()) : null, versions: saved ? [version("b".repeat(64), new Date().toISOString())] : [] });
+  await page.route("**/api/v1/orgs/friends/templates", (route) => route.fulfill({ json: [template()] }));
+  // Each time the stream is opened it ends at once, and is opened again.
+  await page.route("**/api/v1/events?*", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: waiting\ndata: null\n\n" }));
+  await page.goto("/o/friends/templates");
+  const row = page.getByRole("listitem", { name: "Lobby" });
+  await expect(row).toContainText("Saving");
+  await expect(row.getByRole("button", { name: "New server" })).toBeDisabled();
+  // Its end was never heard.
+  saved = true;
+  await expect(row).toContainText("Paper 1.21.4", { timeout: 15_000 });
+  await expect(row.getByRole("button", { name: "New server" })).toBeEnabled();
+});
