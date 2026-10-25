@@ -338,7 +338,7 @@ export interface ServerStatus {
   snapshots?: { lastTime?: string; lastID?: string; error?: string; /** When the daily snapshot last completed, whether or not anything had changed. */ lastRun?: string } | null;
 }
 
-export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore" | "pre-replace" | "final" | "copy" | "move";
+export type SnapshotTrigger = "manual" | "scheduled" | "pre-restore" | "pre-replace" | "final" | "copy" | "move" | "template";
 
 /** One saved state of a server. */
 export interface Snapshot {
@@ -371,8 +371,24 @@ export interface SnapshotDetail extends Snapshot {
 }
 
 /** A snapshot or restore under way on a server, or a new server receiving its files. */
+/** A server kept to make others from. Each version is a snapshot of a server. */
+export interface Template {
+  id: string;
+  name: string;
+  description: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  /** The version servers are made from; null while its first is being saved. */
+  current: Snapshot | null;
+  /** Newest first. */
+  versions: Snapshot[];
+  /** What a server made from it is, for one template asked for. */
+  spec?: ServerSpec;
+}
+
 export interface Operation {
-  kind: "snapshot" | "restore" | "create" | "delete-server" | "move" | "import";
+  kind: "snapshot" | "restore" | "create" | "delete-server" | "move" | "import" | "template";
   org: string;
   server: string;
   stage: string;
@@ -381,7 +397,7 @@ export interface Operation {
 }
 
 export interface OperationDone {
-  kind: "snapshot" | "restore" | "create" | "delete" | "delete-server" | "move" | "import";
+  kind: "snapshot" | "restore" | "create" | "delete" | "delete-server" | "move" | "import" | "template";
   org: string;
   server: string;
   error?: string;

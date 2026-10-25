@@ -23,7 +23,7 @@ import { toast } from "../lib/toast";
 
 const GiB = 1024 ** 3;
 
-const slugify = (name: string) =>
+export const slugify = (name: string) =>
   name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -39,7 +39,7 @@ function freeName(wanted: string, taken: Set<string>) {
   }
 }
 
-/** A server or snapshot a new server is made out of. */
+/** A server, snapshot or template a new server is made out of. */
 export interface Source {
   origin: Origin;
   name: string;
@@ -50,6 +50,8 @@ export interface Source {
   taken?: string;
   /** The server itself, if it still exists. */
   live?: Server;
+  /** The snapshot its files come from, where it is a template's: its picture is that one's. */
+  snapshot?: string;
 }
 
 /** An archive of an existing server's folder, and what it says about the server. */
@@ -342,14 +344,16 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const domains = useQuery({ queryKey: ["domains", org], queryFn: () => api.get<{ domains: string[] }>(`/orgs/${org}/domains`) });
   const spec = source?.spec;
   const duplicating = source?.origin.kind === "server";
+  // Made from a template, it is a new server, under a name of its own.
+  const templated = source?.origin.kind === "template";
   // A server that still exists is being copied; one that is gone gets its name back.
-  const copying = !!source && taken.has(source.name);
+  const copying = !!source && (templated || taken.has(source.name));
   // Whole gigabytes that hold the snapshot's files with some room to spare.
   const leastStorage = source ? Math.max(1, Math.ceil((source.size * 1.2) / GiB)) : 1;
   // One that is gone is brought back under its own name, and its history goes
   // on. A copy is a new server, and takes a name no server or snapshot has.
-  const startingName = source ? (copying ? freeName(`${source.name}-copy`, new Set([...taken, ...history])) : source.name) : "";
-  const [start] = useState(() => (source ? valuesOf(source, startingName, copying, leastStorage) : fresh));
+  const startingName = source ? (templated ? freeName(source.name, new Set([...taken, ...history])) : copying ? freeName(`${source.name}-copy`, new Set([...taken, ...history])) : source.name) : "";
+  const [start] = useState(() => (source ? valuesOf(source, startingName, copying && !templated, leastStorage) : fresh));
   const [v, setValues] = useState(start);
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
@@ -415,7 +419,15 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   const versionChanged = found ? !!found.version && effective(v.version) !== found.version : effective(v.version) !== effective(start.version);
   // The picture made from it will have: the original's as it is now for a
   // copy of it as it is now, or the one a snapshot holds.
-  const brought = source ? (source.origin.kind === "snapshot" ? `/api/v1/orgs/${org}/snapshots/${source.origin.id}/icon` : source.live ? serverIcon(source.live) : undefined) : undefined;
+  const brought = source
+    ? source.origin.kind === "snapshot"
+      ? `/api/v1/orgs/${org}/snapshots/${source.origin.id}/icon`
+      : source.snapshot
+        ? `/api/v1/orgs/${org}/snapshots/${source.snapshot}/icon`
+        : source.live
+          ? serverIcon(source.live)
+          : undefined
+    : undefined;
   // "Server default" for a copy leaves its server.properties as it is; for a
   // new server it is the game's or the modpack's own default.
   const unset = source || importing ? "Server default" : v.kind === "modpack" ? "Modpack default" : undefined;
@@ -750,7 +762,8 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     const title = v.displayName || name;
     try {
       if (source) {
-        const from = source.origin.kind === "server" ? { fromServer: source.origin.name } : { fromSnapshot: source.origin.id };
+        const from =
+          source.origin.kind === "server" ? { fromServer: source.origin.name } : source.origin.kind === "template" ? { fromTemplate: source.origin.id } : { fromSnapshot: source.origin.id };
         // Left out, it keeps the one its files bring.
         const pictured = v.picture.kind === "file" ? { picture: await pictureForRequest(v.picture.file) } : v.picture.kind === "none" ? { picture: null } : {};
         // "auto" lets the panel choose for a copy of a server kept to some
@@ -864,7 +877,19 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
         <ChevronLeft className="size-3.5" />
         Servers
       </Link>
-      <PageHeader title={!source ? "New server" : duplicating ? `Duplicate ${source.name}` : copying ? `New server from a snapshot of ${source.name}` : `Bring back ${source.name}`} />
+      <PageHeader
+        title={
+          !source
+            ? "New server"
+            : duplicating
+              ? `Duplicate ${source.name}`
+              : templated
+                ? `New server from ${spec?.displayName || source.name}`
+                : copying
+                  ? `New server from a snapshot of ${source.name}`
+                  : `Bring back ${source.name}`
+        }
+      />
 
       {source ? (
         <Section title="Starting point">
@@ -873,10 +898,10 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 truncate text-[13px] font-medium">
                 {spec?.displayName || source.name}
-                {!source.live && <Chip>deleted</Chip>}
+                {templated ? <Chip>template</Chip> : !source.live && <Chip>deleted</Chip>}
               </p>
               <p className="truncate text-xs text-muted">
-                {[source.taken && `Snapshot from ${ago(source.taken)} · ${new Date(source.taken).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`, softwareName]
+                {[source.taken && `${templated ? "Saved" : "Snapshot from"} ${ago(source.taken)} · ${new Date(source.taken).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`, softwareName]
                   .filter(Boolean)
                   .join(" · ")}
               </p>

@@ -1,5 +1,5 @@
-/** What a new server is made from: a server as it is now, or a snapshot. */
-export type Origin = { kind: "server"; name: string } | { kind: "snapshot"; id: string };
+/** What a new server is made from: a server as it is now, a snapshot, or a template. */
+export type Origin = { kind: "server"; name: string } | { kind: "snapshot"; id: string } | { kind: "template"; id: string };
 
 /** Reads "server:creative" or "snapshot:1a2b3c…" out of the page's address. */
 export function originOf(from: string | null): Origin | null {
@@ -7,7 +7,7 @@ export function originOf(from: string | null): Origin | null {
   const value = rest.join(":");
   if (!value) return null;
   if (kind === "server") return { kind, name: value };
-  if (kind === "snapshot") return { kind, id: value };
+  if (kind === "snapshot" || kind === "template") return { kind, id: value };
   return null;
 }
 

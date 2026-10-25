@@ -11,6 +11,7 @@ import { queryClient, useMe } from "./lib/queries";
 import { Account } from "./pages/Account";
 import { Nodes } from "./pages/Nodes";
 import { Backups } from "./pages/Backups";
+import { Templates } from "./pages/Templates";
 import { Home } from "./pages/Home";
 import { Invite } from "./pages/Invite";
 import { Login } from "./pages/Login";
@@ -61,6 +62,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route index element={<Servers />} />
                 <Route path="new" element={<NewServer />} />
                 <Route path="backups" element={<Backups />} />
+                <Route path="templates" element={<Templates />} />
                 <Route path="members" element={<Members />} />
                 <Route path="settings" element={<OrgSettings />} />
                 <Route path="s/:server" element={<ServerPage />}>

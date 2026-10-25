@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, ChevronsUpDown, Cpu, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
+import { Archive, Check, ChevronsUpDown, Cpu, LayoutTemplate, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
@@ -129,7 +129,7 @@ function NavItem({ to, end, icon, children }: { to: string; end?: boolean; icon:
       end={end}
       className={({ isActive }) =>
         cx(
-          "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium transition-colors [&>svg]:size-4",
+          "flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium transition-colors [&>svg]:size-4",
           isActive ? "bg-raised text-fg [&>svg]:text-accent" : "text-muted hover:bg-raised/60 hover:text-fg",
         )
       }
@@ -222,12 +222,16 @@ export function Shell() {
         </Link>
         <OrgSwitcher current={navOrg} />
         {navOrg && (
-          <nav className="flex gap-0.5 md:flex-col">
+          // Scrolled sideways on a phone, where its links do not fit in a row.
+          <nav className="-mx-3 flex gap-0.5 overflow-x-auto px-3 [scrollbar-width:none] md:mx-0 md:flex-col md:overflow-visible md:px-0">
             <NavItem to={`/o/${navOrg.slug}`} end icon={<Server />}>
               Servers
             </NavItem>
             <NavItem to={`/o/${navOrg.slug}/backups`} icon={<Archive />}>
               Backups
+            </NavItem>
+            <NavItem to={`/o/${navOrg.slug}/templates`} icon={<LayoutTemplate />}>
+              Templates
             </NavItem>
             <NavItem to={`/o/${navOrg.slug}/members`} icon={<Users />}>
               Members
