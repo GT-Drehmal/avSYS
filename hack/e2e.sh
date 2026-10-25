@@ -15,7 +15,7 @@
 # it last exited, given the organization and the server as $1 and $2. The
 # panel's console shows the game that is running, which after an exit is the
 # next one; why the last one stopped is only in its own log.
-# AVSYS_E2E_PART runs one part of it: content, lifecycle or history. Each
+# AVSYS_E2E_PART runs one part of it: content, lifecycle, history or servers. Each
 # makes its own server, so that the parts can run side by side, each on a
 # cluster of its own, as CI runs them. Unset, all of them run, one after
 # another, on one server.
@@ -40,7 +40,7 @@ step() { printf '\n== %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 expect() { case "$2" in *"$3"*) printf 'ok: %s\n' "$1" ;; *) fail "$1: expected to find '$3' in: $2" ;; esac; }
 PART=${AVSYS_E2E_PART:-all}
-case "$PART" in all|content|lifecycle|history) ;; *) fail "AVSYS_E2E_PART is content, lifecycle or history, not $PART" ;; esac
+case "$PART" in all|content|lifecycle|history|servers) ;; *) fail "AVSYS_E2E_PART is content, lifecycle, history or servers, not $PART" ;; esac
 part() { [ "$PART" = all ] || [ "$PART" = "$1" ]; }
 # A datapack from a URL, and a resource pack made here: put on the probe
 # and, later, on a server made with files from this computer.
@@ -674,6 +674,12 @@ for _ in 1 2 3 4 5; do
 done
 echo "ok: a command's errors come through, every time"
 
+fi
+
+# Servers of their own: imported, placed on a node and moved, and given files
+# from this computer.
+if part servers; then
+
 step "import"
 # An existing server's folder, packed on another host, is unpacked into a new
 # server made stopped: kept as it was but for what belonged to the old host.
@@ -747,6 +753,10 @@ ids=$(call "$OWN/snapshots" | field "__import__('json').dumps([s['id'] for s in 
 call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
 call -X DELETE "$OWN?snapshot=false" >/dev/null
 
+fi
+
+if part history; then
+
 step "extra ports"
 # A port a mod listens on beside the game is opened to players: here a web
 # server in the workspace, which shares the game's pod, stands in for one.
@@ -788,6 +798,10 @@ expect "and the port is closed again" "$(call -X PATCH -d '{"spec":{"ports":[]}}
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"
+
+fi
+
+if part servers; then
 
 step "nodes"
 # Measuring every node's speed goes on while the rest of this step runs.
@@ -844,6 +858,10 @@ done
 measured=$(call "$API/nodes")
 expect "every node that is up is measured" "$(echo "$measured" | field "(d['measuring'], d.get('measured', {}).get('failed', []), d.get('measured', {}).get('error', ''))")" "(False, [], '')"
 expect "and has a speed" "$(echo "$measured" | field "all(n['score'] > 0 for n in d['nodes'] if n['ready'])")" True
+
+fi
+
+if part history; then
 
 step "domains"
 # The organization claims its domain; another cannot use a name under it.
@@ -1013,6 +1031,13 @@ copy=$(call "$SRV/snapshots" | field "[s['id'] for s in d['snapshots'] if s['tri
 expect "deleting several stops at one that is unknown" "$(call -o /dev/null -w '%{http_code}' -X DELETE -d "{\"ids\":[\"$copy\",\"0000000000000000\"]}" "$API/orgs/$ORG/snapshots")" 404
 expect "the snapshot it was made from is an ordinary one" "$(call -X DELETE -d "{\"ids\":[\"$copy\"]}" "$API/orgs/$ORG/snapshots" | field "d['deleted']")" 1
 
+fi
+
+if part servers; then
+
+# Run by itself, what the parts before would have left.
+[ "$PART" = servers ] && make_packs
+
 step "a new server given files from this computer"
 # As the new-server form does it: made stopped, its files sent straight
 # after, before its volume is there, which is waited for; then started.
@@ -1033,6 +1058,10 @@ for _ in $(seq 1 30); do
   [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
   sleep 2
 done
+
+fi
+
+if part history; then
 
 step "snapshots outlive the server"
 # Something that is in no snapshot yet. Deleting the server must not lose it.

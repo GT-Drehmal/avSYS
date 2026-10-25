@@ -92,7 +92,7 @@ jobs:
   # real Minecraft server through it. This is what catches a broken manifest,
   # missing permissions or a panel that cannot make its first start.
   #
-  # In three parts side by side, each on a cluster of its own: most of its
+  # In four parts side by side, each on a cluster of its own: most of its
   # time is games starting, one after another.
   e2e-part:
     name: e2e (${{ matrix.part }})
@@ -101,7 +101,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [content, lifecycle, history]
+        part: [content, lifecycle, history, servers]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
