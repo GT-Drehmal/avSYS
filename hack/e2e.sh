@@ -46,15 +46,20 @@ part() { [ "$PART" = all ] || [ "$PART" = "$1" ]; }
 # and, later, on a server made with files from this computer.
 PACK=https://cdn.modrinth.com/data/OhduvhIc/versions/8cEJouzY/Veinminer-1.2.4.zip
 make_packs() {
-  python3 - "$WORK/pack.zip" "$WORK/nested.zip" <<'PY'
+  python3 - "$WORK/pack.zip" "$WORK/nested.zip" "$WORK/pack2.zip" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
     z.writestr("pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e"}}')
     z.writestr("assets/minecraft/lang/en_us.json", '{"menu.singleplayer":"e2e"}')
 with zipfile.ZipFile(sys.argv[2], "w") as z:
     z.writestr("E2E Pack/pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e"}}')
+# A second, to join with the first.
+with zipfile.ZipFile(sys.argv[3], "w") as z:
+    z.writestr("pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e two"}}')
+    z.writestr("assets/minecraft/lang/en_us.json", '{"menu.singleplayer":"two","menu.multiplayer":"two"}')
 PY
   PACK_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack.zip")
+  PACK2_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack2.zip")
 }
 # set_spec BODY [SERVER]: changes a server's settings, failing with the panel's
 # answer if it refused. Its answer is not otherwise needed, and a change
@@ -449,13 +454,6 @@ expect "with its file" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/conten
 step "resource packs joined into one"
 # Several packs, in order, the top one first: the panel joins them into one,
 # which it serves, and joins them again when the order changes.
-python3 - "$WORK/pack2.zip" <<'PY'
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1], "w") as z:
-    z.writestr("pack.mcmeta", '{"pack":{"pack_format":46,"description":"e2e two"}}')
-    z.writestr("assets/minecraft/lang/en_us.json", '{"menu.singleplayer":"two","menu.multiplayer":"two"}')
-PY
-PACK2_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/pack2.zip")
 call -X PUT --data-binary @"$WORK/pack.zip" "$SRV/resource-pack?name=e2e-pack.zip" >/dev/null
 stack=$(call -X POST --data-binary @"$WORK/pack2.zip" "$SRV/resource-packs?name=two.zip")
 expect "a second pack goes on top of the one it had" "$(echo "$stack" | field "[p['sha1'] for p in d['spec']['resourcePack']['stack']]")" "['$PACK2_SHA', '$PACK_SHA']"
@@ -1086,10 +1084,16 @@ sent=$(call -X PUT --data-binary @"$WORK/veinminer.zip" "$FRESH/content?kind=dat
 expect "a file sent before its volume is there waits for it, and is listed" "$(echo "$sent" | field "[m['project'] for m in d['spec']['mods'] if m['source'] == 'upload']")" "['Veinminer-1.2.4.zip']"
 packed=$(call -X PUT --data-binary @"$WORK/pack.zip" "$FRESH/resource-pack?name=e2e-pack.zip&wait=true")
 expect "and so does a resource pack" "$(echo "$packed" | field "d['spec']['resourcePack']['sha1']")" "$PACK_SHA"
+# The form gives it several, each on top of the one under, then in the order picked.
+stacked=$(call -X POST --data-binary @"$WORK/pack2.zip" "$FRESH/resource-packs?name=two.zip&wait=true")
+expect "another goes on top of it before it first starts" "$(echo "$stacked" | field "[p['sha1'] for p in d['spec']['resourcePack']['stack']]")" "['$PACK2_SHA', '$PACK_SHA']"
+turned=$(call -X PUT -d '{"order":["'"$PACK_SHA"'","'"$PACK2_SHA"'"]}' "$FRESH/resource-packs?wait=true")
+expect "and they are put in another order" "$(echo "$turned" | field "[p['sha1'] for p in d['spec']['resourcePack']['stack']]")" "['$PACK_SHA', '$PACK2_SHA']"
+JOINED=$(echo "$turned" | field "d['spec']['resourcePack']['sha1']")
 call -X POST "$FRESH/start" >/dev/null
 wait_phase Running "$FRESH"
 expect "started, the game has the datapack" "$(call -d '{"command":"datapack list enabled"}' "$FRESH/console" | field "d['output']")" "Veinminer-1.2.4.zip"
-expect "and offers the pack" "$(call "$FRESH/files/content?path=/server.properties" | python3 -c 'import sys; p = dict(l.split("=", 1) for l in sys.stdin.read().splitlines() if "=" in l and not l.startswith("#")); print(p.get("resource-pack-sha1"))')" "$PACK_SHA"
+expect "and offers the pack" "$(call "$FRESH/files/content?path=/server.properties" | python3 -c 'import sys; p = dict(l.split("=", 1) for l in sys.stdin.read().splitlines() if "=" in l and not l.startswith("#")); print(p.get("resource-pack-sha1"))')" "$JOINED"
 call -o /dev/null -X DELETE "$FRESH?snapshot=false"
 for _ in $(seq 1 30); do
   [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break

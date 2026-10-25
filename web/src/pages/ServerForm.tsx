@@ -1,15 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive as ArchiveIcon, ChevronLeft, Plus, X } from "lucide-react";
+import { Archive as ArchiveIcon, ChevronLeft, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { AddContentDialog, ContentList, contentList, kindsFor, kindsPhrase, PackCard, PackFit, type PickKind, type Software } from "../components/Content";
+import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit, packTitle, type PickKind, type Software } from "../components/Content";
+import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
 import { Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, qs, serverIcon, serverPath, snapshotIcon, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type ResourcePack, type Server, type ServerSpec, type Template } from "../lib/api";
+import { api, ApiError, qs, serverIcon, serverPath, snapshotIcon, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
@@ -97,6 +98,35 @@ const listed = (f: Found) => f.jars.length > 0 && f.unread === 0;
 
 type Upload = { file: File; kind: ContentKind };
 
+/**
+ * One of the resource packs a server is given, the top one first: one of
+ * its original's, which comes with a copy (one of those it was joined from,
+ * or its only one); one from Modrinth or an address; or a file from here.
+ */
+type FormPack =
+  | { id: string; from: "original"; stacked?: StackedPack; pack?: ResourcePack }
+  | { id: string; from: "url"; pack: ResourcePack }
+  | { id: string; from: "file"; file: File };
+
+let packIds = 0;
+const urlPack = (pack: ResourcePack): FormPack => ({ id: `url-${++packIds}`, from: "url", pack });
+const filePack = (file: File): FormPack => ({ id: `file-${++packIds}`, from: "file", file });
+
+/** A server's packs as a copy of it starts with them. */
+function originalPacks(rp: ResourcePack | null | undefined): FormPack[] {
+  if (!rp?.url) return [];
+  if (rp.stack?.length) return rp.stack.map((stacked) => ({ id: stacked.sha1, from: "original", stacked }));
+  return [{ id: "original", from: "original", pack: rp }];
+}
+
+/** A pack as the list shows it, by its id. */
+function shownPack(p: FormPack): StackedPack {
+  if (p.from === "file") return { sha1: p.id, size: p.file.size, name: p.file.name };
+  if (p.from === "original" && p.stacked) return p.stacked;
+  const rp = p.pack;
+  return { sha1: p.id, size: rp?.uploaded?.size ?? 0, name: rp ? rp.uploaded?.name || packTitle(rp) : undefined, project: rp?.project, formats: rp?.formats };
+}
+
 /** What an archive has as content: its mods, plugins and datapacks, and a resource pack file. */
 interface ArchiveContent {
   mods: ContentRef[];
@@ -174,14 +204,15 @@ interface Values {
   motd: string;
   picture: PictureChange;
   mods: ContentRef[];
-  /** The resource pack offered to players, with whether it is required and its prompt. */
-  pack: ResourcePack | null;
+  /** The resource packs offered to players, joined into one, the top one first. */
+  packs: FormPack[];
+  /** Whether players must take the pack, and what the game asks them. */
+  packRequired: boolean;
+  packPrompt: string;
   /** Files from this computer for a server not made yet, uploaded once it is, before it first starts. */
   uploads: Upload[];
   /** Content from an imported archive that its world did not load before. */
   unused: string[];
-  /** The resource pack's file, likewise; pack then stands for it, with no address yet. */
-  packFile: File | null;
   gamemode: string;
   difficulty: string;
   levelType: string;
@@ -226,10 +257,11 @@ const fresh: Values = {
   motd: "",
   picture: { kind: "none" },
   mods: [],
-  pack: null,
+  packs: [],
+  packRequired: false,
+  packPrompt: "",
   uploads: [],
   unused: [],
-  packFile: null,
   gamemode: "",
   difficulty: "",
   levelType: "",
@@ -275,10 +307,11 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     motd: p["motd"] ?? "",
     picture: { kind: "keep" },
     mods: spec.mods ?? [],
-    pack: spec.resourcePack?.url ? spec.resourcePack : null,
+    packs: originalPacks(spec.resourcePack),
+    packRequired: !!spec.resourcePack?.enforce,
+    packPrompt: spec.resourcePack?.prompt ?? "",
     uploads: [],
     unused: [],
-    packFile: null,
     gamemode: p["gamemode"] ?? "",
     difficulty: p["difficulty"] ?? "",
     levelType: p["level-type"] ?? "",
@@ -321,6 +354,8 @@ function presetValues(p: Preset, name: string | null): Values {
     displayName: p.name,
     customName: name,
     picture: { kind: "none" },
+    // There is nothing to copy it from: it is fetched from its address.
+    packs: p.spec.resourcePack?.url ? [urlPack(p.spec.resourcePack)] : [],
     // Set in the panel by an admin, not written by a server.
     extraFlags: launchOf(p.spec).extraFlags,
   };
@@ -414,7 +449,20 @@ export function ServerForm({
   const mine = !source && v.kind === "game" && usingMine ? v.myWorld : null;
   // What is sent to be unpacked into the server once it is made.
   const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false, listed: listed(found) } : mine ? { file: mine.file, root: mine.found.root, world: true, listed: false } : null;
-  const toUpload = v.uploads.length > 0 || !!v.packFile || !!toImport;
+  // Of the packs, the original's come with a copy, and the request itself
+  // can give the lowest when it is from an address and there are none of
+  // those. The rest go in once it is made, bottom first, and are put in
+  // order there.
+  const kept = v.packs.filter((p) => p.from === "original");
+  const lowest = v.packs.at(-1);
+  const requested = kept.length === 0 && lowest?.from === "url" ? lowest : null;
+  const toAdd = v.packs.filter((p) => p.from !== "original" && p !== requested).reverse();
+  const packsChanged = v.packs.map((p) => p.id).join() !== start.packs.map((p) => p.id).join();
+  const packSettingsChanged = v.packRequired !== start.packRequired || v.packPrompt !== start.packPrompt;
+  // Whether the pack is required, and what is asked, as a request says it: a prompt only where there is or was one.
+  const packSettings = { enforce: v.packRequired, ...(v.packPrompt || start.packPrompt ? { prompt: v.packPrompt } : {}) };
+  const packWork = toAdd.length > 0 || (kept.length > 0 && kept.map((p) => p.id).join() !== start.packs.map((p) => p.id).join());
+  const toUpload = v.uploads.length > 0 || packWork || !!toImport;
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
   const [needsLoader, setNeedsLoader] = useState(false);
@@ -429,6 +477,9 @@ export function ServerForm({
     setValues((was) => ({ ...was, version: "LATEST" }));
   }, [source, importing, v.version, versions.data, versions.isPlaceholderData, v.loader]);
   const [addingMods, setAddingMods] = useState<PickKind | null>(null);
+  // A mod whose version is being picked, by where it is in the list.
+  const [versioning, setVersioning] = useState<number | null>(null);
+  const versioned = versioning !== null ? v.mods[versioning] : undefined;
   const [moreWorld, setMoreWorld] = useState(false);
   const [moreNetwork, setMoreNetwork] = useState(false);
   const [moreLaunch, setMoreLaunch] = useState(false);
@@ -464,7 +515,10 @@ export function ServerForm({
   const software: Software | null =
     v.kind === "modpack" ? { loader: "vanilla", version: v.version, modpack: v.modpack ?? { source: "modrinth", project: "" } } : v.loader ? { loader: v.loader, version: v.version } : null;
   const modsChanged = JSON.stringify(v.mods) !== JSON.stringify(start.mods);
-  const packChanged = JSON.stringify(v.pack) !== JSON.stringify(start.pack);
+  const takes = software ? kindsFor(software) : [];
+  const contentKinds = [...takes, ...(["mod", "plugin", "datapack"] as const).filter((k) => !takes.includes(k) && (v.mods.some((m) => (m.kind ?? "mod") === k) || v.uploads.some((u) => u.kind === k)))];
+  // The one pack there is, where it says which game versions it is made for.
+  const onlyPack = v.packs.length === 1 ? (v.packs[0].from === "url" ? v.packs[0].pack : v.packs[0].from === "original" ? (v.packs[0].pack ?? null) : null) : null;
   // "Latest release" is whichever version that is now: picked for a copy of
   // a server already on it, nothing changes.
   const effective = (version: string) => (version === "LATEST" ? (versions.data?.latest ?? version) : version);
@@ -572,7 +626,11 @@ export function ServerForm({
         // As much memory as it had, with the room beside Java the panel keeps.
         memory: f.heap > 0 ? String(Math.ceil(((f.heap + 768) / 0.9 / 1024) * 2) / 2) : was.memory,
         // The one server.properties gives players, or else a pack file it has.
-        ...(packOf(p) ? { pack: packOf(p), packFile: null } : { pack: content.pack && { ...content.pack, enforce: p["require-resource-pack"] === "true" }, packFile: content.packFile }),
+        ...(() => {
+          const given = packOf(p);
+          const packs = given ? [urlPack(given)] : content.packFile ? [filePack(content.packFile)] : content.pack ? [urlPack(content.pack)] : [];
+          return { packs, packRequired: p["require-resource-pack"] === "true", packPrompt: given?.prompt ?? "" };
+        })(),
         storage: String(Math.max(10, Math.ceil((f.size * 1.5 + file.size) / GiB))),
       }));
       setNeedsLoader(false);
@@ -595,8 +653,8 @@ export function ServerForm({
       storage: { size: fromGigabytes(v.storage) },
       expose: v.exposeType === "None" ? { type: "None" } : { type: v.exposeType, hostname: v.hostname.trim() },
       mods: v.mods,
-      // One to upload is the server's once it is made and the file is in.
-      ...(v.pack && !v.packFile ? { resourcePack: v.pack } : {}),
+      // The rest are the server's once it is made.
+      ...(requested?.from === "url" ? { resourcePack: { ...requested.pack, ...packSettings } } : {}),
       properties,
       // Members from this role up who have linked a Minecraft account are let in.
       ...(v.join !== "anyone" && v.join !== "list" ? { autoWhitelist: v.join } : {}),
@@ -640,11 +698,15 @@ export function ServerForm({
     if (v.schedule !== start.schedule) changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : null;
     if (modsChanged) changes.mods = v.mods;
     // Left out, the original's comes with it, an uploaded one in its files.
-    // That one only made required keeps its file: the panel knows it by
-    // its address, and a request does not say a pack was uploaded.
-    if (packChanged) changes.resourcePack = v.pack && { ...v.pack, uploaded: null };
-    // One to upload is the copy's once its files are in: the original's goes.
-    if (v.packFile) changes.resourcePack = null;
+    // Given again only made required or with another prompt, it keeps its
+    // file and what it was joined from: the panel knows it by its address,
+    // and a request does not say a pack was uploaded. With none of the
+    // original's kept, it goes, for the lowest from an address or for none.
+    if (kept.length > 0 && packSettingsChanged && spec?.resourcePack) {
+      changes.resourcePack = { ...spec.resourcePack, ...packSettings, uploaded: null };
+    } else if (kept.length === 0 && (packsChanged || packSettingsChanged)) {
+      changes.resourcePack = requested?.from === "url" ? { ...requested.pack, ...packSettings, uploaded: null } : null;
+    }
     const jvm: NonNullable<ServerSpec["jvm"]> = {};
     if (v.aikar !== start.aikar) jvm.aikarFlags = v.aikar;
     if (v.extraFlags !== start.extraFlags) jvm.extraFlags = v.extraFlags;
@@ -714,29 +776,63 @@ export function ServerForm({
   };
 
   /**
-   * Uploads the files chosen for a server just made, one at a time. One that
-   * did not go leaves the rest unsent and the server stopped, to be given
-   * them on its Content page.
+   * Uploads the files chosen for a server just made, one at a time, and
+   * gives it its packs. One that did not go leaves the rest unsent and the
+   * server stopped, to be given them on its Content page.
    */
   const uploadAll = async (w: SetupWork, server: string) => {
     const path = serverPath(org, server);
-    const all = v.uploads.length + (v.packFile ? 1 : 0);
+    const files = toAdd.filter((p) => p.from === "file");
+    const all = v.uploads.length + files.length;
     let n = 0;
     const label = (name: string) => (all > 1 ? `${name} (${++n} of ${all})` : name);
     try {
       for (const { file, kind } of v.uploads) {
         await w.send<Server>(label(file.name), `${path}/content?${qs({ kind, name: file.name, wait: "true" })}`, file);
       }
-      if (v.packFile) {
-        await w.send<Server>(label(v.packFile.name), `${path}/resource-pack?${qs({ name: v.packFile.name, wait: "true" })}`, v.packFile);
-        // Whether it is required and its prompt, which an upload leaves as they were.
-        if (v.pack?.enforce || v.pack?.prompt) await api.patch<Server>(path, { spec: { resourcePack: { enforce: !!v.pack.enforce, prompt: v.pack.prompt ?? "" } } });
-      }
+      if (packWork) await givePacks(w, path, label);
     } catch (err) {
       const why = cancelled(err) ? "the upload was stopped." : err instanceof Error ? err.message : "an upload failed.";
       throw new SetupFailed(`Not started: ${why} Add the rest on its Content page, then start it.`, `/o/${org}/s/${server}/content`);
     } finally {
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
+    }
+  };
+
+  /**
+   * Puts the packs that were not in the request on a server just made,
+   * bottom first, each on top of those before, then all of them in the
+   * order picked, and says whether they are required and what is asked.
+   */
+  const givePacks = async (w: SetupWork, path: string, label: (name: string) => string) => {
+    // What each is called on the server, by its own.
+    const sha = new Map<string, string>();
+    let now = await api.get<Server>(path);
+    for (const p of toAdd) {
+      if (w.signal.aborted) throw new ApiError(0, "aborted", "The upload was stopped.");
+      const has = !!now.spec.resourcePack?.url;
+      if (p.from === "url") {
+        const { url, sha1, project, formats } = p.pack;
+        now = has
+          ? await api.post<Server>(`${path}/resource-packs/url?wait=true`, { url, sha1, project, formats })
+          : await api.patch<Server>(path, { spec: { resourcePack: { url, sha1, project, formats, ...packSettings } } });
+      } else if (p.from === "file") {
+        now = await w.send<Server>(label(p.file.name), `${path}/${has ? "resource-packs" : "resource-pack"}?${qs({ name: p.file.name, wait: "true" })}`, p.file, has ? "POST" : "PUT");
+      }
+      const rp = now.spec.resourcePack;
+      sha.set(p.id, rp?.stack?.[0]?.sha1 ?? rp?.sha1 ?? "");
+    }
+    const stack = now.spec.resourcePack?.stack ?? [];
+    if (stack.length > 0) {
+      // The original's only pack is the one on it that was not added here.
+      const added = new Set(sha.values());
+      const theirs = stack.find((s) => !added.has(s.sha1) && !v.packs.some((p) => p.from === "original" && p.stacked?.sha1 === s.sha1))?.sha1;
+      const order = v.packs.map((p) => (p.from === "original" ? (p.stacked?.sha1 ?? theirs) : sha.get(p.id))).filter((x): x is string => !!x);
+      if (order.join() !== stack.map((s) => s.sha1).join()) now = await api.put<Server>(`${path}/resource-packs?wait=true`, { order });
+    }
+    const rp = now.spec.resourcePack;
+    if (!!rp?.enforce !== v.packRequired || (rp?.prompt ?? "") !== v.packPrompt) {
+      await api.patch<Server>(path, { spec: { resourcePack: { enforce: v.packRequired, prompt: v.packPrompt } } });
     }
   };
 
@@ -1182,57 +1278,82 @@ export function ServerForm({
 
       <Section
         title="Content"
-        description={
-          found
-            ? `What it has comes with it. ${contentList(software)}. Optional.`
-            : !source
-              ? `${contentList(software)}. Optional.`
-              : v.modpack
-                ? `${contentList(software)} on top of the modpack.`
-                : `${contentList(software)}. Copied from the original.`
-        }
+        description={found ? "What it has comes with it. Optional." : !source ? "Optional." : v.modpack ? "On top of its modpack. Copied from the original." : "Copied from the original."}
       >
-        {v.mods.length + v.uploads.length > 0 ? (
-          <ContentList
-            // Files to upload are listed with the rest, by their names.
-            mods={[...v.mods, ...v.uploads.map((u): ContentRef => ({ source: "upload", kind: u.kind, project: u.file.name, title: u.file.name }))]}
-            note={(_, i) => {
-              const upload = i >= v.mods.length ? v.uploads[i - v.mods.length] : null;
-              const off = v.unused.includes(upload ? upload.file.name : v.mods[i].project) && "not on in its world before";
-              return [upload && `${bytes(upload.file.size)} · uploaded when created`, off].filter(Boolean).join(" · ") || undefined;
-            }}
-            onRemove={(i) =>
-              i < v.mods.length ? set("mods", v.mods.filter((_, j) => j !== i)) : set("uploads", v.uploads.filter((_, j) => j !== i - v.mods.length))
-            }
-          />
+        {!software ? (
+          <p className="text-[13px] text-muted">{v.kind === "modpack" ? "Pick a modpack first." : "Choose a server type first."}</p>
         ) : (
-          source && software && <p className="text-[13px] text-muted">{v.modpack ? "Nothing on top of its modpack." : `No ${kindsPhrase(software)}.`}</p>
+          <>
+            {/* As on a server's Content page: a section for each kind it takes, and for any it has that it does not. */}
+            {contentKinds.map((kind) => {
+              // Where each is in the whole lists, which are what is sent.
+              const mods = v.mods.flatMap((m, i) => ((m.kind ?? "mod") === kind ? [i] : []));
+              const ups = v.uploads.flatMap((u, i) => (u.kind === kind ? [i] : []));
+              const refs = [...mods.map((i) => v.mods[i]), ...ups.map((i): ContentRef => ({ source: "upload", kind, project: v.uploads[i].file.name, title: v.uploads[i].file.name }))];
+              return (
+                <section key={kind} aria-label={kindNames[kind]} className="flex flex-col gap-2.5">
+                  <SectionHead sub title={kindNames[kind]} count={refs.length} onAdd={takes.includes(kind) && !(v.kind === "modpack" && !v.modpack) ? () => setAddingMods(kind) : undefined} />
+                  {refs.length === 0 ? (
+                    <p className="text-[13px] text-muted">{v.modpack && kind === "mod" ? "None on top of the modpack." : `No ${kindNames[kind].toLowerCase()}.`}</p>
+                  ) : (
+                    <ContentList
+                      mods={refs}
+                      showKind={false}
+                      note={(_, j) => {
+                        const upload = j >= mods.length ? v.uploads[ups[j - mods.length]] : null;
+                        const off = v.unused.includes(upload ? upload.file.name : v.mods[mods[j]].project) && "not on in its world before";
+                        return [upload && `${bytes(upload.file.size)} · uploaded when created`, off].filter(Boolean).join(" · ") || undefined;
+                      }}
+                      onRemove={(j) => (j < mods.length ? set("mods", v.mods.filter((_, i) => i !== mods[j])) : set("uploads", v.uploads.filter((_, i) => i !== ups[j - mods.length])))}
+                      extra={(m, j) =>
+                        m.source === "modrinth" &&
+                        j < mods.length && (
+                          <Button size="sm" onClick={() => setVersioning(mods[j])} className="max-w-40">
+                            <span className="truncate">{m.versionName || "Newest"}</span>
+                          </Button>
+                        )
+                      }
+                    />
+                  )}
+                </section>
+              );
+            })}
+            <section aria-label="Resource packs" className="flex flex-col gap-2.5">
+              <SectionHead sub title="Resource packs" count={v.packs.length > 1 ? v.packs.length : undefined} addLabel="Add resource pack" onAdd={() => setAddingMods("resourcepack")} />
+              {v.packs.length === 0 ? (
+                <p className="text-[13px] text-muted">None. A pack added here is offered to each player as they join.</p>
+              ) : (
+                <>
+                  <PackStack
+                    stack={v.packs.map(shownPack)}
+                    canEdit
+                    busy={false}
+                    note={(p) => (v.packs.find((x) => x.id === p.sha1)?.from === "file" ? "uploaded when created" : undefined)}
+                    onOrder={async (order) => {
+                      setValues((was) => ({ ...was, packs: order.flatMap((id) => was.packs.filter((p) => p.id === id)) }));
+                      return order;
+                    }}
+                  />
+                  {onlyPack && <PackFit pack={onlyPack} version={v.kind === "modpack" ? v.modpack?.gameVersion : effective(v.version)} />}
+                  <div className="flex flex-col gap-3 px-1">
+                    <Toggle checked={v.packRequired} onChange={(on) => set("packRequired", on)} label="Required" hint="Players who decline the pack are disconnected." />
+                    <Field label="Prompt" hint="Shown when the game asks to download the pack.">
+                      {(id) => <Input id={id} value={v.packPrompt} onChange={(e) => set("packPrompt", e.target.value)} placeholder="A pack made for this world" />}
+                    </Field>
+                  </div>
+                </>
+              )}
+            </section>
+          </>
         )}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* One picker for all of it, the resource pack too. */}
-          <Button icon={<Plus className="size-4" />} disabled={!software || (v.kind === "modpack" && !v.modpack)} onClick={() => software && setAddingMods(kindsFor(software)[0])}>
-            Add content
-          </Button>
-          {source && (modsChanged || packChanged || toUpload) && (
-            <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setValues((was) => ({ ...was, mods: start.mods, pack: start.pack, uploads: [], packFile: null }))}>
-              Undo changes
-            </button>
-          )}
-        </div>
-        {v.pack && (
-          <div className="flex flex-col gap-3">
-            <PackCard pack={v.pack}>
-              <Button size="sm" disabled={!software} onClick={() => setAddingMods("resourcepack")}>
-                Replace
-              </Button>
-              <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Remove the resource pack" onClick={() => setValues((was) => ({ ...was, pack: null, packFile: null }))} />
-            </PackCard>
-            <PackFit pack={v.pack} version={v.kind === "modpack" ? v.modpack?.gameVersion : effective(v.version)} />
-            <Toggle checked={!!v.pack.enforce} onChange={(enforce) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, enforce } }))} label="Pack required" hint="Players who decline the pack are disconnected." />
-            <Field label="Pack prompt" hint="Shown when the game asks to download the pack.">
-              {(id) => <Input id={id} value={v.pack?.prompt ?? ""} onChange={(e) => setValues((was) => ({ ...was, pack: was.pack && { ...was.pack, prompt: e.target.value } }))} placeholder="A pack made for this world" />}
-            </Field>
-          </div>
+        {source && (modsChanged || packsChanged || packSettingsChanged || v.uploads.length > 0) && (
+          <button
+            type="button"
+            className="w-fit text-xs text-muted hover:text-fg"
+            onClick={() => setValues((was) => ({ ...was, mods: start.mods, uploads: [], packs: start.packs, packRequired: start.packRequired, packPrompt: start.packPrompt }))}
+          >
+            Undo changes
+          </button>
         )}
         {addingMods && software && (
           <AddContentDialog
@@ -1252,19 +1373,33 @@ export function ServerForm({
             }
             uploadNote="Uploaded after the server is created."
             start={addingMods}
+            only
             pack={{
-              current: v.pack,
-              onPick: async (pack) => setValues((was) => ({ ...was, packFile: null, pack: { ...pack, enforce: !!was.pack?.enforce, prompt: was.pack?.prompt ?? "" } })),
-              keep: forTemplate
-                ? undefined
-                : (file) =>
-                    setValues((was) => ({
-                      ...was,
-                      packFile: file,
-                      pack: { url: "", sha1: "", uploaded: { name: file.name, size: file.size, time: new Date().toISOString() }, project: null, enforce: !!was.pack?.enforce, prompt: was.pack?.prompt ?? "" },
-                    })),
+              // Each goes on top of those there are, as on the Content page.
+              current: { url: "", project: null, stack: v.packs.map(shownPack) },
+              onTop: v.packs.length > 0,
+              onPick: async (pack) => {
+                if (pack.sha1 && v.packs.some((p) => (p.from === "url" ? p.pack.sha1 : p.from === "original" ? (p.stacked?.sha1 ?? p.pack?.sha1) : "") === pack.sha1)) {
+                  throw new Error("That pack is in the list already.");
+                }
+                setValues((was) => ({ ...was, packs: [urlPack(pack), ...was.packs] }));
+              },
+              keep: forTemplate ? undefined : (file) => setValues((was) => ({ ...was, packs: [filePack(file), ...was.packs] })),
             }}
             onClose={() => setAddingMods(null)}
+          />
+        )}
+        {versioned && software && versioning !== null && (
+          <VersionDialog
+            title={versioned.title || versioned.project}
+            project={versioned.project}
+            current={versioned.version}
+            filters={filtersFor(software, versioned.kind ?? "mod", versions.data?.latest)}
+            onClose={() => setVersioning(null)}
+            onPick={(ver) => {
+              setValues((was) => ({ ...was, mods: was.mods.map((m, i) => (i === versioning ? { ...m, version: ver?.id ?? "", versionName: ver?.version_number ?? "" } : m)) }));
+              setVersioning(null);
+            }}
           />
         )}
       </Section>

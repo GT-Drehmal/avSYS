@@ -217,10 +217,9 @@ test("for a new server on the latest version, a pack is picked once it is known 
   });
   await page.goto(`/o/${slug}/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ }).click();
-  // In the one picker for all content.
-  await page.getByRole("button", { name: "Add content" }).click();
+  // In a part of its own, as on the Content page.
+  await page.getByRole("button", { name: "Add resource pack" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: "Resource pack", exact: true }).click();
   await expect(dialog.getByRole("button", { name: /^Faithful 32x/ })).toBeDisabled();
   await expect.poll(() => answer).toBeDefined();
   answer?.();
@@ -315,15 +314,14 @@ test("a new server can be given a pack from Modrinth when it is made", async ({ 
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Game version").selectOption("1.21.4");
-  // In the one picker for all content.
-  await page.getByRole("button", { name: "Add content" }).click();
+  // In a part of its own, as on the Content page.
+  await page.getByRole("button", { name: "Add resource pack" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: "Resource pack", exact: true }).click();
   // One from this computer could be chosen too, uploaded once it is made.
   await expect(dialog.getByRole("button", { name: "Upload", exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
   await expect(dialog).toHaveCount(0);
-  await page.getByRole("switch", { name: "Pack required" }).click();
+  await page.getByRole("switch", { name: "Required" }).click();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/packed$`));
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/packed`);
@@ -346,12 +344,12 @@ test("a copy keeps the original's uploaded pack, made required, and can be given
   expect(sent[0].spec).not.toHaveProperty("resourcePack");
 
   // Made required: sent, but not as an upload, which the panel knows by its address.
-  await page.getByRole("switch", { name: "Pack required" }).click();
+  await page.getByRole("switch", { name: "Required" }).click();
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect.poll(() => sent.length).toBe(2);
   expect(sent[1].spec.resourcePack).toEqual({ url: uploaded.url, sha1: sha, uploaded: null, enforce: true });
 
-  await page.getByRole("button", { name: "Remove the resource pack" }).click();
+  await page.getByRole("button", { name: "Remove faithful" }).click();
   await expect(page.getByText("faithful", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect.poll(() => sent.length).toBe(3);
@@ -471,13 +469,75 @@ test("a new server's pack says when it is not made for the version chosen", asyn
   await page.goto(`/o/${slug}/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Game version").selectOption("1.21.4");
-  await page.getByRole("button", { name: "Add content" }).click();
+  await page.getByRole("button", { name: "Add resource pack" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: "Resource pack", exact: true }).click();
   await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText("Faithful 32x", { exact: true })).toBeVisible();
   await expect(page.getByText(/This pack is made for/)).toHaveCount(0);
   await page.getByLabel("Game version").selectOption("26.3");
   await expect(page.getByText(/This pack is for an older game version \(pack format 46; 26\.3 uses 97\)/)).toBeVisible();
+});
+
+test("a new server is given several packs in the order picked, each put on top of the one under it once it is made", async ({ page, org }) => {
+  const slug = await org([]);
+  const asked: string[] = [];
+  const path = `/api/v1/orgs/${slug}/servers/layered`;
+  const mine = { sha1: "a".repeat(40), size: 6, name: "mine.zip" };
+  const faithful = { sha1: picked.sha1, size: 1 << 20, project: picked.project };
+  let pack: object | null = null;
+  const answer = async () => {
+    const made = await (await page.request.get(path)).json();
+    return { json: { ...made, spec: { ...made.spec, resourcePack: pack } } };
+  };
+  await page.route(`**/api/v1/orgs/${slug}/servers`, async (route) => {
+    if (route.request().method() === "POST") {
+      const { spec } = route.request().postDataJSON();
+      asked.push(`create ${spec.state} ${JSON.stringify(spec.resourcePack ?? null)}`);
+    }
+    return route.fallback();
+  });
+  await page.route(`**${path}`, async (route) => (route.request().method() === "GET" ? route.fulfill(await answer()) : route.fallback()));
+  await page.route(`**${path}/**`, async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const at = url.pathname.split("/layered")[1];
+    if (req.method() === "GET") return route.fallback();
+    asked.push(`${req.method()} ${at} ${url.searchParams.get("name") ?? req.postDataJSON?.()?.project?.id ?? ""}`.trim());
+    if (at === "/resource-pack") pack = { url: `http://panel.test/packs/${mine.sha1}.zip`, sha1: mine.sha1, uploaded: { name: "mine.zip", size: 6, time: new Date().toISOString() } };
+    if (at === "/resource-packs/url") pack = { url: "http://panel.test/packs/joined.zip", sha1: "c".repeat(40), uploaded: { size: 9, time: new Date().toISOString() }, stack: [faithful, mine] };
+    if (at === "/start") return route.fulfill({ status: 204 });
+    return route.fulfill(await answer());
+  });
+
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Layered");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("button", { name: "Add resource pack" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /^Faithful 32x/ }).click();
+  // Another goes on top, as on the Content page.
+  await page.getByRole("button", { name: "Add resource pack" }).click();
+  let dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+  await dialog.getByLabel("Resource pack file").setInputFiles({ name: "mine.zip", mimeType: "application/zip", buffer: Buffer.from("PK zip") });
+  await expect(dialog).toHaveCount(0);
+  const packs = page.getByRole("list", { name: "Packs, the top one first" }).getByRole("listitem");
+  await expect(packs).toHaveText([/mine/, /Faithful 32x/]);
+  await expect(packs.first()).toContainText("uploaded when created");
+  // The same one twice is turned away.
+  await page.getByRole("button", { name: "Add resource pack" }).click();
+  dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: /^Faithful 32x/ }).click();
+  await expect(page.getByText("That pack is in the list already.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Move mine down" }).click();
+  await expect(packs).toHaveText([/Faithful 32x/, /mine/]);
+
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/layered$`));
+  await expect(page.getByText("Layered is set up")).toBeVisible();
+  // The lowest first, then the one over it: in that order already, so not put in order again.
+  expect(asked).toEqual(["create Stopped null", "PUT /resource-pack mine.zip", "POST /resource-packs/url faithful-32x", "POST /start"]);
 });

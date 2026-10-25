@@ -28,7 +28,7 @@ export interface Setup {
 /** What a setup's work is given: a way to say what it does, and to send a file. */
 export interface SetupWork {
   say: (stage: string, stoppable?: boolean) => void;
-  send: <T>(label: string, path: string, file: Blob) => Promise<T>;
+  send: <T>(label: string, path: string, file: Blob, method?: "PUT" | "POST") => Promise<T>;
   signal: AbortSignal;
 }
 
@@ -75,10 +75,10 @@ export function startSetup(org: string, server: string, title: string, work: (w:
   emit();
   const w: SetupWork = {
     say: (stage, stoppable = false) => update(id, { stage, progress: null, stoppable }),
-    send: async <T>(label: string, path: string, file: Blob) => {
+    send: async <T>(label: string, path: string, file: Blob, method: "PUT" | "POST" = "PUT") => {
       update(id, { stage: label, progress: { sent: 0, total: file.size }, stoppable: true });
       try {
-        return await upload<T>(path, file, (progress) => update(id, { progress }), ctl.signal);
+        return await upload<T>(path, file, (progress) => update(id, { progress }), ctl.signal, method);
       } finally {
         update(id, { progress: null, stoppable: false });
       }

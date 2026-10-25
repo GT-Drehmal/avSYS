@@ -71,9 +71,12 @@ func (s *Server) addURLToStack(w http.ResponseWriter, r *http.Request, u *store.
 }
 
 // addPackTo puts the pack that get writes to a file on top of the server's
-// stack. get is given how large it may be.
+// stack. get is given how large it may be. With ?wait=true it is for a
+// server made a moment ago, given its packs before it first starts: its
+// volume is waited for.
 func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User, get func(to *os.File, limit int64) (avsysv1.StackedPack, error)) error {
-	a, mc, err := s.server(r, u, store.RoleAdmin)
+	wait := r.URL.Query().Get("wait") == "true"
+	a, mc, err := s.serverMaybeNew(r, u, wait)
 	if err != nil {
 		return err
 	}
@@ -111,7 +114,7 @@ func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User
 	if err != nil {
 		return err
 	}
-	sc, done, err := s.filesOf(r.Context(), now, false)
+	sc, done, err := s.filesOf(r.Context(), now, wait)
 	if err != nil {
 		return err
 	}
@@ -156,7 +159,9 @@ func (s *Server) orderStack(w http.ResponseWriter, r *http.Request, u *store.Use
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	a, mc, err := s.server(r, u, store.RoleAdmin)
+	// As for adding one, with ?wait=true.
+	wait := r.URL.Query().Get("wait") == "true"
+	a, mc, err := s.serverMaybeNew(r, u, wait)
 	if err != nil {
 		return err
 	}
@@ -199,7 +204,7 @@ func (s *Server) orderStack(w http.ResponseWriter, r *http.Request, u *store.Use
 		writeJSON(w, http.StatusOK, s.view(now))
 		return nil
 	}
-	sc, done, err := s.filesOf(r.Context(), now, false)
+	sc, done, err := s.filesOf(r.Context(), now, wait)
 	if err != nil {
 		return err
 	}
