@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api, ApiError, type Server, type Template } from "../lib/api";
 import { displayName } from "../lib/format";
 import { keys } from "../lib/queries";
+import { List, ServerRow } from "./StartPicker";
 import { Button, cx, Field, Input, Modal, Notice, Select, Textarea } from "./ui";
 
 /**
@@ -73,20 +74,18 @@ export function SaveTemplate({
     <Modal open={open} onOpenChange={close} title={into ? `Update ${into.name}` : "Save as template"}>
       <form className="flex flex-col gap-4" onSubmit={save}>
         {!server && (
-          <Field label="Server">
-            {(id) => (
-              <Select id={id} value={picked} onChange={(e) => setPicked(e.target.value)} required>
-                <option value="" disabled>
-                  Pick a server
-                </option>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-[13px] font-medium text-fg">Server</p>
+            {servers.length === 0 ? (
+              <p className="text-xs text-muted">No servers yet.</p>
+            ) : (
+              <List label="Servers" className="max-h-64">
                 {servers.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {displayName(s)}
-                  </option>
+                  <ServerRow key={s.name} server={s} selected={s.name === picked} onClick={() => setPicked(s.name)} />
                 ))}
-              </Select>
+              </List>
             )}
-          </Field>
+          </div>
         )}
         {!into && templates.length > 0 && (
           <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5" role="group" aria-label="Save as">
