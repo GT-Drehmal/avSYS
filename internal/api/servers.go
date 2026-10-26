@@ -374,14 +374,16 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// or null for none.
 		Picture json.RawMessage `json:"picture"`
 		// World is "new" for one made from a snapshot or another server to
-		// start a world of its own rather than take the original's.
+		// start a world of its own rather than take the original's, and
+		// "kept" for one made from a template whose servers start a new
+		// world to take its version's anyway.
 		World string `json:"world"`
 	}
 	if err := decode(r, &raw); err != nil {
 		return err
 	}
-	if raw.World != "" && raw.World != "new" {
-		return errBadRequest(`"world" is "new", or left out to keep the original's.`)
+	if raw.World != "" && raw.World != "new" && raw.World != "kept" {
+		return errBadRequest(`"world" is "new" or "kept".`)
 	}
 	newWorld := raw.World == "new"
 	if newWorld && raw.FromSnapshot == "" && raw.FromServer == "" && raw.FromTemplate == "" {
@@ -400,6 +402,8 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if raw.Spec, err = layered(changes, raw.Spec); err != nil {
 			return errBadRequest("Invalid spec: %v", err)
 		}
+		// Its servers start a new world unless this one is to keep its own.
+		newWorld = newWorld || (raw.World == "" && newWorldIn(string(changes)))
 	}
 	in := struct {
 		Name string

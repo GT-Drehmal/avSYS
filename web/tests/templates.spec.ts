@@ -164,7 +164,8 @@ test("a new template starts from a server picked from the servers, each with its
   // What is each server's own is not asked.
   await expect(page.getByLabel("Short name")).toHaveCount(0);
   await expect(page.getByLabel("Hostname")).toHaveCount(0);
-  await expect(page.getByRole("group", { name: "Its world" })).toHaveCount(0);
+  // Its world kept, unless its servers are to start one of their own.
+  await expect(page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep its world" })).toHaveAttribute("aria-pressed", "true");
   await page.getByLabel("Difficulty").selectOption("peaceful");
   await page.getByRole("button", { name: "Create template" }).click();
   await expect(page).toHaveURL(/\/o\/friends\/templates$/);
@@ -431,4 +432,44 @@ test("a template is duplicated in the form, filled in from it: one saved from a 
   expect(sent[0]).toMatchObject({ name: "Lobby copy", template: "t1", changes: { resources: { memory: "8192Mi" } } });
   expect(sent[1]).toMatchObject({ name: "Skyblock hard", spec: { loader: "paper", version: "1.21.4" } });
   expect(sent[1]).not.toHaveProperty("template");
+});
+
+test("a template says whether its servers keep its world or start a new one, and a server made from it can say otherwise", async ({ page, as }) => {
+  await as("owner");
+  const sent: unknown[] = [];
+  await page.route(/\/api\/v1\/orgs\/friends\/templates$/, (route) => {
+    if (route.request().method() !== "POST") return route.fulfill({ json: [] });
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 202, json: {} });
+  });
+  await page.goto("/o/friends/templates/new?from=server%3Asurvival");
+  const worldChoice = page.getByRole("group", { name: "Its world" });
+  await expect(worldChoice.getByRole("button", { name: "Keep its world" })).toHaveAttribute("aria-pressed", "true");
+  await worldChoice.getByRole("button", { name: "New world" }).click();
+  await page.getByRole("button", { name: "Create template" }).click();
+  await expect(page).toHaveURL(/\/o\/friends\/templates$/);
+  expect(sent[0]).toMatchObject({ server: "survival", changes: { world: "new" } });
+
+  // A server made from one whose servers start a new world starts one, unless it keeps the template's.
+  const { template } = await lobby(page);
+  await page.route("**/api/v1/orgs/friends/templates/t1", async (route) => {
+    const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+    return route.fulfill({ json: { ...template, world: "new", spec: survival.spec } });
+  });
+  const made = () => page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.route("**/api/v1/orgs/friends/servers", (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
+  );
+  await page.goto("/o/friends/new?from=template:t1");
+  await expect(page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "New world" })).toHaveAttribute("aria-pressed", "true");
+  // Asked first, as it would be open to anyone: either way, it is sent.
+  const create = async () => {
+    const request = made();
+    await page.getByRole("button", { name: "Create server" }).click();
+    await page.getByRole("button", { name: "Create without a whitelist" }).click();
+    return (await request).postDataJSON();
+  };
+  expect(await create()).toMatchObject({ fromTemplate: "t1", world: "new" });
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep its world" }).click();
+  expect(await create()).toMatchObject({ fromTemplate: "t1", world: "kept" });
 });
