@@ -531,3 +531,88 @@ test("a stopped server held while the panel puts its files in place cannot be st
   await expect(page.getByRole("main").getByRole("button", { name: "Start", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Replace the world" })).toBeDisabled();
 });
+
+test("a template is given a world of one's own, kept with it, as a server is", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  let made: unknown = null;
+  let kept: { params: URLSearchParams; size: number } | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/templates`, (route) => {
+    if (route.request().method() !== "POST") return route.fulfill({ json: [] });
+    made = route.request().postDataJSON();
+    return route.fulfill({ status: 201, json: { id: "t9" } });
+  });
+  await page.route(`**/api/v1/orgs/${slug}/templates/t9/world?*`, (route) => {
+    kept = { params: new URL(route.request().url()).searchParams, size: route.request().postDataBuffer()?.length ?? 0 };
+    return route.fulfill({ json: {} });
+  });
+  await page.goto(`/o/${slug}/templates/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Island");
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Use a world I have" }).click();
+  const save = zip({ "saves/Island Save/level.dat": levelDat("1.21.4", "Island"), "saves/Island Save/region/r.0.0.mca": "region" });
+  await page.getByLabel("World archive").setInputFiles({ name: "island.zip", mimeType: "application/zip", buffer: save });
+  await expect(page.getByTestId("world-summary")).toContainText("Last opened in 1.21.4");
+  await page.getByRole("button", { name: "Create template" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  expect(made).toMatchObject({ name: "Island", spec: { loader: "paper" } });
+  expect(kept).not.toBeNull();
+  const { params, size } = kept!;
+  expect(Object.fromEntries(params)).toEqual({ root: "saves/Island Save", name: "Island", version: "1.21.4", file: "island.zip" });
+  // WebKit does not show what was sent of a file.
+  if (size > 0) expect(size).toBe(save.length);
+});
+
+test("a server made from a template with a world of its own is given it once it is made", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  const island = {
+    id: "t9", name: "Island", description: "", createdBy: "owner", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), current: null, versions: [],
+    settingsOnly: true, spec: { loader: "paper", version: "1.21.4", resources: { memory: "2Gi" }, storage: { size: "5Gi" } },
+    world: "own", ownWorld: { root: "saves/Island Save", name: "Island", version: "1.21.4", file: "island.zip", size: 4096 },
+  };
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/templates(/t9)?$`), (route) => route.fulfill({ json: route.request().url().endsWith("/t9") ? island : [island] }));
+  let sent: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/island`) });
+  });
+  await page.goto(`/o/${slug}/new?from=template:t9`);
+  // Its world, kept with the template, is the one it is given.
+  const worldChoice = page.getByRole("group", { name: "Its world" });
+  await expect(worldChoice.getByRole("button", { name: "Use a world I have" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("world-summary")).toContainText("kept with the template");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await page.getByRole("button", { name: "Create without a whitelist" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(sent).not.toBeNull();
+  expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", template: "t9" });
+});
+
+test("a template's own world is taken away in its form, for its servers to start new ones", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const island = {
+    id: "t9", name: "Island", description: "", createdBy: "owner", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), current: null, versions: [],
+    settingsOnly: true, spec: { loader: "paper", version: "1.21.4", resources: { memory: "2Gi" }, storage: { size: "5Gi" } },
+    world: "own", ownWorld: { root: "", name: "Island", size: 4096 },
+  };
+  const calls: string[] = [];
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/templates(/t9(/world)?)?$`), (route) => {
+    const req = route.request();
+    if (req.method() !== "GET") calls.push(`${req.method()} ${new URL(req.url()).pathname.replace(`/api/v1/orgs/${slug}`, "")}`);
+    return route.fulfill({ json: req.url().endsWith("/templates") ? [island] : island });
+  });
+  await page.goto(`/o/${slug}/templates/t9/edit`);
+  await expect(page.getByTestId("world-summary")).toContainText("kept with the template");
+  await page.getByRole("button", { name: "Remove the world" }).click();
+  // None chosen in its place: one is asked for, or a new one.
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Choose a world, or make a new one.")).toBeVisible();
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "New world" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  expect(calls).toEqual(["PATCH /templates/t9", "DELETE /templates/t9/world"]);
+});

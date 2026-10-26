@@ -235,6 +235,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"DELETE /orgs/{org}/templates/{template}", "/orgs/alpha/templates/nope", "", store.RoleAdmin, 404},
 		{"POST /orgs/{org}/templates/{template}/versions", "/orgs/alpha/templates/nope/versions", `{"server":"world"}`, store.RoleAdmin, 404},
 		{"DELETE /orgs/{org}/templates/{template}/versions/{id}", "/orgs/alpha/templates/nope/versions/aaaa1111", "", store.RoleAdmin, 404},
+		{"PUT /orgs/{org}/templates/{template}/world", "/orgs/alpha/templates/nope/world?root=World", "", store.RoleAdmin, 404},
+		{"DELETE /orgs/{org}/templates/{template}/world", "/orgs/alpha/templates/nope/world", "", store.RoleAdmin, 404},
 		{"GET /orgs/{org}/presence", "", "", store.RoleViewer, 200},
 		{"PUT /orgs/{org}/presence", "", `{"tab":"tab-of-{who}","server":"survival"}`, store.RoleViewer, 204},
 		// 503 below: allowed, and then told that this panel has no restic.

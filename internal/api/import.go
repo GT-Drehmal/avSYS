@@ -248,6 +248,21 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err := unfinished(mc); err != nil && !importUnfinished(mc) {
 		return err
 	}
+	// A template's own world comes out of its snapshot rather than with the
+	// request, its folder in it as it was kept.
+	var archive func(io.Writer) error
+	if from := r.URL.Query().Get("template"); from != "" {
+		if r.URL.Query().Get("world") != "true" {
+			return errBadRequest("A template's world is imported as a world: add world=true.")
+		}
+		snap, info, err := s.ownWorldOf(r.Context(), a, from)
+		if err != nil {
+			return err
+		}
+		root = info.Root
+		org := a.Org.Slug
+		archive = func(dst io.Writer) error { return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst) }
+	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindImport, "")
 	if !ok {
 		if running := s.ops.current(a.Namespace, mc.Name); running != nil {
@@ -269,7 +284,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 	}
 	go func() {
-		undo, err := s.importInto(r, w, mc, root, op, replace, a.Org.Slug, u.Username, onReceived)
+		undo, err := s.importInto(r, w, mc, root, archive, op, replace, a.Org.Slug, u.Username, onReceived)
 		ctx := context.WithoutCancel(r.Context())
 		if undo != nil || answered {
 			// What it replaced is in a snapshot, noted on the server as its
@@ -312,7 +327,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 // importInto returns the snapshot it took of what a world replaced, once there
 // is one, whether or not the rest then succeeded. received, if given, is
 // called once the archive is in.
-func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, op *operation, replace bool, org, by string, received func()) (undo *backup.Snapshot, err error) {
+func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, archive func(io.Writer) error, op *operation, replace bool, org, by string, received func()) (undo *backup.Snapshot, err error) {
 	ctx := r.Context()
 	key := client.ObjectKeyFromObject(mc)
 	wasMarked := importUnfinished(mc)
@@ -389,7 +404,14 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	if err != nil {
 		return undo, fileError(err)
 	}
-	_, err = f.ReadFromWithConcurrency(http.MaxBytesReader(w, r.Body, maxUpload), 0)
+	var body io.Reader = http.MaxBytesReader(w, r.Body, maxUpload)
+	if archive != nil {
+		pr, pw := io.Pipe()
+		go func() { pw.CloseWithError(archive(pw)) }()
+		defer pr.Close()
+		body = pr
+	}
+	_, err = f.ReadFromWithConcurrency(body, 0)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

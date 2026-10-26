@@ -418,3 +418,75 @@ func callList(t *testing.T, p *panel, who, path string) (int, []any) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return rec.Code, out
 }
+
+// A template is given a world of its own, kept as a snapshot beside it: one
+// at a time, copied to another template, taken away, and gone with it.
+func TestTemplateOwnWorld(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	p := newPanel(t)
+	call := func(who, method, path, body string) (int, map[string]any) {
+		t.Helper()
+		req := httptest.NewRequest(method, "/api/v1"+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+p.tokens[who])
+		rec := httptest.NewRecorder()
+		p.h.ServeHTTP(rec, req)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	p.srv.Backups = &backup.Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	worlds := func(id string) int {
+		t.Helper()
+		list, err := p.srv.Backups.List(t.Context(), "alpha")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(worldsOf(list, id))
+	}
+	const settings = `{"loader":"paper","version":"1.21.4","resources":{"memory":"4Gi"},"storage":{"size":"10Gi"}}`
+	_, made := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Island","spec":`+settings+`}`)
+	id := made["id"].(string)
+
+	if code, _ := call("viewer", "PUT", "/orgs/alpha/templates/"+id+"/world?root=Island", "a world"); code != http.StatusForbidden {
+		t.Errorf("a viewer gave it a world: %d", code)
+	}
+	if code, _ := call("admin", "PUT", "/orgs/alpha/templates/"+id+"/world?root=../etc", "a world"); code != http.StatusBadRequest {
+		t.Errorf("a folder outside the archive: %d", code)
+	}
+	code, got := call("admin", "PUT", "/orgs/alpha/templates/"+id+"/world?root=saves%2FIsland&name=Island&version=1.21.4&file=island.zip", "a world")
+	if code != http.StatusOK || got["world"] != "own" {
+		t.Fatalf("given a world: %d %v", code, got)
+	}
+	if own := got["ownWorld"].(map[string]any); own["root"] != "saves/Island" || own["name"] != "Island" || own["version"] != "1.21.4" || own["file"] != "island.zip" || own["size"] != float64(len("a world")) {
+		t.Errorf("its world: %v", own)
+	}
+	// Given another, the one before goes.
+	if code, _ := call("admin", "PUT", "/orgs/alpha/templates/"+id+"/world?root=Other", "another world"); code != http.StatusOK || worlds(id) != 1 {
+		t.Errorf("given another: %d, %d kept", code, worlds(id))
+	}
+	// Not among a server's or the organization's snapshots.
+	if code, list := call("admin", "GET", "/orgs/alpha/snapshots", ""); code != http.StatusOK || len(list["snapshots"].([]any)) != 0 {
+		t.Errorf("listed with the snapshots: %d %v", code, list)
+	}
+
+	// Copied to another template.
+	_, other := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Island copy","spec":`+settings+`}`)
+	otherID := other["id"].(string)
+	if code, got := call("admin", "PUT", "/orgs/alpha/templates/"+otherID+"/world?from="+id, ""); code != http.StatusOK || got["ownWorld"].(map[string]any)["root"] != "Other" || worlds(otherID) != 1 {
+		t.Errorf("copied: %d %v", code, got)
+	}
+	if code, out := call("admin", "PUT", "/orgs/alpha/templates/"+id+"/world?from="+otherID+"x", ""); code != http.StatusNotFound {
+		t.Errorf("from a template that is not there: %d %v", code, out)
+	}
+
+	// Taken away: none, and its servers have a new one again.
+	if code, got := call("admin", "DELETE", "/orgs/alpha/templates/"+id+"/world", ""); code != http.StatusOK || got["world"] != nil || got["ownWorld"] != nil || worlds(id) != 0 {
+		t.Errorf("taken away: %d %v, %d kept", code, got, worlds(id))
+	}
+	// Gone with the template.
+	if code, _ := call("admin", "DELETE", "/orgs/alpha/templates/"+otherID, ""); code != http.StatusNoContent || worlds(otherID) != 0 {
+		t.Errorf("deleted: %d, %d kept", code, worlds(otherID))
+	}
+}

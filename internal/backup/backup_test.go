@@ -918,3 +918,41 @@ func TestCopyAs(t *testing.T) {
 		t.Errorf("offsite holds %v, want the copies %v", lineages, want)
 	}
 }
+
+// A file kept as a snapshot of its own comes back out as it went in, under
+// the host it was kept for, as a template's.
+func TestKeepFile(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	archive := bytes.Repeat([]byte("a world, zipped "), 1<<12)
+	kept, err := m.KeepFile(ctx, "alpha", "template-t1-world", "world.archive", "owner", bytes.NewReader(archive))
+	if err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	if kept.Server != "template-t1-world" || kept.Trigger != TriggerTemplate || kept.By != "owner" || kept.Size != int64(len(archive)) {
+		t.Errorf("kept as %+v", kept)
+	}
+	var out bytes.Buffer
+	if err := m.Stream(ctx, "alpha", kept.ID, "/world.archive", &out); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if !bytes.Equal(out.Bytes(), archive) {
+		t.Errorf("came back as %d bytes, went in as %d", out.Len(), len(archive))
+	}
+	if err := m.Stream(ctx, "alpha", kept.ID, "/other", io.Discard); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a file it does not have: %v", err)
+	}
+	// Copied for another template, as a template's version is.
+	copied, err := m.CopyAs(ctx, "alpha", kept.ID, "template-t2-world", "admin")
+	if err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	out.Reset()
+	if err := m.Stream(ctx, "alpha", copied.ID, "/world.archive", &out); err != nil || !bytes.Equal(out.Bytes(), archive) {
+		t.Errorf("the copy: %d bytes, %v", out.Len(), err)
+	}
+}

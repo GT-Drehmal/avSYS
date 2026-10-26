@@ -56,7 +56,7 @@ export function NewFromSource({ org, origin, templating }: { org: string; origin
   // A template of settings alone has no files: the server is a new one, with them.
   const settings = origin.kind === "template" ? template.data : undefined;
   if (settings?.settingsOnly && settings.spec) {
-    return <ServerForm key={`settings:${settings.id}`} org={org} preset={{ id: settings.id, name: settings.name, spec: settings.spec }} templating={templating} taken={taken} history={history} />;
+    return <ServerForm key={`settings:${settings.id}`} org={org} preset={{ id: settings.id, name: settings.name, spec: settings.spec, ownWorld: settings.ownWorld }} templating={templating} taken={taken} history={history} />;
   }
   const live = origin.kind === "server" ? servers.data?.find((s) => s.name === origin.name) : undefined;
   // A template's version, named as the template is: the server made from it
@@ -69,7 +69,7 @@ export function NewFromSource({ org, origin, templating }: { org: string; origin
         : null
       : origin.kind === "template"
         ? template.data?.spec && version
-          ? { origin, name: slugify(template.data.name) || "server", spec: { ...template.data.spec, displayName: template.data.name }, size: version.size, taken: version.time, snapshot: version.id, world: template.data.world }
+          ? { origin, name: slugify(template.data.name) || "server", spec: { ...template.data.spec, displayName: template.data.name }, size: version.size, taken: version.time, snapshot: version.id, world: template.data.world, ownWorld: template.data.ownWorld }
           : null
         : snapshot.data
           ? { origin, name: snapshot.data.server, spec: snapshot.data.spec, size: snapshot.data.size, taken: snapshot.data.time, live: servers.data?.find((s) => s.name === snapshot.data.server) }
