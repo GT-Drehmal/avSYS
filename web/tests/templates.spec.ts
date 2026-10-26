@@ -282,6 +282,8 @@ test("the new-server form starts from a template picked in it", async ({ page, a
   await start.getByRole("button", { name: "Template", exact: true }).click();
   const list = page.getByRole("list", { name: "Templates" });
   await expect(list).toContainText("Paper 1.21.4 · 300 MB");
+  await page.getByLabel("Search templates").fill("lobby");
+  await expect(list.getByRole("button")).toHaveCount(1);
   // The rest is filled in from the one picked.
   await expect(page.getByLabel("Display name")).toBeHidden();
   await list.getByRole("button", { name: /Lobby/ }).click();

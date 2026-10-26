@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
-import { Check, Copy, LoaderCircle, X } from "lucide-react";
+import { Check, Copy, LoaderCircle, Search, X } from "lucide-react";
 import {
   useId,
   useLayoutEffect,
@@ -65,6 +65,21 @@ const widthOf = (className?: string) => (/(^|\s)w-/.test(className ?? "") ? "" :
 
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...rest} className={cx(controlClass, widthOf(className), "h-8", className)} />;
+}
+
+/** A box to narrow a list by what is typed, with a way to clear it. */
+export function SearchBox({ value, onChange, label, className }: { value: string; onChange: (value: string) => void; label: string; className?: string }) {
+  return (
+    <div className={cx("relative", className ?? "w-full sm:w-64")}>
+      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" />
+      <Input type="search" aria-label={label} placeholder="Search" value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => {
+          if (e.key !== "Escape" || !value) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onChange("");
+        }} className="w-full pl-8" spellCheck={false} />
+    </div>
+  );
 }
 
 export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
