@@ -1165,16 +1165,31 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 // that are not in the snapshot are removed, except the workspace's own. The
 // game must not be running.
 func (m *Manager) Restore(ctx context.Context, org string, ws *ssh.Client, id string, progress func(Progress)) error {
-	return m.restore(ctx, org, ws, id, false, progress)
+	return m.restore(ctx, org, ws, id, false, nil, nil, progress)
+}
+
+// RestoreWithout is Restore leaving out paths, relative to the server
+// directory, and then putting back only, from among those, what is in them:
+// a world left out, and the datapacks in it kept.
+func (m *Manager) RestoreWithout(ctx context.Context, org string, ws *ssh.Client, id string, leave, only []string, progress func(Progress)) error {
+	if err := m.restore(ctx, org, ws, id, false, leave, nil, progress); err != nil {
+		return err
+	}
+	if len(only) == 0 {
+		return nil
+	}
+	return m.restore(ctx, org, ws, id, false, nil, only, nil)
 }
 
 // RestoreWhole puts back a whole snapshot, the workspace's home with it, onto
 // a server's new, empty volume.
 func (m *Manager) RestoreWhole(ctx context.Context, org string, ws *ssh.Client, id string, progress func(Progress)) error {
-	return m.restore(ctx, org, ws, id, true, progress)
+	return m.restore(ctx, org, ws, id, true, nil, nil, progress)
 }
 
-func (m *Manager) restore(ctx context.Context, org string, ws *ssh.Client, id string, whole bool, progress func(Progress)) error {
+// restore puts back a snapshot, less what leave names. With only, it puts
+// back that and nothing else, and leaves the rest as it is.
+func (m *Manager) restore(ctx context.Context, org string, ws *ssh.Client, id string, whole bool, leave, only []string, progress func(Progress)) error {
 	snap, err := m.Get(ctx, org, id)
 	if err != nil {
 		return err
@@ -1196,9 +1211,21 @@ func (m *Manager) restore(ctx context.Context, org string, ws *ssh.Client, id st
 	// The snapshot is addressed from its server directory and restored onto
 	// that directory. Restoring the whole snapshot onto / with --delete would
 	// remove everything outside the server directory as "not in the snapshot".
-	args := []string{"restore", snap.ID + ":" + dataDir, "--target", dataDir, "--delete", "--json"}
-	for _, path := range exclusions(whole) {
-		args = append(args, "--exclude", path)
+	args := []string{"restore", snap.ID + ":" + dataDir, "--target", dataDir, "--json"}
+	if len(only) > 0 {
+		// restic takes includes or excludes, not both: what is included is
+		// never among what is excluded anyway.
+		for _, path := range only {
+			args = append(args, "--include", path)
+		}
+	} else {
+		args = append(args, "--delete")
+		for _, path := range append(exclusions(whole), leave...) {
+			args = append(args, "--exclude", path)
+		}
+	}
+	if progress == nil {
+		progress = func(Progress) {}
 	}
 	f := &follow{progress: progress}
 	if stderr, err := runCtx(ctx, ws, resticIn(socket, args...), strings.NewReader(secret+"\n"), f.line); err != nil {

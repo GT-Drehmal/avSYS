@@ -373,9 +373,19 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// picture of its own in place of the one its files bring: base64,
 		// or null for none.
 		Picture json.RawMessage `json:"picture"`
+		// World is "new" for one made from a snapshot or another server to
+		// start a world of its own rather than take the original's.
+		World string `json:"world"`
 	}
 	if err := decode(r, &raw); err != nil {
 		return err
+	}
+	if raw.World != "" && raw.World != "new" {
+		return errBadRequest(`"world" is "new", or left out to keep the original's.`)
+	}
+	newWorld := raw.World == "new"
+	if newWorld && raw.FromSnapshot == "" && raw.FromServer == "" && raw.FromTemplate == "" {
+		return errBadRequest("A new server has a new world already.")
 	}
 	if raw.FromTemplate != "" {
 		if raw.FromSnapshot != "" || raw.FromServer != "" {
@@ -432,9 +442,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 		if raw.FromServer != "" {
-			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture, raw.Node)
+			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture, newWorld, raw.Node)
 		}
-		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture, raw.Node)
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture, newWorld, raw.Node)
 	}
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given its picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once it is made.")

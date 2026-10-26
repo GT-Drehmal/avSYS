@@ -3,6 +3,10 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -80,5 +84,68 @@ func TestKeepListed(t *testing.T) {
 	}
 	if err := keepListed(sc, "/data/none.json", nil); err != nil {
 		t.Errorf("no list: %v", err)
+	}
+}
+
+// A world given to a server that has its files but no world yet, as one
+// copied with a new world, goes in beside those files, and the datapacks it
+// had stay, with the world's own where their names are not taken.
+func TestWorldFillsAServerWithNone(t *testing.T) {
+	for _, tool := range []string{"bsdtar", "sh"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+	}
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(data, "mods", "a.jar"), "a mod")
+	write(filepath.Join(data, "server.properties"), "motd=hi\n")
+	write(filepath.Join(data, "world", "datapacks", "kept.zip"), "the server's")
+	write(filepath.Join(data, "world", "datapacks", "both.zip"), "the server's")
+	write(filepath.Join(data, "world_nether", "DIM-1", "old"), "an old nether")
+	src := filepath.Join(root, "src")
+	write(filepath.Join(src, "MyWorld", "level.dat"), "my world")
+	write(filepath.Join(src, "MyWorld", "datapacks", "both.zip"), "the world's")
+	write(filepath.Join(src, "MyWorld", "datapacks", "theirs.zip"), "the world's")
+	if err := os.MkdirAll(filepath.Join(data, ".avsys"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("bsdtar", "-cf", filepath.Join(data, ".avsys", "import.archive"), "-C", src, "MyWorld").CombinedOutput(); err != nil {
+		t.Fatalf("bsdtar: %v: %s", err, out)
+	}
+	// The server directory, and not the start of a name such as datapacks.
+	script := regexp.MustCompile(regexp.QuoteMeta(dataRoot)+`\b`).ReplaceAllString(worldScript, data)
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Stdin = strings.NewReader("MyWorld\n\n\nfill\nworld\n")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("script: %v: %s", err, out)
+	}
+	for path, want := range map[string]string{
+		"world/level.dat":            "my world",
+		"world/datapacks/kept.zip":   "the server's",
+		"world/datapacks/both.zip":   "the world's",
+		"world/datapacks/theirs.zip": "the world's",
+		"mods/a.jar":                 "a mod",
+		"server.properties":          "motd=hi\n",
+	} {
+		got, err := os.ReadFile(filepath.Join(data, path))
+		if err != nil || string(got) != want {
+			t.Errorf("%s: %q, %v; want %q", path, got, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(data, "world_nether")); !os.IsNotExist(err) {
+		t.Errorf("the old Nether is still there: %v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(data, ".avsys", "import*")); len(left) > 0 {
+		t.Errorf("left behind: %v", left)
 	}
 }

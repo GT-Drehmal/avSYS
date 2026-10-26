@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -939,5 +940,34 @@ func TestACopyIsAnsweredBeforeItsSnapshot(t *testing.T) {
 			t.Fatal("the original or the copy is still held after the copy was deleted")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A new world is for a server made from another's files; anything else is
+// refused before a server is made.
+func TestNewWorldIsAskedForOnlyWithFiles(t *testing.T) {
+	p := newPanel(t)
+	for _, tc := range []struct{ body, why string }{
+		{`{"name":"fresh","world":"new","spec":{"eula":true,"loader":"paper","version":"1.21.4"}}`, "a new server"},
+		{`{"name":"copy","fromServer":"world","world":"old"}`, "a world that is not new"},
+	} {
+		req := httptest.NewRequest("POST", "/api/v1/orgs/alpha/servers", strings.NewReader(tc.body))
+		req.Header.Set("Authorization", "Bearer "+p.tokens["admin"])
+		rec := httptest.NewRecorder()
+		p.h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s", tc.why, rec.Code, rec.Body)
+		}
+	}
+	// One whose world's folder cannot be told is not given a new one.
+	spec := avsysv1.MinecraftServerSpec{Env: []corev1.EnvVar{{Name: "LEVEL", ValueFrom: &corev1.EnvVarSource{}}}}
+	if err := worldLeavable(&spec, true); err == nil {
+		t.Error("a world in a folder that cannot be told was left behind")
+	}
+	if err := worldLeavable(&spec, false); err != nil {
+		t.Errorf("kept: %v", err)
+	}
+	if got := worldFolders("world"); strings.Join(got, " ") != "/world /world_nether /world_the_end" {
+		t.Errorf("folders: %v", got)
 	}
 }
