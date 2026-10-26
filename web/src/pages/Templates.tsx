@@ -6,7 +6,8 @@ import { Picture } from "../components/Picture";
 import { SaveTemplate } from "../components/SaveTemplate";
 import { useOrg } from "../components/Shell";
 import { software } from "../components/Snapshots";
-import { Button, Chip, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, Spinner, Textarea } from "../components/ui";
+import { Button, Chip, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox, Spinner, Textarea } from "../components/ui";
+import { matches, useSearch } from "../lib/search";
 import { api, ApiError, atLeast, snapshotIcon, type Template } from "../lib/api";
 import { ago, bytes } from "../lib/format";
 import { newFrom } from "../lib/origin";
@@ -27,6 +28,7 @@ export function Templates() {
   const [editing, setEditing] = useState<Template | null>(null);
   const [versions, setVersions] = useState<Template | null>(null);
   const [deleting, setDeleting] = useState<Template | null>(null);
+  const [query, setQuery] = useSearch();
 
   const header = (
     <PageHeader
@@ -59,6 +61,7 @@ export function Templates() {
     );
   }
   const list = templates.data;
+  const shown = list.filter((t) => matches(query, t.name, t.description, templateSummary(t)));
   // Kept fresh on the dialogs, which are opened with the one clicked.
   const latest = (t: Template | null) => (t ? (list.find((x) => x.id === t.id) ?? null) : null);
 
@@ -69,8 +72,13 @@ export function Templates() {
       {list.length === 0 ? (
         <Empty title="No templates yet">Make one from settings, or save a server as one.</Empty>
       ) : (
+        <>
+        <SearchBox value={query} onChange={setQuery} label="Search templates" />
+        {shown.length === 0 ? (
+          <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No templates match.</p>
+        ) : (
         <ul className="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface" aria-label="Templates">
-          {list.map((t) => (
+          {shown.map((t) => (
             <li key={t.id} className="flex items-center gap-3 px-4 py-3" aria-label={t.name}>
               <Picture name={t.name} url={t.current ? snapshotIcon(org, t.current.id) : undefined} size={36} />
               <div className="min-w-0 flex-1">
@@ -120,6 +128,8 @@ export function Templates() {
             </li>
           ))}
         </ul>
+        )}
+        </>
       )}
 
       {servers.data && (

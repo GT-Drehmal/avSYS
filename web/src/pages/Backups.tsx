@@ -6,11 +6,12 @@ import { backupConcern, BackupSchedule, scheduleOf } from "../components/BackupS
 import { OffsiteCopy } from "../components/OffsiteCopy";
 import { Picture } from "../components/Picture";
 import { useOrg } from "../components/Shell";
-import { OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, type RowsProps } from "../components/Snapshots";
-import { Button, Chip, cx, Empty, Loading, Notice, PageHeader, Select } from "../components/ui";
+import { OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, software, triggerLabel, type RowsProps } from "../components/Snapshots";
+import { Button, Chip, cx, Empty, Loading, Notice, PageHeader, SearchBox, Select } from "../components/ui";
 import { api, atLeast, serverIcon, serverPath, snapshotIcon, type Operation, type Server, type Snapshot } from "../lib/api";
 import { ago, bytes, displayName } from "../lib/format";
 import { keys, useAction, useBackupPolicy, useOrgSnapshots, useServers } from "../lib/queries";
+import { matches, useSearch } from "../lib/search";
 import { useSelection, type Selection } from "../lib/selection";
 
 /** How the page lays the snapshots out: a row to a server, or all of them in order of time. */
@@ -59,6 +60,7 @@ export function Backups() {
   const [all, setAll] = useState<ReadonlySet<string>>(new Set());
   const [onlyServer, setOnlyServer] = useState("");
   const [onlyReason, setOnlyReason] = useState("");
+  const [query, setQuery] = useSearch();
 
   const snapshots = list.data?.snapshots ?? [];
   const byName = new Map(servers.data?.map((s) => [s.name, s]));
@@ -84,8 +86,18 @@ export function Backups() {
   };
   // Servers that need looking at come first, then whichever was snapshotted last.
   const newestTime = (items: Snapshot[]) => (items[0] ? new Date(items[0].time).getTime() : 0);
-  const ordered = [...byServer].sort(([a, as], [b, bs]) => Number(!!concernOf(b)) - Number(!!concernOf(a)) || newestTime(bs) - newestTime(as) || a.localeCompare(b));
-  const filtered = snapshots.filter((s) => (!onlyServer || s.server === onlyServer) && (!onlyReason || s.trigger === onlyReason));
+  // A server by its names; a snapshot by those, when and why it was taken and what ran.
+  const serverSaid = (name: string) => {
+    const s = byName.get(name);
+    return [name, s && displayName(s), !s && servers.data && "deleted"];
+  };
+  const ordered = [...byServer].filter(([name]) => matches(query, ...serverSaid(name))).sort(([a, as], [b, bs]) => Number(!!concernOf(b)) - Number(!!concernOf(a)) || newestTime(bs) - newestTime(as) || a.localeCompare(b));
+  const filtered = snapshots.filter(
+    (s) =>
+      (!onlyServer || s.server === onlyServer) &&
+      (!onlyReason || s.trigger === onlyReason) &&
+      matches(query, ...serverSaid(s.server), triggerLabel(s), software(s), new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })),
+  );
   // What can be ticked is what is on the page, in its order.
   const listed = view === "time" ? filtered : ordered.flatMap(([name, items]) => (open.has(name) ? (all.has(name) ? items : items.slice(0, firstFew)) : []));
   const selection = useSelection(listed.map((s) => s.id), `${org}/${view}`);
@@ -147,6 +159,7 @@ export function Backups() {
         {byServer.size > 0 && (
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
               <div role="group" aria-label="Arrange by" className="flex gap-1 rounded-md border border-line bg-bg p-0.5">
                 <button type="button" aria-pressed={view === "servers"} className={tab(view === "servers")} onClick={() => choose("servers")}>
                   By server
@@ -154,6 +167,8 @@ export function Backups() {
                 <button type="button" aria-pressed={view === "time"} className={tab(view === "time")} onClick={() => choose("time")}>
                   By time
                 </button>
+              </div>
+              <SearchBox value={query} onChange={setQuery} label="Search backups" className="w-full sm:w-56" />
               </div>
               {view === "time" && (
                 <div className="flex gap-2">
@@ -195,6 +210,8 @@ export function Backups() {
                   )}
                 />
               )
+            ) : ordered.length === 0 ? (
+              <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No servers match.</p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {ordered.map(([name, items]) => (
