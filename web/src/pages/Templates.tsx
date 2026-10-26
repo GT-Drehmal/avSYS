@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { History, MoreHorizontal, Pencil, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Copy, History, MoreHorizontal, Pencil, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Picture } from "../components/Picture";
@@ -28,6 +28,7 @@ export function Templates() {
   const [editing, setEditing] = useState<Template | null>(null);
   const [versions, setVersions] = useState<Template | null>(null);
   const [deleting, setDeleting] = useState<Template | null>(null);
+  const [copying, setCopying] = useState<Template | null>(null);
   const [query, setQuery] = useSearch();
 
   const header = (
@@ -38,8 +39,8 @@ export function Templates() {
         canAdmin && (
           <>
             {meta?.snapshots && (
-              <Button icon={<Save className="size-3.5" />} onClick={() => setSaving(true)} disabled={!servers.data?.length}>
-                Save a server
+              <Button icon={<Save className="size-3.5" />} onClick={() => setSaving(true)} disabled={!servers.data}>
+                Save a server or snapshot
               </Button>
             )}
             <Link to="new" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-medium text-accent-ink hover:bg-accent-strong">
@@ -109,8 +110,13 @@ export function Templates() {
                         Edit
                       </MenuItem>
                       {meta?.snapshots && (
-                        <MenuItem icon={<RefreshCw />} disabled={!servers.data?.length} onSelect={() => setUpdating(t)}>
-                          Update from a server
+                        <MenuItem icon={<RefreshCw />} onSelect={() => setUpdating(t)}>
+                          New version
+                        </MenuItem>
+                      )}
+                      {(t.settingsOnly || meta?.snapshots) && (
+                        <MenuItem icon={<Copy />} disabled={!ready(t)} onSelect={() => setCopying(t)}>
+                          Duplicate
                         </MenuItem>
                       )}
                       {!t.settingsOnly && (
@@ -139,9 +145,56 @@ export function Templates() {
         </>
       )}
       {editing && <EditTemplate org={org} template={editing} onClose={() => setEditing(null)} />}
+      {copying && <DuplicateTemplate org={org} template={copying} onClose={() => setCopying(null)} />}
       {latest(versions) && <Versions org={org} template={latest(versions)!} onClose={() => setVersions(null)} />}
       <DeleteTemplate org={org} template={deleting} onClose={() => setDeleting(null)} />
     </div>
+  );
+}
+
+/**
+ * A new template like one there is: with its settings, or with the version
+ * of it servers are made from as its first, which is not copied file by file.
+ */
+function DuplicateTemplate({ org, template, onClose }: { org: string; template: Template; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState(`${template.name} copy`.slice(0, 60));
+  const [description, setDescription] = useState(template.description);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Modal open onOpenChange={(o) => !o && !busy && onClose()} title={`Duplicate ${template.name}`}>
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError(null);
+          try {
+            const from = template.settingsOnly ? { spec: template.spec } : { snapshot: template.current?.id };
+            await api.post(`/orgs/${org}/templates`, { name, description, ...from });
+            await qc.invalidateQueries({ queryKey: keys.templates(org) });
+            onClose();
+          } catch (err) {
+            setBusy(false);
+            setError(err instanceof ApiError ? err.message : "Could not duplicate it.");
+          }
+        }}
+      >
+        <Field label="Name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} />}</Field>
+        <Field label="Description">{(id) => <Textarea id={id} value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={500} />}</Field>
+        <p className="text-[13px] text-muted">{template.settingsOnly ? "Its settings are copied." : "The version servers are made from is copied, world and all. The copy has no other versions."}</p>
+        {error && <Notice tone="danger">{error}</Notice>}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" loading={busy}>
+            Duplicate
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

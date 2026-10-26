@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -818,5 +819,102 @@ func TestWholeKeepsTheWorkspaceHome(t *testing.T) {
 	}
 	if !found {
 		t.Error("an ordinary snapshot takes the workspace's home")
+	}
+}
+
+// A copy made for a template refers to the same files under the template's
+// host, as a template's version, dated now. It has a lineage of its own: the
+// original's removal is not noted as its, and the other way round.
+func TestCopyAs(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Offsite: &Offsite{Repository: filepath.Join(t.TempDir(), "far"), Password: "kept-by-the-operator"}}
+	if err := m.ensure(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	files := t.TempDir()
+	if err := os.WriteFile(filepath.Join(files, "level.dat"), []byte("a world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("restic", "--repo", m.repoDir("alpha"), "--password-file", m.keyFile("alpha"),
+		"backup", files, "--host", "survival", "--tag", "avsys", "--tag", "trigger=manual", "--tag", "by=alex", "--tag", "version=1.21.4", "--time", "2026-09-01 04:00:00").CombinedOutput()
+	if err != nil {
+		t.Fatalf("taking a snapshot: %v: %s", err, out)
+	}
+	list, err := m.List(ctx, "alpha")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("snapshots: %v, %v", list, err)
+	}
+	src := list[0]
+
+	before := time.Now().Add(-time.Second)
+	made, err := m.CopyAs(ctx, "alpha", src.ID, "template-t1", "owner")
+	if err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	if made.Server != "template-t1" || made.Trigger != TriggerTemplate || made.By != "owner" || made.Version != "1.21.4" || made.Size != src.Size {
+		t.Errorf("the copy is %+v", made)
+	}
+	if made.Time.Before(before) {
+		t.Errorf("the copy is dated %v, before it was made", made.Time)
+	}
+	if made.Lineage == src.Lineage || made.Lineage == "" {
+		t.Errorf("the copy's lineage is %q, the original's %q", made.Lineage, src.Lineage)
+	}
+	// A second copy of the same, as another version, is one of its own too.
+	again, err := m.CopyAs(ctx, "alpha", src.ID, "template-t1", "owner")
+	if err != nil {
+		t.Fatalf("copy again: %v", err)
+	}
+	if again.ID == made.ID || again.Lineage == made.Lineage {
+		t.Errorf("the second copy is the first: %+v", again)
+	}
+	// A copy of a copy is one of its own as well.
+	twice, err := m.CopyAs(ctx, "alpha", made.ID, "template-t2", "owner")
+	if err != nil {
+		t.Fatalf("copy of a copy: %v", err)
+	}
+	if twice.Server != "template-t2" || twice.Trigger != TriggerTemplate || twice.By != "owner" || twice.Lineage == made.Lineage || twice.Lineage == src.Lineage {
+		t.Errorf("the copy of a copy is %+v", twice)
+	}
+	// The original is as it was.
+	if got, err := m.Get(ctx, "alpha", src.ID); err != nil || got.Server != "survival" || got.Trigger != TriggerManual || got.By != "alex" {
+		t.Errorf("the original is now %+v, %v", got, err)
+	}
+	// Its files are the original's.
+	data, err := m.File(ctx, "alpha", made.ID, filepath.Join(files, "level.dat"), 1<<10)
+	if err != nil || string(data) != "a world" {
+		t.Errorf("the copy's file: %q, %v", data, err)
+	}
+	// Offsite, each is copied, and removing the original there leaves the copies.
+	if res, err := m.SyncOffsite(ctx, "alpha"); err != nil || res.Snapshots != 4 {
+		t.Fatalf("offsite: %+v, %v", res, err)
+	}
+	if err := m.Delete(ctx, "alpha", src.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Get(ctx, "alpha", made.ID); err != nil {
+		t.Errorf("the copy went with the original: %v", err)
+	}
+	if res, err := m.SyncOffsite(ctx, "alpha"); err != nil || res.Removed != 1 || res.Snapshots != 3 {
+		t.Fatalf("offsite once the original is gone: %+v, %v", res, err)
+	}
+	there, err := m.Recoverable(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lineages []string
+	for _, s := range there {
+		lineages = append(lineages, s.Lineage)
+	}
+	slices.Sort(lineages)
+	want := []string{made.Lineage, again.Lineage, twice.Lineage}
+	slices.Sort(want)
+	if !slices.Equal(lineages, want) {
+		t.Errorf("offsite holds %v, want the copies %v", lineages, want)
 	}
 }

@@ -2,8 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -210,4 +215,98 @@ func TestATemplateSavedIntoIsMadeFromItsVersions(t *testing.T) {
 	if v := templateOf(tpl, list); v.SettingsOnly || v.Spec != nil || v.Current == nil {
 		t.Errorf("with a version: %+v", v)
 	}
+}
+
+// A template is made from a snapshot, or given one as its newest version, as
+// a copy of it under the template's own name: the snapshot stays as it was.
+// One of a template's versions is a snapshot too, which is how a template is
+// duplicated.
+func TestTemplateFromASnapshot(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	p := newPanel(t)
+	call := func(who, method, path, body string) (int, map[string]any) {
+		t.Helper()
+		req := httptest.NewRequest(method, "/api/v1"+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+p.tokens[who])
+		rec := httptest.NewRecorder()
+		p.h.ServeHTTP(rec, req)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	dir := t.TempDir()
+	p.srv.Backups = &backup.Manager{Dir: dir, Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := os.WriteFile(filepath.Join(dir, "alpha.key"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restic := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("restic", append([]string{"--repo", filepath.Join(dir, "alpha"), "--password-file", filepath.Join(dir, "alpha.key")}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("restic %v: %v: %s", args, err, out)
+		}
+	}
+	files := t.TempDir()
+	if err := os.WriteFile(filepath.Join(files, "level.dat"), []byte("a world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restic("init")
+	restic("backup", files, "--host", "survival", "--tag", "avsys", "--tag", "trigger=scheduled", "--tag", "version=1.21.4", "--tag", "loader=paper")
+	list, err := p.srv.Backups.List(t.Context(), "alpha")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("snapshots: %v %v", list, err)
+	}
+	src := list[0].ID
+
+	if code, _ := call("viewer", "POST", "/orgs/alpha/templates", `{"name":"Nope","snapshot":"`+src+`"}`); code != http.StatusForbidden {
+		t.Errorf("a viewer made one: %d", code)
+	}
+	if code, _ := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Both","server":"world","snapshot":"`+src+`"}`); code != http.StatusBadRequest {
+		t.Errorf("from a server and a snapshot: %d", code)
+	}
+	if code, _ := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Missing","snapshot":"`+strings.Repeat("0", 64)+`"}`); code != http.StatusNotFound {
+		t.Errorf("from a snapshot that is not there: %d", code)
+	}
+
+	code, made := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Survival","snapshot":"`+src+`"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("made: %d %v", code, made)
+	}
+	current := made["current"].(map[string]any)
+	if current["server"] != "template-"+made["id"].(string) || current["trigger"] != "template" || current["by"] != "admin" || current["version"] != "1.21.4" {
+		t.Errorf("its version: %v", current)
+	}
+	id := made["id"].(string)
+
+	// Duplicated, from the version it is made from.
+	code, copied := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Survival copy","snapshot":"`+current["id"].(string)+`"}`)
+	if code != http.StatusCreated || copied["current"] == nil || copied["current"].(map[string]any)["server"] != "template-"+copied["id"].(string) {
+		t.Fatalf("duplicated: %d %v", code, copied)
+	}
+
+	// A newer version, from the same snapshot.
+	code, again := call("admin", "POST", "/orgs/alpha/templates/"+id+"/versions", `{"snapshot":"`+src+`"}`)
+	if code != http.StatusCreated || len(again["versions"].([]any)) != 2 || again["current"].(map[string]any)["id"] == current["id"] {
+		t.Errorf("a newer version: %d %v", code, again)
+	}
+
+	// The snapshot is as it was, and the failed one left no template behind.
+	if got, err := p.srv.Backups.Get(t.Context(), "alpha", src); err != nil || got.Server != "survival" || got.Trigger != "scheduled" {
+		t.Errorf("the snapshot is now %+v, %v", got, err)
+	}
+	if code, all := callList(t, p, "admin", "/orgs/alpha/templates"); code != http.StatusOK || len(all) != 2 {
+		t.Errorf("templates: %d %v", code, all)
+	}
+}
+
+func callList(t *testing.T, p *panel, who, path string) (int, []any) {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1"+path, nil)
+	req.Header.Set("Authorization", "Bearer "+p.tokens[who])
+	rec := httptest.NewRecorder()
+	p.h.ServeHTTP(rec, req)
+	var out []any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
 }

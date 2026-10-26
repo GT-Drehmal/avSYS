@@ -1055,7 +1055,24 @@ expect "a server made from a template has the files of the version used" "$(call
 expect "and its software" "$(echo "$made" | field "(d['spec']['loader'], d['spec']['version'])")" "('paper', '1.21.4')"
 expect "a template's version is not deleted as a server's snapshot" "$(call -X DELETE "$API/orgs/$ORG/snapshots/$FIRST" | field "d['code']")" template
 call -X DELETE "$FROM?snapshot=false" >/dev/null
+# Duplicated from the version used, and made from a snapshot: copies, under
+# names of their own, that outlast what they were made from.
+copy=$(call -d "{\"name\":\"E2E Lobby copy\",\"snapshot\":\"$FIRST\"}" "$API/orgs/$ORG/templates")
+COPY=$(echo "$copy" | field "d['id']") || fail "no template was duplicated: $copy"
+expect "a template is duplicated from its version" "$(echo "$copy" | field "(len(d['versions']), d['current']['server'] == 'template-' + d['id'], d['current']['id'] != '$FIRST')")" "(1, True, True)"
+PROBE_SNAP=$(call -X POST "$SRV/snapshots?wait=true" | field "d['id']") || fail "no snapshot of the server was taken"
+fromsnap=$(call -d "{\"name\":\"E2E From a snapshot\",\"snapshot\":\"$PROBE_SNAP\"}" "$API/orgs/$ORG/templates")
+FROMSNAP=$(echo "$fromsnap" | field "d['id']") || fail "no template was made from a snapshot: $fromsnap"
+expect "a template is made from a snapshot" "$(echo "$fromsnap" | field "(len(d['versions']), d['current']['trigger'])")" "(1, 'template')"
+expect "which is still the server's own" "$(call "$SRV/snapshots" | field "[s['trigger'] for s in d['snapshots'] if s['id'] == '$PROBE_SNAP']")" "['manual']"
 expect "a template is deleted, its versions with it" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/templates/$TPL")" 204
+made=$(call -d "{\"name\":\"from-copy\",\"fromTemplate\":\"$COPY\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"from-copy.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
+case "$made" in *'"spec"'*) ;; *) fail "no server was made from the duplicate: $made" ;; esac
+expect "its duplicate still makes servers with its files" "$(call "$API/orgs/$ORG/servers/from-copy/files/content?path=/template.txt")" "kept in the template"
+call -X DELETE "$API/orgs/$ORG/servers/from-copy?snapshot=false" >/dev/null
+for t in "$COPY" "$FROMSNAP"; do call -X DELETE "$API/orgs/$ORG/templates/$t" >/dev/null; done
+# Not part of the server's history that later steps count.
+expect "the snapshot a template was made from is deleted on its own" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$PROBE_SNAP")" 204
 expect "and is gone" "$(call "$API/orgs/$ORG/templates" | field 'len(d)')" 0
 # One of settings alone has no server behind it, until one is saved into it.
 set=$(call -d '{"name":"E2E Settings","spec":{"loader":"fabric","version":"LATEST","resources":{"memory":"2Gi"},"storage":{"size":"2Gi"},"expose":{"type":"Router","hostname":"not-kept.test"}}}' "$API/orgs/$ORG/templates")
