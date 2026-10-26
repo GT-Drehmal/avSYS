@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive as ArchiveIcon, ChevronLeft, Undo2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit, packTitle, type PickKind, type Software } from "../components/Content";
 import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
@@ -403,6 +403,7 @@ export function ServerForm({
   source,
   preset,
   templating,
+  lead,
   pick,
   taken,
   history,
@@ -414,6 +415,8 @@ export function ServerForm({
   pick?: StartKind;
   /** Making a template of settings alone, or changing the one given. */
   templating?: { template: Template | null };
+  /** Put first, before the form's own sections: what a new template starts from. */
+  lead?: ReactNode;
   taken: Set<string>;
   history: Set<string>;
 }) {
@@ -1112,6 +1115,7 @@ export function ServerForm({
                   : `Bring back ${source.name}`
         }
       />
+      {lead}
 
       {!forTemplate && (
         <Section title="Starting point">

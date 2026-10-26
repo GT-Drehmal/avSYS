@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, History, MoreHorizontal, Pencil, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Copy, History, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Picture } from "../components/Picture";
@@ -23,7 +23,6 @@ export function Templates() {
   const servers = useServers(org);
   const navigate = useNavigate();
   const canAdmin = !!membership && atLeast(membership.role, "admin");
-  const [saving, setSaving] = useState(false);
   const [updating, setUpdating] = useState<Template | null>(null);
   const [editing, setEditing] = useState<Template | null>(null);
   const [versions, setVersions] = useState<Template | null>(null);
@@ -37,17 +36,10 @@ export function Templates() {
       description="Servers kept to make others like them."
       actions={
         canAdmin && (
-          <>
-            {meta?.snapshots && (
-              <Button icon={<Save className="size-3.5" />} onClick={() => setSaving(true)} disabled={!servers.data}>
-                Save a server or snapshot
-              </Button>
-            )}
-            <Link to="new" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-medium text-accent-ink hover:bg-accent-strong">
-              <Plus className="size-4" />
-              New template
-            </Link>
-          </>
+          <Link to="new" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-medium text-accent-ink hover:bg-accent-strong">
+            <Plus className="size-4" />
+            New template
+          </Link>
         )
       }
     />
@@ -71,7 +63,7 @@ export function Templates() {
       {header}
       {meta && !meta.snapshots && <Notice>Saving a server as a template needs snapshots, which are not set up on this panel.</Notice>}
       {list.length === 0 ? (
-        <Empty title="No templates yet">Make one from settings, or save a server as one.</Empty>
+        <Empty title="No templates yet">Make one from settings, a server or a snapshot.</Empty>
       ) : (
         <>
         <SearchBox value={query} onChange={setQuery} label="Search templates" />
@@ -138,12 +130,7 @@ export function Templates() {
         </>
       )}
 
-      {servers.data && (
-        <>
-          <SaveTemplate key="new" org={org} open={saving} onOpenChange={setSaving} servers={servers.data} templates={list} />
-          {updating && <SaveTemplate key={updating.id} org={org} open onOpenChange={(o) => !o && setUpdating(null)} servers={servers.data} templates={list} into={updating} />}
-        </>
-      )}
+      {updating && <SaveTemplate key={updating.id} org={org} open onOpenChange={(o) => !o && setUpdating(null)} servers={servers.data} templates={list} into={updating} />}
       {editing && <EditTemplate org={org} template={editing} onClose={() => setEditing(null)} />}
       {copying && <DuplicateTemplate org={org} template={copying} onClose={() => setCopying(null)} />}
       {latest(versions) && <Versions org={org} template={latest(versions)!} onClose={() => setVersions(null)} />}

@@ -529,7 +529,7 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request, u *store
 	}
 	if len(in.Spec) > 0 {
 		if !v.SettingsOnly {
-			return errBadRequest("This template was saved from a server. Update it from a server instead.")
+			return errBadRequest("This template was saved from a server. Give it a new version instead.")
 		}
 		if t.Settings, err = s.templateSettings(r.Context(), a, in.Spec); err != nil {
 			return err
