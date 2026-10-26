@@ -174,7 +174,7 @@ func (s *Server) getTemplate(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err != nil {
 		return err
 	}
-	_, v, err := s.template(r.Context(), a, r.PathValue("template"))
+	t, v, err := s.template(r.Context(), a, r.PathValue("template"))
 	if err != nil {
 		return err
 	}
@@ -184,6 +184,10 @@ func (s *Server) getTemplate(w http.ResponseWriter, r *http.Request, u *store.Us
 			return err
 		}
 		v.Spec = &record.Spec
+		// As a server made from it is: its version, with what was changed.
+		if spec, ok := withChanges(&record.Spec, t.Changes); ok {
+			v.Spec = &spec
+		}
 	}
 	writeJSON(w, http.StatusOK, templateFor(a.Role, v))
 	return nil
@@ -229,7 +233,13 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store
 		Name, Description, Server string
 		// Snapshot makes it from a snapshot, a template's version among them.
 		Snapshot string
+		// Template makes it from another template's version, with what that
+		// one has changed.
+		Template string
 		Spec     json.RawMessage
+		// Changes are what it has other than the server, snapshot or
+		// template it is made from, as a copy's request asks for them.
+		Changes json.RawMessage
 	}
 	if err := decode(r, &in); err != nil {
 		return err
@@ -239,17 +249,40 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store
 		return err
 	}
 	sources := 0
-	for _, given := range []bool{len(in.Spec) > 0, in.Server != "", in.Snapshot != ""} {
+	for _, given := range []bool{len(in.Spec) > 0, in.Server != "", in.Snapshot != "", in.Template != ""} {
 		if given {
 			sources++
 		}
 	}
 	if sources > 1 {
-		return errBadRequest("A template is made from one server, snapshot or set of settings.")
+		return errBadRequest("A template is made from one server, snapshot, template or set of settings.")
 	}
-	if in.Snapshot != "" {
+	if len(in.Changes) > 0 && in.Server == "" && in.Snapshot == "" && in.Template == "" {
+		return errBadRequest("Changes are made to a server, snapshot or template it is made from.")
+	}
+	if in.Snapshot != "" || in.Template != "" {
 		if !s.Backups.Available() {
 			return errNoBackups
+		}
+		id, older := in.Snapshot, json.RawMessage(nil)
+		if in.Template != "" {
+			if id, older, err = s.templateVersionToMake(r.Context(), a, in.Template); err != nil {
+				return err
+			}
+		}
+		// Checked against what the version has, when there is anything to check.
+		changes := ""
+		if len(older) > 0 || len(in.Changes) > 0 {
+			record, err := s.recordOf(r.Context(), a.Org.Slug, id)
+			if err != nil {
+				if errors.Is(err, backup.ErrNotFound) {
+					return errNoSuchSnapshot
+				}
+				return errNoRecord(err)
+			}
+			if changes, err = s.templateChanges(r.Context(), a, &record.Spec, older, in.Changes); err != nil {
+				return err
+			}
 		}
 		t := &store.Template{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username}
 		if err := s.Store.CreateTemplate(r.Context(), t); errors.Is(err, store.ErrTemplateNameTaken) {
@@ -257,7 +290,7 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store
 		} else if err != nil {
 			return err
 		}
-		return s.copyTemplateVersion(w, r, u, a, t, in.Snapshot, true)
+		return s.copyTemplateVersion(w, r, u, a, t, id, changes, true)
 	}
 	if len(in.Spec) > 0 {
 		settings, err := s.templateSettings(r.Context(), a, in.Spec)
@@ -278,13 +311,17 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return err
 	}
+	changes, err := s.templateChanges(r.Context(), a, &mc.Spec, nil, in.Changes)
+	if err != nil {
+		return err
+	}
 	t := &store.Template{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username}
 	if err := s.Store.CreateTemplate(r.Context(), t); errors.Is(err, store.ErrTemplateNameTaken) {
 		return templateNameTaken(name)
 	} else if err != nil {
 		return err
 	}
-	return s.saveTemplateVersion(w, r, u, a, t, mc, true)
+	return s.saveTemplateVersion(w, r, u, a, t, mc, changes, true)
 }
 
 // templateSettings checks the settings a template of settings alone is
@@ -332,6 +369,131 @@ func (s *Server) templateSettings(ctx context.Context, a *access, raw json.RawMe
 	return string(out), err
 }
 
+// templateChanges checks what a template is to have other than its version,
+// newer laid over older, as base is the version's settings, and gives it
+// back as it is kept: without what is a server's own, as for a template of
+// settings alone. "" is no changes.
+func (s *Server) templateChanges(ctx context.Context, a *access, base *avsysv1.MinecraftServerSpec, older, newer json.RawMessage) (string, error) {
+	raw, err := layered(older, newer)
+	if err != nil {
+		return "", errBadRequest("Invalid changes: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return "", errBadRequest("Invalid changes: %v", err)
+		}
+	}
+	for _, own := range []string{"displayName", "state", "eula", "nodeSelector", "image", "env", "gameJava", "ports"} {
+		delete(fields, own)
+	}
+	if e, ok := fields["expose"]; ok {
+		var expose struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(e, &expose)
+		if expose.Type == "" {
+			delete(fields, "expose")
+		} else {
+			fields["expose"], _ = json.Marshal(map[string]string{"type": expose.Type})
+		}
+	}
+	if len(fields) == 0 {
+		return "", nil
+	}
+	if raw, err = json.Marshal(fields); err != nil {
+		return "", err
+	}
+	var requested avsysv1.MinecraftServerSpec
+	if err := json.Unmarshal(raw, &requested); err != nil {
+		return "", errBadRequest("Invalid changes: %v", err)
+	}
+	if err := checkCopiedContent(&requested, base, fields); err != nil {
+		return "", err
+	}
+	// Checked as a copy with them would be, but for the address, which is
+	// each server's own.
+	spec := fromSnapshot(&requested, base, fields)
+	spec.Expose = avsysv1.ExposeSpec{Type: spec.Expose.Type}
+	if spec.Expose.Type == "" {
+		spec.Expose.Type = base.Expose.Type
+	}
+	spec.EULA = true
+	if err := s.validateSpec(ctx, a.Namespace, "", &spec); err != nil {
+		return "", err
+	}
+	if err := checkPackSHA1(spec.ResourcePack, base.ResourcePack); err != nil {
+		return "", err
+	}
+	if err := checkPackFormats(spec.ResourcePack, base.ResourcePack); err != nil {
+		return "", err
+	}
+	if spec.Version != base.Version || spec.Loader != base.Loader {
+		if err := s.checkVersion(ctx, &spec); err != nil {
+			return "", err
+		}
+	}
+	return string(raw), nil
+}
+
+// withChanges is a template's version's settings with its changes, as a
+// server made from it has them before it is given its own; false for none.
+func withChanges(base *avsysv1.MinecraftServerSpec, changes string) (avsysv1.MinecraftServerSpec, bool) {
+	var fields map[string]json.RawMessage
+	var requested avsysv1.MinecraftServerSpec
+	if changes == "" || json.Unmarshal([]byte(changes), &fields) != nil || json.Unmarshal([]byte(changes), &requested) != nil {
+		return avsysv1.MinecraftServerSpec{}, false
+	}
+	spec := fromSnapshot(&requested, base, fields)
+	// What a copy is not given unless it asks.
+	if _, said := fields["expose"]; !said {
+		spec.Expose = base.Expose
+	}
+	if spec.JVM.ExtraFlags == "" && !namedInJVM(fields, "extraFlags") {
+		spec.JVM.ExtraFlags = base.JVM.ExtraFlags
+	}
+	return spec, true
+}
+
+// layered lays newer changes over older ones, as one request asking for both
+// would: what newer names replaces what older does, but for its game
+// settings and launch flags, which are added to older's one by one.
+func layered(older, newer json.RawMessage) (json.RawMessage, error) {
+	fields := map[string]json.RawMessage{}
+	if len(older) > 0 {
+		if err := json.Unmarshal(older, &fields); err != nil {
+			return nil, err
+		}
+	}
+	var over map[string]json.RawMessage
+	if len(newer) > 0 {
+		if err := json.Unmarshal(newer, &over); err != nil {
+			return nil, err
+		}
+	}
+	for key, value := range over {
+		if key == "properties" || key == "jvm" {
+			var was, now map[string]json.RawMessage
+			if json.Unmarshal(fields[key], &was) == nil && json.Unmarshal(value, &now) == nil && was != nil && now != nil {
+				for k, v := range now {
+					was[k] = v
+				}
+				merged, err := json.Marshal(was)
+				if err != nil {
+					return nil, err
+				}
+				fields[key] = merged
+				continue
+			}
+		}
+		fields[key] = value
+	}
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(fields)
+}
+
 // templateSource is the server a version of a template is to be saved from.
 func (s *Server) templateSource(ctx context.Context, a *access, name string) (*avsysv1.MinecraftServer, error) {
 	if !s.Backups.Available() {
@@ -360,7 +522,7 @@ func (s *Server) templateSource(ctx context.Context, a *access, name string) (*a
 // saveTemplateVersion takes a snapshot of mc as the newest version of t,
 // which servers are then made from. first says t was made for it, and is
 // not kept if it fails.
-func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *store.User, a *access, t *store.Template, mc *avsysv1.MinecraftServer, first bool) error {
+func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *store.User, a *access, t *store.Template, mc *avsysv1.MinecraftServer, changes string, first bool) error {
 	forget := func(ctx context.Context) {
 		if first {
 			if err := s.Store.DeleteTemplate(ctx, a.Org.ID, t.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -391,8 +553,8 @@ func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 		if err == nil {
 			// The newest is the one servers are made from. Only that is
 			// changed: a name given meanwhile stays.
-			t.Current = ""
-			if err = s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, ""); err != nil {
+			t.Current, t.Changes = "", changes
+			if err = s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, "", changes); err != nil {
 				// Saved for a template that is not there: not left behind.
 				if derr := s.Backups.Delete(context.WithoutCancel(ctx), a.Org.Slug, snap.ID); derr != nil {
 					s.Log.Error("could not remove a template's version saved for nothing", "template", t.ID, "snapshot", snap.ID, "error", derr)
@@ -433,7 +595,7 @@ func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 // copyTemplateVersion makes a copy of a snapshot the newest version of t. No
 // files are copied, so it is done before answering. first says t was made
 // for it, and is not kept if it fails.
-func (s *Server) copyTemplateVersion(w http.ResponseWriter, r *http.Request, u *store.User, a *access, t *store.Template, id string, first bool) error {
+func (s *Server) copyTemplateVersion(w http.ResponseWriter, r *http.Request, u *store.User, a *access, t *store.Template, id, changes string, first bool) error {
 	ctx := context.WithoutCancel(r.Context())
 	err := func() error {
 		unclaim, err := claimTemplate(a, t.ID)
@@ -445,8 +607,8 @@ func (s *Server) copyTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 		if err != nil {
 			return snapshotError(err)
 		}
-		t.Current = ""
-		if err := s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, ""); err != nil {
+		t.Current, t.Changes = "", changes
+		if err := s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, "", changes); err != nil {
 			// Made for a template that is not there: not left behind.
 			if derr := s.Backups.Delete(ctx, a.Org.Slug, snap.ID); derr != nil {
 				s.Log.Error("could not remove a template's version copied for nothing", "template", t.ID, "snapshot", snap.ID, "error", derr)
@@ -498,13 +660,15 @@ func (s *Server) addTemplateVersion(w http.ResponseWriter, r *http.Request, u *s
 		if !s.Backups.Available() {
 			return errNoBackups
 		}
-		return s.copyTemplateVersion(w, r, u, a, t, in.Snapshot, false)
+		// A new version is as it was saved: what was changed of the one
+		// before is not carried over.
+		return s.copyTemplateVersion(w, r, u, a, t, in.Snapshot, "", false)
 	}
 	mc, err := s.templateSource(r.Context(), a, in.Server)
 	if err != nil {
 		return err
 	}
-	return s.saveTemplateVersion(w, r, u, a, t, mc, false)
+	return s.saveTemplateVersion(w, r, u, a, t, mc, "", false)
 }
 
 // updateTemplate renames a template, describes it again, or says which of
@@ -523,13 +687,32 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request, u *store
 		Current           *string
 		// Spec is the settings of a template of settings alone.
 		Spec json.RawMessage
+		// Changes are more for one saved from a server, laid over those it
+		// has, as a copy's request asks for them.
+		Changes json.RawMessage
 	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
+	if len(in.Changes) > 0 {
+		if v.SettingsOnly || v.Current == nil {
+			return errBadRequest("This template has settings alone. Change them as its spec.")
+		}
+		record, err := s.recordOf(r.Context(), a.Org.Slug, v.Current.ID)
+		if err != nil {
+			return errNoRecord(err)
+		}
+		var older json.RawMessage
+		if t.Changes != "" {
+			older = json.RawMessage(t.Changes)
+		}
+		if t.Changes, err = s.templateChanges(r.Context(), a, &record.Spec, older, in.Changes); err != nil {
+			return err
+		}
+	}
 	if len(in.Spec) > 0 {
 		if !v.SettingsOnly {
-			return errBadRequest("This template was saved from a server. Give it a new version instead.")
+			return errBadRequest("This template was saved from a server. Change its settings as changes, or give it a new version.")
 		}
 		if t.Settings, err = s.templateSettings(r.Context(), a, in.Spec); err != nil {
 			return err
@@ -641,7 +824,7 @@ func (s *Server) deleteTemplateVersion(w http.ResponseWriter, r *http.Request, u
 	}
 	// The one used is gone: the newest is used.
 	if t.Current == snap.Lineage {
-		if err := s.Store.SetTemplateCurrent(r.Context(), a.Org.ID, t.ID, ""); err != nil {
+		if err := s.Store.SetTemplateCurrent(r.Context(), a.Org.ID, t.ID, "", t.Changes); err != nil {
 			return err
 		}
 	}
@@ -683,18 +866,21 @@ func (s *Server) claimToDelete(ctx context.Context, a *access, snaps []backup.Sn
 
 // templateVersionToMake is the snapshot a server made from a template is
 // made from: the version it says it uses.
-func (s *Server) templateVersionToMake(ctx context.Context, a *access, id string) (string, error) {
-	_, v, err := s.template(ctx, a, id)
+func (s *Server) templateVersionToMake(ctx context.Context, a *access, id string) (version string, changes json.RawMessage, err error) {
+	t, v, err := s.template(ctx, a, id)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if v.SettingsOnly {
-		return "", &Error{Status: http.StatusConflict, Code: "settings_only", Message: "This template has settings alone, with no files to copy: make a new server with its settings."}
+		return "", nil, &Error{Status: http.StatusConflict, Code: "settings_only", Message: "This template has settings alone, with no files to copy: make a new server with its settings."}
 	}
 	if v.Current == nil {
-		return "", &Error{Status: http.StatusConflict, Code: "no_version", Message: "This template has no version yet. Wait for its first to be saved."}
+		return "", nil, &Error{Status: http.StatusConflict, Code: "no_version", Message: "This template has no version yet. Wait for its first to be saved."}
 	}
-	return v.Current.ID, nil
+	if t.Changes != "" {
+		changes = json.RawMessage(t.Changes)
+	}
+	return v.Current.ID, changes, nil
 }
 
 // isTemplate is whether a snapshot is a version of a template, which is not

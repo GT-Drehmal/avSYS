@@ -49,13 +49,13 @@ func TestTemplates(t *testing.T) {
 		t.Errorf("updated: %+v, %v", got, err)
 	}
 	// The version used is set alone: a name given meanwhile stays.
-	if err := s.SetTemplateCurrent(ctx, a.ID, lobby.ID, ""); err != nil {
+	if err := s.SetTemplateCurrent(ctx, a.ID, lobby.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.Template(ctx, a.ID, lobby.ID); err != nil || got.Name != "Hub" || got.Current != "" {
 		t.Errorf("version set alone: %+v, %v", got, err)
 	}
-	if err := s.SetTemplateCurrent(ctx, b.ID, lobby.ID, ""); !errors.Is(err, ErrNotFound) {
+	if err := s.SetTemplateCurrent(ctx, b.ID, lobby.ID, "", ""); !errors.Is(err, ErrNotFound) {
 		t.Errorf("set in another organization: %v", err)
 	}
 	arena.Name = "HUB"
@@ -92,15 +92,17 @@ func TestTemplateSettingsAdded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`ALTER TABLE templates DROP COLUMN settings`); err != nil {
-		t.Fatal(err)
+	for _, column := range []string{"settings", "changes"} {
+		if _, err := db.Exec(`ALTER TABLE templates DROP COLUMN ` + column); err != nil {
+			t.Fatal(err)
+		}
 	}
 	db.Close()
 	for range 2 {
 		if s, err = Open(path); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := s.Template(ctx, org.ID, old.ID); err != nil || got.Settings != "" {
+		if got, err := s.Template(ctx, org.ID, old.ID); err != nil || got.Settings != "" || got.Changes != "" {
 			t.Errorf("after opening: %+v %v", got, err)
 		}
 		s.Close()
@@ -114,10 +116,10 @@ func TestTemplateSettingsAdded(t *testing.T) {
 	if got, _ := s.Template(ctx, org.ID, made.ID); got.Settings != made.Settings {
 		t.Errorf("settings not kept: %q", got.Settings)
 	}
-	if err := s.SetTemplateCurrent(ctx, org.ID, made.ID, ""); err != nil {
+	if err := s.SetTemplateCurrent(ctx, org.ID, made.ID, "", `{"resources":{"memory":"8Gi"}}`); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Template(ctx, org.ID, made.ID); got.Settings != "" {
-		t.Errorf("settings kept with a version: %q", got.Settings)
+	if got, _ := s.Template(ctx, org.ID, made.ID); got.Settings != "" || got.Changes != `{"resources":{"memory":"8Gi"}}` {
+		t.Errorf("with a version: settings %q, changes %q", got.Settings, got.Changes)
 	}
 }

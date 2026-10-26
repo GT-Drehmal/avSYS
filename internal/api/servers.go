@@ -391,8 +391,14 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if raw.FromSnapshot != "" || raw.FromServer != "" {
 			return errBadRequest("A server is made from one template, snapshot or server.")
 		}
-		if raw.FromSnapshot, err = s.templateVersionToMake(r.Context(), a, raw.FromTemplate); err != nil {
+		var changes json.RawMessage
+		if raw.FromSnapshot, changes, err = s.templateVersionToMake(r.Context(), a, raw.FromTemplate); err != nil {
 			return err
+		}
+		// What the template has other than its version comes first, and
+		// what this server is given goes over it.
+		if raw.Spec, err = layered(changes, raw.Spec); err != nil {
+			return errBadRequest("Invalid spec: %v", err)
 		}
 	}
 	in := struct {

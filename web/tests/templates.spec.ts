@@ -83,15 +83,19 @@ test("a template is edited, updated from a server, gone back to an earlier versi
     await row.getByRole("button", { name: "Actions for Lobby" }).click();
     await page.getByRole("menuitem", { name: item }).click();
   };
+  // Edited in the same form as a server, filled in as servers are made from it.
   await menu("Edit");
-  let dialog = page.getByRole("dialog", { name: "Edit Lobby" });
-  await dialog.getByLabel("Name").fill("Hub");
-  await dialog.getByRole("button", { name: "Save" }).click();
-  await expect(dialog).toHaveCount(0);
-  expect(calls.at(-1)).toEqual({ method: "PATCH", path: "/templates/t1", body: { name: "Hub", description: "Where everyone starts." } });
+  await expect(page).toHaveURL(/\/templates\/t1\/edit$/);
+  await expect(page.getByRole("heading", { name: "Edit Lobby" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Change", exact: true })).toHaveCount(0);
+  await page.getByLabel("Name", { exact: true }).fill("Hub");
+  await page.getByLabel("Memory (GB)").fill("6");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page).toHaveURL(/\/o\/friends\/templates$/);
+  expect(calls.at(-1)).toMatchObject({ method: "PATCH", path: "/templates/t1", body: { name: "Hub", description: "Where everyone starts.", changes: { resources: { memory: "6144Mi" } } } });
 
   await menu("New version");
-  dialog = page.getByRole("dialog", { name: "Update Lobby" });
+  let dialog = page.getByRole("dialog", { name: "Update Lobby" });
   await dialog.getByRole("list", { name: "Servers" }).getByRole("button", { name: /creative/ }).click();
   await expect(dialog).toContainText("becomes the newest version of Lobby");
   await dialog.getByRole("button", { name: "Update" }).click();
@@ -133,7 +137,7 @@ test("with no templates the page says how to make one", async ({ page, as }) => 
   await expect(page.getByRole("link", { name: "New template" })).toBeVisible();
 });
 
-test("a new template starts from a server picked from the servers, each with its picture", async ({ page, as }) => {
+test("a new template starts from a server picked from the servers, each with its picture, then filled in from it", async ({ page, as }) => {
   await as("owner");
   const calls: unknown[] = [];
   await page.route(/\/api\/v1\/orgs\/friends\/templates$/, (route) => {
@@ -150,13 +154,28 @@ test("a new template starts from a server picked from the servers, each with its
   const survival = page.getByRole("list", { name: "Servers" }).getByRole("button", { name: /survival/ });
   await expect(survival).toContainText("Paper 1.21.4");
   await expect(survival.locator('img[src*="/servers/survival/icon"]')).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Create template" })).toBeDisabled();
   await survival.click();
-  await expect(survival).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByLabel("Name", { exact: true })).toHaveAttribute("placeholder", "Survival");
+  // The form, filled in from it, to change before it is made.
+  await expect(page).toHaveURL(/\/templates\/new\?from=server%3Asurvival$/);
+  await expect(page.getByRole("heading", { name: "New template" })).toBeVisible();
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Survival");
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  await expect(page.getByText("LuckPerms", { exact: true })).toBeVisible();
+  // What is each server's own is not asked.
+  await expect(page.getByLabel("Short name")).toHaveCount(0);
+  await expect(page.getByLabel("Hostname")).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Its world" })).toHaveCount(0);
+  await page.getByLabel("Difficulty").selectOption("peaceful");
   await page.getByRole("button", { name: "Create template" }).click();
   await expect(page).toHaveURL(/\/o\/friends\/templates$/);
-  expect(calls).toEqual([{ name: "Survival", description: "", server: "survival" }]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({ name: "Survival", description: "", server: "survival", changes: { properties: { difficulty: "peaceful" } } });
+  // What was left alone is not named, so that it comes from the server.
+  expect((calls[0] as { changes: object }).changes).not.toHaveProperty("mods");
+  // And the list asked for again: the starting point changes back.
+  await page.goto("/o/friends/templates/new?from=server%3Asurvival");
+  await page.getByRole("button", { name: "Change", exact: true }).click();
+  await expect(page).toHaveURL(/\/templates\/new\?start=server$/);
 });
 
 test("the form from a template shows the version used now, after another was picked", async ({ page, as }) => {
@@ -340,17 +359,16 @@ test("a new template starts from a snapshot, its server picked first", async ({ 
   await page.getByRole("list", { name: "Servers with snapshots" }).getByRole("button", { name: /Survival/ }).click();
   const snapshots = page.getByRole("list", { name: "Snapshots" }).getByRole("button");
   await expect(snapshots).toHaveCount(4);
-  await expect(page.getByRole("button", { name: "Create template" })).toBeDisabled();
   await snapshots.nth(1).click();
-  await expect(snapshots.nth(1)).toHaveAttribute("aria-pressed", "true");
-  // Named after its server.
-  await expect(page.getByLabel("Name", { exact: true })).toHaveAttribute("placeholder", "Survival");
-  await expect(page.getByText("Its files, world and settings are copied.")).toBeVisible();
-  await page.getByRole("button", { name: "Create template" }).click();
-  await expect(page).toHaveURL(/\/o\/friends\/templates$/);
   const list = await (await page.request.get("/api/v1/orgs/friends/snapshots")).json();
   const survival = list.snapshots.filter((s: { server: string }) => s.server === "survival");
-  expect(sent).toEqual([{ name: "Survival", description: "", snapshot: survival[1].id }]);
+  await expect(page).toHaveURL(new RegExp(`/templates/new\\?from=snapshot%3A${survival[1].id}$`));
+  await expect(page.getByText(/^Snapshot from/)).toBeVisible();
+  await page.getByLabel("Name", { exact: true }).fill("Before the war");
+  await page.getByRole("button", { name: "Create template" }).click();
+  await expect(page).toHaveURL(/\/o\/friends\/templates$/);
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatchObject({ name: "Before the war", description: "", snapshot: survival[1].id });
 });
 
 test("a snapshot is saved as a template from its details", async ({ page, as }) => {
@@ -374,73 +392,43 @@ test("a snapshot is saved as a template from its details", async ({ page, as }) 
   expect(sent).toEqual([{ name: "Before the war", description: "", snapshot: expect.any(String) }]);
 });
 
-test("a template is duplicated: one saved from a server by its version, one of settings by them", async ({ page, as }) => {
+test("a template is duplicated in the form, filled in from it: one saved from a server with its files, one of settings with them", async ({ page, as }) => {
   await as("owner");
+  const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
   const v = version("b".repeat(64), new Date().toISOString());
   const saved = { id: "t1", name: "Lobby", description: "Where everyone starts.", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: v, versions: [v], settingsOnly: false };
   const spec = { loader: "paper", version: "1.21.4", resources: { memory: "4Gi" }, storage: { size: "10Gi" } };
   const settings = { id: "t2", name: "Skyblock", description: "", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: null, versions: [], settingsOnly: true, spec };
   const sent: unknown[] = [];
-  await page.route(/\/api\/v1\/orgs\/friends\/templates$/, (route) => {
-    if (route.request().method() !== "POST") return route.fulfill({ json: [saved, settings] });
-    sent.push(route.request().postDataJSON());
-    return route.fulfill({ status: 201, json: {} });
+  await page.route(/\/api\/v1\/orgs\/friends\/templates(\/t[12])?$/, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() === "POST") {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ status: 201, json: {} });
+    }
+    if (path.endsWith("/t1")) return route.fulfill({ json: { ...saved, spec: { ...survival.spec, displayName: "Lobby" } } });
+    if (path.endsWith("/t2")) return route.fulfill({ json: settings });
+    return route.fulfill({ json: [saved, settings] });
   });
   await page.goto("/o/friends/templates");
   const duplicate = async (name: string) => {
     await page.getByRole("button", { name: `Actions for ${name}` }).click();
     await page.getByRole("menuitem", { name: "Duplicate" }).click();
-    return page.getByRole("dialog", { name: `Duplicate ${name}` });
+    await expect(page.getByRole("heading", { name: "New template" })).toBeVisible();
   };
-  let dialog = await duplicate("Lobby");
-  await expect(dialog.getByLabel("Name")).toHaveValue("Lobby copy");
-  await expect(dialog.getByLabel("Description")).toHaveValue("Where everyone starts.");
-  await expect(dialog).toContainText("world and all");
-  await dialog.getByRole("button", { name: "Duplicate" }).click();
-  await expect(dialog).toHaveCount(0);
-  dialog = await duplicate("Skyblock");
-  await dialog.getByLabel("Name").fill("Skyblock hard");
-  await dialog.getByRole("button", { name: "Duplicate" }).click();
-  await expect(dialog).toHaveCount(0);
-  expect(sent).toEqual([
-    { name: "Lobby copy", description: "Where everyone starts.", snapshot: v.id },
-    { name: "Skyblock hard", description: "", spec },
-  ]);
-});
-
-test("a new template starts from another: one of settings by them, one saved from a server by its version", async ({ page, as }) => {
-  await as("owner");
-  const v = version("b".repeat(64), new Date().toISOString());
-  const saved = { id: "t1", name: "Lobby", description: "Where everyone starts.", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: v, versions: [v], settingsOnly: false };
-  const spec = { loader: "paper", version: "1.21.4", resources: { memory: "4Gi" }, storage: { size: "10Gi" } };
-  const settings = { id: "t2", name: "Skyblock", description: "", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: null, versions: [], settingsOnly: true, spec };
-  const sent: unknown[] = [];
-  await page.route(/\/api\/v1\/orgs\/friends\/templates$/, (route) => {
-    if (route.request().method() !== "POST") return route.fulfill({ json: [saved, settings] });
-    sent.push(route.request().postDataJSON());
-    return route.fulfill({ status: 201, json: {} });
-  });
-  await page.goto("/o/friends/templates/new");
-  // New is settings, on the server form, under where it starts from.
-  await expect(page.locator("form h2").first()).toHaveText("Starting point");
-  await expect(page.getByRole("heading", { name: "Software" })).toBeVisible();
-  const start = page.getByRole("group", { name: "Start from" });
-  await start.getByRole("button", { name: "Template", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Software" })).toHaveCount(0);
-  const list = page.getByRole("list", { name: "Templates" });
-  await list.getByRole("button", { name: /Lobby/ }).click();
-  await expect(page.getByLabel("Name", { exact: true })).toHaveAttribute("placeholder", "Lobby copy");
-  await expect(page.getByLabel("Description")).toHaveValue("Where everyone starts.");
+  await duplicate("Lobby");
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Lobby copy");
+  await expect(page.getByText("LuckPerms", { exact: true })).toBeVisible();
+  await page.getByLabel("Memory (GB)").fill("8");
   await page.getByRole("button", { name: "Create template" }).click();
   await expect(page).toHaveURL(/\/o\/friends\/templates$/);
-  await page.goto("/o/friends/templates/new?start=template");
-  await page.getByRole("list", { name: "Templates" }).getByRole("button", { name: /Skyblock/ }).click();
-  await expect(page.getByText("Its settings are copied.")).toBeVisible();
+  await duplicate("Skyblock");
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Skyblock copy");
   await page.getByLabel("Name", { exact: true }).fill("Skyblock hard");
   await page.getByRole("button", { name: "Create template" }).click();
   await expect(page).toHaveURL(/\/o\/friends\/templates$/);
-  expect(sent).toEqual([
-    { name: "Lobby copy", description: "Where everyone starts.", snapshot: v.id },
-    { name: "Skyblock hard", description: "", spec },
-  ]);
+  expect(sent).toHaveLength(2);
+  expect(sent[0]).toMatchObject({ name: "Lobby copy", template: "t1", changes: { resources: { memory: "8192Mi" } } });
+  expect(sent[1]).toMatchObject({ name: "Skyblock hard", spec: { loader: "paper", version: "1.21.4" } });
+  expect(sent[1]).not.toHaveProperty("template");
 });
