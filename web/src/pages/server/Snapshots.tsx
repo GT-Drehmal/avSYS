@@ -66,7 +66,7 @@ export function Snapshots() {
           </Empty>
         )
       ) : (
-        <SnapshotRows org={server.org} snapshots={snapshots} canAdmin={canAdmin} busy={!!op} onRestore={setRestoring} selection={selection} />
+        <SnapshotRows org={server.org} snapshots={snapshots} canAdmin={canAdmin} canSaveWorld={canSave} busy={!!op} onRestore={setRestoring} selection={selection} />
       )}
       {canAdmin && <SnapshotSelectionBar org={server.org} snapshots={snapshots} selection={selection} />}
 

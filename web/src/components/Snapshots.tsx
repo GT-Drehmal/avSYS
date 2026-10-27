@@ -75,6 +75,8 @@ export interface RowsProps {
   snapshots: Snapshot[];
   /** Admins can delete and make a new server; restore is offered where onRestore is given. */
   canAdmin: boolean;
+  /** Operators can save a snapshot's world to the library. */
+  canSaveWorld?: boolean;
   /** True while something is running on its server, which rules out a restore. */
   busy?: boolean | ((snapshot: Snapshot) => boolean);
   /** Offers a restore, of the snapshots it is asked for; on a list that mixes servers, only those whose server still exists. */
@@ -87,7 +89,7 @@ export interface RowsProps {
 }
 
 /** A list of snapshots, newest first, as rows of one bordered box. */
-export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restorable, selection, lead }: RowsProps) {
+export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin, busy, onRestore, restorable, selection, lead }: RowsProps) {
   const isBusy = (s: Snapshot) => (typeof busy === "function" ? busy(s) : !!busy);
   const canRestore = (s: Snapshot) => canAdmin && !!onRestore && (restorable?.(s) ?? true);
   const [deleting, setDeleting] = useState<Snapshot | null>(null);
@@ -162,7 +164,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
         onClose={() => setLooking(null)}
         actions={
           looking &&
-          canAdmin && (
+          (canAdmin || canSaveWorld) && (
             <>
               {canRestore(looking) && (
                 <Button
@@ -176,43 +178,52 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
                   Restore
                 </Button>
               )}
-              <Button
-                icon={<CopyPlus className="size-3.5" />}
-                onClick={() => {
-                  setLooking(null);
-                  setCreating(looking);
-                }}
-              >
-                New server
-              </Button>
-              <Button
-                icon={<LayoutTemplate className="size-3.5" />}
-                onClick={() => {
-                  setLooking(null);
-                  setTemplating(looking);
-                }}
-              >
-                Save as template
-              </Button>
-              <Button
-                icon={<Globe className="size-3.5" />}
-                onClick={() => {
-                  setLooking(null);
-                  setSaving(looking);
-                }}
-              >
-                Save world
-              </Button>
-              <Button
-                variant="danger"
-                icon={<Trash2 className="size-3.5" />}
-                onClick={() => {
-                  setLooking(null);
-                  setDeleting(looking);
-                }}
-              >
-                Delete
-              </Button>
+              {canAdmin && (
+                <>
+                  <Button
+                    icon={<CopyPlus className="size-3.5" />}
+                    onClick={() => {
+                      setLooking(null);
+                      setCreating(looking);
+                    }}
+                  >
+                    New server
+                  </Button>
+                  <Button
+                    icon={<LayoutTemplate className="size-3.5" />}
+                    onClick={() => {
+                      setLooking(null);
+                      setTemplating(looking);
+                    }}
+                  >
+                    Save as template
+                  </Button>
+                </>
+              )}
+              {/* Its world, kept to start servers with, is operators' to save too. */}
+              {canSaveWorld && (
+                <Button
+                  icon={<Globe className="size-3.5" />}
+                  onClick={() => {
+                    setLooking(null);
+                    setSaving(looking);
+                  }}
+                >
+                  Save world
+                </Button>
+              )}
+              {canAdmin && (
+                <Button
+                  variant="danger"
+                  icon={<Trash2 className="size-3.5" />}
+                  onClick={() => {
+                    setLooking(null);
+                    setDeleting(looking);
+                  }}
+                >
+                  Delete
+                </Button>
+              )}
             </>
           )
         }

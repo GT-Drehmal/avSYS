@@ -312,6 +312,24 @@ test("a snapshot's world is saved to the library from its details", async ({ pag
   expect(calls[0]).toMatchObject({ method: "POST", path: "/worlds", body: { name: "Before the war", snapshot: expect.any(String) } });
 });
 
+test("an operator saves a snapshot's world from its details, which offer nothing else of an admin's", async ({ page, as }) => {
+  await as("operator");
+  const calls = await library(page, []);
+  for (const at of ["/o/friends/s/survival/backups", "/o/friends/backups"]) {
+    await page.goto(at);
+    // The organization's, one list of them all.
+    if (at === "/o/friends/backups") await page.getByRole("group", { name: "Arrange by" }).getByRole("button", { name: "By time" }).click();
+    await page.getByRole("button", { name: /^About the snapshot of survival/ }).first().click();
+    const details = page.getByRole("dialog");
+    for (const admins of ["New server", "Save as template", "Delete", "Restore"]) await expect(details.getByRole("button", { name: admins, exact: true })).toHaveCount(0);
+    await details.getByRole("button", { name: "Save world" }).click();
+    const dialog = page.getByRole("dialog", { name: "Save world to library" });
+    await dialog.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+  expect(calls.map((c) => (c.body as { snapshot?: string }).snapshot)).toEqual([expect.any(String), expect.any(String)]);
+});
+
 test("a viewer has no world to save", async ({ page, as }) => {
   await as("viewer");
   await page.goto("/o/friends/s/survival/backups");
