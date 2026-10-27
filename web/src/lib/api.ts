@@ -465,6 +465,32 @@ export interface Template {
   spec?: ServerSpec;
 }
 
+/** A world in an organization's library, kept to start servers from. */
+export interface LibraryWorld {
+  id: string;
+  name: string;
+  description: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Its folder in its archive, "" for the top. */
+  root: string;
+  /** The game version it was last opened in, where known. */
+  version?: string;
+  /** The archive's name, for one uploaded. */
+  file?: string;
+  size: number;
+  /** Where it came from: "upload", "server:<name>" or "snapshot:<server>". */
+  source: string;
+  /** While its archive is still being made. */
+  saving?: boolean;
+  /** Whether it can be used. */
+  ready: boolean;
+}
+
+/** Where a library world's picture is. */
+export const worldIcon = (org: string, id: string) => `/api/v1/orgs/${org}/worlds/${id}/icon`;
+
 export interface Operation {
   kind: "snapshot" | "restore" | "create" | "delete-server" | "move" | "import" | "template";
   org: string;
