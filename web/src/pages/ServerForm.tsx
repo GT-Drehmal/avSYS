@@ -55,6 +55,8 @@ export interface Source {
   live?: Server;
   /** The snapshot its files come from, where it is a template's: its picture is that one's. */
   snapshot?: string;
+  /** "new" for a template whose servers start a world of their own. */
+  world?: "new";
 }
 
 /** A template of settings alone, which a new server is made with: there are no files to copy. */
@@ -460,8 +462,9 @@ export function ServerForm({
   // A world of one's own goes with a new server of a game version.
   // Made from another's files, it keeps their world unless it is given a
   // new one or one of its own; one brought back keeps its own.
-  const worldChoosable = !!source && copying && !forTemplate;
-  const [world, setWorld] = useState<"kept" | "new" | "mine">(worldChoosable ? "kept" : "new");
+  const worldChoosable = !!source && (copying || forTemplate);
+  // As the template it comes from says, where it says.
+  const [world, setWorld] = useState<"kept" | "new" | "mine">(source?.world === "new" || !worldChoosable ? "new" : "kept");
   const usingMine = world === "mine";
   const mine = (source ? worldChoosable : v.kind === "game") && usingMine ? v.myWorld : null;
   // What is sent to be unpacked into the server once it is made.
@@ -730,6 +733,8 @@ export function ServerForm({
       changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : v.schedule === "own" ? ownBackups() : null;
     }
     if (modsChanged) changes.mods = v.mods;
+    // A template says whether its servers start a world of their own.
+    if (forTemplate && (world === "new") !== (source?.world === "new")) Object.assign(changes, { world: world === "new" ? "new" : null });
     // Left out, the original's comes with it, an uploaded one in its files.
     // Given again only made required or with another prompt, it keeps its
     // file and what it was joined from: the panel knows it by its address,
@@ -986,7 +991,7 @@ export function ServerForm({
         // Answered at once: the panel takes the snapshot of a server copied
         // as it is now, and then puts the files in, which its page shows.
         // Without its world, for one to be made or put in.
-        const fresh = worldChoosable && world !== "kept" ? { world: "new" } : {};
+        const fresh = worldChoosable && world !== "kept" ? { world: "new" } : source.world === "new" ? { world: "kept" } : {};
         const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...fresh, ...pictured, ...placed });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files
@@ -1463,9 +1468,11 @@ export function ServerForm({
               <button type="button" aria-pressed={world === "new"} className={segment(world === "new")} onClick={() => chooseWorld("new")}>
                 New world
               </button>
-              <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
-                Use a world I have
-              </button>
+              {!forTemplate && (
+                <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
+                  Use a world I have
+                </button>
+              )}
             </div>
             {usingMine && (
               <>

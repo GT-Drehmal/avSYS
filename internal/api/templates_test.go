@@ -359,12 +359,30 @@ func TestTemplateFromASnapshot(t *testing.T) {
 	if code, _ := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Alone","changes":{"resources":{"memory":"8Gi"}}}`); code != http.StatusBadRequest {
 		t.Errorf("changes to nothing: %d", code)
 	}
-	// A new version is as it was saved.
+	// Its servers can start a world of their own, which is said of it.
+	world := func() any {
+		t.Helper()
+		_, got := call("admin", "GET", "/orgs/alpha/templates/"+peaceful, "")
+		return got["world"]
+	}
+	if code, out := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"world":"old"}}`); code != http.StatusOK || world() != nil {
+		t.Errorf("a world that is not new: %d %v %v", code, out, world())
+	}
+	if code, out := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"world":"new"}}`); code != http.StatusOK || world() != "new" {
+		t.Errorf("a new world: %d %v %v", code, out, world())
+	}
+	// A new version is as it was saved, but for that.
 	if code, out := call("admin", "POST", "/orgs/alpha/templates/"+peaceful+"/versions", `{"snapshot":"`+src+`"}`); code != http.StatusCreated {
 		t.Fatalf("new version: %d %v", code, out)
 	}
 	if got := spec(peaceful); got["resources"].(map[string]any)["memory"] != "4Gi" || got["properties"].(map[string]any)["difficulty"] != "hard" {
 		t.Errorf("a new version kept the changes: %v", got)
+	}
+	if world() != "new" {
+		t.Error("a new version forgot that its servers start a new world")
+	}
+	if code, out := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"world":null}}`); code != http.StatusOK || world() != nil {
+		t.Errorf("its world kept again: %d %v %v", code, out, world())
 	}
 }
 

@@ -78,6 +78,9 @@ type templateView struct {
 	// Spec is what a server made from it is: for one template asked for,
 	// and for every template of settings alone.
 	Spec *avsysv1.MinecraftServerSpec `json:"spec,omitempty"`
+	// World is "new" for one whose servers start a world of their own
+	// rather than take its version's.
+	World string `json:"world,omitempty"`
 }
 
 // templateOf is a template as it is shown, with its versions found among
@@ -96,6 +99,9 @@ func templateOf(t *store.Template, list []backup.Snapshot) templateView {
 	}
 	if v.Current == nil && len(v.Versions) > 0 {
 		v.Current = &v.Versions[0]
+	}
+	if newWorldIn(t.Changes) {
+		v.World = "new"
 	}
 	// Versions win over settings: a server saved into it is what it is now.
 	if t.Settings != "" && len(v.Versions) == 0 {
@@ -387,6 +393,10 @@ func (s *Server) templateChanges(ctx context.Context, a *access, base *avsysv1.M
 	for _, own := range []string{"displayName", "state", "eula", "nodeSelector", "image", "env", "gameJava", "ports"} {
 		delete(fields, own)
 	}
+	// Whether its servers start a world of their own: "new", or not at all.
+	if w, ok := fields["world"]; ok && string(w) != `"new"` {
+		delete(fields, "world")
+	}
 	if e, ok := fields["expose"]; ok {
 		var expose struct {
 			Type string `json:"type"`
@@ -422,6 +432,9 @@ func (s *Server) templateChanges(ctx context.Context, a *access, base *avsysv1.M
 	if err := s.validateSpec(ctx, a.Namespace, "", &spec); err != nil {
 		return "", err
 	}
+	if err := worldLeavable(&spec, newWorldIn(string(raw))); err != nil {
+		return "", err
+	}
 	if err := checkPackSHA1(spec.ResourcePack, base.ResourcePack); err != nil {
 		return "", err
 	}
@@ -434,6 +447,23 @@ func (s *Server) templateChanges(ctx context.Context, a *access, base *avsysv1.M
 		}
 	}
 	return string(raw), nil
+}
+
+// newWorldIn says whether a template's changes give its servers a new world.
+func newWorldIn(changes string) bool {
+	var fields struct {
+		World string `json:"world"`
+	}
+	return changes != "" && json.Unmarshal([]byte(changes), &fields) == nil && fields.World == "new"
+}
+
+// worldOnly is what of a template's changes outlasts a new version: whether
+// its servers start a new world.
+func worldOnly(changes string) string {
+	if newWorldIn(changes) {
+		return `{"world":"new"}`
+	}
+	return ""
 }
 
 // withChanges is a template's version's settings with its changes, as a
@@ -661,14 +691,15 @@ func (s *Server) addTemplateVersion(w http.ResponseWriter, r *http.Request, u *s
 			return errNoBackups
 		}
 		// A new version is as it was saved: what was changed of the one
-		// before is not carried over.
-		return s.copyTemplateVersion(w, r, u, a, t, in.Snapshot, "", false)
+		// before is not carried over, but for whether servers made from it
+		// start a new world.
+		return s.copyTemplateVersion(w, r, u, a, t, in.Snapshot, worldOnly(t.Changes), false)
 	}
 	mc, err := s.templateSource(r.Context(), a, in.Server)
 	if err != nil {
 		return err
 	}
-	return s.saveTemplateVersion(w, r, u, a, t, mc, "", false)
+	return s.saveTemplateVersion(w, r, u, a, t, mc, worldOnly(t.Changes), false)
 }
 
 // updateTemplate renames a template, describes it again, or says which of

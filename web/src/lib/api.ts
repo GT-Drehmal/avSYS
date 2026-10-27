@@ -445,6 +445,8 @@ export interface Template {
   versions: Snapshot[];
   /** Made of settings alone, with no files: a server made from it is a new one with them. */
   settingsOnly: boolean;
+  /** "new" for one whose servers start a world of their own rather than take its version's. */
+  world?: "new";
   /** What a server made from it is: for one template asked for, and every one of settings alone. */
   spec?: ServerSpec;
 }
