@@ -260,6 +260,17 @@ func TestWhatAnOperationHoldsOff(t *testing.T) {
 		{"DELETE", world, ""},
 	}
 
+	// A template's version is a snapshot of the server like any other.
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindTemplate, ""); !ok {
+		t.Fatal("could not start saving a template")
+	}
+	for _, action := range []string{"start", "restart"} {
+		if got, code := p.do("owner", "POST", world+"/"+action, ""); got != 409 || code != "busy" {
+			t.Errorf("%s while a template is saved: got %d %q, want 409 busy", action, got, code)
+		}
+	}
+	p.srv.ops.end("mc-alpha", "world")
+
 	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindSnapshot, ""); !ok {
 		t.Fatal("could not start a snapshot")
 	}

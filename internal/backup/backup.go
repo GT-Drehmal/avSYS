@@ -84,6 +84,9 @@ const (
 	// TriggerMove is the snapshot that carries a server's files to the
 	// node it is moved to.
 	TriggerMove = "move"
+	// TriggerTemplate is a version of a template, taken of a server under
+	// the template's own name.
+	TriggerTemplate = "template"
 )
 
 var (

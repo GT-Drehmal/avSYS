@@ -1053,6 +1053,36 @@ fi
 
 if part servers; then
 
+step "templates"
+# A server saved as a template, which servers are then made from. Its
+# versions are not among the server's snapshots, nor the organization's.
+echo "kept in the template" | call -X PUT --data-binary @- "$SRV/files/content?path=/template.txt" >/dev/null
+tpl=$(call -d '{"name":"E2E Lobby","description":"Made by e2e","server":"probe"}' "$API/orgs/$ORG/templates?wait=true")
+TPL=$(echo "$tpl" | field "d['id']") || fail "no template was made: $tpl"
+expect "a template is made with its first version" "$(echo "$tpl" | field "(d['name'], len(d['versions']), d['current']['trigger'])")" "('E2E Lobby', 1, 'template')"
+expect "another of its name is not" "$(call -d '{"name":"e2e lobby","server":"probe"}' "$API/orgs/$ORG/templates" | field "d['code']")" conflict
+expect "it is not among the server's snapshots" "$(call "$SRV/snapshots" | field "[s for s in d['snapshots'] if s['trigger'] == 'template']")" "[]"
+expect "nor the organization's" "$(call "$API/orgs/$ORG/snapshots" | field "[s for s in d['snapshots'] if s['trigger'] == 'template']")" "[]"
+echo "changed after" | call -X PUT --data-binary @- "$SRV/files/content?path=/template.txt" >/dev/null
+again=$(call -d '{"server":"probe"}' "$API/orgs/$ORG/templates/$TPL/versions?wait=true")
+expect "the server saved again is its newest version" "$(echo "$again" | field "(len(d['versions']), d['current']['id'] == d['versions'][0]['id'])")" "(2, True)"
+FIRST=$(echo "$again" | field "d['versions'][1]['id']")
+expect "and its first can be the one used again" "$(call -X PATCH -d "{\"current\":\"$FIRST\"}" "$API/orgs/$ORG/templates/$TPL" | field "d['current']['id']")" "$FIRST"
+made=$(call -d "{\"name\":\"from-template\",\"fromTemplate\":\"$TPL\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"from-template.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
+case "$made" in *'"spec"'*) ;; *) fail "no server was made from the template: $made" ;; esac
+FROM=$API/orgs/$ORG/servers/from-template
+expect "a server made from a template has the files of the version used" "$(call "$FROM/files/content?path=/template.txt")" "kept in the template"
+expect "and its software" "$(echo "$made" | field "(d['spec']['loader'], d['spec']['version'])")" "('paper', '1.21.4')"
+expect "a template's version is not deleted as a server's snapshot" "$(call -X DELETE "$API/orgs/$ORG/snapshots/$FIRST" | field "d['code']")" template
+call -X DELETE "$FROM?snapshot=false" >/dev/null
+expect "a template is deleted, its versions with it" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/templates/$TPL")" 204
+expect "and is gone" "$(call "$API/orgs/$ORG/templates" | field 'len(d)')" 0
+call -X DELETE "$SRV/files?path=/template.txt" >/dev/null
+for _ in $(seq 1 30); do
+  [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
+  sleep 2
+done
+
 # Run by itself, what the parts before would have left.
 [ "$PART" = servers ] && make_packs
 

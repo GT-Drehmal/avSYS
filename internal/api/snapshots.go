@@ -278,8 +278,9 @@ var (
 // changing admits a request that changes a server. While a restore owns the
 // server nothing else may touch it: starting the game would run it on a
 // half-restored world, and most other changes replace the pod the restore is
-// working through. A snapshot only needs the game not to be started or
-// restarted under it, which callers ask for with alsoDuringSnapshot.
+// working through. A snapshot, a template's too, only needs the game not to
+// be started or restarted under it, which callers ask for with
+// alsoDuringSnapshot.
 //
 // The caller must call release once its change has been made.
 func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
@@ -300,7 +301,7 @@ func (s *Server) changing(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) 
 func (s *Server) admit(mc *avsysv1.MinecraftServer, alsoDuringSnapshot bool) (release func(), err error) {
 	kinds := []string{kindRestore, kindCreate, kindDeleteServer, kindMove, kindImport}
 	if alsoDuringSnapshot {
-		kinds = append(kinds, kindSnapshot)
+		kinds = append(kinds, kindSnapshot, kindTemplate)
 	}
 	release, blocker := s.ops.change(mc.Namespace, mc.Name, kinds...)
 	if blocker == nil {
@@ -423,8 +424,15 @@ func (s *Server) listOrgSnapshots(w http.ResponseWriter, r *http.Request, u *sto
 		writeJSON(w, http.StatusOK, out)
 		return nil
 	}
-	if out.Snapshots, err = s.Backups.List(r.Context(), a.Org.Slug); err != nil {
+	all, err := s.Backups.List(r.Context(), a.Org.Slug)
+	if err != nil {
 		return err
+	}
+	// Templates' are on their own page.
+	for _, snap := range all {
+		if !isTemplate(&snap) {
+			out.Snapshots = append(out.Snapshots, snap)
+		}
 	}
 	usage, err := s.Backups.Usage(r.Context(), a.Org.Slug)
 	if err != nil {
@@ -450,7 +458,7 @@ func (s *Server) listServerSnapshots(w http.ResponseWriter, r *http.Request, u *
 			return err
 		}
 		for _, snap := range all {
-			if snap.Server == mc.Name {
+			if snap.Server == mc.Name && !isTemplate(&snap) {
 				out.Snapshots = append(out.Snapshots, snap)
 			}
 		}
@@ -596,6 +604,12 @@ func sentence(s string) string {
 // takeSnapshot saves the server as it is now. A running game is told to
 // write everything out and then hold its saves until the files are copied.
 func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.MinecraftServer, op *operation, trigger, by string) (*backup.Snapshot, error) {
+	return s.takeSnapshotAs(ctx, org, mc, op, trigger, by, mc.Name)
+}
+
+// takeSnapshotAs is takeSnapshot, the snapshot taken under host rather than
+// the server's name: as a template's, which is not part of its history.
+func (s *Server) takeSnapshotAs(ctx context.Context, org string, mc *avsysv1.MinecraftServer, op *operation, trigger, by, host string) (*backup.Snapshot, error) {
 	// The caller read the server before it held the claim, and it may have
 	// been started, stopped or changed since. From here it cannot be.
 	mc, err := s.fresh(ctx, mc)
@@ -665,7 +679,7 @@ func (s *Server) takeSnapshot(ctx context.Context, org string, mc *avsysv1.Minec
 	recorded := *mc.Spec.DeepCopy()
 	recorded.Backups = nil
 	meta := backup.Meta{
-		Server: mc.Name, Trigger: trigger, By: by, Version: version, Loader: loader,
+		Server: host, Trigger: trigger, By: by, Version: version, Loader: loader,
 		Record: snapshotRecord{Format: 1, Org: org, Server: mc.Name, Spec: recorded, AutoOps: mc.Annotations[avsysv1.AnnotationAutoOps], AutoWhitelist: mc.Annotations[avsysv1.AnnotationAutoWhitelist]},
 		// A scheduled snapshot of a server nothing has happened to is not
 		// taken, and neither is a final one or one to copy from: the last
@@ -1247,6 +1261,9 @@ func (s *Server) deleteSnapshots(w http.ResponseWriter, r *http.Request, u *stor
 		if snap == nil {
 			return &Error{Status: http.StatusNotFound, Code: "not_found", Message: fmt.Sprintf("There is no snapshot %q. Nothing was deleted.", id)}
 		}
+		if isTemplate(snap) {
+			return errTemplateVersion
+		}
 		if !seen[snap.ID] {
 			seen[snap.ID] = true
 			snaps = append(snaps, snap)
@@ -1294,6 +1311,9 @@ func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	snap, err := s.Backups.Get(r.Context(), a.Org.Slug, r.PathValue("id"))
 	if err != nil {
 		return snapshotError(err)
+	}
+	if isTemplate(snap) {
+		return errTemplateVersion
 	}
 	release, ok := s.ops.remove(a.Namespace, snap.ID)
 	if !ok {
