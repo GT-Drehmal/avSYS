@@ -290,7 +290,7 @@ test("a new server starts from a world of one's own", async ({ page, as, org, ap
   await page.goto(`/o/${slug}/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Display name").fill("Island");
-  await page.getByRole("button", { name: "Use a world I have" }).click();
+  await page.getByRole("button", { name: "Upload world" }).click();
   // A single-player save, with the Nether and the End inside it.
   const save = zip({
     "saves/Island Save/level.dat": levelDat("1.21.4", "Island"),
@@ -328,7 +328,7 @@ test("a world from a newer game than the one picked is warned of", async ({ page
   await as("owner");
   await page.goto(`/o/${slug}/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
-  await page.getByRole("button", { name: "Use a world I have" }).click();
+  await page.getByRole("button", { name: "Upload world" }).click();
   await page.getByLabel("World archive").setInputFiles({ name: "new.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("26.3") }) });
   await expect(page.getByLabel("Game version")).toHaveValue("26.3");
   await expect(page.getByText(/newer than/)).toHaveCount(0);
@@ -349,7 +349,7 @@ test("an archive with no world in it says so", async ({ page, as, org }) => {
   await as("owner");
   await page.goto(`/o/${slug}/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
-  await page.getByRole("button", { name: "Use a world I have" }).click();
+  await page.getByRole("button", { name: "Upload world" }).click();
   await page.getByLabel("World archive").setInputFiles({ name: "pics.zip", mimeType: "application/zip", buffer: zip({ "a.png": "png" }) });
   await expect(page.getByText("No world in this archive: it has no level.dat.")).toBeVisible();
 });
@@ -549,7 +549,7 @@ test("a template is given a world of one's own, kept with it, as a server is", a
   await page.goto(`/o/${slug}/templates/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Name", { exact: true }).fill("Island");
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Use a world I have" }).click();
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" }).click();
   const save = zip({ "saves/Island Save/level.dat": levelDat("1.21.4", "Island"), "saves/Island Save/region/r.0.0.mca": "region" });
   await page.getByLabel("World archive").setInputFiles({ name: "island.zip", mimeType: "application/zip", buffer: save });
   await expect(page.getByTestId("world-summary")).toContainText("Last opened in 1.21.4");
@@ -580,7 +580,7 @@ test("a server made from a template with a world of its own is given it once it 
   await page.goto(`/o/${slug}/new?from=template:t9`);
   // Its world, kept with the template, is the one it is given.
   const worldChoice = page.getByRole("group", { name: "Its world" });
-  await expect(worldChoice.getByRole("button", { name: "Use a world I have" })).toHaveAttribute("aria-pressed", "true");
+  await expect(worldChoice.getByRole("button", { name: "Upload world" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("world-summary")).toContainText("kept with the template");
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
