@@ -331,7 +331,7 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 // was deleted, to bring it back, or of one that still exists, to copy it.
 // The server exists as soon as this answers, stopped and held, and its files
 // follow; with ?wait=true the answer waits for them.
-func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, picture newPicture, node string) error {
+func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, picture newPicture, newWorld bool, node string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -372,6 +372,9 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	}
 	spec, err := s.specFromSnapshot(ctx, a, name, &requested, &record.Spec, given)
 	if err != nil {
+		return err
+	}
+	if err := worldLeavable(&spec, newWorld); err != nil {
 		return err
 	}
 	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
@@ -448,7 +451,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		defer stop()
 		ctx, cancel := context.WithTimeout(working, operationTimeout)
 		defer cancel()
-		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, &record.Spec, picture)
+		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, &record.Spec, picture, newWorld)
 		if err != nil {
 			err = failed(err, "making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again")
 		}
@@ -474,7 +477,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 // is then taken, unless its newest one already has everything, and the copy
 // is given its files from that, as its create operation. The original keeps
 // running and is not touched. With ?wait=true it answers when all is done.
-func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string, picture newPicture, node string) error {
+func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string, picture newPicture, newWorld bool, node string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -503,6 +506,9 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	// the same, written a moment later.
 	spec, err := s.specFromSnapshot(ctx, a, name, &requested, &mc.Spec, given)
 	if err != nil {
+		return err
+	}
+	if err := worldLeavable(&spec, newWorld); err != nil {
 		return err
 	}
 	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
@@ -585,7 +591,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 		defer cancel()
 		snap, err := s.copyFrom(ctx, a, mc, origOp, created, op, u.Username)
 		if err == nil {
-			err = s.populate(ctx, a.Org.Slug, created, snap, op, final, original, picture)
+			err = s.populate(ctx, a.Org.Slug, created, snap, op, final, original, picture, newWorld)
 			if err != nil {
 				err = failed(err, "making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again")
 			}
@@ -696,7 +702,7 @@ func (s *Server) newestOf(ctx context.Context, org, server string) (*backup.Snap
 // once the files are in. A picture of its
 // own goes in then too, over the one the files brought, before the game
 // first starts.
-func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, original *avsysv1.MinecraftServerSpec, picture newPicture) error {
+func (s *Server) populate(ctx context.Context, org string, created *avsysv1.MinecraftServer, snap *backup.Snapshot, op *operation, final avsysv1.DesiredState, original *avsysv1.MinecraftServerSpec, picture newPicture, newWorld bool) error {
 	key := client.ObjectKeyFromObject(created)
 	// A new server's volume has to be provisioned and the workspace image may
 	// have to be pulled, which on a node that has never run one takes a while.
@@ -714,13 +720,25 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 
 	s.setOperation(key.Namespace, op, "Copying files", 0)
 	last := time.Time{}
-	err = s.Backups.Restore(ctx, org, ws, snap.ID, func(p backup.Progress) {
+	progress := func(p backup.Progress) {
 		if time.Since(last) < 500*time.Millisecond {
 			return
 		}
 		last = time.Now()
 		s.setOperation(key.Namespace, op, "Copying files", p.Percent)
-	})
+	}
+	if newWorld {
+		// All but the world, whose datapacks stay: content the server has.
+		// Its seed goes as well, for the game to pick one unless it is
+		// given one. The world is made as the server first starts.
+		level := levelOf(&created.Spec)
+		err = s.Backups.RestoreWithout(ctx, org, ws, snap.ID, worldFolders(level), []string{"/" + level + "/datapacks"}, progress)
+		if err == nil {
+			err = runIn(ws, "cd "+dataRoot+" && if [ -f server.properties ]; then sed -i '/^level-seed=/d' server.properties; fi")
+		}
+	} else {
+		err = s.Backups.Restore(ctx, org, ws, snap.ID, progress)
+	}
 	// The picture may have come with the files, or gone with them. What was
 	// read before, perhaps from an empty volume, is not kept.
 	s.serverIcons.forget(key.Namespace + "/" + key.Name)
@@ -814,4 +832,19 @@ func displayNameOf(mc *avsysv1.MinecraftServer) string {
 		return mc.Spec.DisplayName
 	}
 	return mc.Name
+}
+
+// worldFolders are a world's folders, relative to the server directory: the
+// world, and the Nether and the End where its software keeps them apart.
+func worldFolders(level string) []string {
+	return []string{"/" + level, "/" + level + "_nether", "/" + level + "_the_end"}
+}
+
+// worldLeavable says whether a server copied with a new world can be: it can
+// when it is known which folder the world it leaves behind is in.
+func worldLeavable(spec *avsysv1.MinecraftServerSpec, newWorld bool) error {
+	if newWorld && levelOf(spec) == "" {
+		return errBadRequest("Which folder its world is in could not be told from its settings, so it cannot be given a new one.")
+	}
+	return nil
 }

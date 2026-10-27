@@ -47,6 +47,7 @@ var (
 	// files an import started on and did not finish.
 	errImportIncomplete = &Error{Status: http.StatusConflict, Code: "import_incomplete", Message: "An import did not finish, so files may be missing. Import again, restore a snapshot, or delete the server."}
 	errHasFiles         = &Error{Status: http.StatusConflict, Code: "has_files", Message: "This server has files already. Import into a new server."}
+	errHasWorld         = &Error{Status: http.StatusConflict, Code: "has_world", Message: "This server has a world already. Replace it in its settings instead."}
 )
 
 // importUnfinished reports whether an import started on this server's files
@@ -69,9 +70,11 @@ var kept = []string{".avsys", ".workspace", "lost+found"}
 // came out of it, checks that the folder named on the first line of stdin is
 // there, and empties the server directory but for what is kept. Then rest
 // runs, and the staging folder is removed. The next lines of stdin say how:
-// "split", "listed", "replace" and the world's folder, or nothing. With
-// "replace", only the world's folders are emptied, for the one unpacked to
-// take their place; the world's folder is "world" unless said.
+// "split", "listed", "replace" or "fill" and the world's folder, or nothing.
+// With "replace", only the world's folders are emptied, for the one unpacked
+// to take their place; the world's folder is "world" unless said. With
+// "fill", for a server with no world yet, the datapacks that are there go
+// into the world unpacked, where it has none of their names.
 func unpacked(rest string) string {
 	return `set -eu
 command -v bsdtar >/dev/null || exit 127
@@ -83,7 +86,7 @@ IFS= read -r level || true
 lv=${level:-world}
 a=` + importArchive + `
 s=` + importStaging + `
-rm -rf "$s" "$s.err"
+rm -rf "$s" "$s.err" "$s.datapacks"
 mkdir -p "$s"
 if ! bsdtar -xf "$a" -C "$s" 2>"$s.err"; then
   head -n 1 "$s.err" >&2
@@ -100,10 +103,21 @@ if [ ! -d "$s/$root" ]; then
 fi
 if [ "$replace" = replace ]; then
   rm -rf "` + dataRoot + `/$lv" "` + dataRoot + `/${lv}_nether" "` + dataRoot + `/${lv}_the_end"
+elif [ "$replace" = fill ]; then
+  if [ -d "` + dataRoot + `/$lv/datapacks" ]; then mv -- "` + dataRoot + `/$lv/datapacks" "$s.datapacks"; fi
+  rm -rf "` + dataRoot + `/$lv" "` + dataRoot + `/${lv}_nether" "` + dataRoot + `/${lv}_the_end"
 else
   find ` + dataRoot + ` -mindepth 1 -maxdepth 1 ! -name .avsys ! -name .workspace ! -name lost+found -exec rm -rf {} +
 fi
 ` + rest + `
+if [ -d "$s.datapacks" ]; then
+  mkdir -p "` + dataRoot + `/$lv/datapacks"
+  for f in "$s.datapacks"/* "$s.datapacks"/.[!.]*; do
+    [ -e "$f" ] || continue
+    if [ ! -e "` + dataRoot + `/$lv/datapacks/${f##*/}" ]; then mv -- "$f" "` + dataRoot + `/$lv/datapacks/"; fi
+  done
+  rm -rf "$s.datapacks"
+fi
 cd /
 rm -rf "$s"
 `
@@ -349,10 +363,20 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	}
 	defer sc.Close()
 	// Over a server whose import did not finish, what it left is replaced.
-	// A world replaced goes among files that are there.
+	// A world replaced goes among files that are there, and so does one
+	// given to a server that has none yet, as one copied with a new world.
+	fill := false
 	if !wasMarked && !replace {
+		level := levelOf(&mc.Spec)
 		if has, err := hasFiles(sc); err != nil {
 			return undo, fileError(err)
+		} else if has && r.URL.Query().Get("world") == "true" && level != "" {
+			if world, err := hasWorld(sc, level); err != nil {
+				return undo, fileError(err)
+			} else if world {
+				return undo, errHasWorld
+			}
+			fill = true
 		} else if has {
 			return undo, errHasFiles
 		}
@@ -442,6 +466,8 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	again, level := "", ""
 	if replace {
 		again, level = "replace", levelOf(&mc.Spec)
+	} else if fill {
+		again, level = "fill", levelOf(&mc.Spec)
 	}
 	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n" + level + "\n")
 	var stderr bytes.Buffer
@@ -562,6 +588,26 @@ func gameIn(ctx context.Context, c client.Reader, mc *avsysv1.MinecraftServer) (
 
 // hasFiles reports whether the server directory has anything in it but what
 // an import keeps.
+// hasWorld reports whether a server has a world in its world's folder:
+// anything there but the datapacks, which a server has as content before
+// its world is made.
+func hasWorld(sc *sftp.Client, level string) (bool, error) {
+	for _, dir := range worldFolders(level) {
+		entries, err := sc.ReadDir(dataRoot + dir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return false, err
+		}
+		for _, e := range entries {
+			if dir != "/"+level || e.Name() != "datapacks" {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func hasFiles(sc *sftp.Client) (bool, error) {
 	entries, err := sc.ReadDir(dataRoot)
 	if err != nil {

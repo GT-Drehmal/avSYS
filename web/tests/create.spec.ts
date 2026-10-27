@@ -1236,3 +1236,53 @@ test("a copy keeps its original's own schedule unless it is changed", async ({ p
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   expect((await sent).postDataJSON().spec.backups).toEqual({ ...backups, keep: { ...backups.keep, weekly: 5 } });
 });
+
+test("a copy keeps its original's world, or is given a new one with a seed of its own", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/new?from=server:survival");
+  const worldChoice = page.getByRole("group", { name: "Its world" });
+  await expect(worldChoice.getByRole("button", { name: "Keep its world" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
+  // Its world was made already, with its own seed.
+  await expect(page.getByLabel("Seed")).toBeDisabled();
+  await worldChoice.getByRole("button", { name: "New world" }).click();
+  await expect(page.getByLabel("Seed")).toBeEnabled();
+  await expect(page.getByLabel("Seed")).toHaveValue("");
+  await page.getByLabel("Seed").fill("42");
+  await page.getByLabel("World type").selectOption("flat");
+
+  const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.route("**/api/v1/orgs/friends/servers", (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
+  );
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  const body = (await sent).postDataJSON();
+  expect(body).toMatchObject({ fromServer: "survival", world: "new" });
+  expect(body.spec.properties).toMatchObject({ "level-seed": "42", "level-type": "flat" });
+});
+
+test("a copy made with a world of one's own has it put in once its files are", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends/new?from=server:survival");
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Use a world I have" }).click();
+  // Nothing is sent without one.
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect(page.getByText("Choose a world, or make a new one.")).toBeVisible();
+  // Back to keeping its own, nothing more is asked.
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep its world" }).click();
+  const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.route("**/api/v1/orgs/friends/servers", (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
+  );
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  expect((await sent).postDataJSON()).not.toHaveProperty("world");
+});
+
+test("a server brought back keeps its own world, with no choice of another", async ({ page, as }) => {
+  await as("owner");
+  const list = await (await page.request.get("/api/v1/orgs/friends/snapshots")).json();
+  const final = list.snapshots.find((s: { server: string }) => s.server === "oldworld");
+  await page.goto(`/o/friends/new?from=snapshot:${final.id}`);
+  await expect(page.getByRole("heading", { name: "Bring back oldworld" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Its world" })).toHaveCount(0);
+});

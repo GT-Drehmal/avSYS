@@ -452,8 +452,12 @@ export function ServerForm({
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
   // A world of one's own goes with a new server of a game version.
-  const [usingMine, setUsingMine] = useState(false);
-  const mine = !source && v.kind === "game" && usingMine ? v.myWorld : null;
+  // Made from another's files, it keeps their world unless it is given a
+  // new one or one of its own; one brought back keeps its own.
+  const worldChoosable = !!source && copying;
+  const [world, setWorld] = useState<"kept" | "new" | "mine">(worldChoosable ? "kept" : "new");
+  const usingMine = world === "mine";
+  const mine = (source ? worldChoosable : v.kind === "game") && usingMine ? v.myWorld : null;
   // What is sent to be unpacked into the server once it is made.
   const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false, listed: listed(found) } : mine ? { file: mine.file, root: mine.found.root, world: true, listed: false } : null;
   // Of the packs, the original's come with a copy, and the request itself
@@ -545,7 +549,7 @@ export function ServerForm({
   // new server it is the game's or the modpack's own default.
   const unset = source || importing ? "Server default" : v.kind === "modpack" ? "Modpack default" : undefined;
   // A world that is there already was made with its own seed and type.
-  const worldMade = !!source || !!found?.world || !!mine;
+  const worldMade = (!!source && world === "kept") || !!found?.world || !!mine;
   // An import unpacks next to the archive, so both need room at once.
   const least = toImport ? Math.max(1, Math.ceil(((found?.size ?? mine?.found.size ?? 0) + toImport.file.size) / GiB)) : leastStorage;
   // Every version, in the order they came out, to tell which is newer.
@@ -569,6 +573,20 @@ export function ServerForm({
     setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "" }));
   };
 
+  const chooseWorld = (next: "kept" | "new" | "mine") => {
+    if (next === world) return;
+    if (next !== "mine") {
+      // A world still being read is not used.
+      reads.current++;
+      setReadingWorld(false);
+      set("myWorld", null);
+    }
+    // A new world gets a seed of its own, unless one is given; the one it
+    // keeps has the seed it was made with.
+    if (worldChoosable) set("seed", next === "kept" ? start.seed : "");
+    setWorld(next);
+  };
+
   /** Reads an archive of a world, to start the server with. */
   const pickWorld = async (file: File) => {
     setError(null);
@@ -581,7 +599,9 @@ export function ServerForm({
         ...was,
         myWorld: { file, found: w },
         // Opened in the version it was last opened in, where there is one.
-        version: w.version && versions.data?.all.has(w.version) ? w.version : was.version,
+        // A copy keeps its original's, which its content was picked for: a
+        // world too new for it is said.
+        version: !source && w.version && versions.data?.all.has(w.version) ? w.version : was.version,
         storage: String(Math.max(Number(was.storage) || 10, Math.ceil((w.size * 1.5 + file.size) / GiB))),
       }));
     } catch (err) {
@@ -927,7 +947,7 @@ export function ServerForm({
     e?.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
     if (!source && importing && !v.archive) return setError("Choose an archive.");
-    if (!source && v.kind === "game" && usingMine && !v.myWorld) return setError("Choose a world, or make a new one.");
+    if ((source ? worldChoosable : v.kind === "game") && usingMine && !v.myWorld) return setError("Choose a world, or make a new one.");
     if (!source && v.kind !== "modpack" && !v.loader) {
       setNeedsLoader(true);
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -950,13 +970,16 @@ export function ServerForm({
         const placed = v.node === "auto" ? { spec: { ...copyRequest(), nodeSelector: {} } } : { ...(v.node ? { node: v.node } : {}), spec: copyRequest() };
         // Answered at once: the panel takes the snapshot of a server copied
         // as it is now, and then puts the files in, which its page shows.
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...pictured, ...placed });
+        // Without its world, for one to be made or put in.
+        const fresh = worldChoosable && world !== "kept" ? { world: "new" } : {};
+        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...fresh, ...pictured, ...placed });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files
         // are in. Files to upload join them after.
         if (!toUpload) return navigate(`/o/${org}/s/${server.name}`);
         return handOff(server.name, async (w) => {
           await copied(w, server.name);
+          await importArchive(w, server.name, title);
           await uploadAll(w, server.name);
           if (startNow) await startIt(w, server.name);
         });
@@ -1411,23 +1434,18 @@ export function ServerForm({
               : undefined
         }
       >
-        {!source && !forTemplate && v.kind === "game" && (
+        {(worldChoosable || (!source && !forTemplate && v.kind === "game")) && (
           <>
-            <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
-              <button
-                type="button"
-                className={segment(!usingMine)}
-                onClick={() => {
-                  // A world still being read is not used.
-                  reads.current++;
-                  setReadingWorld(false);
-                  setUsingMine(false);
-                  set("myWorld", null);
-                }}
-              >
+            <div role="group" aria-label="Its world" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
+              {worldChoosable && (
+                <button type="button" aria-pressed={world === "kept"} className={segment(world === "kept")} onClick={() => chooseWorld("kept")}>
+                  Keep its world
+                </button>
+              )}
+              <button type="button" aria-pressed={world === "new"} className={segment(world === "new")} onClick={() => chooseWorld("new")}>
                 New world
               </button>
-              <button type="button" className={segment(usingMine)} onClick={() => setUsingMine(true)}>
+              <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
                 Use a world I have
               </button>
             </div>

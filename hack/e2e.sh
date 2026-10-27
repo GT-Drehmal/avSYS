@@ -1055,6 +1055,8 @@ step "templates"
 # A server saved as a template, which servers are then made from. Its
 # versions are not among the server's snapshots, nor the organization's.
 echo "kept in the template" | call -X PUT --data-binary @- "$SRV/files/content?path=/template.txt" >/dev/null
+# A datapack in its world, which a server given a new world keeps.
+echo "a datapack" | call -X PUT --data-binary @- "$SRV/files/content?path=/world/datapacks/e2e.zip" >/dev/null
 tpl=$(call -d '{"name":"E2E Lobby","description":"Made by e2e","server":"probe"}' "$API/orgs/$ORG/templates?wait=true")
 TPL=$(echo "$tpl" | field "d['id']") || fail "no template was made: $tpl"
 expect "a template is made with its first version" "$(echo "$tpl" | field "(d['name'], len(d['versions']), d['current']['trigger'])")" "('E2E Lobby', 1, 'template')"
@@ -1065,6 +1067,7 @@ echo "changed after" | call -X PUT --data-binary @- "$SRV/files/content?path=/te
 again=$(call -d '{"server":"probe"}' "$API/orgs/$ORG/templates/$TPL/versions?wait=true")
 expect "the server saved again is its newest version" "$(echo "$again" | field "(len(d['versions']), d['current']['id'] == d['versions'][0]['id'])")" "(2, True)"
 FIRST=$(echo "$again" | field "d['versions'][1]['id']")
+call -X DELETE "$SRV/files?path=/world/datapacks/e2e.zip" >/dev/null
 expect "and its first can be the one used again" "$(call -X PATCH -d "{\"current\":\"$FIRST\"}" "$API/orgs/$ORG/templates/$TPL" | field "d['current']['id']")" "$FIRST"
 made=$(call -d "{\"name\":\"from-template\",\"fromTemplate\":\"$TPL\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"from-template.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
 case "$made" in *'"spec"'*) ;; *) fail "no server was made from the template: $made" ;; esac
@@ -1073,6 +1076,18 @@ expect "a server made from a template has the files of the version used" "$(call
 expect "and its software" "$(echo "$made" | field "(d['spec']['loader'], d['spec']['version'])")" "('paper', '1.21.4')"
 expect "a template's version is not deleted as a server's snapshot" "$(call -X DELETE "$API/orgs/$ORG/snapshots/$FIRST" | field "d['code']")" template
 call -X DELETE "$FROM?snapshot=false" >/dev/null
+# One made with a new world has the template's files but not its world,
+# whose datapacks stay, nor its seed. A world of one's own then goes in.
+fresh=$(call -d "{\"name\":\"fresh-world\",\"fromTemplate\":\"$TPL\",\"world\":\"new\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"fresh-world.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
+case "$fresh" in *'"spec"'*) ;; *) fail "no server was made from the template with a new world: $fresh" ;; esac
+FRESH=$API/orgs/$ORG/servers/fresh-world
+expect "a server made with a new world has the template's files and not its world" "$(call "$FRESH/files/content?path=/template.txt") $(call -o /dev/null -w '%{http_code}' "$FRESH/files/content?path=/world/level.dat")" "kept in the template 404"
+expect "but the datapacks that were in it" "$(call "$FRESH/files/content?path=/world/datapacks/e2e.zip")" "a datapack"
+expect "and not the old world's seed" "$(call "$FRESH/files/content?path=/server.properties" | grep -c '^level-seed=' || true)" 0
+call -X PUT --data-binary "@$WORK/save.tar.gz" "$FRESH/import?root=saves%2FMy%20World&world=true&wait=true" >/dev/null
+expect "a world of one's own goes in beside its files" "$(call -o /dev/null -w '%{http_code}' "$FRESH/files/content?path=/world/level.dat") $(call "$FRESH/files/content?path=/world/datapacks/e2e.zip") / $(call "$FRESH/files/content?path=/template.txt")" "200 a datapack / kept in the template"
+expect "and with one there, another does not go over it" "$(call -X PUT --data-binary "@$WORK/save.tar.gz" "$FRESH/import?root=saves%2FMy%20World&world=true" | field "d['code']")" has_world
+call -X DELETE "$FRESH?snapshot=false" >/dev/null
 # Duplicated from the version used, and made from a snapshot: copies, under
 # names of their own, that outlast what they were made from.
 copy=$(call -d "{\"name\":\"E2E Lobby copy\",\"snapshot\":\"$FIRST\"}" "$API/orgs/$ORG/templates")
