@@ -294,6 +294,6 @@ test("a pack joined from several shows each of them in the form, the top one fir
   await expect(packs.nth(0)).toContainText("Colorful Grasses");
   await expect(packs.nth(0)).toContainText("Colorful Grasses 1.0");
   await expect(packs.nth(2)).toContainText("Fresh Animations");
-  await expect(page.getByText("3 packs joined into one · 3.0 MB")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
+  await expect(page.getByText("Joined into one pack.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move Dark Mode up" })).toBeEnabled();
 });

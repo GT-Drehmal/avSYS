@@ -36,14 +36,12 @@ const places: { name: string; open: (page: Page, slug: string) => Promise<void> 
       await page.goto(`/o/${slug}/new`);
       await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
       await page.getByLabel("Game version").selectOption("1.21.4");
-      await page.getByRole("button", { name: "Add content" }).click();
     },
   },
   {
     name: "a duplicate",
     open: async (page) => {
       await page.goto("/o/friends/new?from=server:survival");
-      await page.getByRole("button", { name: "Add content" }).click();
     },
   },
   {
@@ -51,7 +49,6 @@ const places: { name: string; open: (page: Page, slug: string) => Promise<void> 
     open: async (page) => {
       await snapshot(page);
       await page.goto(`/o/friends/new?from=snapshot:${id}`);
-      await page.getByRole("button", { name: "Add content" }).click();
     },
   },
 ];
@@ -61,16 +58,19 @@ for (const place of places) {
     await as("owner");
     const slug = await org([]);
     await place.open(page, slug);
-    const dialog = page.getByRole("dialog");
-    await expect(dialog.getByRole("heading", { name: "Add content" })).toBeVisible();
-    for (const kind of ["Plugins", "Datapacks", "Resource pack"]) {
-      await dialog.getByRole("button", { name: kind, exact: true }).click();
+    // A section for each, as on a server's Content page.
+    for (const kind of ["plugins", "datapacks", "resource pack"]) {
+      await page.getByRole("button", { name: `Add ${kind}` }).click();
+      const dialog = page.getByRole("dialog", { name: `Add ${kind}` });
       for (const source of ["Modrinth", "From URL", "Upload"]) {
         await expect(dialog.getByRole("button", { name: source, exact: true }), `${kind} from ${source}`).toBeVisible();
       }
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
     }
     // Nothing a Paper server cannot run.
-    await expect(dialog.getByRole("button", { name: "Mods", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Mods" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add mods" })).toHaveCount(0);
   });
 }
 
