@@ -171,7 +171,7 @@ export type PictureChange = { kind: "keep" } | { kind: "file"; file: File } | { 
  * The picture of a server made from another: the one its files bring unless
  * another is chosen or it is taken away. current is where that one is.
  */
-export function PictureChange({ name, current, value, onChange }: { name: string; current?: string; value: PictureChange; onChange: (change: PictureChange) => void }) {
+export function PictureChange({ name, current, value, onChange, optional = "Optional. Shown in the server list.", kept = "From the original." }: { name: string; current?: string; value: PictureChange; onChange: (change: PictureChange) => void; optional?: string; kept?: string }) {
   const input = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string>();
   // Whether the files bring one at all, which is only known once it is asked for.
@@ -190,10 +190,13 @@ export function PictureChange({ name, current, value, onChange }: { name: string
       : value.kind === "none"
         ? current
           ? "No picture."
-          : "Optional. Shown in the server list."
+          : optional
         : brought === false
-          ? "Could not show its picture."
-          : "From the original.";
+          ? // With nothing to say of the one kept, there is simply none.
+            kept
+            ? "Could not show its picture."
+            : optional
+          : kept;
   return (
     <div className="flex items-center gap-4">
       <Picture name={name || "?"} url={url} size={56} onFound={value.kind === "keep" ? setBrought : undefined} />
