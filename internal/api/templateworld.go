@@ -67,7 +67,8 @@ func (s *Server) ownWorldOf(ctx context.Context, a *access, id string) (*backup.
 }
 
 // putTemplateWorld gives a template a world of its own: the archive sent,
-// with ?root= its world's folder in it, or with ?from= another template's.
+// with ?root= its world's folder in it, with ?from= another template's, or
+// with ?library= one of the organization's library.
 // The one it had before goes.
 func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleAdmin)
@@ -100,6 +101,17 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 			return snapshotError(err)
 		}
 		info = theirs
+	} else if lib := q.Get("library"); lib != "" {
+		// One of the library's, copied: changing or deleting it there
+		// leaves the template's as it is.
+		world, snap, err := s.readyWorld(r.Context(), a, lib)
+		if err != nil {
+			return err
+		}
+		if kept, err = s.Backups.CopyAs(ctx, a.Org.Slug, snap.ID, worldHost(t.ID), u.Username); err != nil {
+			return snapshotError(err)
+		}
+		info = ownWorld{Root: world.Root, Name: world.Name, Version: world.Version, File: world.File}
 	} else {
 		root, err := archiveRoot(q.Get("root"))
 		if err != nil {

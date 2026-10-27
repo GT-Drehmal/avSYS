@@ -1,12 +1,13 @@
 import { ChevronLeft } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { ApiError, serverIcon, snapshotIcon, type Server, type Snapshot, type Template } from "../lib/api";
+import { ApiError, serverIcon, snapshotIcon, type LibraryWorld, type Server, type Snapshot, type Template, worldIcon } from "../lib/api";
 import { ago, bytes, describeSoftware, displayName } from "../lib/format";
 import { newFrom } from "../lib/origin";
-import { useOrgSnapshots, useServers, useTemplates } from "../lib/queries";
+import { useOrgSnapshots, useServers, useTemplates, useWorlds } from "../lib/queries";
 import { matches } from "../lib/search";
 import { ready, templateSummary } from "../lib/templates";
+import { worldSummary } from "../lib/worlds";
 import { Picture } from "./Picture";
 import { software, triggerLabel } from "./Snapshots";
 import { Chip, cx, Loading, SearchBox } from "./ui";
@@ -54,6 +55,42 @@ export function TemplatePicker({ org, onPick, picked }: { org: string; onPick: (
         />
       ))}
     </List>
+    </Searched>
+  );
+}
+
+/** The worlds in the organization's library to pick one of, but those still being saved. */
+export function WorldPicker({ org, onPick, picked }: { org: string; onPick: (w: LibraryWorld) => void; picked?: string }) {
+  const worlds = useWorlds(org);
+  const [query, setQuery] = useState("");
+  if (worlds.isPending) return <Loading />;
+  if (!worlds.data) return <Empty>{failed(worlds.error, "Could not load worlds.")}</Empty>;
+  if (worlds.data.length === 0)
+    return (
+      <Empty>
+        No worlds yet. Add one on the{" "}
+        <Link to={`/o/${org}/worlds`} className="text-fg underline underline-offset-2">
+          Worlds
+        </Link>{" "}
+        page.
+      </Empty>
+    );
+  const shown = worlds.data.filter((w) => matches(query, w.name, w.description, worldSummary(w)));
+  return (
+    <Searched query={query} onQuery={setQuery} label="Search worlds" none={shown.length === 0}>
+      <List label="Worlds">
+        {shown.map((w) => (
+          <Row
+            key={w.id}
+            disabled={!w.ready}
+            selected={w.id === picked}
+            onClick={() => onPick(w)}
+            picture={<Picture name={w.name} url={worldIcon(org, w.id)} size={32} />}
+            title={w.name}
+            sub={w.ready ? worldSummary(w) : "Saving"}
+          />
+        ))}
+      </List>
     </Searched>
   );
 }

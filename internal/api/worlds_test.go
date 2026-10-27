@@ -160,6 +160,17 @@ func TestWorldLibrary(t *testing.T) {
 		t.Errorf("its picture: %d", code)
 	}
 
+	// Given to a template as its own world: a copy, which stays when the
+	// library's is deleted.
+	_, made := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Island base","spec":{"loader":"paper","version":"1.21.4","resources":{"memory":"4Gi"},"storage":{"size":"10Gi"}}}`)
+	tid := object(made)["id"].(string)
+	if code, got := call("admin", "PUT", "/orgs/alpha/templates/"+tid+"/world?library="+id, ""); code != http.StatusOK || object(got)["ownWorld"].(map[string]any)["root"] != "saves/Island" || object(got)["ownWorld"].(map[string]any)["name"] != "Atoll" {
+		t.Fatalf("given to a template: %d %s", code, got)
+	}
+	if code, _ := call("admin", "PUT", "/orgs/alpha/templates/"+tid+"/world?library=nope", ""); code != http.StatusNotFound {
+		t.Errorf("one not in the library: %d", code)
+	}
+
 	// Taken out by an admin, with its archive.
 	if code, _ := call("operator", "DELETE", "/orgs/alpha/worlds/"+id, ""); code != http.StatusForbidden {
 		t.Errorf("an operator deleted one: %d", code)
@@ -170,8 +181,13 @@ func TestWorldLibrary(t *testing.T) {
 		}
 	}
 	list, err = p.srv.Backups.List(t.Context(), "alpha")
-	if err != nil || len(list) != 1 || list[0].Server != "survival" {
+	if err != nil || len(list) != 2 {
 		t.Errorf("left in the repository: %v %v", list, err)
+	}
+	for _, s := range list {
+		if s.Server != "survival" && s.Server != worldHost(tid) {
+			t.Errorf("left in the repository: %+v", s)
+		}
 	}
 	if code, _ := call("viewer", "GET", "/orgs/alpha/worlds/"+id+"/icon", ""); code != http.StatusNotFound {
 		t.Errorf("its picture stayed: %d", code)

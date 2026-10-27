@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Download, MoreHorizontal, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import { Picture, PictureChange } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { ServerPicker, SnapshotPicker } from "../components/StartPicker";
@@ -12,18 +12,8 @@ import { ArchiveError } from "../lib/archive";
 import { ago, bytes } from "../lib/format";
 import { keys, useMeta, useWorlds } from "../lib/queries";
 import { matches, useSearch } from "../lib/search";
+import { worldSummary } from "../lib/worlds";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
-
-/** Where a world came from, said plainly. */
-export function worldSource(w: LibraryWorld) {
-  const [kind, name] = w.source.split(/:(.*)/s);
-  return kind === "server" ? `from ${name}` : kind === "snapshot" ? `from a snapshot of ${name}` : "uploaded";
-}
-
-/** What a world is, in a line: its version, size and where it came from. */
-export function worldSummary(w: LibraryWorld) {
-  return [w.version, w.ready ? bytes(w.size) : null, worldSource(w)].filter(Boolean).join(" · ");
-}
 
 /** An organization's library of worlds: maps kept to start servers from. */
 export function Worlds() {
@@ -37,6 +27,9 @@ export function Worlds() {
   const [deleting, setDeleting] = useState<LibraryWorld | null>(null);
   const canAdd = !!membership && atLeast(membership.role, "operator");
   const canDelete = !!membership && atLeast(membership.role, "admin");
+  // Making servers is admins' to do.
+  const canMake = canDelete;
+  const navigate = useNavigate();
 
   const header = (
     <PageHeader
@@ -96,6 +89,11 @@ export function Worlds() {
                       )}
                     </p>
                   </div>
+                  {canMake && (
+                    <Button size="sm" disabled={!w.ready} onClick={() => navigate(`/o/${org}/new?${qs({ world: w.id })}`)}>
+                      New server
+                    </Button>
+                  )}
                   {canAdd && (
                     <Menu>
                       <MenuTrigger asChild>

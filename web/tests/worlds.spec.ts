@@ -21,12 +21,12 @@ const world = (id: string, name: string, extra: Record<string, unknown> = {}) =>
 });
 
 /** The library the panel would have, with what is asked of it noted. */
-async function library(page: Page, worlds: ReturnType<typeof world>[]) {
+async function library(page: Page, worlds: ReturnType<typeof world>[], org = "friends") {
   const calls: { method: string; path: string; query: Record<string, string>; body: unknown }[] = [];
-  await page.route(/\/api\/v1\/orgs\/friends\/worlds(\/.*)?(\?.*)?$/, async (route) => {
+  await page.route(new RegExp(`/api/v1/orgs/${org}/worlds(/.*)?(\\?.*)?$`), async (route) => {
     const req = route.request();
     const url = new URL(req.url());
-    const path = url.pathname.replace("/api/v1/orgs/friends", "");
+    const path = url.pathname.replace(`/api/v1/orgs/${org}`, "");
     if (req.method() === "GET" && path === "/worlds") return route.fulfill({ json: worlds });
     if (req.method() === "GET" && path.endsWith("/icon")) return route.fulfill({ status: 404, json: { code: "not_found", message: "No picture." } });
     let body: unknown = null;
@@ -152,4 +152,95 @@ test("an operator adds and changes worlds, but does not delete them", async ({ p
   await expect(page.getByRole("menuitem", { name: "Edit" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Download" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+});
+
+test("a new server starts with a world from the library, picked where it is kept", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await library(page, [world("w1", "Island", { size: 3 * 2 ** 30 })], slug);
+  let sent: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/island`) });
+  });
+  await page.goto(`/o/${slug}/worlds`);
+  await page.getByRole("listitem", { name: "Island" }).getByRole("button", { name: "New server" }).click();
+  await expect(page.getByRole("heading", { name: "New server" })).toBeVisible();
+  const worldChoice = page.getByRole("group", { name: "Its world" });
+  await expect(worldChoice.getByRole("button", { name: "Library world" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("world-summary")).toContainText("1.21.4 · 3.0 GB · uploaded");
+  await expect(page.getByLabel("Display name")).toHaveValue("Island");
+  // Room for it, unpacked beside its archive.
+  await expect(page.getByLabel("Storage (GB)")).toHaveValue("10");
+  // Made with it, not generated.
+  await page.getByRole("button", { name: /World options and more/ }).click();
+  await expect(page.getByLabel("Seed")).toBeDisabled();
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", library: "w1" });
+});
+
+test("a world from the library newer than the game picked is warned of, and one must be picked", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island", { version: "1.21.5" }), world("w2", "Lobby", { ready: false, saving: true })]);
+  await page.goto("/o/friends/new");
+  await page.getByLabel("Display name").fill("Picked");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Library world" }).click();
+  const picker = page.getByRole("list", { name: "Worlds" });
+  // One still being saved cannot be picked.
+  await expect(picker.getByRole("button", { name: /Lobby/ })).toBeDisabled();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page.getByText("Pick a world from the library.")).toBeVisible();
+  await picker.getByRole("button", { name: /Island/ }).click();
+  await expect(page.getByText("This world was last opened in 1.21.5, which is newer than 1.21.4.")).toBeVisible();
+  await page.getByRole("button", { name: "Change" }).last().click();
+  await expect(page.getByRole("searchbox", { name: "Search worlds" })).toBeVisible();
+});
+
+test("a template is given a world from the library, kept with it", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await library(page, [world("w1", "Island")], slug);
+  let put: string | null = null;
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/templates/[^/]+/world\\?`), (route) => {
+    put = new URL(route.request().url()).search;
+    return route.fulfill({ json: {} });
+  });
+  await page.goto(`/o/${slug}/templates/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByLabel("Name", { exact: true }).fill("Island base");
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await page.getByRole("button", { name: "Create template" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  expect(put).toBe("?library=w1");
+});
+
+test("a stopped server's world is replaced with one from the library", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island")]);
+  let sent: URLSearchParams | null = null;
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+  });
+  await page.goto("/o/friends/s/creative/settings");
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await dialog.getByRole("button", { name: "Library", exact: true }).click();
+  const replace = dialog.getByRole("button", { name: "Replace the world" });
+  await expect(replace).toBeDisabled();
+  await dialog.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect(dialog.getByTestId("world-summary")).toContainText("1.21.4 · 12 MB · uploaded");
+  await replace.click();
+  await expect(dialog).toHaveCount(0);
+  expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", replace: "true", library: "w1" });
 });
