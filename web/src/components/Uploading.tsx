@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, upload, type Progress } from "../lib/api";
+import { ApiError, upload, uploadParts, type Progress } from "../lib/api";
 import { bytes } from "../lib/format";
 import { Spinner } from "./ui";
 
@@ -19,14 +19,14 @@ export function useUpload() {
   const stop = useRef<AbortController | null>(null);
   // Leaving the page stops what it was sending.
   useEffect(() => () => stop.current?.abort(), []);
-  const send = async <T,>(label: string, path: string, file: Blob, method?: "PUT" | "POST"): Promise<T> => {
+  const run = async <T,>(label: string, file: Blob, work: (onProgress: (p: Progress) => void, signal: AbortSignal) => Promise<T>): Promise<T> => {
     // One at a time: the progress shown and Cancel are of one upload.
     if (stop.current) throw new ApiError(0, "busy", "Wait for the current upload to finish, or cancel it.");
     const ctl = new AbortController();
     stop.current = ctl;
     setSending({ label, progress: { sent: 0, total: file.size } });
     try {
-      return await upload<T>(path, file, (progress) => setSending({ label, progress }), ctl.signal, method);
+      return await work((progress) => setSending({ label, progress }), ctl.signal);
     } finally {
       if (stop.current === ctl) {
         stop.current = null;
@@ -34,7 +34,11 @@ export function useUpload() {
       }
     }
   };
-  return { sending, send, cancel: () => stop.current?.abort() };
+  const send = <T,>(label: string, path: string, file: Blob, method?: "PUT" | "POST") => run<T>(label, file, (p, signal) => upload<T>(path, file, p, signal, method));
+  /** Sends an archive to a server in parts, then asks for what finish does. */
+  const sendParts = <T,>(label: string, server: string, file: Blob, finish: (upload: string) => Promise<T>) =>
+    run<T>(label, file, async (p, signal) => finish(await uploadParts(server, file, p, signal)));
+  return { sending, send, sendParts, cancel: () => stop.current?.abort() };
 }
 
 export const cancelled = (err: unknown) => err instanceof ApiError && err.code === "aborted";
