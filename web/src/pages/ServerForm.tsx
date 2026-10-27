@@ -1513,14 +1513,14 @@ export function ServerForm({
             <div role="group" aria-label="Its world" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
               {worldChoosable && (
                 <button type="button" aria-pressed={world === "kept"} className={segment(world === "kept")} onClick={() => chooseWorld("kept")}>
-                  Keep its world
+                  Keep world
                 </button>
               )}
               <button type="button" aria-pressed={world === "new"} className={segment(world === "new")} onClick={() => chooseWorld("new")}>
                 New world
               </button>
               <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
-                Use a world I have
+                Upload world
               </button>
             </div>
             {usingMine && (

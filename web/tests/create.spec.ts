@@ -1241,7 +1241,7 @@ test("a copy keeps its original's world, or is given a new one with a seed of it
   await as("owner");
   await page.goto("/o/friends/new?from=server:survival");
   const worldChoice = page.getByRole("group", { name: "Its world" });
-  await expect(worldChoice.getByRole("button", { name: "Keep its world" })).toHaveAttribute("aria-pressed", "true");
+  await expect(worldChoice.getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
   // Its world was made already, with its own seed.
   await expect(page.getByLabel("Seed")).toBeDisabled();
@@ -1264,12 +1264,12 @@ test("a copy keeps its original's world, or is given a new one with a seed of it
 test("a copy made with a world of one's own has it put in once its files are", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new?from=server:survival");
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Use a world I have" }).click();
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" }).click();
   // Nothing is sent without one.
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect(page.getByText("Choose a world, or make a new one.")).toBeVisible();
   // Back to keeping its own, nothing more is asked.
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep its world" }).click();
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep world" }).click();
   const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
   await page.route("**/api/v1/orgs/friends/servers", (route) =>
     route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
