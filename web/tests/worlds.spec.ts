@@ -92,8 +92,46 @@ test("a world is uploaded to the library, named as it calls itself, with its own
   await dialog.getByRole("button", { name: "Add world" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("listitem", { name: "Island" })).toBeVisible();
-  expect(calls[0]).toMatchObject({ method: "POST", path: "/worlds/upload", query: { name: "Island", description: "Where we started", root: "Island Save", version: "1.21.4", file: "island.zip" } });
+  expect(calls[0]).toMatchObject({ method: "POST", path: "/worlds/upload", query: { name: "Island", description: "Where we started", root: "Island Save", version: "1.21.4", file: "island.zip", unpacked: expect.stringMatching(/^\d+$/) } });
   expect(calls[1]).toMatchObject({ method: "PUT", path: "/worlds/w9/icon" });
+});
+
+test("a world's own picture goes with it, not with another archive or a server's world", async ({ page, as }) => {
+  await as("operator");
+  const calls = await library(page, []);
+  await page.goto("/o/friends/worlds");
+  await page.getByRole("button", { name: "Add world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add a world" });
+  const icon = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await dialog.getByLabel("World archive").setInputFiles({ name: "a.zip", mimeType: "application/zip", buffer: zip({ "A/level.dat": levelDat("1.21.4", "A"), "A/icon.png": icon }) });
+  await expect(dialog.getByRole("button", { name: "Remove" })).toBeVisible();
+  // Another without one: none.
+  await dialog.getByLabel("World archive").setInputFiles({ name: "b.zip", mimeType: "application/zip", buffer: zip({ "B/level.dat": levelDat("1.21.4", "B") }) });
+  await expect(dialog.getByTestId("world-summary")).toContainText('World "B"');
+  await expect(dialog.getByRole("button", { name: "Remove" })).toHaveCount(0);
+  await dialog.getByLabel("World archive").setInputFiles({ name: "a.zip", mimeType: "application/zip", buffer: zip({ "A/level.dat": levelDat("1.21.4", "A"), "A/icon.png": icon }) });
+  await expect(dialog.getByRole("button", { name: "Remove" })).toBeVisible();
+  // A server's world brings the server's.
+  await dialog.getByRole("button", { name: "Server", exact: true }).click();
+  await dialog.getByRole("button", { name: /Survival/ }).first().click();
+  await dialog.getByLabel("Name").fill("Spawn");
+  await dialog.getByRole("button", { name: "Add world" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /worlds"]);
+});
+
+test("a world that could not be saved says why, until it is deleted", async ({ page, as }) => {
+  await as("admin");
+  await library(page, [world("w1", "Nothing", { ready: false, error: "Its world is not among its files." })]);
+  await page.goto("/o/friends/worlds");
+  const row = page.getByRole("listitem", { name: "Nothing" });
+  await expect(row).toContainText("Not saved: Its world is not among its files.");
+  await expect(row.getByRole("button", { name: "New server" })).toBeDisabled();
+  await row.getByRole("button", { name: "Actions for Nothing" }).click();
+  await expect(page.getByRole("menuitem", { name: "Download" })).toHaveAttribute("data-disabled", "");
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByText("No worlds yet")).toBeVisible();
 });
 
 test("a server's world, or a snapshot's, is saved to the library", async ({ page, as }) => {
@@ -157,7 +195,7 @@ test("an operator adds and changes worlds, but does not delete them", async ({ p
 test("a new server starts with a world from the library, picked where it is kept", async ({ page, as, org, api }) => {
   const slug = await org([]);
   await as("owner");
-  await library(page, [world("w1", "Island", { size: 3 * 2 ** 30 })], slug);
+  await library(page, [world("w1", "Island", { size: 3 * 2 ** 30, unpacked: 9 * 2 ** 30 })], slug);
   let sent: URLSearchParams | null = null;
   await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
     sent = new URL(route.request().url()).searchParams;
@@ -171,7 +209,7 @@ test("a new server starts with a world from the library, picked where it is kept
   await expect(page.getByTestId("world-summary")).toContainText("1.21.4 · 3.0 GB · uploaded");
   await expect(page.getByLabel("Display name")).toHaveValue("Island");
   // Room for it, unpacked beside its archive.
-  await expect(page.getByLabel("Storage (GB)")).toHaveValue("10");
+  await expect(page.getByLabel("Storage (GB)")).toHaveValue("12");
   // Made with it, not generated.
   await page.getByRole("button", { name: /World options and more/ }).click();
   await expect(page.getByLabel("Seed")).toBeDisabled();
@@ -243,4 +281,16 @@ test("a stopped server's world is replaced with one from the library", async ({ 
   await replace.click();
   await expect(dialog).toHaveCount(0);
   expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", replace: "true", library: "w1" });
+});
+
+test("a new server asked for with a world that cannot be used yet says so, rather than making a new one", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island", { ready: false, saving: true }), world("w2", "Nothing", { ready: false, error: "Its world is not among its files." })]);
+  await page.goto("/o/friends/new?world=w1");
+  await expect(page.getByText("Island is still being saved. This page goes on once it is.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create server" })).toHaveCount(0);
+  await page.goto("/o/friends/new?world=w2");
+  await expect(page.getByText("Nothing was not saved: Its world is not among its files.")).toBeVisible();
+  await page.goto("/o/friends/new?world=gone");
+  await expect(page.getByText("There is no such world in the library.")).toBeVisible();
 });

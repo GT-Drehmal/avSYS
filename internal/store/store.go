@@ -145,7 +145,9 @@ CREATE TABLE IF NOT EXISTS worlds (
 	version     TEXT NOT NULL DEFAULT '',
 	file        TEXT NOT NULL DEFAULT '',
 	size        INTEGER NOT NULL DEFAULT 0,
-	source      TEXT NOT NULL DEFAULT ''
+	unpacked    INTEGER NOT NULL DEFAULT 0,
+	source      TEXT NOT NULL DEFAULT '',
+	failed      TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS worlds_name ON worlds(org_id, name);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);

@@ -192,6 +192,13 @@ async function contentOf(f: Found): Promise<ArchiveContent> {
   return out;
 }
 
+/**
+ * The gigabytes a server needs for a world from the library: its archive,
+ * and the world unpacked beside it, as large as it is out of it where that
+ * is known, and else a guess.
+ */
+const roomFor = (w: LibraryWorld) => Math.ceil((w.size + (w.unpacked || w.size * 4)) / GiB);
+
 /** Which world a server starts with: its original's, a new one, one from the library, or one uploaded. */
 type WorldChoice = "kept" | "new" | "library" | "mine";
 
@@ -469,7 +476,7 @@ export function ServerForm({
         : editing?.spec
           ? presetValues({ id: editing.id, name: editing.name, spec: editing.spec }, null)
           : given
-            ? { ...fresh, displayName: given.name }
+            ? { ...fresh, displayName: given.name, storage: String(Math.max(Number(fresh.storage), roomFor(given))) }
             : fresh,
   );
   const [description, setDescription] = useState(editing?.description ?? "");
@@ -597,11 +604,12 @@ export function ServerForm({
   // One brought back has its own, whatever else it is given.
   const worldMade = (!!source && (world === "kept" || !worldChoosable)) || !!found?.world || !!mine || !!fromLibrary;
   // An import unpacks next to the archive, so both need room at once.
-  // One from the library comes as an archive too, unpacked beside it.
+  // One from the library comes as an archive too, unpacked beside it: as
+  // large as it is out of it where that is known, and else a guess.
   const least = toImport
     ? Math.max(1, Math.ceil(((found?.size ?? mine?.found.size ?? 0) + toImport.file.size) / GiB))
     : fromLibrary && !forTemplate
-      ? Math.max(leastStorage, Math.ceil((fromLibrary.size * 2.5) / GiB))
+      ? Math.max(leastStorage, roomFor(fromLibrary))
       : leastStorage;
   // Every version, in the order they came out, to tell which is newer.
   const allVersions = useGameVersions();
@@ -816,6 +824,12 @@ export function ServerForm({
       ...(keepCustom ? { image: spec?.image, env: spec?.env } : {}),
       ...changes,
     };
+  };
+
+  /** Picks a world from the library, with room on the server for it. */
+  const pickLibrary = (w: LibraryWorld) => {
+    setLibraryPick(w);
+    if (!forTemplate) setValues((was) => ({ ...was, storage: String(Math.max(Number(was.storage) || 0, leastStorage, roomFor(w))) }));
   };
 
   /** Puts the world picked from the library into a server just made. */
@@ -1608,7 +1622,7 @@ export function ServerForm({
                   </Button>
                 </div>
               ) : (
-                <WorldPicker org={org} onPick={setLibraryPick} />
+                <WorldPicker org={org} onPick={pickLibrary} />
               ))}
             {world === "library" && worldTooNew && (
               <Notice tone="warn">

@@ -31,19 +31,22 @@ type World struct {
 	Version string
 	// File is the name of the archive it came in, for one uploaded.
 	File string
-	// Size is how large its archive is.
-	Size int64
+	// Size is how large its archive is, and Unpacked how large the world
+	// is out of it, where known.
+	Size, Unpacked int64
 	// Source says where it was saved from: "upload", "server:<name>" or
 	// "snapshot:<server>".
 	Source string
+	// Failed says why its archive could not be made, for one that was not.
+	Failed string
 }
 
-const worldColumns = `id, org_id, name, description, created_by, created_at, updated_at, root, version, file, size, source`
+const worldColumns = `id, org_id, name, description, created_by, created_at, updated_at, root, version, file, size, unpacked, source, failed`
 
 func scanWorld(row interface{ Scan(...any) error }) (*World, error) {
 	var w World
 	var created, updated int64
-	if err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.CreatedBy, &created, &updated, &w.Root, &w.Version, &w.File, &w.Size, &w.Source); err != nil {
+	if err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.CreatedBy, &created, &updated, &w.Root, &w.Version, &w.File, &w.Size, &w.Unpacked, &w.Source, &w.Failed); err != nil {
 		return nil, err
 	}
 	w.CreatedAt, w.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
@@ -55,8 +58,8 @@ func (s *Store) CreateWorld(ctx context.Context, w *World) error {
 	w.ID = NewID(8)
 	w.CreatedAt = time.Now().Truncate(time.Second)
 	w.UpdatedAt = w.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO worlds (`+worldColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.OrgID, w.Name, w.Description, w.CreatedBy, w.CreatedAt.Unix(), w.UpdatedAt.Unix(), w.Root, w.Version, w.File, w.Size, w.Source)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO worlds (`+worldColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.OrgID, w.Name, w.Description, w.CreatedBy, w.CreatedAt.Unix(), w.UpdatedAt.Unix(), w.Root, w.Version, w.File, w.Size, w.Unpacked, w.Source, w.Failed)
 	return worldNameTaken(err)
 }
 
@@ -104,8 +107,20 @@ func (s *Store) UpdateWorld(ctx context.Context, w *World) error {
 
 // SetWorldArchive keeps what is known of a world's archive once it is
 // saved, leaving the rest of it as it is now.
-func (s *Store) SetWorldArchive(ctx context.Context, orgID, id, root, version string, size int64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE worlds SET root = ?, version = ?, size = ?, updated_at = ? WHERE org_id = ? AND id = ?`, root, version, size, time.Now().Unix(), orgID, id)
+func (s *Store) SetWorldArchive(ctx context.Context, orgID, id, root, version string, size, unpacked int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE worlds SET root = ?, version = ?, size = ?, unpacked = ?, failed = '', updated_at = ? WHERE org_id = ? AND id = ?`, root, version, size, unpacked, time.Now().Unix(), orgID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetWorldFailed says why a world's archive could not be made.
+func (s *Store) SetWorldFailed(ctx context.Context, orgID, id, why string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE worlds SET failed = ?, updated_at = ? WHERE org_id = ? AND id = ?`, why, time.Now().Unix(), orgID, id)
 	if err != nil {
 		return err
 	}
