@@ -282,7 +282,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
         {from === "server" && picked && <p className="text-xs text-muted">A snapshot of it is taken first, and the world saved from that.</p>}
         <Field label="Name">{(id) => <Input id={id} required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
         <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
-        {from === "upload" && <PictureChange name={name} value={picture} onChange={setPicture} />}
+        {from === "upload" && <PictureChange name={name} value={picture} onChange={setPicture} optional="Optional. Shown in the library." />}
         {error && <Notice tone="danger">{error}</Notice>}
         {sending && <UploadProgress sending={sending} onCancel={cancel} />}
         <div className="flex justify-end gap-2">
@@ -330,7 +330,7 @@ function EditWorld({ org, world, onClose }: { org: string; world: LibraryWorld; 
           void save();
         }}
       >
-        <PictureChange name={name} current={worldIcon(org, world.id)} value={picture} onChange={setPicture} />
+        <PictureChange name={name} current={worldIcon(org, world.id)} value={picture} onChange={setPicture} optional="Optional. Shown in the library." kept="" />
         <Field label="Name">{(id) => <Input id={id} required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
         <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
         {error && <Notice tone="danger">{error}</Notice>}
