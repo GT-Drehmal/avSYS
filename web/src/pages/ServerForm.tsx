@@ -6,21 +6,21 @@ import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit
 import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
 import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
+import { StartPicker, type StartKind } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
 import { Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, qs, serverIcon, serverPath, snapshotIcon, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template } from "../lib/api";
+import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
-import { newFrom, type Origin } from "../lib/origin";
+import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
-import { keys, useBackupPolicy, useMe, useTemplates } from "../lib/queries";
+import { keys, useBackupPolicy, useMe } from "../lib/queries";
 import { type Found, type FoundWorld, inspectServer, inspectWorld } from "../lib/serverImport";
 import { SetupFailed, type SetupWork, startSetup } from "../lib/setups";
-import { ready, templateSummary } from "../lib/templates";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
 
@@ -402,12 +402,15 @@ export function ServerForm({
   source,
   preset,
   templating,
+  pick,
   taken,
   history,
 }: {
   org: string;
   source?: Source;
   preset?: Preset;
+  /** What a new server is to be picked from, to start with. */
+  pick?: StartKind;
   /** Making a template of settings alone, or changing the one given. */
   templating?: { template: Template | null };
   taken: Set<string>;
@@ -443,10 +446,8 @@ export function ServerForm({
           : fresh,
   );
   const [description, setDescription] = useState(editing?.description ?? "");
-  // A new server can start from one of the organization's templates.
-  const templates = useTemplates(org);
-  const choosable = !source && !preset && !forTemplate && (templates.data?.length ?? 0) > 0;
-  const [pickingTemplate, setPickingTemplate] = useState(false);
+  // A new server can start from a template, a server or a snapshot, picked here.
+  const [picking, setPicking] = useState<StartKind | null>(source || preset || forTemplate ? null : (pick ?? null));
   const [v, setValues] = useState(start);
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
@@ -1000,6 +1001,14 @@ export function ServerForm({
     cx("flex flex-col gap-0.5 rounded-md border px-3 py-2.5 text-left transition-colors", active ? "border-accent bg-accent-wash" : "border-line-strong bg-raised hover:bg-hover");
   const segment = (active: boolean) => cx("h-7 rounded-sm px-3 text-xs font-medium", active ? "bg-hover text-fg" : "text-muted hover:text-fg");
   // The starting point says what the original runs, whatever is picked below.
+  const startName = source ? spec?.displayName || source.name : (preset?.name ?? "");
+  const starts = [
+    ["new", "New"],
+    ["template", "Template"],
+    ["server", "Server"],
+    ["snapshot", "Snapshot"],
+    ["import", "Import"],
+  ] as const;
   const softwareName = start.modpack ? `${start.modpack.title || start.modpack.project} modpack` : `${loaderNames[start.loader ?? "vanilla"] ?? start.loader} ${start.version}`;
   const versionField = (
     <Field
@@ -1075,139 +1084,119 @@ export function ServerForm({
         }
       />
 
-      {source ? (
+      {!forTemplate && (
         <Section title="Starting point">
-          <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-            <Picture name={spec?.displayName || source.name} url={brought} size={36} />
-            <div className="min-w-0 flex-1">
-              <p className="flex items-center gap-2 truncate text-[13px] font-medium">
-                {spec?.displayName || source.name}
-                {templated ? <Chip>template</Chip> : !source.live && <Chip>deleted</Chip>}
-              </p>
-              <p className="truncate text-xs text-muted">
-                {[source.taken && `${templated ? "Saved" : "Snapshot from"} ${ago(source.taken)} · ${new Date(source.taken).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`, softwareName]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
+          {source || preset ? (
+            <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+              <Picture name={startName} url={brought} size={36} />
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-2 truncate text-[13px] font-medium">
+                  {startName}
+                  {templated || preset ? <Chip>template</Chip> : source && !source.live && <Chip>deleted</Chip>}
+                </p>
+                <p className="truncate text-xs text-muted">
+                  {[source?.taken && `${templated ? "Saved" : "Snapshot from"} ${ago(source.taken)} · ${new Date(source.taken).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`, softwareName]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              <Button size="sm" onClick={() => navigate(`/o/${org}/new?${qs({ start: source?.origin.kind ?? "template" })}`)}>
+                Change
+              </Button>
             </div>
-          </div>
-          {v.kind === "game" && versionField}
-        </Section>
-      ) : (
-        <Section title="Software">
-          <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
-            <button
-              type="button"
-              className={segment(v.kind === "game" && !pickingTemplate)}
-              onClick={() => {
-                setPickingTemplate(false);
-                if (v.kind === "game") return;
-                reads.current++;
-                setReading(false);
-                changeSoftware({ kind: "game" });
-              }}
-            >
-              Game version
-            </button>
-            <button
-              type="button"
-              className={segment(v.kind === "modpack" && !pickingTemplate)}
-              onClick={() => {
-                setPickingTemplate(false);
-                if (v.kind === "modpack") return;
-                reads.current++;
-                setReading(false);
-                changeSoftware({ kind: "modpack" });
-              }}
-            >
-              Modpack
-            </button>
-            {choosable && (
-              <button type="button" className={segment(pickingTemplate)} onClick={() => setPickingTemplate(true)}>
-                Template
-              </button>
-            )}
-            {!forTemplate && (
-              <button
-                type="button"
-                className={segment(importing && !pickingTemplate)}
-                onClick={() => {
-                  setPickingTemplate(false);
-                  if (!importing) changeSoftware({ kind: "import" });
-                }}
-              >
-                Import
-              </button>
-            )}
-          </div>
-          {pickingTemplate ? (
-            <ul aria-label="Templates" className="flex flex-col divide-y divide-line rounded-md border border-line">
-              {templates.data?.map((t) => (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    disabled={!ready(t)}
-                    onClick={() => navigate(newFrom(org, { kind: "template", id: t.id }))}
-                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-hover disabled:opacity-50 disabled:hover:bg-transparent"
-                  >
-                    <Picture name={t.name} url={t.current ? snapshotIcon(org, t.current.id) : undefined} size={32} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium">{t.name}</span>
-                      <span className="block truncate text-xs text-muted">{templateSummary(t) ?? "Saving"}</span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
           ) : (
-          <>
-          {importing && (
             <>
-              <input
-                ref={archiveInput}
-                type="file"
-                accept=".zip,.tar,.tgz,.gz"
-                className="hidden"
-                aria-label="Server archive"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (file) void pickArchive(file);
-                }}
-              />
-              {v.archive ? (
-                <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-                  <ArchiveIcon className="size-5 shrink-0 text-muted" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-medium">{v.archive.file.name}</p>
-                    <p className="truncate text-xs text-muted" data-testid="archive-summary">
-                      {[
-                        `${bytes(v.archive.found.size)} unpacked`,
-                        v.archive.found.world ? `world "${v.archive.found.world}"` : "no world",
-                        v.archive.found.plugins > 0 && count(v.archive.found.plugins, "plugin"),
-                        v.archive.found.mods > 0 && count(v.archive.found.mods, "mod"),
-                        v.archive.found.ops.length > 0 && count(v.archive.found.ops.length, "operator"),
-                        v.archive.found.whitelist.length > 0 && `${v.archive.found.whitelist.length} whitelisted`,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
+              <div role="group" aria-label="Start from" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
+                {starts.map(([id, label]) => {
+                  const on = picking ? id === picking : id === (importing ? "import" : "new");
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      aria-pressed={on}
+                      className={segment(on)}
+                      onClick={() => {
+                        if (id === "template" || id === "server" || id === "snapshot") return setPicking(id);
+                        setPicking(null);
+                        if (id === "import") {
+                          if (!importing) changeSoftware({ kind: "import" });
+                        } else if (importing) {
+                          reads.current++;
+                          setReading(false);
+                          changeSoftware({ kind: "game" });
+                        }
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {picking ? <StartPicker org={org} kind={picking} /> : importing && (
+              <>
+                <input
+                  ref={archiveInput}
+                  type="file"
+                  accept=".zip,.tar,.tgz,.gz"
+                  className="hidden"
+                  aria-label="Server archive"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void pickArchive(file);
+                  }}
+                />
+                {v.archive ? (
+                  <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                    <ArchiveIcon className="size-5 shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-medium">{v.archive.file.name}</p>
+                      <p className="truncate text-xs text-muted" data-testid="archive-summary">
+                        {[
+                          `${bytes(v.archive.found.size)} unpacked`,
+                          v.archive.found.world ? `world "${v.archive.found.world}"` : "no world",
+                          v.archive.found.plugins > 0 && count(v.archive.found.plugins, "plugin"),
+                          v.archive.found.mods > 0 && count(v.archive.found.mods, "mod"),
+                          v.archive.found.ops.length > 0 && count(v.archive.found.ops.length, "operator"),
+                          v.archive.found.whitelist.length > 0 && `${v.archive.found.whitelist.length} whitelisted`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    </div>
+                    <Button size="sm" disabled={reading} onClick={() => archiveInput.current?.click()}>
+                      Change
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled={reading} icon={<X className="size-4" />} aria-label="Remove the archive" onClick={() => setValues((was) => ({ ...was, archive: null, mods: [], uploads: [], unused: [], packs: [], packRequired: false, packPrompt: "" }))} />
                   </div>
-                  <Button size="sm" disabled={reading} onClick={() => archiveInput.current?.click()}>
-                    Change
-                  </Button>
-                  <Button size="sm" variant="ghost" disabled={reading} icon={<X className="size-4" />} aria-label="Remove the archive" onClick={() => setValues((was) => ({ ...was, archive: null, mods: [], uploads: [], unused: [], pack: null, packFile: null }))} />
-                </div>
-              ) : (
-                <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">
-                  <Button icon={<ArchiveIcon className="size-4" />} loading={reading} onClick={() => archiveInput.current?.click()}>
-                    Choose an archive
-                  </Button>
-                  <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz of the server's folder.</p>
-                </div>
-              )}
-              {found && !found.version && <p className="text-xs text-muted">Could not tell the game version. Pick the one it ran.</p>}
+                ) : (
+                  <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">
+                    <Button icon={<ArchiveIcon className="size-4" />} loading={reading} onClick={() => archiveInput.current?.click()}>
+                      Choose an archive
+                    </Button>
+                    <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz of the server's folder.</p>
+                  </div>
+                )}
+                {found && !found.version && <p className="text-xs text-muted">Could not tell the game version. Pick the one it ran.</p>}
+              </>
+            )}
             </>
+          )}
+          {source && v.kind === "game" && versionField}
+        </Section>
+      )}
+
+      {!source && !picking && (!importing || found) && (
+        <Section title="Software">
+          {!importing && (
+            <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
+              <button type="button" className={segment(v.kind === "game")} onClick={() => v.kind !== "game" && changeSoftware({ kind: "game" })}>
+                Game version
+              </button>
+              <button type="button" className={segment(v.kind === "modpack")} onClick={() => v.kind !== "modpack" && changeSoftware({ kind: "modpack" })}>
+                Modpack
+              </button>
+            </div>
           )}
           {v.kind === "game" || found ? (
             <>
@@ -1261,13 +1250,11 @@ export function ServerForm({
               />
             </div>
           )}
-          </>
-          )}
         </Section>
       )}
 
-      {/* Picking a template goes on to its own form: the rest is not filled in here. */}
-      <div className={pickingTemplate ? "hidden" : "contents"}>
+      {/* Picking what to start from goes on to a form filled in from it: the rest is not filled in here. */}
+      <div className={picking ? "hidden" : "contents"}>
       <Section title={forTemplate ? "Name" : "Name and picture"}>
         {!forTemplate && <PictureChange name={v.displayName || source?.name || ""} current={brought} value={v.picture} onChange={(change) => set("picture", change)} />}
         <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from it are called this." : undefined}>

@@ -376,7 +376,80 @@ test("picking the latest release for a copy already on it changes nothing", asyn
 test("the new-server page has the same sections in the same order", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new");
-  await expect(page.locator("form h2")).toHaveText(["Software", "Name and picture", "Content", "World", "Players", "Resources", "Network", "Backups", "Minecraft EULA"]);
+  await expect(page.locator("form h2")).toHaveText(["Starting point", "Software", "Name and picture", "Content", "World", "Players", "Resources", "Network", "Backups", "Minecraft EULA"]);
+});
+
+test("the new-server form starts from a server picked in it, and the start can be changed", async ({ page, as }) => {
+  await as("owner");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==", "base64");
+  await page.route("**/api/v1/orgs/friends/servers/survival/icon*", (route) => route.fulfill({ contentType: "image/png", body: png }));
+  await page.goto("/o/friends/new");
+  const start = page.getByRole("group", { name: "Start from" });
+  await expect(start.getByRole("button", { name: "New", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await start.getByRole("button", { name: "Server", exact: true }).click();
+  const list = page.getByRole("list", { name: "Servers" });
+  // The rest is filled in from the one picked.
+  await expect(page.getByLabel("Display name")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Software" })).toHaveCount(0);
+  // Narrowed by what is typed, in any case and order.
+  const search = page.getByLabel("Search servers");
+  await search.fill("zzz");
+  await expect(page.getByText("Nothing matches.")).toBeVisible();
+  await search.fill("PAPER surv");
+  await expect(list.getByRole("button")).toHaveCount(1);
+  const survival = list.getByRole("button", { name: /survival/ });
+  await expect(survival).toContainText("Paper 1.21.4");
+  await expect(survival.locator('img[src*="/servers/survival/icon"]')).toHaveCount(1);
+  await survival.click();
+  await expect(page).toHaveURL(/\/o\/friends\/new\?from=server:survival$/);
+  await expect(page.getByRole("heading", { name: "Duplicate survival" })).toBeVisible();
+  // Another start, picked from the same list.
+  await page.getByRole("button", { name: "Change", exact: true }).click();
+  await expect(page).toHaveURL(/\/o\/friends\/new\?start=server$/);
+  await expect(page.getByRole("list", { name: "Servers" })).toBeVisible();
+  await page.getByRole("group", { name: "Start from" }).getByRole("button", { name: "New", exact: true }).click();
+  await expect(page.getByRole("list", { name: "Servers" })).toHaveCount(0);
+  await expect(page.getByLabel("Display name")).toBeVisible();
+});
+
+test("the new-server form starts from a snapshot picked in it, its server first, deleted ones too", async ({ page, as }) => {
+  await as("owner");
+  const ago = (hours: number) => new Date(Date.now() - hours * 3600_000).toISOString();
+  const snap = (id: string, server: string, hours: number, trigger = "scheduled") => ({ id, time: ago(hours), server, trigger, version: "1.21.4", loader: "paper", size: 1 << 20, added: 0, files: 1 });
+  await page.route("**/api/v1/orgs/friends/snapshots", (route) =>
+    route.fulfill({
+      json: {
+        available: true,
+        operations: [],
+        snapshots: [snap("s1", "survival", 5), snap("g1", "gone", 2, "final"), snap("s2", "survival", 1, "manual"), snap("t1", "template-t1", 0, "template")],
+      },
+    }),
+  );
+  await page.goto("/o/friends/new");
+  await page.getByRole("group", { name: "Start from" }).getByRole("button", { name: "Snapshot", exact: true }).click();
+  // The servers first, the one with the newest snapshot at the top; a template's versions are not here.
+  const servers = page.getByRole("list", { name: "Servers with snapshots" }).getByRole("button");
+  await expect(servers).toHaveCount(2);
+  await expect(servers.nth(0)).toContainText("Survival");
+  await expect(servers.nth(0)).toContainText("survival · 2 snapshots · newest 1 hour ago");
+  await expect(servers.nth(1)).toContainText("deleted");
+  await expect(servers.nth(1)).toContainText("gone · 1 snapshot");
+  await servers.nth(0).click();
+  const rows = page.getByRole("list", { name: "Snapshots" }).getByRole("button");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("1 hour ago");
+  // Back to the servers, and on to another's.
+  await page.getByLabel("Search snapshots").fill("manual");
+  await expect(rows).toHaveCount(1);
+  await page.getByRole("button", { name: "All servers" }).click();
+  await page.getByLabel("Search servers").fill("deleted");
+  await expect(servers).toHaveCount(1);
+  await servers.first().click();
+  await expect(page.getByLabel("Search snapshots")).toHaveValue("");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("Before it was deleted");
+  await rows.first().click();
+  await expect(page).toHaveURL(/\/o\/friends\/new\?from=snapshot:g1$/);
 });
 
 test("a server that is not there cannot be copied", async ({ page, as }) => {

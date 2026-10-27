@@ -1,9 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, ApiError, type Server, type Template } from "../lib/api";
-import { displayName } from "../lib/format";
+import { describeSoftware, displayName } from "../lib/format";
+import { matches } from "../lib/search";
 import { keys } from "../lib/queries";
-import { Button, cx, Field, Input, Modal, Notice, Select, Textarea } from "./ui";
+import { List, ServerRow } from "./StartPicker";
+import { Button, cx, Field, Input, Modal, Notice, SearchBox, Select, Textarea } from "./ui";
 
 /**
  * Saves a server as a template: a new one, or the newest version of one
@@ -30,6 +32,7 @@ export function SaveTemplate({
 }) {
   const qc = useQueryClient();
   const [picked, setPicked] = useState(server?.name ?? "");
+  const [query, setQuery] = useState("");
   const from = server ?? servers.find((s) => s.name === picked);
   // A new one, or a template there is, by its ID.
   const [target, setTarget] = useState<string>(into?.id ?? "new");
@@ -48,6 +51,7 @@ export function SaveTemplate({
       setDescription("");
       setTarget(into?.id ?? "new");
       setPicked(server?.name ?? "");
+      setQuery("");
     }
   };
 
@@ -73,20 +77,21 @@ export function SaveTemplate({
     <Modal open={open} onOpenChange={close} title={into ? `Update ${into.name}` : "Save as template"}>
       <form className="flex flex-col gap-4" onSubmit={save}>
         {!server && (
-          <Field label="Server">
-            {(id) => (
-              <Select id={id} value={picked} onChange={(e) => setPicked(e.target.value)} required>
-                <option value="" disabled>
-                  Pick a server
-                </option>
-                {servers.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {displayName(s)}
-                  </option>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-[13px] font-medium text-fg">Server</p>
+            {servers.length === 0 ? (
+              <p className="text-xs text-muted">No servers yet.</p>
+            ) : (
+              <>
+              {servers.length > 5 && <SearchBox value={query} onChange={setQuery} label="Search servers" className="w-full" />}
+              <List label="Servers" className="max-h-64">
+                {servers.filter((s) => s.name === picked || matches(query, s.name, displayName(s), describeSoftware(s))).map((s) => (
+                  <ServerRow key={s.name} server={s} selected={s.name === picked} onClick={() => setPicked(s.name)} />
                 ))}
-              </Select>
+              </List>
+              </>
             )}
-          </Field>
+          </div>
         )}
         {!into && templates.length > 0 && (
           <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5" role="group" aria-label="Save as">

@@ -92,7 +92,7 @@ test("a template is edited, updated from a server, gone back to an earlier versi
 
   await menu("Update from a server");
   dialog = page.getByRole("dialog", { name: "Update Lobby" });
-  await dialog.getByLabel("Server").selectOption("creative");
+  await dialog.getByRole("list", { name: "Servers" }).getByRole("button", { name: /creative/ }).click();
   await expect(dialog).toContainText("becomes the newest version of Lobby");
   await dialog.getByRole("button", { name: "Update" }).click();
   await expect(dialog).toHaveCount(0);
@@ -133,6 +133,30 @@ test("with no templates the page says how to make one", async ({ page, as }) => 
   await expect(page.getByText("No templates yet")).toBeVisible();
   await expect(page.getByRole("button", { name: "Save a server" })).toBeEnabled();
   await expect(page.getByRole("link", { name: "New template" })).toBeVisible();
+});
+
+test("saving a server as a template picks it from the servers, each with its picture", async ({ page, as }) => {
+  await as("owner");
+  const calls: unknown[] = [];
+  await page.route(/\/api\/v1\/orgs\/friends\/templates$/, (route) => {
+    if (route.request().method() !== "POST") return route.fulfill({ json: [] });
+    calls.push(route.request().postDataJSON());
+    return route.fulfill({ status: 202, json: {} });
+  });
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==", "base64");
+  await page.route("**/api/v1/orgs/friends/servers/survival/icon*", (route) => route.fulfill({ contentType: "image/png", body: png }));
+  await page.goto("/o/friends/templates");
+  await page.getByRole("button", { name: "Save a server" }).click();
+  const dialog = page.getByRole("dialog", { name: "Save as template" });
+  const survival = dialog.getByRole("list", { name: "Servers" }).getByRole("button", { name: /survival/ });
+  await expect(survival).toContainText("Paper 1.21.4");
+  await expect(survival.locator('img[src*="/servers/survival/icon"]')).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await survival.click();
+  await expect(survival).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(calls).toEqual([{ name: "Survival", description: "", server: "survival" }]);
 });
 
 test("the form from a template shows the version used now, after another was picked", async ({ page, as }) => {
@@ -254,9 +278,12 @@ test("the new-server form starts from a template picked in it", async ({ page, a
   await as("owner");
   await lobby(page);
   await page.goto("/o/friends/new");
-  await page.getByRole("button", { name: "Template", exact: true }).click();
+  const start = page.getByRole("group", { name: "Start from" });
+  await start.getByRole("button", { name: "Template", exact: true }).click();
   const list = page.getByRole("list", { name: "Templates" });
   await expect(list).toContainText("Paper 1.21.4 · 300 MB");
+  await page.getByLabel("Search templates").fill("lobby");
+  await expect(list.getByRole("button")).toHaveCount(1);
   // The rest is filled in from the one picked.
   await expect(page.getByLabel("Display name")).toBeHidden();
   await list.getByRole("button", { name: /Lobby/ }).click();
@@ -264,18 +291,21 @@ test("the new-server form starts from a template picked in it", async ({ page, a
   await expect(page.getByLabel("Display name")).toHaveValue("Lobby");
   // Back to the form as it was, and on to another way to start.
   await page.goBack();
-  await page.getByRole("button", { name: "Template", exact: true }).click();
-  await page.getByRole("button", { name: "Game version" }).click();
+  await start.getByRole("button", { name: "Template", exact: true }).click();
+  await start.getByRole("button", { name: "New", exact: true }).click();
   await expect(page.getByRole("list", { name: "Templates" })).toHaveCount(0);
   await expect(page.getByLabel("Display name")).toBeVisible();
 });
 
-test("the new-server form offers no templates where there are none", async ({ page, as, org }) => {
+test("the new-server form says where templates are made when there are none", async ({ page, as, org }) => {
   const slug = await org([]);
   await as("owner");
   await page.goto(`/o/${slug}/new`);
-  await expect(page.getByRole("button", { name: "Import" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Template", exact: true })).toHaveCount(0);
+  await page.getByRole("group", { name: "Start from" }).getByRole("button", { name: "Template", exact: true }).click();
+  const none = page.getByText("No templates yet.");
+  await expect(none).toBeVisible();
+  await none.getByRole("link", { name: "Templates" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
 });
 
 test("a pack joined from several shows each of them in the form, the top one first", async ({ page, as }) => {
