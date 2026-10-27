@@ -1106,6 +1106,16 @@ call -X DELETE "$API/orgs/$ORG/servers/from-copy?snapshot=false" >/dev/null
 for t in "$COPY" "$FROMSNAP"; do call -X DELETE "$API/orgs/$ORG/templates/$t" >/dev/null; done
 # Not part of the server's history that later steps count.
 expect "the snapshot a template was made from is deleted on its own" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$PROBE_SNAP")" 204
+# Made with changes of its own, laid over its version's settings as a copy's
+# request would be; a server made from it has them, under what it is given.
+changed=$(call -d '{"name":"E2E Changed","server":"probe","changes":{"properties":{"motd":"From the template","difficulty":"peaceful"},"expose":{"type":"Router","hostname":"not-kept.test"}}}' "$API/orgs/$ORG/templates?wait=true")
+CHANGED=$(echo "$changed" | field "d['id']") || fail "no template was made with changes: $changed"
+expect "a template made with changes has them" "$(call "$API/orgs/$ORG/templates/$CHANGED" | field "(d['spec']['properties']['motd'], d['spec']['properties']['difficulty'], d['spec']['expose'].get('hostname') != 'not-kept.test')")" "('From the template', 'peaceful', True)"
+call -X PATCH -d '{"changes":{"properties":{"pvp":"false"}}}' "$API/orgs/$ORG/templates/$CHANGED" >/dev/null
+made=$(call -d "{\"name\":\"from-changed\",\"fromTemplate\":\"$CHANGED\",\"spec\":{\"state\":\"Stopped\",\"properties\":{\"difficulty\":\"hard\"},\"expose\":{\"hostname\":\"from-changed.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
+expect "a server made from it has its changes, under its own" "$(echo "$made" | field "(d['spec']['properties'].get('motd'), d['spec']['properties'].get('pvp'), d['spec']['properties'].get('difficulty'))")" "('From the template', 'false', 'hard')"
+call -X DELETE "$API/orgs/$ORG/servers/from-changed?snapshot=false" >/dev/null
+call -X DELETE "$API/orgs/$ORG/templates/$CHANGED" >/dev/null
 expect "and is gone" "$(call "$API/orgs/$ORG/templates" | field 'len(d)')" 0
 # One of settings alone has no server behind it, until one is saved into it.
 set=$(call -d '{"name":"E2E Settings","spec":{"loader":"fabric","version":"LATEST","resources":{"memory":"2Gi"},"storage":{"size":"2Gi"},"expose":{"type":"Router","hostname":"not-kept.test"}}}' "$API/orgs/$ORG/templates")

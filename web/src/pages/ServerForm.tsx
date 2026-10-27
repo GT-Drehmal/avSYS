@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive as ArchiveIcon, ChevronLeft, Undo2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit, packTitle, type PickKind, type Software } from "../components/Content";
 import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
@@ -402,6 +402,7 @@ export function ServerForm({
   source,
   preset,
   templating,
+  lead,
   pick,
   taken,
   history,
@@ -413,6 +414,8 @@ export function ServerForm({
   pick?: StartKind;
   /** Making a template of settings alone, or changing the one given. */
   templating?: { template: Template | null };
+  /** Put first, before the form's own sections: what a new template starts from. */
+  lead?: ReactNode;
   taken: Set<string>;
   history: Set<string>;
 }) {
@@ -438,9 +441,12 @@ export function ServerForm({
   const editing = templating?.template;
   const [start] = useState(() =>
     source
-      ? valuesOf(source, startingName, copying && !templated, leastStorage)
+      ? // A template made from another is called its copy, until named.
+        valuesOf(source, startingName, forTemplate ? templated && !editing : copying && !templated, leastStorage)
       : preset
-        ? presetValues(preset, freeName(slugify(preset.name) || "server", new Set([...taken, ...history])))
+        ? forTemplate
+          ? { ...presetValues(preset, null), displayName: `${preset.name} copy` }
+          : presetValues(preset, freeName(slugify(preset.name) || "server", new Set([...taken, ...history])))
         : editing?.spec
           ? presetValues({ id: editing.id, name: editing.name, spec: editing.spec }, null)
           : fresh,
@@ -454,7 +460,7 @@ export function ServerForm({
   // A world of one's own goes with a new server of a game version.
   // Made from another's files, it keeps their world unless it is given a
   // new one or one of its own; one brought back keeps its own.
-  const worldChoosable = !!source && copying;
+  const worldChoosable = !!source && copying && !forTemplate;
   const [world, setWorld] = useState<"kept" | "new" | "mine">(worldChoosable ? "kept" : "new");
   const usingMine = world === "mine";
   const mine = (source ? worldChoosable : v.kind === "game") && usingMine ? v.myWorld : null;
@@ -927,11 +933,20 @@ export function ServerForm({
   const saveTemplate = async () => {
     setBusy(true);
     setError(null);
-    const spec = newRequest();
-    delete spec.eula;
-    delete spec.state;
-    delete spec.displayName;
-    const body = { name: v.displayName.trim(), description: description.trim(), spec };
+    const words = { name: v.displayName.trim(), description: description.trim() };
+    let body: object;
+    if (source) {
+      // Its files are its source's, and what was changed of them goes with
+      // them, as a copy's request would ask for it.
+      const from = source.origin.kind === "server" ? { server: source.origin.name } : source.origin.kind === "template" ? { template: source.origin.id } : { snapshot: source.origin.id };
+      body = { ...words, changes: copyRequest(), ...(editing ? {} : from) };
+    } else {
+      const spec = newRequest();
+      delete spec.eula;
+      delete spec.state;
+      delete spec.displayName;
+      body = { ...words, spec };
+    }
     try {
       if (editing) await api.patch(`/orgs/${org}/templates/${editing.id}`, body);
       else await api.post(`/orgs/${org}/templates`, body);
@@ -1106,8 +1121,9 @@ export function ServerForm({
                   : `Bring back ${source.name}`
         }
       />
+      {lead}
 
-      {!forTemplate && (
+      {(!forTemplate || source || preset) && (
         <Section title="Starting point">
           {source || preset ? (
             <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
@@ -1123,9 +1139,11 @@ export function ServerForm({
                     .join(" · ")}
                 </p>
               </div>
-              <Button size="sm" onClick={() => navigate(`/o/${org}/new?${qs({ start: source?.origin.kind ?? "template" })}`)}>
-                Change
-              </Button>
+              {!editing && (
+                <Button size="sm" onClick={() => navigate(`/o/${org}/${forTemplate ? "templates/" : ""}new?${qs({ start: source?.origin.kind ?? "template" })}`)}>
+                  Change
+                </Button>
+              )}
             </div>
           ) : (
             <>

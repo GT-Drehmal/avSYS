@@ -11,7 +11,7 @@ import { ServerForm, slugify, type Source } from "./ServerForm";
  * Making a server out of one that exists, a snapshot or a template: the server form,
  * filled in with what the original has, once that has been read.
  */
-export function NewFromSource({ org, origin }: { org: string; origin: Origin }) {
+export function NewFromSource({ org, origin, templating }: { org: string; origin: Origin; templating?: { template: Template | null } }) {
   const servers = useServers(org);
   // Names that snapshots are under go with them: a new server cannot take one.
   const snapshots = useOrgSnapshots(org);
@@ -32,9 +32,9 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
     refetchOnMount: "always",
   });
   const back = (
-    <Link to={`/o/${org}`} className="mb-3 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
+    <Link to={templating ? `/o/${org}/templates` : `/o/${org}`} className="mb-3 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
       <ChevronLeft className="size-3.5" />
-      Servers
+      {templating ? "Templates" : "Servers"}
     </Link>
   );
   if (servers.isPending || snapshots.isPending || (origin.kind === "snapshot" && snapshot.isPending) || (origin.kind === "template" && template.isFetching)) return <Loading />;
@@ -44,7 +44,7 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
     return (
       <>
         {back}
-        <PageHeader title="New server" />
+        <PageHeader title={templating ? "New template" : "New server"} />
         <Notice tone="danger">{servers.error instanceof ApiError ? servers.error.message : "Could not load servers."}</Notice>
       </>
     );
@@ -56,7 +56,7 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
   // A template of settings alone has no files: the server is a new one, with them.
   const settings = origin.kind === "template" ? template.data : undefined;
   if (settings?.settingsOnly && settings.spec) {
-    return <ServerForm key={`settings:${settings.id}`} org={org} preset={{ id: settings.id, name: settings.name, spec: settings.spec }} taken={taken} history={history} />;
+    return <ServerForm key={`settings:${settings.id}`} org={org} preset={{ id: settings.id, name: settings.name, spec: settings.spec }} templating={templating} taken={taken} history={history} />;
   }
   const live = origin.kind === "server" ? servers.data?.find((s) => s.name === origin.name) : undefined;
   // A template's version, named as the template is: the server made from it
@@ -78,7 +78,7 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
     return (
       <>
         {back}
-        <PageHeader title="New server" />
+        <PageHeader title={templating ? "New template" : "New server"} />
         <Notice tone="danger">
           {origin.kind === "server"
             ? `There is no server named ${origin.name} to copy.`
@@ -95,5 +95,5 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
       </>
     );
   }
-  return <ServerForm key={`${origin.kind}:${source.name}`} org={org} source={source} taken={taken} history={history} />;
+  return <ServerForm key={`${origin.kind}:${source.name}`} org={org} source={source} templating={templating} taken={taken} history={history} />;
 }

@@ -32,14 +32,18 @@ type Template struct {
 	// Settings are, for a template of settings alone, what a server made
 	// from it is, as JSON; "" for one saved from a server.
 	Settings string
+	// Changes are, for one saved from a server, what servers made from it
+	// have other than its version does, as a copy's request asks for it:
+	// JSON, "" for none.
+	Changes string
 }
 
-const templateColumns = `id, org_id, name, description, created_by, created_at, updated_at, current, settings`
+const templateColumns = `id, org_id, name, description, created_by, created_at, updated_at, current, settings, changes`
 
 func scanTemplate(row interface{ Scan(...any) error }) (*Template, error) {
 	var t Template
 	var created, updated int64
-	if err := row.Scan(&t.ID, &t.OrgID, &t.Name, &t.Description, &t.CreatedBy, &created, &updated, &t.Current, &t.Settings); err != nil {
+	if err := row.Scan(&t.ID, &t.OrgID, &t.Name, &t.Description, &t.CreatedBy, &created, &updated, &t.Current, &t.Settings, &t.Changes); err != nil {
 		return nil, err
 	}
 	t.CreatedAt, t.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
@@ -51,8 +55,8 @@ func (s *Store) CreateTemplate(ctx context.Context, t *Template) error {
 	t.ID = NewID(8)
 	t.CreatedAt = time.Now().Truncate(time.Second)
 	t.UpdatedAt = t.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO templates (`+templateColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.OrgID, t.Name, t.Description, t.CreatedBy, t.CreatedAt.Unix(), t.UpdatedAt.Unix(), t.Current, t.Settings)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO templates (`+templateColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.OrgID, t.Name, t.Description, t.CreatedBy, t.CreatedAt.Unix(), t.UpdatedAt.Unix(), t.Current, t.Settings, t.Changes)
 	return nameTaken(err)
 }
 
@@ -83,12 +87,12 @@ func (s *Store) Template(ctx context.Context, orgID, id string) (*Template, erro
 	return t, err
 }
 
-// UpdateTemplate saves a template's name, description, current version and
-// settings, and says it was changed now.
+// UpdateTemplate saves a template's name, description, current version,
+// settings and changes, and says it was changed now.
 func (s *Store) UpdateTemplate(ctx context.Context, t *Template) error {
 	t.UpdatedAt = time.Now().Truncate(time.Second)
-	res, err := s.db.ExecContext(ctx, `UPDATE templates SET name = ?, description = ?, current = ?, settings = ?, updated_at = ? WHERE org_id = ? AND id = ?`,
-		t.Name, t.Description, t.Current, t.Settings, t.UpdatedAt.Unix(), t.OrgID, t.ID)
+	res, err := s.db.ExecContext(ctx, `UPDATE templates SET name = ?, description = ?, current = ?, settings = ?, changes = ?, updated_at = ? WHERE org_id = ? AND id = ?`,
+		t.Name, t.Description, t.Current, t.Settings, t.Changes, t.UpdatedAt.Unix(), t.OrgID, t.ID)
 	if err != nil {
 		return nameTaken(err)
 	}
@@ -98,11 +102,12 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *Template) error {
 	return nil
 }
 
-// SetTemplateCurrent says which version servers are made from, leaving the
-// rest of the template as it is now. A template of settings alone given a
-// version is made from its versions from then on: its settings are dropped.
-func (s *Store) SetTemplateCurrent(ctx context.Context, orgID, id, current string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE templates SET current = ?, settings = '', updated_at = ? WHERE org_id = ? AND id = ?`, current, time.Now().Unix(), orgID, id)
+// SetTemplateCurrent says which version servers are made from, with the
+// changes made to it, leaving the rest of the template as it is now. A
+// template of settings alone given a version is made from its versions from
+// then on: its settings are dropped.
+func (s *Store) SetTemplateCurrent(ctx context.Context, orgID, id, current, changes string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE templates SET current = ?, settings = '', changes = ?, updated_at = ? WHERE org_id = ? AND id = ?`, current, changes, time.Now().Unix(), orgID, id)
 	if err != nil {
 		return err
 	}

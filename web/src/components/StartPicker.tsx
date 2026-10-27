@@ -1,7 +1,7 @@
 import { ChevronLeft } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { ApiError, serverIcon, snapshotIcon, type Server, type Snapshot } from "../lib/api";
+import { ApiError, serverIcon, snapshotIcon, type Server, type Snapshot, type Template } from "../lib/api";
 import { ago, bytes, describeSoftware, displayName } from "../lib/format";
 import { newFrom } from "../lib/origin";
 import { useOrgSnapshots, useServers, useTemplates } from "../lib/queries";
@@ -16,13 +16,14 @@ export type StartKind = "template" | "server" | "snapshot";
 
 /** The templates, servers or snapshots a new server can be made from; picking one opens the form filled in from it. */
 export function StartPicker({ org, kind }: { org: string; kind: StartKind }) {
-  if (kind === "template") return <Templates org={org} />;
-  if (kind === "server") return <Servers org={org} />;
-  return <SnapshotsToStartFrom org={org} />;
+  const navigate = useNavigate();
+  if (kind === "template") return <TemplatePicker org={org} onPick={(t) => navigate(newFrom(org, { kind: "template", id: t.id }))} />;
+  if (kind === "server") return <ServerPicker org={org} onPick={(s) => navigate(newFrom(org, { kind: "server", name: s.name }))} />;
+  return <SnapshotPicker org={org} onPick={(s) => navigate(newFrom(org, { kind: "snapshot", id: s.id }))} />;
 }
 
-function Templates({ org }: { org: string }) {
-  const navigate = useNavigate();
+/** The organization's templates to pick one of, but those still being saved. */
+export function TemplatePicker({ org, onPick, picked }: { org: string; onPick: (t: Template) => void; picked?: string }) {
   const templates = useTemplates(org);
   const [query, setQuery] = useState("");
   if (templates.isPending) return <Loading />;
@@ -45,7 +46,8 @@ function Templates({ org }: { org: string }) {
         <Row
           key={t.id}
           disabled={!ready(t)}
-          onClick={() => navigate(newFrom(org, { kind: "template", id: t.id }))}
+          selected={t.id === picked}
+          onClick={() => onPick(t)}
           picture={<Picture name={t.name} url={t.current ? snapshotIcon(org, t.current.id) : undefined} size={32} />}
           title={t.name}
           sub={templateSummary(t) ?? "Saving"}
@@ -61,8 +63,8 @@ export function ServerRow({ server, selected, onClick }: { server: Server; selec
   return <Row onClick={onClick} selected={selected} picture={<Picture name={displayName(server)} url={serverIcon(server)} size={32} />} title={displayName(server)} sub={[server.name, describeSoftware(server)].join(" · ")} />;
 }
 
-function Servers({ org }: { org: string }) {
-  const navigate = useNavigate();
+/** The organization's servers to pick one of. */
+export function ServerPicker({ org, onPick, picked }: { org: string; onPick: (s: Server) => void; picked?: string }) {
   const servers = useServers(org);
   const [query, setQuery] = useState("");
   if (servers.isPending) return <Loading />;
@@ -73,16 +75,11 @@ function Servers({ org }: { org: string }) {
     <Searched query={query} onQuery={setQuery} label="Search servers" none={shown.length === 0}>
       <List label="Servers">
         {shown.map((s) => (
-          <ServerRow key={s.name} server={s} onClick={() => navigate(newFrom(org, { kind: "server", name: s.name }))} />
+          <ServerRow key={s.name} server={s} selected={s.name === picked} onClick={() => onPick(s)} />
         ))}
       </List>
     </Searched>
   );
-}
-
-function SnapshotsToStartFrom({ org }: { org: string }) {
-  const navigate = useNavigate();
-  return <SnapshotPicker org={org} onPick={(s) => navigate(newFrom(org, { kind: "snapshot", id: s.id }))} />;
 }
 
 /**

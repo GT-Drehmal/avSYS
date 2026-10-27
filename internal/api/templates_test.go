@@ -247,12 +247,27 @@ func TestTemplateFromASnapshot(t *testing.T) {
 			t.Fatalf("restic %v: %v: %s", args, err, out)
 		}
 	}
-	files := t.TempDir()
-	if err := os.WriteFile(filepath.Join(files, "level.dat"), []byte("a world"), 0o644); err != nil {
-		t.Fatal(err)
+	// A server's files as a snapshot has them, under /data with the record
+	// of the server in them.
+	root := t.TempDir()
+	record := `{"format":1,"org":"alpha","server":"survival","spec":{"eula":true,"loader":"paper","version":"1.21.4",` +
+		`"resources":{"memory":"4Gi"},"storage":{"size":"10Gi"},"properties":{"difficulty":"hard","motd":"hi"},` +
+		`"expose":{"type":"Router","hostname":"survival.alpha.test"}}}`
+	for path, content := range map[string]string{"data/level.dat": "a world", "data/.avsys/snapshot.json": record} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	restic("init")
-	restic("backup", files, "--host", "survival", "--tag", "avsys", "--tag", "trigger=scheduled", "--tag", "version=1.21.4", "--tag", "loader=paper")
+	backup := exec.Command("restic", "--repo", filepath.Join(dir, "alpha"), "--password-file", filepath.Join(dir, "alpha.key"),
+		"backup", "data", "--host", "survival", "--tag", "avsys", "--tag", "trigger=scheduled", "--tag", "version=1.21.4", "--tag", "loader=paper")
+	backup.Dir = root
+	if out, err := backup.CombinedOutput(); err != nil {
+		t.Fatalf("backup: %v: %s", err, out)
+	}
 	list, err := p.srv.Backups.List(t.Context(), "alpha")
 	if err != nil || len(list) != 1 {
 		t.Fatalf("snapshots: %v %v", list, err)
@@ -297,6 +312,81 @@ func TestTemplateFromASnapshot(t *testing.T) {
 	}
 	if code, all := callList(t, p, "admin", "/orgs/alpha/templates"); code != http.StatusOK || len(all) != 2 {
 		t.Errorf("templates: %d %v", code, all)
+	}
+
+	// Made with changes: a server made from it has them over its version's
+	// settings, but for what is each server's own.
+	spec := func(id string) map[string]any {
+		t.Helper()
+		code, got := call("admin", "GET", "/orgs/alpha/templates/"+id, "")
+		if code != http.StatusOK {
+			t.Fatalf("get: %d %v", code, got)
+		}
+		return got["spec"].(map[string]any)
+	}
+	code, changed := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Peaceful","snapshot":"`+src+`","changes":`+
+		`{"displayName":"Not kept","resources":{"memory":"8Gi"},"properties":{"difficulty":"peaceful"},"expose":{"type":"Router","hostname":"not-kept.test"}}}`)
+	if code != http.StatusCreated {
+		t.Fatalf("made with changes: %d %v", code, changed)
+	}
+	peaceful := changed["id"].(string)
+	got := spec(peaceful)
+	if got["resources"].(map[string]any)["memory"] != "8Gi" || got["properties"].(map[string]any)["difficulty"] != "peaceful" || got["properties"].(map[string]any)["motd"] != "hi" {
+		t.Errorf("with its changes: %v", got)
+	}
+	if got["displayName"] == "Not kept" || got["expose"].(map[string]any)["hostname"] == "not-kept.test" {
+		t.Errorf("a server's own kept: %v", got)
+	}
+	// Changed again, over what it had.
+	if code, out := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"properties":{"pvp":"false"}}}`); code != http.StatusOK {
+		t.Fatalf("changed again: %d %v", code, out)
+	}
+	if props := spec(peaceful)["properties"].(map[string]any); props["difficulty"] != "peaceful" || props["pvp"] != "false" {
+		t.Errorf("changed again: %v", props)
+	}
+	// Duplicated with changes of its own, over the other's.
+	code, again2 := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Peaceful big","template":"`+peaceful+`","changes":{"resources":{"memory":"6Gi"}}}`)
+	if code != http.StatusCreated {
+		t.Fatalf("duplicated with changes: %d %v", code, again2)
+	}
+	if got := spec(again2["id"].(string)); got["resources"].(map[string]any)["memory"] != "6Gi" || got["properties"].(map[string]any)["pvp"] != "false" {
+		t.Errorf("duplicated with changes: %v", got)
+	}
+	// Changes that would make no server are refused.
+	if code, _ := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"resources":{"memory":"1Mi"}}}`); code != http.StatusBadRequest {
+		t.Errorf("too little memory: %d", code)
+	}
+	if code, _ := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Alone","changes":{"resources":{"memory":"8Gi"}}}`); code != http.StatusBadRequest {
+		t.Errorf("changes to nothing: %d", code)
+	}
+	// A new version is as it was saved.
+	if code, out := call("admin", "POST", "/orgs/alpha/templates/"+peaceful+"/versions", `{"snapshot":"`+src+`"}`); code != http.StatusCreated {
+		t.Fatalf("new version: %d %v", code, out)
+	}
+	if got := spec(peaceful); got["resources"].(map[string]any)["memory"] != "4Gi" || got["properties"].(map[string]any)["difficulty"] != "hard" {
+		t.Errorf("a new version kept the changes: %v", got)
+	}
+}
+
+// Changes laid over others: what the newer names replaces the older's, but
+// game settings and launch flags are added to them one by one.
+func TestLayered(t *testing.T) {
+	got, err := layered(
+		json.RawMessage(`{"version":"1.21.4","properties":{"difficulty":"hard","pvp":"false"},"jvm":{"aikarFlags":true},"mods":[{"project":"a"}]}`),
+		json.RawMessage(`{"properties":{"difficulty":null,"motd":"hi"},"jvm":{"extraFlags":"-Xss1m"},"mods":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"jvm":{"aikarFlags":true,"extraFlags":"-Xss1m"},"mods":[],"properties":{"difficulty":null,"motd":"hi","pvp":"false"},"version":"1.21.4"}`
+	if string(got) != want {
+		t.Errorf("layered:\n%s\nwant\n%s", got, want)
+	}
+	if got, err := layered(nil, nil); err != nil || got != nil {
+		t.Errorf("nothing: %s %v", got, err)
+	}
+	if got, err := layered(nil, json.RawMessage(`{"version":"1.21.5"}`)); err != nil || string(got) != `{"version":"1.21.5"}` {
+		t.Errorf("only newer: %s %v", got, err)
 	}
 }
 

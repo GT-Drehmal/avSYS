@@ -1,14 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, History, MoreHorizontal, Pencil, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Copy, History, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Picture } from "../components/Picture";
 import { SaveTemplate } from "../components/SaveTemplate";
 import { useOrg } from "../components/Shell";
 import { software } from "../components/Snapshots";
-import { Button, Chip, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox, Spinner, Textarea } from "../components/ui";
+import { Button, Chip, Confirm, cx, Empty, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox, Spinner } from "../components/ui";
 import { matches, useSearch } from "../lib/search";
-import { api, ApiError, atLeast, snapshotIcon, type Template } from "../lib/api";
+import { api, ApiError, atLeast, qs, snapshotIcon, type Template } from "../lib/api";
 import { ago, bytes } from "../lib/format";
 import { newFrom } from "../lib/origin";
 import { keys, useMeta, useServers, useTemplates } from "../lib/queries";
@@ -23,12 +23,9 @@ export function Templates() {
   const servers = useServers(org);
   const navigate = useNavigate();
   const canAdmin = !!membership && atLeast(membership.role, "admin");
-  const [saving, setSaving] = useState(false);
   const [updating, setUpdating] = useState<Template | null>(null);
-  const [editing, setEditing] = useState<Template | null>(null);
   const [versions, setVersions] = useState<Template | null>(null);
   const [deleting, setDeleting] = useState<Template | null>(null);
-  const [copying, setCopying] = useState<Template | null>(null);
   const [query, setQuery] = useSearch();
 
   const header = (
@@ -37,17 +34,10 @@ export function Templates() {
       description="Servers kept to make others like them."
       actions={
         canAdmin && (
-          <>
-            {meta?.snapshots && (
-              <Button icon={<Save className="size-3.5" />} onClick={() => setSaving(true)} disabled={!servers.data}>
-                Save a server or snapshot
-              </Button>
-            )}
-            <Link to="new" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-medium text-accent-ink hover:bg-accent-strong">
-              <Plus className="size-4" />
-              New template
-            </Link>
-          </>
+          <Link to="new" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-medium text-accent-ink hover:bg-accent-strong">
+            <Plus className="size-4" />
+            New template
+          </Link>
         )
       }
     />
@@ -71,7 +61,7 @@ export function Templates() {
       {header}
       {meta && !meta.snapshots && <Notice>Saving a server as a template needs snapshots, which are not set up on this panel.</Notice>}
       {list.length === 0 ? (
-        <Empty title="No templates yet">Make one from settings, or save a server as one.</Empty>
+        <Empty title="No templates yet">Make one from settings, a server or a snapshot.</Empty>
       ) : (
         <>
         <SearchBox value={query} onChange={setQuery} label="Search templates" />
@@ -106,7 +96,7 @@ export function Templates() {
                       <Button size="sm" variant="ghost" icon={<MoreHorizontal className="size-4" />} aria-label={`Actions for ${t.name}`} />
                     </MenuTrigger>
                     <MenuContent>
-                      <MenuItem icon={<Pencil />} onSelect={() => (t.settingsOnly ? navigate(`/o/${org}/templates/${t.id}/edit`) : setEditing(t))}>
+                      <MenuItem icon={<Pencil />} disabled={!ready(t)} onSelect={() => navigate(`/o/${org}/templates/${t.id}/edit`)}>
                         Edit
                       </MenuItem>
                       {meta?.snapshots && (
@@ -115,7 +105,7 @@ export function Templates() {
                         </MenuItem>
                       )}
                       {(t.settingsOnly || meta?.snapshots) && (
-                        <MenuItem icon={<Copy />} disabled={!ready(t)} onSelect={() => setCopying(t)}>
+                        <MenuItem icon={<Copy />} disabled={!ready(t)} onSelect={() => navigate(`/o/${org}/templates/new?${qs({ from: `template:${t.id}` })}`)}>
                           Duplicate
                         </MenuItem>
                       )}
@@ -138,105 +128,13 @@ export function Templates() {
         </>
       )}
 
-      {servers.data && (
-        <>
-          <SaveTemplate key="new" org={org} open={saving} onOpenChange={setSaving} servers={servers.data} templates={list} />
-          {updating && <SaveTemplate key={updating.id} org={org} open onOpenChange={(o) => !o && setUpdating(null)} servers={servers.data} templates={list} into={updating} />}
-        </>
-      )}
-      {editing && <EditTemplate org={org} template={editing} onClose={() => setEditing(null)} />}
-      {copying && <DuplicateTemplate org={org} template={copying} onClose={() => setCopying(null)} />}
+      {updating && <SaveTemplate key={updating.id} org={org} open onOpenChange={(o) => !o && setUpdating(null)} servers={servers.data} templates={list} into={updating} />}
       {latest(versions) && <Versions org={org} template={latest(versions)!} onClose={() => setVersions(null)} />}
       <DeleteTemplate org={org} template={deleting} onClose={() => setDeleting(null)} />
     </div>
   );
 }
 
-/**
- * A new template like one there is: with its settings, or with the version
- * of it servers are made from as its first, which is not copied file by file.
- */
-function DuplicateTemplate({ org, template, onClose }: { org: string; template: Template; onClose: () => void }) {
-  const qc = useQueryClient();
-  const [name, setName] = useState(`${template.name} copy`.slice(0, 60));
-  const [description, setDescription] = useState(template.description);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <Modal open onOpenChange={(o) => !o && !busy && onClose()} title={`Duplicate ${template.name}`}>
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError(null);
-          try {
-            const from = template.settingsOnly ? { spec: template.spec } : { snapshot: template.current?.id };
-            await api.post(`/orgs/${org}/templates`, { name, description, ...from });
-            await qc.invalidateQueries({ queryKey: keys.templates(org) });
-            onClose();
-          } catch (err) {
-            setBusy(false);
-            setError(err instanceof ApiError ? err.message : "Could not duplicate it.");
-          }
-        }}
-      >
-        <Field label="Name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} />}</Field>
-        <Field label="Description">{(id) => <Textarea id={id} value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={500} />}</Field>
-        <p className="text-[13px] text-muted">{template.settingsOnly ? "Its settings are copied." : "The version servers are made from is copied, world and all. The copy has no other versions."}</p>
-        {error && <Notice tone="danger">{error}</Notice>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" loading={busy}>
-            Duplicate
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function EditTemplate({ org, template, onClose }: { org: string; template: Template; onClose: () => void }) {
-  const qc = useQueryClient();
-  const [name, setName] = useState(template.name);
-  const [description, setDescription] = useState(template.description);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <Modal open onOpenChange={(o) => !o && !busy && onClose()} title={`Edit ${template.name}`}>
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError(null);
-          try {
-            await api.patch(`/orgs/${org}/templates/${template.id}`, { name, description });
-            await qc.invalidateQueries({ queryKey: keys.templates(org) });
-            onClose();
-          } catch (err) {
-            setBusy(false);
-            setError(err instanceof ApiError ? err.message : "Could not save.");
-          }
-        }}
-      >
-        <Field label="Name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} />}</Field>
-        <Field label="Description">{(id) => <Textarea id={id} value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={500} />}</Field>
-        {error && <Notice tone="danger">{error}</Notice>}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary" loading={busy}>
-            Save
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-/** A template's versions, newest first: which one servers are made from, and the others to go back to. */
 function Versions({ org, template, onClose }: { org: string; template: Template; onClose: () => void }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
