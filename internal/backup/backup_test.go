@@ -172,7 +172,8 @@ func TestSnapshotAndRestoreThroughAWorkspace(t *testing.T) {
 	sh(t, ws, `mkdir -p /data/world /data/mods /data/.workspace /data/.cache /data/.avsys/import &&
 		echo one > /data/world/level.dat && echo jar > /data/mods/a.jar &&
 		echo history > /data/.workspace/.bash_history && echo cached > /data/.cache/x &&
-		echo archive > /data/.avsys/import.archive && echo half > /data/.avsys/import/x`)
+		echo archive > /data/.avsys/import.archive && echo half > /data/.avsys/import/x &&
+		echo parts > /data/.avsys/import.upload && echo id > /data/.avsys/import.upload.id`)
 
 	if list, err := m.List(ctx, "alpha"); err != nil || len(list) != 0 {
 		t.Fatalf("an organization with no repository: %v, %v", list, err)
@@ -236,7 +237,8 @@ func TestSnapshotAndRestoreThroughAWorkspace(t *testing.T) {
 	state := sh(t, ws, `cat /data/world/level.dat; cat /data/mods/a.jar;
 		test -e /data/world/stray.txt && echo STRAY; test -e /data/new && echo NEWDIR;
 		wc -l < /data/.workspace/.bash_history; cat /data/.cache/x; cat /tmp/outside.txt; test -x /bin/sh && echo shell;
-		test -e /data/.avsys/import.archive && echo IMPORT; test -e /data/.avsys/import && echo STAGING; true`)
+		test -e /data/.avsys/import.archive && echo IMPORT; test -e /data/.avsys/import && echo STAGING;
+		test -e /data/.avsys/import.upload && echo PARTS; test -e /data/.avsys/import.upload.id && echo PARTSID; true`)
 	// An import's archive and staging are not saved, and a restore takes
 	// them away: they are of an import the restore undoes.
 	want := "one\njar\n2\ncached\noutside\nshell"

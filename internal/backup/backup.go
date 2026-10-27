@@ -53,9 +53,10 @@ const (
 var excluded = []string{"/.workspace", "/.cache"}
 
 // notSaved are left out of snapshots but not left alone by restores: an
-// import's archive and what it was unpacked into, there only while one runs.
-// A restore over an import that was cut short takes them away.
-var notSaved = []string{"/.avsys/import", "/.avsys/import.archive"}
+// import's archive, what it was unpacked into and the parts of one being
+// sent, there only while one runs. A restore over an import that was cut
+// short takes them away.
+var notSaved = []string{"/.avsys/import", "/.avsys/import.archive", "/.avsys/import.upload", "/.avsys/import.upload.id"}
 
 // excludedFromWhole are left out of a whole snapshot, and of putting one
 // back: download caches, restic's own among them.
