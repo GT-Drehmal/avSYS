@@ -181,22 +181,36 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-      # A slow package mirror once took the whole of the job's time here, so
-      # each try has a few minutes, and what one fetched is kept for the next.
+      # The system packages they need are kept too: the runners' package
+      # mirror is at times slow enough to take the whole of the job's time.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/apt-archives
+          key: apt-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      # Each try has a few minutes, and what one fetched is kept for the next.
       - name: Browsers
         working-directory: web
         run: |
           if [ "${{ steps.browsers.outputs.cache-hit }}" = true ]; then
-            # Only what they need from the system, which is not kept.
+            # Only what they need from the system.
             install=(install-deps chromium webkit)
           else
             install=(install --with-deps chromium webkit)
           fi
-          # A try that runs out of time leaves its apt-get running, holding
-          # apt's lock: the next waits for it rather than failing at once.
-          echo 'DPkg::Lock::Timeout "600";' | sudo tee /etc/apt/apt.conf.d/99-lock-timeout > /dev/null
+          mkdir -p ~/.cache/apt-archives/partial
+          {
+            echo "Dir::Cache::Archives \"$HOME/.cache/apt-archives/\";"
+            echo 'APT::Keep-Downloaded-Packages "true";'
+            # A try that runs out of time leaves its apt-get running, holding
+            # apt's lock: the next waits for it rather than failing at once.
+            echo 'DPkg::Lock::Timeout "600";'
+          } | sudo tee /etc/apt/apt.conf.d/99-ci > /dev/null
           for try in 1 2 3; do
-            timeout 240 bunx playwright "${install[@]}" && exit 0
+            if timeout 240 bunx playwright "${install[@]}"; then
+              # Kept for the next run, which reads them as this user.
+              sudo chown -R "$(id -u):$(id -g)" ~/.cache/apt-archives
+              exit 0
+            fi
             echo "::warning::installing the browsers did not finish (try $try of 3)"
           done
           exit 1
