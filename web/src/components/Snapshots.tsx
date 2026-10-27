@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CopyPlus, History, LayoutTemplate, Trash2 } from "lucide-react";
+import { CopyPlus, Globe, History, LayoutTemplate, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
@@ -12,6 +12,7 @@ import type { Selection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { Picture } from "./Picture";
 import { SaveTemplate } from "./SaveTemplate";
+import { SaveWorld } from "./SaveWorld";
 import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectionBar } from "./ui";
 
 export const triggerLabel = (s: Snapshot) => {
@@ -95,6 +96,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
   const setCreating = (s: Snapshot) => navigate(newFrom(org, { kind: "snapshot", id: s.id }));
   const [looking, setLooking] = useState<Snapshot | null>(null);
   const [templating, setTemplating] = useState<Snapshot | null>(null);
+  const [saving, setSaving] = useState<Snapshot | null>(null);
   const servers = useServers(org);
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
   return (
@@ -193,6 +195,15 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
                 Save as template
               </Button>
               <Button
+                icon={<Globe className="size-3.5" />}
+                onClick={() => {
+                  setLooking(null);
+                  setSaving(looking);
+                }}
+              >
+                Save world
+              </Button>
+              <Button
                 variant="danger"
                 icon={<Trash2 className="size-3.5" />}
                 onClick={() => {
@@ -206,6 +217,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
           )
         }
       />
+      {saving && <SaveWorld key={saving.id} org={org} snapshot={saving} onClose={() => setSaving(null)} />}
       {templating && <SaveTemplate key={templating.id} org={org} open onOpenChange={(o) => !o && setTemplating(null)} snapshot={templating} servers={servers.data} />}
       <Confirm
         open={!!deleting}

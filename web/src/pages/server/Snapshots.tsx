@@ -1,7 +1,8 @@
-import { LayoutTemplate } from "lucide-react";
+import { Globe, LayoutTemplate } from "lucide-react";
 import { useState } from "react";
 import { ServerSchedule } from "../../components/BackupSchedule";
 import { SaveTemplate } from "../../components/SaveTemplate";
+import { SaveWorld } from "../../components/SaveWorld";
 import { holdsTheServer, OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar } from "../../components/Snapshots";
 import { Button, Empty, Loading, Notice } from "../../components/ui";
 import { atLeast, type Snapshot } from "../../lib/api";
@@ -16,6 +17,8 @@ export function Snapshots() {
   const [restoring, setRestoring] = useState<Snapshot | null>(null);
   const canAdmin = atLeast(role, "admin");
   const [templating, setTemplating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const canSave = atLeast(role, "operator");
   const servers = useServers(server.org);
   const templates = useTemplates(server.org);
 
@@ -37,12 +40,20 @@ export function Snapshots() {
         <p className="text-[13px] text-muted">
           {snapshots.length === 0 ? "No snapshots yet." : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"}, the newest from ${ago(snapshots[0].time)}.`}
         </p>
-        {/* Kept to make others like it. */}
-        {canAdmin && (
-          <Button size="sm" icon={<LayoutTemplate className="size-3.5" />} disabled={!!op} onClick={() => setTemplating(true)}>
-            Save as template
-          </Button>
-        )}
+        <div className="flex flex-wrap justify-end gap-2">
+          {/* Its world kept to start others with. */}
+          {canSave && (
+            <Button size="sm" icon={<Globe className="size-3.5" />} disabled={!!op} onClick={() => setSaving(true)}>
+              Save world
+            </Button>
+          )}
+          {/* Kept to make others like it. */}
+          {canAdmin && (
+            <Button size="sm" icon={<LayoutTemplate className="size-3.5" />} disabled={!!op} onClick={() => setTemplating(true)}>
+              Save as template
+            </Button>
+          )}
+        </div>
       </div>
       <ServerSchedule server={server} canAdmin={canAdmin} />
       {failure && !op && <Notice tone="danger">The last snapshot or restore failed: {failure}</Notice>}
@@ -60,6 +71,7 @@ export function Snapshots() {
       {canAdmin && <SnapshotSelectionBar org={server.org} snapshots={snapshots} selection={selection} />}
 
       <RestoreDialog server={server} snapshot={restoring} onClose={() => setRestoring(null)} />
+      {saving && <SaveWorld org={server.org} server={server} onClose={() => setSaving(false)} />}
       {canAdmin && <SaveTemplate org={server.org} open={templating} onOpenChange={setTemplating} server={server} servers={servers.data ?? []} templates={templates.data ?? []} />}
     </div>
   );

@@ -244,3 +244,39 @@ test("a stopped server's world is replaced with one from the library", async ({ 
   await expect(dialog).toHaveCount(0);
   expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", replace: "true", library: "w1" });
 });
+
+test("a server's world is saved to the library from its Backups tab, named after it unless named otherwise", async ({ page, as }) => {
+  await as("operator");
+  const calls = await library(page, []);
+  await page.goto("/o/friends/s/survival/backups");
+  // Making templates is admins', saving worlds operators' too.
+  await expect(page.getByRole("button", { name: "Save as template" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Save world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Save world to library" });
+  await expect(dialog).toContainText("A snapshot is taken first");
+  await expect(dialog.getByLabel("Name")).toHaveAttribute("placeholder", "Survival");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("Saving Survival to Worlds")).toBeVisible();
+  expect(calls[0]).toMatchObject({ method: "POST", path: "/worlds", body: { name: "Survival", description: "", server: "survival" } });
+});
+
+test("a snapshot's world is saved to the library from its details", async ({ page, as }) => {
+  await as("owner");
+  const calls = await library(page, []);
+  await page.goto("/o/friends/s/survival/backups");
+  await page.getByRole("button", { name: /^About the snapshot of survival/ }).first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Save world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Save world to library" });
+  await dialog.getByLabel("Name").fill("Before the war");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(calls[0]).toMatchObject({ method: "POST", path: "/worlds", body: { name: "Before the war", snapshot: expect.any(String) } });
+});
+
+test("a viewer has no world to save", async ({ page, as }) => {
+  await as("viewer");
+  await page.goto("/o/friends/s/survival/backups");
+  await expect(page.getByText(/snapshots?, the newest/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save world" })).toHaveCount(0);
+});
