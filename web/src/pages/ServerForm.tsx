@@ -6,23 +6,24 @@ import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit
 import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
 import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
-import { StartPicker, type StartKind } from "../components/StartPicker";
+import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
 import { Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, upload } from "../lib/api";
+import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, upload, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
 import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
-import { keys, useBackupPolicy, useMe } from "../lib/queries";
+import { keys, useBackupPolicy, useMe, useMeta } from "../lib/queries";
 import { type Found, type FoundWorld, inspectServer, inspectWorld } from "../lib/serverImport";
 import { SetupFailed, type SetupWork, startSetup } from "../lib/setups";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
+import { worldSummary } from "../lib/worlds";
 
 const GiB = 1024 ** 3;
 
@@ -190,6 +191,16 @@ async function contentOf(f: Found): Promise<ArchiveContent> {
   }
   return out;
 }
+
+/**
+ * The gigabytes a server needs for a world from the library: its archive,
+ * and the world unpacked beside it, as large as it is out of it where that
+ * is known, and else a guess.
+ */
+const roomFor = (w: LibraryWorld) => Math.ceil((w.size + (w.unpacked || w.size * 4)) / GiB);
+
+/** Which world a server starts with: its original's, a new one, one from the library, or one uploaded. */
+type WorldChoice = "kept" | "new" | "library" | "mine";
 
 /** When it is snapshotted: as its organization, as the server it is a copy of, or not. */
 type Schedule = "org" | "own" | "off";
@@ -415,6 +426,7 @@ export function ServerForm({
   templating,
   lead,
   pick,
+  world: given,
   taken,
   history,
 }: {
@@ -427,12 +439,15 @@ export function ServerForm({
   templating?: { template: Template | null };
   /** Put first, before the form's own sections: what a new template starts from. */
   lead?: ReactNode;
+  /** A world from the library to start with, picked where it is kept. */
+  world?: LibraryWorld;
   taken: Set<string>;
   history: Set<string>;
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const me = useMe().data;
+  const meta = useMeta().data;
   // A hostname under another organization's domain is refused; its own are said here.
   const domains = useQuery({ queryKey: ["domains", org], queryFn: () => api.get<{ domains: string[] }>(`/orgs/${org}/domains`) });
   // The organization's snapshots: what "the same" is, and where a schedule of its own starts from.
@@ -460,7 +475,9 @@ export function ServerForm({
           : presetValues(preset, freeName(slugify(preset.name) || "server", new Set([...taken, ...history])))
         : editing?.spec
           ? presetValues({ id: editing.id, name: editing.name, spec: editing.spec }, null)
-          : fresh,
+          : given
+            ? { ...fresh, displayName: given.name, storage: String(Math.max(Number(fresh.storage), roomFor(given))) }
+            : fresh,
   );
   const [description, setDescription] = useState(editing?.description ?? "");
   // A new server can start from a template, a server or a snapshot, picked here.
@@ -477,11 +494,14 @@ export function ServerForm({
   // Which template that is.
   const theirsFrom = source?.origin.kind === "template" ? source.origin.id : (preset?.id ?? editing?.id);
   // As the template it comes from says, where it says.
-  const [world, setWorld] = useState<"kept" | "new" | "mine">(theirs ? "mine" : source?.world === "new" || !worldChoosable ? "new" : "kept");
+  const [world, setWorld] = useState<WorldChoice>(given ? "library" : theirs ? "mine" : source?.world === "new" || !worldChoosable ? "new" : "kept");
+  // One from the organization's library, put in once its files are.
+  const [libraryPick, setLibraryPick] = useState<LibraryWorld | null>(given ?? null);
   const [keepTheirs, setKeepTheirs] = useState(!!theirs);
   const usingMine = world === "mine";
   const worldGiven = source ? worldChoosable : v.kind === "game";
   const mine = worldGiven && usingMine ? v.myWorld : null;
+  const fromLibrary = worldGiven && world === "library" ? libraryPick : null;
   // That world, for this one, unless another was chosen.
   const fromTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs && !!theirsFrom && !(forTemplate && editing && theirsFrom === editing.id) ? theirsFrom : null;
   const keepsTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs;
@@ -503,7 +523,7 @@ export function ServerForm({
   // A template keeps the packs its files have as they are, or none, or is
   // given one from an address: there is nothing to put more in.
   const packsKept = forTemplate && kept.length > 0;
-  const toUpload = v.uploads.length > 0 || packWork || !!toImport || (!forTemplate && !!fromTheirs);
+  const toUpload = v.uploads.length > 0 || packWork || !!toImport || (!forTemplate && (!!fromTheirs || !!fromLibrary));
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
   const [needsLoader, setNeedsLoader] = useState(false);
@@ -582,9 +602,15 @@ export function ServerForm({
   const unset = source || importing ? "Server default" : v.kind === "modpack" ? "Modpack default" : undefined;
   // A world that is there already was made with its own seed and type.
   // One brought back has its own, whatever else it is given.
-  const worldMade = (!!source && (world === "kept" || !worldChoosable)) || !!found?.world || !!mine;
+  const worldMade = (!!source && (world === "kept" || !worldChoosable)) || !!found?.world || !!mine || !!fromLibrary;
   // An import unpacks next to the archive, so both need room at once.
-  const least = toImport ? Math.max(1, Math.ceil(((found?.size ?? mine?.found.size ?? 0) + toImport.file.size) / GiB)) : leastStorage;
+  // One from the library comes as an archive too, unpacked beside it: as
+  // large as it is out of it where that is known, and else a guess.
+  const least = toImport
+    ? Math.max(1, Math.ceil(((found?.size ?? mine?.found.size ?? 0) + toImport.file.size) / GiB))
+    : fromLibrary && !forTemplate
+      ? Math.max(leastStorage, roomFor(fromLibrary))
+      : leastStorage;
   // Every version, in the order they came out, to tell which is newer.
   const allVersions = useGameVersions();
   const newer = (a: string, b: string) => {
@@ -593,7 +619,9 @@ export function ServerForm({
     const j = order?.indexOf(b) ?? -1;
     return i >= 0 && j >= 0 && i < j;
   };
-  const worldTooNew = !!mine?.found.version && newer(mine.found.version, effective(v.version));
+  // The version the world given was last opened in.
+  const givenVersion = mine?.found.version || fromLibrary?.version || "";
+  const worldTooNew = !!givenVersion && newer(givenVersion, effective(v.version));
   const [readingWorld, setReadingWorld] = useState(false);
   const worldInput = useRef<HTMLInputElement>(null);
 
@@ -606,7 +634,7 @@ export function ServerForm({
     setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "" }));
   };
 
-  const chooseWorld = (next: "kept" | "new" | "mine") => {
+  const chooseWorld = (next: WorldChoice) => {
     if (next === world) return;
     if (next !== "mine") {
       // A world still being read is not used.
@@ -796,6 +824,24 @@ export function ServerForm({
       ...(keepCustom ? { image: spec?.image, env: spec?.env } : {}),
       ...changes,
     };
+  };
+
+  /** Picks a world from the library, with room on the server for it. */
+  const pickLibrary = (w: LibraryWorld) => {
+    setLibraryPick(w);
+    if (!forTemplate) setValues((was) => ({ ...was, storage: String(Math.max(Number(was.storage) || 0, leastStorage, roomFor(w))) }));
+  };
+
+  /** Puts the world picked from the library into a server just made. */
+  const importLibrary = async (w: SetupWork, server: string, title: string) => {
+    if (!fromLibrary) return;
+    w.say("Putting its world in");
+    try {
+      await api.put<Server>(`${serverPath(org, server)}/import?${qs({ world: "true", library: fromLibrary.id, wait: "true" })}`, undefined);
+    } catch (err) {
+      const why = err instanceof ApiError ? err.message : "it did not go.";
+      throw new SetupFailed(`${title} was made without ${fromLibrary.name}: ${why} Replace its world in its settings, then start it.`, `/o/${org}/s/${server}/settings`);
+    }
   };
 
   /** Puts the world kept with the template it is made from into a server just made, from where the panel keeps it. */
@@ -1004,6 +1050,8 @@ export function ServerForm({
       if (mine) {
         const { found, file } = mine;
         await upload(`${path}?${qs({ root: found.root, name: found.name, version: found.version ?? "", file: file.name })}`, file, (p) => setSent(p.total ? p.sent / p.total : 0));
+      } else if (fromLibrary) {
+        await api.put(`${path}?${qs({ library: fromLibrary.id })}`, undefined);
       } else if (keepsTheirs && theirsFrom && theirsFrom !== id) {
         await api.put(`${path}?${qs({ from: theirsFrom })}`, undefined);
       } else if (!keepsTheirs && editing?.ownWorld) {
@@ -1031,6 +1079,7 @@ export function ServerForm({
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
     if (!source && importing && !v.archive) return setError("Choose an archive.");
     if (worldGiven && usingMine && !v.myWorld && !keepsTheirs) return setError("Choose a world, or make a new one.");
+    if (worldGiven && world === "library" && !libraryPick) return setError("Pick a world from the library.");
     if (!source && v.kind !== "modpack" && !v.loader) {
       setNeedsLoader(true);
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1064,6 +1113,7 @@ export function ServerForm({
           await copied(w, server.name);
           await importArchive(w, server.name, title);
           await importTheirs(w, server.name, title);
+          await importLibrary(w, server.name, title);
           await uploadAll(w, server.name);
           if (startNow) await startIt(w, server.name);
         });
@@ -1077,6 +1127,7 @@ export function ServerForm({
         if (toUpload) {
           await importArchive(w, server.name, title);
           await importTheirs(w, server.name, title);
+          await importLibrary(w, server.name, title);
           try {
             await uploadAll(w, server.name);
           } catch (err) {
@@ -1547,10 +1598,37 @@ export function ServerForm({
               <button type="button" aria-pressed={world === "new"} className={segment(world === "new")} onClick={() => chooseWorld("new")}>
                 New world
               </button>
+              {meta?.snapshots && (
+                <button type="button" aria-pressed={world === "library"} className={segment(world === "library")} onClick={() => chooseWorld("library")}>
+                  Library world
+                </button>
+              )}
               <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
                 Upload world
               </button>
             </div>
+            {world === "library" &&
+              (libraryPick ? (
+                <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                  <Picture name={libraryPick.name} url={worldIcon(org, libraryPick.id)} size={32} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium">{libraryPick.name}</p>
+                    <p className="truncate text-xs text-muted" data-testid="world-summary">
+                      {worldSummary(libraryPick)}
+                    </p>
+                  </div>
+                  <Button size="sm" onClick={() => setLibraryPick(null)}>
+                    Change
+                  </Button>
+                </div>
+              ) : (
+                <WorldPicker org={org} onPick={pickLibrary} />
+              ))}
+            {world === "library" && worldTooNew && (
+              <Notice tone="warn">
+                This world was last opened in {givenVersion}, which is newer than {effective(v.version)}. Pick {givenVersion} or newer.
+              </Notice>
+            )}
             {usingMine && (
               <>
                 <input
@@ -1603,7 +1681,7 @@ export function ServerForm({
                 )}
                 {worldTooNew && (
                   <Notice tone="warn">
-                    This world was last opened in {mine?.found.version}, which is newer than {effective(v.version)}. Pick {mine?.found.version} or newer.
+                    This world was last opened in {givenVersion}, which is newer than {effective(v.version)}. Pick {givenVersion} or newer.
                   </Notice>
                 )}
               </>
