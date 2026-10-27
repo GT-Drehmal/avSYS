@@ -59,7 +59,6 @@ interface Archive {
 }
 
 /** The most an archive sent from here may be. */
-const maxArchive = 2 * GiB;
 
 /** A setting in server.properties as the form has it: some are numbers in older files. */
 const named = (value: string | undefined, names: readonly (readonly [string, string])[]) => {
@@ -447,10 +446,6 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   /** Reads an archive of a world, to start the server with. */
   const pickWorld = async (file: File) => {
     setError(null);
-    if (file.size > maxArchive) {
-      setError("Over 2 GB. Create the server, then copy the world in with scp or rsync.");
-      return;
-    }
     setReadingWorld(true);
     const read = ++reads.current;
     try {
@@ -473,10 +468,6 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
   /** Reads an archive of a server and fills the form in with what it says. */
   const pickArchive = async (file: File) => {
     setError(null);
-    if (file.size > maxArchive) {
-      setError("Over 2 GB. Create the server, then copy its files in with scp or rsync.");
-      return;
-    }
     setReading(true);
     const read = ++reads.current;
     try {
@@ -614,10 +605,13 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
     if (!toImport) return;
     const path = serverPath(org, server);
     try {
-      await w.send<Server>(
-        `Sending ${toImport.file.name}`,
-        `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), wait: "true" })}`,
-        toImport.file,
+      // In parts, so that a connection lost for a moment does not lose what
+      // was sent, and an archive of any size goes.
+      await w.sendParts(`Sending ${toImport.file.name}`, path, toImport.file, (upload) =>
+        api.put<Server>(
+          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), from: "upload", upload, size: toImport.file.size, wait: "true" })}`,
+          {},
+        ),
       );
     } catch (err) {
       if (err instanceof ApiError && (cancelled(err) || (err.status >= 400 && err.code !== "error"))) {
@@ -957,7 +951,7 @@ export function ServerForm({ org, source, taken, history }: { org: string; sourc
                   <Button icon={<ArchiveIcon className="size-4" />} loading={reading} onClick={() => archiveInput.current?.click()}>
                     Choose an archive
                   </Button>
-                  <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz of the server's folder, up to 2 GB. Larger? Create the server, then copy its files in with scp or rsync.</p>
+                  <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz of the server's folder.</p>
                 </div>
               )}
               {found && !found.version && <p className="text-xs text-muted">Could not tell the game version. Pick the one it ran.</p>}
