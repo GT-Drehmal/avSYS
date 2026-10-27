@@ -18,7 +18,7 @@ export type StartKind = "template" | "server" | "snapshot";
 export function StartPicker({ org, kind }: { org: string; kind: StartKind }) {
   if (kind === "template") return <Templates org={org} />;
   if (kind === "server") return <Servers org={org} />;
-  return <Snapshots org={org} />;
+  return <SnapshotsToStartFrom org={org} />;
 }
 
 function Templates({ org }: { org: string }) {
@@ -80,8 +80,16 @@ function Servers({ org }: { org: string }) {
   );
 }
 
-function Snapshots({ org }: { org: string }) {
+function SnapshotsToStartFrom({ org }: { org: string }) {
   const navigate = useNavigate();
+  return <SnapshotPicker org={org} onPick={(s) => navigate(newFrom(org, { kind: "snapshot", id: s.id }))} />;
+}
+
+/**
+ * An organization's snapshots to pick one of: the servers that have some
+ * first, then that server's. A template's versions are not among them.
+ */
+export function SnapshotPicker({ org, onPick, picked: chosen, className }: { org: string; onPick: (s: Snapshot) => void; picked?: string; className?: string }) {
   const snapshots = useOrgSnapshots(org);
   const servers = useServers(org);
   const all = (snapshots.data?.snapshots ?? []).filter((s) => s.trigger !== "template").sort((a, b) => b.time.localeCompare(a.time));
@@ -104,7 +112,7 @@ function Snapshots({ org }: { org: string }) {
     const shown = names.filter((name) => matches(query, name, title(name), !live(name) && "deleted"));
     return (
       <Searched query={query} onQuery={setQuery} label="Search servers" none={shown.length === 0}>
-      <List label="Servers with snapshots">
+      <List label="Servers with snapshots" className={className}>
         {shown.map((name) => {
           const of = all.filter((s) => s.server === name);
           const s = live(name);
@@ -142,11 +150,12 @@ function Snapshots({ org }: { org: string }) {
         </p>
       )}
       <Searched query={within} onQuery={setWithin} label="Search snapshots" none={shown.length === 0}>
-        <List label="Snapshots">
+        <List label="Snapshots" className={className}>
           {shown.map((s) => (
             <Row
               key={s.id}
-              onClick={() => navigate(newFrom(org, { kind: "snapshot", id: s.id }))}
+              onClick={() => onPick(s)}
+              selected={s.id === chosen}
               picture={<Picture name={title(s.server)} url={snapshotIcon(org, s.id)} size={32} />}
               title={when(s.time)}
               sub={about(s)}

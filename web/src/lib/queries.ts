@@ -218,7 +218,7 @@ export const useRunning = (org: string, server: string) =>
 export const useActivity = (org: string, server: string) =>
   useQuery({ queryKey: keys.activity(org, server), queryFn: () => api.get<Activity[]>(`${serverPath(org, server)}/activity`) });
 
-export const useTemplates = (org: string) => useQuery({ queryKey: keys.templates(org), queryFn: () => api.get<Template[]>(`/orgs/${org}/templates`) });
+export const useTemplates = (org: string, enabled = true) => useQuery({ queryKey: keys.templates(org), queryFn: () => api.get<Template[]>(`/orgs/${org}/templates`), enabled });
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });

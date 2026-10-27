@@ -429,6 +429,10 @@ func (r resticSnapshot) snapshot() Snapshot {
 			s.Version = value
 		case "loader":
 			s.Loader = value
+		case "lineage":
+			// A copy made here under another host says whose it is: it
+			// remembers the one it was made from as its original too.
+			s.Lineage = value
 		}
 	}
 	if r.Summary != nil {
@@ -513,6 +517,72 @@ func (m *Manager) get(ctx context.Context, org, id string) (*Snapshot, error) {
 		if strings.HasPrefix(list[i].ID, id) {
 			if found != nil {
 				return nil, ErrNotFound
+			}
+			found = &list[i]
+		}
+	}
+	if found == nil {
+		return nil, ErrNotFound
+	}
+	return found, nil
+}
+
+// CopyAs makes a snapshot of what id holds under host, as a version of a
+// template that by saved: nothing is copied, as the new one refers to the
+// same files. It is dated now, and has a lineage of its own, so that
+// removing either one never takes the other's copy offsite with it.
+func (m *Manager) CopyAs(ctx context.Context, org, id, host, by string) (*Snapshot, error) {
+	lock := m.lock(org)
+	lock.Lock()
+	defer lock.Unlock()
+	src, err := m.get(ctx, org, id)
+	if err != nil {
+		return nil, err
+	}
+	// As in DeleteMany: a lock left in the repository by a snapshot that was
+	// cut short would only make this fail.
+	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := m.restic(ctx, org, "rewrite", "--new-host", host, "--new-time", now.Format("2006-01-02 15:04:05"), src.ID); err != nil {
+		return nil, err
+	}
+	// The one just made: under that host, from src and not yet given a
+	// lineage of its own. Held as this is, there is no other.
+	made, err := m.find(ctx, org, func(s Snapshot) bool { return s.Server == host && s.Lineage == src.Lineage })
+	if err != nil {
+		return nil, err
+	}
+	// restic removes after it adds: a tag the copy keeps is not removed. A
+	// copy of a copy brought its original's lineage along with its tags.
+	args := []string{"tag", "--remove", "lineage=" + src.Lineage, "--add", "trigger=" + TriggerTemplate, "--add", "lineage=" + made.ID}
+	if src.Trigger != TriggerTemplate {
+		args = append(args, "--remove", "trigger="+src.Trigger)
+	}
+	if src.By != "" && src.By != by {
+		args = append(args, "--remove", "by="+src.By)
+	}
+	if by != "" {
+		args = append(args, "--add", "by="+by)
+	}
+	if _, err := m.restic(ctx, org, append(args, made.ID)...); err != nil {
+		return nil, err
+	}
+	return m.find(ctx, org, func(s Snapshot) bool { return s.Lineage == made.ID })
+}
+
+// find is the one snapshot that is as asked.
+func (m *Manager) find(ctx context.Context, org string, is func(Snapshot) bool) (*Snapshot, error) {
+	list, err := m.list(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	var found *Snapshot
+	for i := range list {
+		if is(list[i]) {
+			if found != nil {
+				return nil, fmt.Errorf("more than one snapshot is %s's", list[i].Server)
 			}
 			found = &list[i]
 		}

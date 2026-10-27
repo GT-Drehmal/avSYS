@@ -227,7 +227,9 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store
 	}
 	var in struct {
 		Name, Description, Server string
-		Spec                      json.RawMessage
+		// Snapshot makes it from a snapshot, a template's version among them.
+		Snapshot string
+		Spec     json.RawMessage
 	}
 	if err := decode(r, &in); err != nil {
 		return err
@@ -236,10 +238,28 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return err
 	}
-	if len(in.Spec) > 0 {
-		if in.Server != "" {
-			return errBadRequest("A template is made from a server or from settings, not both.")
+	sources := 0
+	for _, given := range []bool{len(in.Spec) > 0, in.Server != "", in.Snapshot != ""} {
+		if given {
+			sources++
 		}
+	}
+	if sources > 1 {
+		return errBadRequest("A template is made from one server, snapshot or set of settings.")
+	}
+	if in.Snapshot != "" {
+		if !s.Backups.Available() {
+			return errNoBackups
+		}
+		t := &store.Template{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username}
+		if err := s.Store.CreateTemplate(r.Context(), t); errors.Is(err, store.ErrTemplateNameTaken) {
+			return templateNameTaken(name)
+		} else if err != nil {
+			return err
+		}
+		return s.copyTemplateVersion(w, r, u, a, t, in.Snapshot, true)
+	}
+	if len(in.Spec) > 0 {
 		settings, err := s.templateSettings(r.Context(), a, in.Spec)
 		if err != nil {
 			return err
@@ -410,7 +430,54 @@ func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 	return nil
 }
 
-// addTemplateVersion saves a server as the newest version of a template.
+// copyTemplateVersion makes a copy of a snapshot the newest version of t. No
+// files are copied, so it is done before answering. first says t was made
+// for it, and is not kept if it fails.
+func (s *Server) copyTemplateVersion(w http.ResponseWriter, r *http.Request, u *store.User, a *access, t *store.Template, id string, first bool) error {
+	ctx := context.WithoutCancel(r.Context())
+	err := func() error {
+		unclaim, err := claimTemplate(a, t.ID)
+		if err != nil {
+			return err
+		}
+		defer unclaim()
+		snap, err := s.Backups.CopyAs(ctx, a.Org.Slug, id, templateHost(t.ID), u.Username)
+		if err != nil {
+			return snapshotError(err)
+		}
+		t.Current = ""
+		if err := s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, ""); err != nil {
+			// Made for a template that is not there: not left behind.
+			if derr := s.Backups.Delete(ctx, a.Org.Slug, snap.ID); derr != nil {
+				s.Log.Error("could not remove a template's version copied for nothing", "template", t.ID, "snapshot", snap.ID, "error", derr)
+			}
+			return err
+		}
+		if first {
+			s.audit(ctx, u, a.Org, "template.create", t.Name, snap.ID)
+		} else {
+			s.audit(ctx, u, a.Org, "template.update", t.Name, snap.ID)
+		}
+		return nil
+	}()
+	if err != nil {
+		if first {
+			if derr := s.Store.DeleteTemplate(ctx, a.Org.ID, t.ID); derr != nil && !errors.Is(derr, store.ErrNotFound) {
+				s.Log.Warn("could not forget a template whose first version failed", "template", t.ID, "error", derr)
+			}
+		}
+		return err
+	}
+	_, v, err := s.template(ctx, a, t.ID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, templateFor(a.Role, v))
+	return nil
+}
+
+// addTemplateVersion saves a server, or a copy of a snapshot, as the newest
+// version of a template.
 func (s *Server) addTemplateVersion(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleAdmin)
 	if err != nil {
@@ -420,9 +487,18 @@ func (s *Server) addTemplateVersion(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return err
 	}
-	var in struct{ Server string }
+	var in struct{ Server, Snapshot string }
 	if err := decode(r, &in); err != nil {
 		return err
+	}
+	if in.Snapshot != "" {
+		if in.Server != "" {
+			return errBadRequest("A version is saved from a server or a snapshot, not both.")
+		}
+		if !s.Backups.Available() {
+			return errNoBackups
+		}
+		return s.copyTemplateVersion(w, r, u, a, t, in.Snapshot, false)
 	}
 	mc, err := s.templateSource(r.Context(), a, in.Server)
 	if err != nil {

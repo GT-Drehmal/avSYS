@@ -1,16 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CopyPlus, History, Trash2 } from "lucide-react";
+import { CopyPlus, History, LayoutTemplate, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
 import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, type Snapshot, type SnapshotDetail } from "../lib/api";
 import { ago, bytes, loaderNames } from "../lib/format";
-import { keys, useAction, useOffsite } from "../lib/queries";
+import { keys, useAction, useOffsite, useServers } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
 import { ContentList, packTitle } from "./Content";
 import type { Selection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { Picture } from "./Picture";
+import { SaveTemplate } from "./SaveTemplate";
 import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectionBar } from "./ui";
 
 export const triggerLabel = (s: Snapshot) => {
@@ -93,6 +94,8 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
   // Making a server out of a snapshot is a page of its own, the same one a new server is made on.
   const setCreating = (s: Snapshot) => navigate(newFrom(org, { kind: "snapshot", id: s.id }));
   const [looking, setLooking] = useState<Snapshot | null>(null);
+  const [templating, setTemplating] = useState<Snapshot | null>(null);
+  const servers = useServers(org);
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
   return (
     <>
@@ -181,6 +184,15 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
                 New server
               </Button>
               <Button
+                icon={<LayoutTemplate className="size-3.5" />}
+                onClick={() => {
+                  setLooking(null);
+                  setTemplating(looking);
+                }}
+              >
+                Save as template
+              </Button>
+              <Button
                 variant="danger"
                 icon={<Trash2 className="size-3.5" />}
                 onClick={() => {
@@ -194,6 +206,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
           )
         }
       />
+      {templating && <SaveTemplate key={templating.id} org={org} open onOpenChange={(o) => !o && setTemplating(null)} snapshot={templating} servers={servers.data} />}
       <Confirm
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
