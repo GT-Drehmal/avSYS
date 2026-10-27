@@ -20,11 +20,12 @@ export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
   if (s.trigger === "copy") return s.by ? `For a copy ${s.by} made` : "For a copy";
   if (s.trigger === "move") return s.by ? `For a move ${s.by} made` : "For a move";
+  if (s.trigger === "template") return s.by ? `Saved by ${s.by}` : "Saved";
   return s.by ? `By ${s.by}` : "Manual";
 };
 
 /** "Paper 1.21.4", from what a snapshot recorded about its server. */
-const software = (s: Snapshot) => [loaderNames[s.loader as keyof typeof loaderNames] ?? s.loader, s.version].filter(Boolean).join(" ");
+export const software = (s: Snapshot) => [loaderNames[s.loader as keyof typeof loaderNames] ?? s.loader, s.version].filter(Boolean).join(" ");
 
 const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   snapshot: ["Taking a snapshot of", "Snapshot"],
@@ -33,6 +34,7 @@ const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   "delete-server": ["Deleting", "Deletion"],
   move: ["Moving", "Move"],
   import: ["Importing files into", "Import"],
+  template: ["Saving a template of", "Saving"],
 };
 
 /** Whether an operation holds its server stopped, and is shown on all of its pages rather than with its snapshots. */

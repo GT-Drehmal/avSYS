@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch } from "./api";
+import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
 import { presenceKey, tab, tellAgain, type Present } from "./presence";
 import { toast } from "./toast";
 
@@ -30,6 +30,9 @@ export const keys = {
   backupPolicy: (org: string) => ["backup-policy", org] as const,
   offsite: (org: string) => ["offsite", org] as const,
   activity: (org: string, server: string) => ["activity", org, server] as const,
+  /** An organization's templates, and under it each one asked for alone. */
+  templates: (org: string) => ["templates", org] as const,
+  template: (org: string, id: string) => ["templates", org, id] as const,
 };
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
@@ -106,6 +109,8 @@ export function useLiveServers() {
       // A move may have finished unheard.
       qc.invalidateQueries({ queryKey: ["placement"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
+      // A template's version may have been saved unheard.
+      qc.invalidateQueries({ queryKey: ["templates"] });
       // Who came and went.
       qc.invalidateQueries({ queryKey: ["presence"] });
       qc.invalidateQueries({ queryKey: ["nodes"] });
@@ -159,6 +164,10 @@ export function useLiveServers() {
       } else if (done.kind === "delete-server") {
         // Only ever sent with an error, which says the whole of it.
         if (done.error) toast.error(done.error);
+      } else if (done.kind === "template") {
+        qc.invalidateQueries({ queryKey: keys.templates(done.org) });
+        if (done.error) toast.error(`Saving ${done.server} as a template failed: ${done.error}`);
+        else toast.info(`${done.server} was saved as a template`);
       } else if (done.kind === "import") {
         // The page that sent it says how it went, or, for one answered once
         // its archive was in, this tab does when it ends.
@@ -208,6 +217,8 @@ export const useRunning = (org: string, server: string) =>
 /** What was last done to a server, newest first, kept current by the event stream. */
 export const useActivity = (org: string, server: string) =>
   useQuery({ queryKey: keys.activity(org, server), queryFn: () => api.get<Activity[]>(`${serverPath(org, server)}/activity`) });
+
+export const useTemplates = (org: string) => useQuery({ queryKey: keys.templates(org), queryFn: () => api.get<Template[]>(`/orgs/${org}/templates`) });
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });
