@@ -192,6 +192,9 @@ jobs:
           else
             install=(install --with-deps chromium webkit)
           fi
+          # A try that runs out of time leaves its apt-get running, holding
+          # apt's lock: the next waits for it rather than failing at once.
+          echo 'DPkg::Lock::Timeout "600";' | sudo tee /etc/apt/apt.conf.d/99-lock-timeout > /dev/null
           for try in 1 2 3; do
             timeout 240 bunx playwright "${install[@]}" && exit 0
             echo "::warning::installing the browsers did not finish (try $try of 3)"
