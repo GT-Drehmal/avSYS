@@ -1117,3 +1117,49 @@ test("a mod's version is picked in the form as on the Content page", async ({ pa
   expect(mods).toHaveLength(1);
   expect(mods[0]).toMatchObject({ source: "modrinth", project: "luckperms", version: "", versionName: "" });
 });
+
+test("a new server can be given a snapshot schedule of its own, as in its settings", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Scheduled");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  // Said what the organization's is.
+  await expect(page.getByText(/^Daily at \d\d:\d\d, kept for /)).toBeVisible();
+  await page.getByLabel("Scheduled snapshots").selectOption("own");
+  // Starting from the organization's.
+  const policy = await api("owner").get(`/orgs/${slug}/backup-policy`);
+  await expect(page.getByLabel("days to keep")).toHaveValue(String(policy.keep.daily));
+  await page.getByLabel("Time").fill("05:30");
+  await page.getByLabel("days to keep").fill("3");
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/scheduled$`));
+  const minute = await page.evaluate(() => {
+    const d = new Date();
+    d.setHours(5, 30, 0, 0);
+    return d.getUTCHours() * 60 + d.getUTCMinutes();
+  });
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/scheduled`);
+  expect(spec.backups).toMatchObject({ enabled: true, minute, keep: { ...policy.keep, daily: 3 } });
+});
+
+test("a copy keeps its original's own schedule unless it is changed", async ({ page, as }) => {
+  await as("owner");
+  const backups = { enabled: true, minute: 60, keep: { daily: 3, weekly: 2, monthly: 0, yearly: 0 } };
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() === "POST") return route.fulfill({ status: 503, json: { code: "test", message: "Not sent by the test." } });
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((x: { name: string; spec: object }) => (x.name === "survival" ? { ...x, spec: { ...x.spec, backups } } : x)) });
+  });
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByLabel("Scheduled snapshots")).toHaveValue("own");
+  await expect(page.getByLabel("days to keep")).toHaveValue("3");
+  let sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  expect((await sent).postDataJSON().spec).not.toHaveProperty("backups");
+  await page.getByLabel("weeks to keep").fill("5");
+  sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  expect((await sent).postDataJSON().spec.backups).toEqual({ ...backups, keep: { ...backups.keep, weekly: 5 } });
+});

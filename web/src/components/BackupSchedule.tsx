@@ -45,15 +45,15 @@ const periods = [
   ["yearly", "years", 20],
 ] as const;
 
-type When = Pick<BackupPolicy, "minute" | "keep">;
+export type When = Pick<BackupPolicy, "minute" | "keep">;
 
 /** The time of day and what to keep, as inputs. */
-function ScheduleFields({ value, onChange }: { value: When; onChange: (patch: Partial<When>) => void }) {
+export function ScheduleFields({ value, onChange }: { value: When; onChange: (patch: Partial<When>) => void }) {
   return (
     <>
       <label className="flex flex-col gap-1.5 text-xs text-muted">
         Time
-        <Input type="time" required value={toLocal(value.minute)} onChange={(e) => e.target.value && onChange({ minute: toUTC(e.target.value) })} className="h-8 w-28" />
+        <Input type="time" required value={toLocal(value.minute)} onChange={(e) => e.target.value && onChange({ minute: toUTC(e.target.value) })} className="h-8 w-36" />
       </label>
       <fieldset className="flex flex-col gap-1.5">
         <legend className="mb-1.5 text-xs text-muted">Keep the newest of each of the last</legend>
@@ -103,7 +103,7 @@ export function scheduleOf(policy: BackupPolicy, own: BackupOverride | null | un
   return { enabled: own?.enabled ?? policy.enabled, minute: own?.minute ?? policy.minute, keep: own?.keep ?? policy.keep };
 }
 
-const describe = (p: BackupPolicy) => (p.enabled ? `Daily at ${toLocal(p.minute)}, kept for ${kept(p.keep)}.` : "Off.");
+export const describe = (p: BackupPolicy) => (p.enabled ? `Daily at ${toLocal(p.minute)}, kept for ${kept(p.keep)}.` : "Off.");
 
 type Mode = "org" | "own" | "off";
 
