@@ -124,6 +124,7 @@ test("a viewer sees the templates, and nothing to change them with", async ({ pa
   await expect(row).toBeVisible();
   await expect(row.getByRole("button")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save a server" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "New template" })).toHaveCount(0);
 });
 
 test("with no templates the page says how to make one", async ({ page, as }) => {
@@ -131,6 +132,7 @@ test("with no templates the page says how to make one", async ({ page, as }) => 
   await page.goto("/o/friends/templates");
   await expect(page.getByText("No templates yet")).toBeVisible();
   await expect(page.getByRole("button", { name: "Save a server" })).toBeEnabled();
+  await expect(page.getByRole("link", { name: "New template" })).toBeVisible();
 });
 
 test("the form from a template shows the version used now, after another was picked", async ({ page, as }) => {
@@ -179,4 +181,119 @@ test("a template saved while the event stream was away is shown once it is back"
   saved = true;
   await expect(row).toContainText("Paper 1.21.4", { timeout: 15_000 });
   await expect(row.getByRole("button", { name: "New server" })).toBeEnabled();
+});
+
+test("a template is made from settings alone, and a new server made from it has them", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/templates`);
+  await page.getByRole("link", { name: "New template" }).click();
+  await expect(page.getByRole("heading", { name: "New template" })).toBeVisible();
+  // Nothing that is a server's own: its files, its name in addresses, its address, its node, the EULA.
+  for (const gone of ["Import", "Use a world I have"]) await expect(page.getByRole("button", { name: gone })).toHaveCount(0);
+  for (const gone of ["Short name", "Hostname"]) await expect(page.getByLabel(gone)).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: /End User License Agreement/ })).toHaveCount(0);
+
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByLabel("Name", { exact: true }).fill("Survival base");
+  await page.getByLabel("Description").fill("Hard, with more memory.");
+  await page.getByLabel("Difficulty").selectOption("hard");
+  await page.getByLabel("Memory (GB)").fill("6");
+  await page.getByRole("button", { name: "Create template" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  const row = page.getByRole("listitem", { name: "Survival base" });
+  await expect(row).toContainText("Hard, with more memory.");
+  await expect(row).toContainText("Paper 1.21.4 · settings only");
+
+  await row.getByRole("button", { name: "New server" }).click();
+  await expect(page.getByRole("heading", { name: "New server from Survival base" })).toBeVisible();
+  // A new server, filled in with it, and every bit of it can be changed.
+  await expect(page.getByLabel("Display name")).toHaveValue("Survival base");
+  await expect(page.getByLabel("Short name")).toHaveValue("survival-base");
+  await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  await expect(page.getByLabel("Difficulty")).toHaveValue("hard");
+  await expect(page.getByLabel("Memory (GB)")).toHaveValue("6");
+  await page.getByLabel("Short name").fill("weekend");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/weekend$`));
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/weekend`);
+  expect(spec).toMatchObject({ loader: "paper", version: "1.21.4", displayName: "Survival base", resources: { memory: "6Gi" }, eula: true });
+  expect(spec.properties).toMatchObject({ difficulty: "hard" });
+});
+
+test("a template of settings alone is changed in the same form", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  const made = await api("owner").post(`/orgs/${slug}/templates`, {
+    name: "Modded",
+    description: "",
+    spec: { loader: "fabric", version: "1.21.4", resources: { memory: "4Gi" }, storage: { size: "10Gi" }, properties: { pvp: "false" } },
+  });
+  await as("owner");
+  await page.goto(`/o/${slug}/templates`);
+  const row = page.getByRole("listitem", { name: "Modded" });
+  await row.getByRole("button", { name: "Actions for Modded" }).click();
+  // It has no versions to go back to.
+  await expect(page.getByRole("menuitem", { name: "Versions" })).toHaveCount(0);
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates/${made.id}/edit$`));
+  await expect(page.getByRole("heading", { name: "Edit Modded" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
+  await page.getByLabel("Name", { exact: true }).fill("Modded plus");
+  await page.getByLabel("Memory (GB)").fill("8");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  await expect(page.getByRole("listitem", { name: "Modded plus" })).toBeVisible();
+  const now = await api("owner").get(`/orgs/${slug}/templates/${made.id}`);
+  expect(now).toMatchObject({ name: "Modded plus", settingsOnly: true, spec: { loader: "fabric", resources: { memory: "8Gi" }, properties: { pvp: "false" } } });
+});
+
+test("the new-server form starts from a template picked in it", async ({ page, as }) => {
+  await as("owner");
+  await lobby(page);
+  await page.goto("/o/friends/new");
+  await page.getByRole("button", { name: "Template", exact: true }).click();
+  const list = page.getByRole("list", { name: "Templates" });
+  await expect(list).toContainText("Paper 1.21.4 · 300 MB");
+  // The rest is filled in from the one picked.
+  await expect(page.getByLabel("Display name")).toBeHidden();
+  await list.getByRole("button", { name: /Lobby/ }).click();
+  await expect(page.getByRole("heading", { name: "New server from Lobby" })).toBeVisible();
+  await expect(page.getByLabel("Display name")).toHaveValue("Lobby");
+  // Back to the form as it was, and on to another way to start.
+  await page.goBack();
+  await page.getByRole("button", { name: "Template", exact: true }).click();
+  await page.getByRole("button", { name: "Game version" }).click();
+  await expect(page.getByRole("list", { name: "Templates" })).toHaveCount(0);
+  await expect(page.getByLabel("Display name")).toBeVisible();
+});
+
+test("the new-server form offers no templates where there are none", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await expect(page.getByRole("button", { name: "Import" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Template", exact: true })).toHaveCount(0);
+});
+
+test("a pack joined from several shows each of them in the form, the top one first", async ({ page, as }) => {
+  await as("owner");
+  const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+  const v = version("b".repeat(64), new Date().toISOString());
+  const pack = (n: number, title: string) => ({ sha1: String(n).repeat(40), size: 1 << 20, name: `${title}.zip`, project: { source: "modrinth", id: title.toLowerCase().replace(/ /g, "-"), version: "v", versionName: `${title} 1.0`, title } });
+  const template = { id: "t1", name: "Lobby", description: "", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: v, versions: [v], settingsOnly: false };
+  const resourcePack = { url: "http://panel.test/packs/joined.zip", sha1: "9".repeat(40), uploaded: { size: 3 << 20, time: v.time }, stack: [pack(1, "Colorful Grasses"), pack(2, "Dark Mode"), pack(3, "Fresh Animations")] };
+  await page.route(/\/api\/v1\/orgs\/friends\/templates(\/.*)?$/, (route) =>
+    route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/templates") ? [template] : { ...template, spec: { ...survival.spec, resourcePack } } }),
+  );
+  await page.goto("/o/friends/new?from=template:t1");
+  const packs = page.getByRole("list", { name: "Packs, the top one first" }).getByRole("listitem");
+  await expect(packs).toHaveCount(3);
+  await expect(packs.nth(0)).toContainText("Colorful Grasses");
+  await expect(packs.nth(0)).toContainText("Colorful Grasses 1.0");
+  await expect(packs.nth(2)).toContainText("Fresh Animations");
+  await expect(page.getByText("3 packs joined into one · 3.0 MB")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
 });

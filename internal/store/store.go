@@ -127,7 +127,8 @@ CREATE TABLE IF NOT EXISTS templates (
 	created_by  TEXT NOT NULL DEFAULT '',
 	created_at  INTEGER NOT NULL,
 	updated_at  INTEGER NOT NULL,
-	current     TEXT NOT NULL DEFAULT ''
+	current     TEXT NOT NULL DEFAULT '',
+	settings    TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS templates_name ON templates(org_id, name);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);
@@ -157,6 +158,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
+	if err := addTemplateSettings(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -173,6 +178,17 @@ func addVerifiedAt(db *sql.DB) error {
 		return err
 	}
 	_, err := db.Exec(`UPDATE minecraft_links SET verified_at = linked_at`)
+	return err
+}
+
+// addTemplateSettings gives a table of templates from before templates could
+// be made of settings alone the column for them.
+func addTemplateSettings(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('templates') WHERE name = 'settings'`).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE templates ADD COLUMN settings TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 

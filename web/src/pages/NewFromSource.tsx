@@ -53,6 +53,11 @@ export function NewFromSource({ org, origin }: { org: string; origin: Origin }) 
   // Without the snapshots (backups switched off, say) none are known of: the
   // panel says so if a name turns out to have some.
   const history = new Set((snapshots.data?.snapshots ?? []).map((s) => s.server));
+  // A template of settings alone has no files: the server is a new one, with them.
+  const settings = origin.kind === "template" ? template.data : undefined;
+  if (settings?.settingsOnly && settings.spec) {
+    return <ServerForm key={`settings:${settings.id}`} org={org} preset={{ id: settings.id, name: settings.name, spec: settings.spec }} taken={taken} history={history} />;
+  }
   const live = origin.kind === "server" ? servers.data?.find((s) => s.name === origin.name) : undefined;
   // A template's version, named as the template is: the server made from it
   // is called after it.

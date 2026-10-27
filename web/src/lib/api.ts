@@ -439,11 +439,13 @@ export interface Template {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
-  /** The version servers are made from; null while its first is being saved. */
+  /** The version servers are made from; null while its first is being saved, and for one of settings alone. */
   current: Snapshot | null;
   /** Newest first. */
   versions: Snapshot[];
-  /** What a server made from it is, for one template asked for. */
+  /** Made of settings alone, with no files: a server made from it is a new one with them. */
+  settingsOnly: boolean;
+  /** What a server made from it is: for one template asked for, and every one of settings alone. */
   spec?: ServerSpec;
 }
 

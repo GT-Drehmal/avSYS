@@ -417,6 +417,41 @@ function PackPane({
 /** A server's resource pack, as content: what it is and where it comes from, with room for actions. */
 export function PackCard({ pack, showKind = true, children }: { pack: ResourcePack; showKind?: boolean; children?: ReactNode }) {
   const p = pack.project;
+  // One joined from several is shown as those, the top one first, as on a server's Content page.
+  if (pack.stack?.length) {
+    return (
+      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+        <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2">
+          <p className="min-w-0 flex-1 truncate text-xs text-muted">
+            {pack.stack.length} packs joined into one{pack.uploaded ? ` · ${bytes(pack.uploaded.size)}` : ""}
+          </p>
+          {showKind && <Chip>resource pack</Chip>}
+          {children}
+        </div>
+        <ol aria-label="Packs, the top one first">
+          {pack.stack.map((s) => {
+            const title = stackedTitle(s);
+            return (
+              <li key={s.sha1} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
+                <ProjectIcon url={s.project?.iconUrl} size={32} kind="resourcepack" name={title} />
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-2 truncate text-[13px] font-medium">
+                    {title}
+                    {s.project && (
+                      <a href={`https://modrinth.com/resourcepack/${s.project.id}`} target="_blank" rel="noreferrer" className="text-faint hover:text-accent" aria-label="Open on Modrinth">
+                        <ExternalLink className="size-3" />
+                      </a>
+                    )}
+                  </p>
+                  <p className="truncate text-xs text-faint">{s.project ? s.project.versionName : s.size ? bytes(s.size) : ""}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5">
       <ProjectIcon url={p?.iconUrl} size={32} kind="resourcepack" name={packTitle(pack)} />

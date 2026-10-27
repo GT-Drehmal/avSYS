@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,6 +27,11 @@ import (
 // snapshots are. What it is called, and which version servers are made
 // from, is kept by the panel. Making a server from one is making it from
 // that version's snapshot.
+//
+// A template can also be made of settings alone, with no server to save:
+// those are kept by the panel, and a server made from one is a new server
+// with them, its world made when it first starts. Saving a server into one
+// gives it versions, which it is made from from then on.
 
 // kindTemplate is a server being saved as a version of a template.
 const kindTemplate = "template"
@@ -67,7 +73,10 @@ type templateView struct {
 	Current *backup.Snapshot `json:"current"`
 	// Versions are newest first.
 	Versions []backup.Snapshot `json:"versions"`
-	// Spec is what a server made from it is, for one template asked for.
+	// SettingsOnly is for a template of settings alone, with no versions.
+	SettingsOnly bool `json:"settingsOnly"`
+	// Spec is what a server made from it is: for one template asked for,
+	// and for every template of settings alone.
 	Spec *avsysv1.MinecraftServerSpec `json:"spec,omitempty"`
 }
 
@@ -87,6 +96,22 @@ func templateOf(t *store.Template, list []backup.Snapshot) templateView {
 	}
 	if v.Current == nil && len(v.Versions) > 0 {
 		v.Current = &v.Versions[0]
+	}
+	// Versions win over settings: a server saved into it is what it is now.
+	if t.Settings != "" && len(v.Versions) == 0 {
+		var spec avsysv1.MinecraftServerSpec
+		if err := json.Unmarshal([]byte(t.Settings), &spec); err == nil {
+			v.SettingsOnly, v.Spec = true, &spec
+		}
+	}
+	return v
+}
+
+// templateFor is a template as someone of the given role is shown it.
+func templateFor(role store.Role, v templateView) templateView {
+	if v.Spec != nil {
+		spec := recordFor(role, *v.Spec)
+		v.Spec = &spec
 	}
 	return v
 }
@@ -123,7 +148,7 @@ func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request, u *store.
 	}
 	out := make([]templateView, len(all))
 	for i := range all {
-		out[i] = templateOf(&all[i], list)
+		out[i] = templateFor(a.Role, templateOf(&all[i], list))
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
@@ -158,10 +183,9 @@ func (s *Server) getTemplate(w http.ResponseWriter, r *http.Request, u *store.Us
 		if err != nil {
 			return err
 		}
-		spec := recordFor(a.Role, record.Spec)
-		v.Spec = &spec
+		v.Spec = &record.Spec
 	}
-	writeJSON(w, http.StatusOK, v)
+	writeJSON(w, http.StatusOK, templateFor(a.Role, v))
 	return nil
 }
 
@@ -194,19 +218,41 @@ func templateNameTaken(name string) error {
 // snapshot of the server as it is now. It answers as the snapshot starts,
 // with the template, which has a version once it is done; with ?wait=true
 // once it is done. A template whose first version could not be saved is
-// not kept.
+// not kept. Given settings ("spec") instead of a server, it keeps a
+// template of those alone.
 func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleAdmin)
 	if err != nil {
 		return err
 	}
-	var in struct{ Name, Description, Server string }
+	var in struct {
+		Name, Description, Server string
+		Spec                      json.RawMessage
+	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
 	name, description, err := templateWords(in.Name, in.Description)
 	if err != nil {
 		return err
+	}
+	if len(in.Spec) > 0 {
+		if in.Server != "" {
+			return errBadRequest("A template is made from a server or from settings, not both.")
+		}
+		settings, err := s.templateSettings(r.Context(), a, in.Spec)
+		if err != nil {
+			return err
+		}
+		t := &store.Template{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username, Settings: settings}
+		if err := s.Store.CreateTemplate(r.Context(), t); errors.Is(err, store.ErrTemplateNameTaken) {
+			return templateNameTaken(name)
+		} else if err != nil {
+			return err
+		}
+		s.audit(r.Context(), u, a.Org, "template.create", t.Name, "")
+		writeJSON(w, http.StatusCreated, templateOf(t, nil))
+		return nil
 	}
 	mc, err := s.templateSource(r.Context(), a, in.Server)
 	if err != nil {
@@ -219,6 +265,51 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store
 		return err
 	}
 	return s.saveTemplateVersion(w, r, u, a, t, mc, true)
+}
+
+// templateSettings checks the settings a template of settings alone is
+// made of, and gives them back as they are kept. What is a server's own is
+// left out: its name, address, node and state, the EULA, which is agreed to
+// for each server made, and its Java, which is found for the version it
+// gets. "Latest" stays: each server made gets the newest there is then.
+// Files cannot be part of it, as there is nowhere to keep them.
+func (s *Server) templateSettings(ctx context.Context, a *access, raw json.RawMessage) (string, error) {
+	var spec avsysv1.MinecraftServerSpec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		return "", errBadRequest("Invalid spec: %v", err)
+	}
+	for _, m := range spec.Mods {
+		if m.Source == avsysv1.SourceUpload {
+			return "", errBadRequest("A template of settings alone cannot have uploaded files. Save a server that has them instead.")
+		}
+	}
+	if rp := spec.ResourcePack; rp != nil && rp.Uploaded != nil {
+		return "", errBadRequest("A template of settings alone cannot have an uploaded resource pack. Save a server that has it instead.")
+	}
+	if rp := spec.ResourcePack; rp != nil {
+		rp.Stack = nil
+	}
+	spec.DisplayName, spec.State, spec.EULA, spec.GameJava = "", "", false, 0
+	spec.Image, spec.Env, spec.NodeSelector, spec.Ports = "", nil, nil, nil
+	spec.Expose = avsysv1.ExposeSpec{Type: spec.Expose.Type}
+	if spec.Modpack == nil && spec.Loader == "" {
+		return "", errBadRequest("Choose a server type, or a modpack.")
+	}
+	// Checked as a server's are, but for the EULA, agreed to later.
+	spec.EULA = true
+	err := s.validateSpec(ctx, a.Namespace, "", &spec)
+	spec.EULA = false
+	if err != nil {
+		return "", err
+	}
+	if err := checkPackSHA1(spec.ResourcePack, nil); err != nil {
+		return "", err
+	}
+	if err := checkPackFormats(spec.ResourcePack, nil); err != nil {
+		return "", err
+	}
+	out, err := json.Marshal(spec)
+	return string(out), err
 }
 
 // templateSource is the server a version of a template is to be saved from.
@@ -354,9 +445,19 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request, u *store
 	var in struct {
 		Name, Description *string
 		Current           *string
+		// Spec is the settings of a template of settings alone.
+		Spec json.RawMessage
 	}
 	if err := decode(r, &in); err != nil {
 		return err
+	}
+	if len(in.Spec) > 0 {
+		if !v.SettingsOnly {
+			return errBadRequest("This template was saved from a server. Update it from a server instead.")
+		}
+		if t.Settings, err = s.templateSettings(r.Context(), a, in.Spec); err != nil {
+			return err
+		}
 	}
 	name, description := t.Name, t.Description
 	if in.Name != nil {
@@ -510,6 +611,9 @@ func (s *Server) templateVersionToMake(ctx context.Context, a *access, id string
 	_, v, err := s.template(ctx, a, id)
 	if err != nil {
 		return "", err
+	}
+	if v.SettingsOnly {
+		return "", &Error{Status: http.StatusConflict, Code: "settings_only", Message: "This template has settings alone, with no files to copy: make a new server with its settings."}
 	}
 	if v.Current == nil {
 		return "", &Error{Status: http.StatusConflict, Code: "no_version", Message: "This template has no version yet. Wait for its first to be saved."}

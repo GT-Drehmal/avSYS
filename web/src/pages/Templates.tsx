@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { History, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { History, MoreHorizontal, Pencil, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { Picture } from "../components/Picture";
 import { SaveTemplate } from "../components/SaveTemplate";
 import { useOrg } from "../components/Shell";
@@ -11,6 +11,7 @@ import { api, ApiError, atLeast, snapshotIcon, type Template } from "../lib/api"
 import { ago, bytes } from "../lib/format";
 import { newFrom } from "../lib/origin";
 import { keys, useMeta, useServers, useTemplates } from "../lib/queries";
+import { ready, templateSummary } from "../lib/templates";
 
 /** An organization's templates: servers kept to make others from. */
 export function Templates() {
@@ -32,11 +33,18 @@ export function Templates() {
       title="Templates"
       description="Servers kept to make others like them."
       actions={
-        canAdmin &&
-        meta?.snapshots && (
-          <Button variant="primary" icon={<Plus className="size-3.5" />} onClick={() => setSaving(true)} disabled={!servers.data?.length}>
-            Save a server
-          </Button>
+        canAdmin && (
+          <>
+            {meta?.snapshots && (
+              <Button icon={<Save className="size-3.5" />} onClick={() => setSaving(true)} disabled={!servers.data?.length}>
+                Save a server
+              </Button>
+            )}
+            <Link to="new" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-medium text-accent-ink hover:bg-accent-strong">
+              <Plus className="size-4" />
+              New template
+            </Link>
+          </>
         )
       }
     />
@@ -57,9 +65,9 @@ export function Templates() {
   return (
     <div className="flex flex-col gap-4">
       {header}
-      {meta && !meta.snapshots && <Notice>Templates need snapshots, which are not set up on this panel.</Notice>}
+      {meta && !meta.snapshots && <Notice>Saving a server as a template needs snapshots, which are not set up on this panel.</Notice>}
       {list.length === 0 ? (
-        <Empty title="No templates yet">Save a server as a template to make others like it.</Empty>
+        <Empty title="No templates yet">Make one from settings, or save a server as one.</Empty>
       ) : (
         <ul className="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface" aria-label="Templates">
           {list.map((t) => (
@@ -68,9 +76,9 @@ export function Templates() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium">{t.name}</p>
                 {t.description && <p className="line-clamp-2 text-xs text-muted">{t.description}</p>}
-                <p className={cx("mt-0.5 text-xs text-faint", !t.current && "flex items-center gap-1.5")}>
-                  {t.current ? (
-                    [software(t.current), bytes(t.current.size), `saved ${ago(t.current.time)}`, t.versions.length > 1 && `${t.versions.length} versions`].filter(Boolean).join(" · ")
+                <p className={cx("mt-0.5 text-xs text-faint", !ready(t) && "flex items-center gap-1.5")}>
+                  {ready(t) ? (
+                    templateSummary(t)
                   ) : (
                     <>
                       <Spinner className="size-3" />
@@ -81,7 +89,7 @@ export function Templates() {
               </div>
               {canAdmin && (
                 <>
-                  <Button size="sm" disabled={!t.current} onClick={() => navigate(newFrom(org, { kind: "template", id: t.id }))}>
+                  <Button size="sm" disabled={!ready(t)} onClick={() => navigate(newFrom(org, { kind: "template", id: t.id }))}>
                     New server
                   </Button>
                   <Menu>
@@ -89,15 +97,19 @@ export function Templates() {
                       <Button size="sm" variant="ghost" icon={<MoreHorizontal className="size-4" />} aria-label={`Actions for ${t.name}`} />
                     </MenuTrigger>
                     <MenuContent>
-                      <MenuItem icon={<Pencil />} onSelect={() => setEditing(t)}>
+                      <MenuItem icon={<Pencil />} onSelect={() => (t.settingsOnly ? navigate(`/o/${org}/templates/${t.id}/edit`) : setEditing(t))}>
                         Edit
                       </MenuItem>
-                      <MenuItem icon={<RefreshCw />} disabled={!servers.data?.length} onSelect={() => setUpdating(t)}>
-                        Update from a server
-                      </MenuItem>
-                      <MenuItem icon={<History />} disabled={!t.versions.length} onSelect={() => setVersions(t)}>
-                        Versions
-                      </MenuItem>
+                      {meta?.snapshots && (
+                        <MenuItem icon={<RefreshCw />} disabled={!servers.data?.length} onSelect={() => setUpdating(t)}>
+                          Update from a server
+                        </MenuItem>
+                      )}
+                      {!t.settingsOnly && (
+                        <MenuItem icon={<History />} disabled={!t.versions.length} onSelect={() => setVersions(t)}>
+                          Versions
+                        </MenuItem>
+                      )}
                       <MenuItem icon={<Trash2 />} danger onSelect={() => setDeleting(t)}>
                         Delete
                       </MenuItem>
@@ -236,7 +248,7 @@ function DeleteTemplate({ org, template, onClose }: { org: string; template: Tem
         }
       }}
       title={template ? `Delete ${template.name}?` : ""}
-      description={error ?? `${n === 1 ? "Its version is" : `Its ${n} versions are`} deleted too. Servers made from it stay as they are. This cannot be undone.`}
+      description={error ?? `${n === 0 ? "" : n === 1 ? "Its version is deleted too. " : `Its ${n} versions are deleted too. `}Servers made from it stay as they are. This cannot be undone.`}
       action="Delete"
       loading={busy}
       onConfirm={async () => {
