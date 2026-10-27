@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -79,8 +80,11 @@ type templateView struct {
 	// and for every template of settings alone.
 	Spec *avsysv1.MinecraftServerSpec `json:"spec,omitempty"`
 	// World is "new" for one whose servers start a world of their own
-	// rather than take its version's.
+	// rather than take its version's, and "own" for one whose servers are
+	// given the world it has of its own.
 	World string `json:"world,omitempty"`
+	// OwnWorld is what is known of that world.
+	OwnWorld *ownWorld `json:"ownWorld,omitempty"`
 }
 
 // templateOf is a template as it is shown, with its versions found among
@@ -102,6 +106,10 @@ func templateOf(t *store.Template, list []backup.Snapshot) templateView {
 	}
 	if newWorldIn(t.Changes) {
 		v.World = "new"
+	}
+	var own ownWorld
+	if t.World != "" && len(worldsOf(list, t.ID)) > 0 && json.Unmarshal([]byte(t.World), &own) == nil {
+		v.World, v.OwnWorld = "own", &own
 	}
 	// Versions win over settings: a server saved into it is what it is now.
 	if t.Settings != "" && len(v.Versions) == 0 {
@@ -800,14 +808,20 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 		return err
 	}
 	defer unclaim()
-	if len(v.Versions) > 0 {
-		release, err := s.claimToDelete(r.Context(), a, v.Versions)
+	// Its own world goes with it.
+	list, err := s.templateSnapshots(r.Context(), a.Org.Slug)
+	if err != nil {
+		return err
+	}
+	all := append(slices.Clone(v.Versions), worldsOf(list, t.ID)...)
+	if len(all) > 0 {
+		release, err := s.claimToDelete(r.Context(), a, all)
 		if err != nil {
 			return err
 		}
 		defer release()
-		ids := make([]string, len(v.Versions))
-		for i, snap := range v.Versions {
+		ids := make([]string, len(all))
+		for i, snap := range all {
 			ids[i] = snap.ID
 		}
 		if err := s.Backups.DeleteMany(context.WithoutCancel(r.Context()), a.Org.Slug, ids); err != nil {
@@ -910,6 +924,13 @@ func (s *Server) templateVersionToMake(ctx context.Context, a *access, id string
 	}
 	if t.Changes != "" {
 		changes = json.RawMessage(t.Changes)
+	}
+	// Its servers are given its own world, put in once its files are: the
+	// version's is left out.
+	if v.World == "own" {
+		if changes, err = layered(changes, json.RawMessage(`{"world":"new"}`)); err != nil {
+			return "", nil, err
+		}
 	}
 	return v.Current.ID, changes, nil
 }

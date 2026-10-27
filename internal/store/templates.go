@@ -36,14 +36,17 @@ type Template struct {
 	// have other than its version does, as a copy's request asks for it:
 	// JSON, "" for none.
 	Changes string
+	// World is, for one given a world of its own, what is known of it, as
+	// JSON; "" for none. The world itself is a snapshot of its own.
+	World string
 }
 
-const templateColumns = `id, org_id, name, description, created_by, created_at, updated_at, current, settings, changes`
+const templateColumns = `id, org_id, name, description, created_by, created_at, updated_at, current, settings, changes, world`
 
 func scanTemplate(row interface{ Scan(...any) error }) (*Template, error) {
 	var t Template
 	var created, updated int64
-	if err := row.Scan(&t.ID, &t.OrgID, &t.Name, &t.Description, &t.CreatedBy, &created, &updated, &t.Current, &t.Settings, &t.Changes); err != nil {
+	if err := row.Scan(&t.ID, &t.OrgID, &t.Name, &t.Description, &t.CreatedBy, &created, &updated, &t.Current, &t.Settings, &t.Changes, &t.World); err != nil {
 		return nil, err
 	}
 	t.CreatedAt, t.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
@@ -55,8 +58,8 @@ func (s *Store) CreateTemplate(ctx context.Context, t *Template) error {
 	t.ID = NewID(8)
 	t.CreatedAt = time.Now().Truncate(time.Second)
 	t.UpdatedAt = t.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO templates (`+templateColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.OrgID, t.Name, t.Description, t.CreatedBy, t.CreatedAt.Unix(), t.UpdatedAt.Unix(), t.Current, t.Settings, t.Changes)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO templates (`+templateColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.OrgID, t.Name, t.Description, t.CreatedBy, t.CreatedAt.Unix(), t.UpdatedAt.Unix(), t.Current, t.Settings, t.Changes, t.World)
 	return nameTaken(err)
 }
 
@@ -88,11 +91,11 @@ func (s *Store) Template(ctx context.Context, orgID, id string) (*Template, erro
 }
 
 // UpdateTemplate saves a template's name, description, current version,
-// settings and changes, and says it was changed now.
+// settings, changes and world, and says it was changed now.
 func (s *Store) UpdateTemplate(ctx context.Context, t *Template) error {
 	t.UpdatedAt = time.Now().Truncate(time.Second)
-	res, err := s.db.ExecContext(ctx, `UPDATE templates SET name = ?, description = ?, current = ?, settings = ?, changes = ?, updated_at = ? WHERE org_id = ? AND id = ?`,
-		t.Name, t.Description, t.Current, t.Settings, t.Changes, t.UpdatedAt.Unix(), t.OrgID, t.ID)
+	res, err := s.db.ExecContext(ctx, `UPDATE templates SET name = ?, description = ?, current = ?, settings = ?, changes = ?, world = ?, updated_at = ? WHERE org_id = ? AND id = ?`,
+		t.Name, t.Description, t.Current, t.Settings, t.Changes, t.World, t.UpdatedAt.Unix(), t.OrgID, t.ID)
 	if err != nil {
 		return nameTaken(err)
 	}
@@ -108,6 +111,19 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *Template) error {
 // then on: its settings are dropped.
 func (s *Store) SetTemplateCurrent(ctx context.Context, orgID, id, current, changes string) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE templates SET current = ?, settings = '', changes = ?, updated_at = ? WHERE org_id = ? AND id = ?`, current, changes, time.Now().Unix(), orgID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetTemplateWorld keeps what is known of a template's own world, or "" for
+// none, leaving the rest of it as it is now.
+func (s *Store) SetTemplateWorld(ctx context.Context, orgID, id, world string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE templates SET world = ?, updated_at = ? WHERE org_id = ? AND id = ?`, world, time.Now().Unix(), orgID, id)
 	if err != nil {
 		return err
 	}

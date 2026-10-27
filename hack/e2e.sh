@@ -1088,6 +1088,16 @@ call -X PUT --data-binary "@$WORK/save.tar.gz" "$FRESH/import?root=saves%2FMy%20
 expect "a world of one's own goes in beside its files" "$(call -o /dev/null -w '%{http_code}' "$FRESH/files/content?path=/world/level.dat") $(call "$FRESH/files/content?path=/world/datapacks/e2e.zip") / $(call "$FRESH/files/content?path=/template.txt")" "200 a datapack / kept in the template"
 expect "and with one there, another does not go over it" "$(call -X PUT --data-binary "@$WORK/save.tar.gz" "$FRESH/import?root=saves%2FMy%20World&world=true" | field "d['code']")" has_world
 call -X DELETE "$FRESH?snapshot=false" >/dev/null
+# Given a world of its own, kept with it: a server made from it has the
+# template's files and that world, put in from where the panel keeps it.
+expect "a template is given a world of its own" "$(call -X PUT --data-binary "@$WORK/save.tar.gz" "$API/orgs/$ORG/templates/$TPL/world?root=saves%2FMy%20World&name=My%20World" | field "(d['world'], d['ownWorld']['root'])")" "('own', 'saves/My World')"
+call -d "{\"name\":\"own-from-template\",\"fromTemplate\":\"$TPL\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"own-from-template.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true" >/dev/null
+OWNT=$API/orgs/$ORG/servers/own-from-template
+expect "a server made from it has its files and not its version's world" "$(call "$OWNT/files/content?path=/template.txt") $(call -o /dev/null -w '%{http_code}' "$OWNT/files/content?path=/world/level.dat")" "kept in the template 404"
+call -X PUT "$OWNT/import?world=true&template=$TPL&wait=true" >/dev/null
+expect "and is given the template's world" "$(call -o /dev/null -w '%{http_code}' "$OWNT/files/content?path=/world/level.dat") $(call "$OWNT/files/content?path=/world/datapacks/e2e.zip")" "200 a datapack"
+call -X DELETE "$OWNT?snapshot=false" >/dev/null
+expect "its world is taken away" "$(call -X DELETE "$API/orgs/$ORG/templates/$TPL/world" | field "d.get('world')")" None
 # Duplicated from the version used, and made from a snapshot: copies, under
 # names of their own, that outlast what they were made from.
 copy=$(call -d "{\"name\":\"E2E Lobby copy\",\"snapshot\":\"$FIRST\"}" "$API/orgs/$ORG/templates")

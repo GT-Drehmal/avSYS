@@ -397,6 +397,8 @@ func (s *Server) Handler() http.Handler {
 	api("PATCH /orgs/{org}/templates/{template}", s.authed(s.updateTemplate))
 	api("DELETE /orgs/{org}/templates/{template}", s.authed(s.deleteTemplate))
 	api("POST /orgs/{org}/templates/{template}/versions", s.authed(s.addTemplateVersion))
+	api("PUT /orgs/{org}/templates/{template}/world", s.authed(s.putTemplateWorld))
+	api("DELETE /orgs/{org}/templates/{template}/world", s.authed(s.deleteTemplateWorld))
 	api("DELETE /orgs/{org}/templates/{template}/versions/{id}", s.authed(s.deleteTemplateVersion))
 	api("PUT /orgs/{org}/servers/{server}/import", s.authed(s.importFiles))
 	api("GET /orgs/{org}/servers/{server}/import/upload", s.authed(s.importUploaded))

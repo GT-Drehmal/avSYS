@@ -432,6 +432,16 @@ export interface SnapshotDetail extends Snapshot {
 
 /** A snapshot or restore under way on a server, or a new server receiving its files. */
 /** A server kept to make others from. Each version is a snapshot of a server. */
+/** A world kept with a template, as it was uploaded, for each server made from it. */
+export interface OwnWorld {
+  /** Its folder in the archive, "" for the top. */
+  root: string;
+  name?: string;
+  version?: string;
+  file?: string;
+  size: number;
+}
+
 export interface Template {
   id: string;
   name: string;
@@ -445,8 +455,10 @@ export interface Template {
   versions: Snapshot[];
   /** Made of settings alone, with no files: a server made from it is a new one with them. */
   settingsOnly: boolean;
-  /** "new" for one whose servers start a world of their own rather than take its version's. */
-  world?: "new";
+  /** "new" for one whose servers start a world of their own rather than take its version's; "own" for one whose servers are given the world it has of its own. */
+  world?: "new" | "own";
+  /** The world it has of its own. */
+  ownWorld?: OwnWorld;
   /** What a server made from it is: for one template asked for, and every one of settings alone. */
   spec?: ServerSpec;
 }

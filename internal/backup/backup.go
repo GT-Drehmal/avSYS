@@ -677,6 +677,70 @@ func (m *Manager) File(ctx context.Context, org, id, path string, limit int64) (
 	return data, err
 }
 
+// KeepFile saves what r gives as a snapshot of one file called name, under
+// host, as a template's that by gave it: a world of its own, kept as it was
+// sent, to be unpacked into each server made from the template.
+func (m *Manager) KeepFile(ctx context.Context, org, host, name, by string, r io.Reader) (*Snapshot, error) {
+	if !m.Available() {
+		return nil, ErrUnavailable
+	}
+	if err := m.ensure(ctx, org); err != nil {
+		return nil, err
+	}
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	args := []string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache",
+		"backup", "--stdin", "--stdin-filename", name, "--host", host, "--json", "--tag", "avsys", "--tag", "trigger=" + TriggerTemplate}
+	if by != "" {
+		args = append(args, "--tag", "by="+by)
+	}
+	cmd := exec.CommandContext(ctx, m.Restic, args...)
+	cmd.Stdin = r
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("restic backup: %w: %s", err, lastLine(stderr.String()))
+	}
+	var id string
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		var msg struct {
+			Type string `json:"message_type"`
+			ID   string `json:"snapshot_id"`
+		}
+		if json.Unmarshal(line, &msg) == nil && msg.Type == "summary" {
+			id = msg.ID
+		}
+	}
+	if id == "" {
+		return nil, errors.New("restic backup: no snapshot was saved")
+	}
+	return m.get(ctx, org, id)
+}
+
+// Stream writes one file of a snapshot to w, as it is read out.
+func (m *Manager) Stream(ctx context.Context, org, id, path string, w io.Writer) error {
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	snap, err := m.get(ctx, org, id)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, m.Restic, "--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache", "dump", "--no-lock", snap.ID, path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Stdout = w
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "not found") {
+			return ErrNotFound
+		}
+		return fmt.Errorf("restic dump: %w: %s", err, lastLine(stderr.String()))
+	}
+	return nil
+}
+
 // Delete removes one snapshot and the data only it referred to.
 func (m *Manager) Delete(ctx context.Context, org, id string) error {
 	return m.DeleteMany(ctx, org, []string{id})

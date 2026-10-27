@@ -12,7 +12,7 @@ import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines
 import { Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template } from "../lib/api";
+import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, upload } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
@@ -55,8 +55,10 @@ export interface Source {
   live?: Server;
   /** The snapshot its files come from, where it is a template's: its picture is that one's. */
   snapshot?: string;
-  /** "new" for a template whose servers start a world of their own. */
-  world?: "new";
+  /** "new" for a template whose servers start a world of their own, "own" for one with a world of its own. */
+  world?: "new" | "own";
+  /** That world. */
+  ownWorld?: OwnWorld;
 }
 
 /** A template of settings alone, which a new server is made with: there are no files to copy. */
@@ -64,6 +66,8 @@ export interface Preset {
   id: string;
   name: string;
   spec: ServerSpec;
+  /** The world it has of its own, for each server made from it. */
+  ownWorld?: OwnWorld;
 }
 
 /** An archive of an existing server's folder, and what it says about the server. */
@@ -463,10 +467,19 @@ export function ServerForm({
   // Made from another's files, it keeps their world unless it is given a
   // new one or one of its own; one brought back keeps its own.
   const worldChoosable = !!source && (copying || forTemplate);
+  // A world kept with the template it starts from, or with the one being changed.
+  const theirs = source?.ownWorld ?? preset?.ownWorld ?? editing?.ownWorld;
+  // Which template that is.
+  const theirsFrom = source?.origin.kind === "template" ? source.origin.id : (preset?.id ?? editing?.id);
   // As the template it comes from says, where it says.
-  const [world, setWorld] = useState<"kept" | "new" | "mine">(source?.world === "new" || !worldChoosable ? "new" : "kept");
+  const [world, setWorld] = useState<"kept" | "new" | "mine">(theirs ? "mine" : source?.world === "new" || !worldChoosable ? "new" : "kept");
+  const [keepTheirs, setKeepTheirs] = useState(!!theirs);
   const usingMine = world === "mine";
-  const mine = (source ? worldChoosable : v.kind === "game") && usingMine ? v.myWorld : null;
+  const worldGiven = source ? worldChoosable : v.kind === "game";
+  const mine = worldGiven && usingMine ? v.myWorld : null;
+  // That world, for this one, unless another was chosen.
+  const fromTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs && !!theirsFrom && !(forTemplate && editing && theirsFrom === editing.id) ? theirsFrom : null;
+  const keepsTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs;
   // What is sent to be unpacked into the server once it is made.
   const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false, listed: listed(found) } : mine ? { file: mine.file, root: mine.found.root, world: true, listed: false } : null;
   // Of the packs, the original's come with a copy, and the request itself
@@ -482,7 +495,7 @@ export function ServerForm({
   // Whether the pack is required, and what is asked, as a request says it: a prompt only where there is or was one.
   const packSettings = { enforce: v.packRequired, ...(v.packPrompt || start.packPrompt ? { prompt: v.packPrompt } : {}) };
   const packWork = toAdd.length > 0 || (kept.length > 0 && kept.map((p) => p.id).join() !== start.packs.map((p) => p.id).join());
-  const toUpload = v.uploads.length > 0 || packWork || !!toImport;
+  const toUpload = v.uploads.length > 0 || packWork || !!toImport || (!forTemplate && !!fromTheirs);
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
   const [needsLoader, setNeedsLoader] = useState(false);
@@ -509,6 +522,8 @@ export function ServerForm({
   const [keepCustom, setKeepCustom] = useState(custom);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // How much of a template's world has been sent, while it is.
+  const [sent, setSent] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
   const archiveInput = useRef<HTMLInputElement>(null);
   // The archive read last: one read earlier that ends later is not used.
@@ -733,8 +748,9 @@ export function ServerForm({
       changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : v.schedule === "own" ? ownBackups() : null;
     }
     if (modsChanged) changes.mods = v.mods;
-    // A template says whether its servers start a world of their own.
-    if (forTemplate && (world === "new") !== (source?.world === "new")) Object.assign(changes, { world: world === "new" ? "new" : null });
+    // A template says whether its servers start a world of their own: one
+    // of its own is one too, put in once its files are.
+    if (forTemplate) Object.assign(changes, { world: world === "kept" ? null : "new" });
     // Left out, the original's comes with it, an uploaded one in its files.
     // Given again only made required or with another prompt, it keeps its
     // file and what it was joined from: the panel knows it by its address,
@@ -766,6 +782,18 @@ export function ServerForm({
       ...(keepCustom ? { image: spec?.image, env: spec?.env } : {}),
       ...changes,
     };
+  };
+
+  /** Puts the world kept with the template it is made from into a server just made, from where the panel keeps it. */
+  const importTheirs = async (w: SetupWork, server: string, title: string) => {
+    if (!fromTheirs) return;
+    w.say("Putting its world in");
+    try {
+      await api.put<Server>(`${serverPath(org, server)}/import?${qs({ world: "true", template: fromTheirs, wait: "true" })}`, undefined);
+    } catch (err) {
+      const why = err instanceof ApiError ? err.message : "it did not go.";
+      throw new SetupFailed(`${title} was made without the template's world: ${why} Replace its world in its settings, then start it.`, `/o/${org}/s/${server}/settings`);
+    }
   };
 
   /**
@@ -952,14 +980,35 @@ export function ServerForm({
       delete spec.displayName;
       body = { ...words, spec };
     }
+    let id = editing?.id;
     try {
       if (editing) await api.patch(`/orgs/${org}/templates/${editing.id}`, body);
-      else await api.post(`/orgs/${org}/templates`, body);
+      else id = (await api.post<Template>(`/orgs/${org}/templates`, body)).id;
+      // Its own world: the one chosen here, the one of the template it
+      // starts from, or none.
+      const path = `/orgs/${org}/templates/${id}/world`;
+      if (mine) {
+        const { found, file } = mine;
+        await upload(`${path}?${qs({ root: found.root, name: found.name, version: found.version ?? "", file: file.name })}`, file, (p) => setSent(p.total ? p.sent / p.total : 0));
+      } else if (keepsTheirs && theirsFrom && theirsFrom !== id) {
+        await api.put(`${path}?${qs({ from: theirsFrom })}`, undefined);
+      } else if (!keepsTheirs && editing?.ownWorld) {
+        await api.del(path);
+      }
       await qc.invalidateQueries({ queryKey: keys.templates(org) });
       navigate(`/o/${org}/templates`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not save the template.");
+      const why = err instanceof ApiError ? err.message : "it did not go.";
+      setSent(null);
       setBusy(false);
+      // Made, but without its world: it is changed from here on.
+      if (!editing && id) {
+        await qc.invalidateQueries({ queryKey: keys.templates(org) });
+        navigate(`/o/${org}/templates/${id}/edit`);
+        toast.error(`Its world was not kept: ${why} Choose it again.`);
+        return;
+      }
+      setError(err instanceof ApiError ? err.message : "Could not save the template.");
     }
   };
 
@@ -967,7 +1016,7 @@ export function ServerForm({
     e?.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
     if (!source && importing && !v.archive) return setError("Choose an archive.");
-    if ((source ? worldChoosable : v.kind === "game") && usingMine && !v.myWorld) return setError("Choose a world, or make a new one.");
+    if (worldGiven && usingMine && !v.myWorld && !keepsTheirs) return setError("Choose a world, or make a new one.");
     if (!source && v.kind !== "modpack" && !v.loader) {
       setNeedsLoader(true);
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1000,6 +1049,7 @@ export function ServerForm({
         return handOff(server.name, async (w) => {
           await copied(w, server.name);
           await importArchive(w, server.name, title);
+          await importTheirs(w, server.name, title);
           await uploadAll(w, server.name);
           if (startNow) await startIt(w, server.name);
         });
@@ -1012,6 +1062,7 @@ export function ServerForm({
         // Its files go in first: made stopped, it is started once they are.
         if (toUpload) {
           await importArchive(w, server.name, title);
+          await importTheirs(w, server.name, title);
           try {
             await uploadAll(w, server.name);
           } catch (err) {
@@ -1457,7 +1508,7 @@ export function ServerForm({
               : undefined
         }
       >
-        {(worldChoosable || (!source && !forTemplate && v.kind === "game")) && (
+        {(worldChoosable || (!source && v.kind === "game")) && (
           <>
             <div role="group" aria-label="Its world" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
               {worldChoosable && (
@@ -1468,11 +1519,9 @@ export function ServerForm({
               <button type="button" aria-pressed={world === "new"} className={segment(world === "new")} onClick={() => chooseWorld("new")}>
                 New world
               </button>
-              {!forTemplate && (
-                <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
-                  Use a world I have
-                </button>
-              )}
+              <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
+                Use a world I have
+              </button>
             </div>
             {usingMine && (
               <>
@@ -1501,6 +1550,20 @@ export function ServerForm({
                       Change
                     </Button>
                     <Button size="sm" variant="ghost" disabled={readingWorld} icon={<X className="size-4" />} aria-label="Remove the world" onClick={() => set("myWorld", null)} />
+                  </div>
+                ) : keepTheirs && theirs ? (
+                  <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                    <ArchiveIcon className="size-5 shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-medium">{theirs.name || theirs.file || "The template's world"}</p>
+                      <p className="truncate text-xs text-muted" data-testid="world-summary">
+                        {[theirs.version && `Last opened in ${theirs.version}`, bytes(theirs.size), "kept with the template"].filter(Boolean).join(" · ")}
+                      </p>
+                    </div>
+                    <Button size="sm" disabled={readingWorld} onClick={() => worldInput.current?.click()}>
+                      Change
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled={readingWorld} icon={<X className="size-4" />} aria-label="Remove the world" onClick={() => setKeepTheirs(false)} />
                   </div>
                 ) : (
                   <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">
@@ -1737,7 +1800,7 @@ export function ServerForm({
         {error && <Notice tone="danger">{error}</Notice>}
         <div className="flex gap-2">
           <Button type="submit" variant="primary" loading={busy}>
-            {forTemplate ? (editing ? "Save" : "Create template") : !source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
+            {sent !== null ? `Sending its world, ${Math.round(sent * 100)}%` : forTemplate ? (editing ? "Save" : "Create template") : !source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
           </Button>
           <Link
             to={forTemplate || templated || preset ? `/o/${org}/templates` : source?.live ? `/o/${org}/s/${source.live.name}` : source ? `/o/${org}/backups` : `/o/${org}`}

@@ -92,7 +92,7 @@ func TestTemplateSettingsAdded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"settings", "changes"} {
+	for _, column := range []string{"settings", "changes", "world"} {
 		if _, err := db.Exec(`ALTER TABLE templates DROP COLUMN ` + column); err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +102,7 @@ func TestTemplateSettingsAdded(t *testing.T) {
 		if s, err = Open(path); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := s.Template(ctx, org.ID, old.ID); err != nil || got.Settings != "" || got.Changes != "" {
+		if got, err := s.Template(ctx, org.ID, old.ID); err != nil || got.Settings != "" || got.Changes != "" || got.World != "" {
 			t.Errorf("after opening: %+v %v", got, err)
 		}
 		s.Close()

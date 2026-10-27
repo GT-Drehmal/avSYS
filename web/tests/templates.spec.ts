@@ -234,7 +234,9 @@ test("a template is made from settings alone, and a new server made from it has 
   await page.getByRole("link", { name: "New template" }).click();
   await expect(page.getByRole("heading", { name: "New template" })).toBeVisible();
   // Nothing that is a server's own: its files, its name in addresses, its address, its node, the EULA.
-  for (const gone of ["Import", "Use a world I have"]) await expect(page.getByRole("button", { name: gone })).toHaveCount(0);
+  // A world it can have, kept with it, as a new server can.
+  await expect(page.getByRole("button", { name: "Import" })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Use a world I have" })).toBeVisible();
   for (const gone of ["Short name", "Hostname"]) await expect(page.getByLabel(gone)).toHaveCount(0);
   await expect(page.getByRole("checkbox", { name: /End User License Agreement/ })).toHaveCount(0);
 
