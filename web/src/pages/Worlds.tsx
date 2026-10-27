@@ -83,7 +83,7 @@ export function Worlds() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-medium">{w.name}</p>
                     {w.description && <p className="line-clamp-2 text-xs text-muted">{w.description}</p>}
-                    <p className={cx("mt-0.5 text-xs text-faint", !w.ready && "flex items-center gap-1.5")}>
+                    <p className={cx("mt-0.5 text-xs", w.error ? "text-danger" : "text-faint", w.saving && "flex items-center gap-1.5")}>
                       {w.ready ? (
                         `${worldSummary(w)} · added ${ago(w.createdAt)}`
                       ) : w.saving ? (
@@ -92,7 +92,7 @@ export function Worlds() {
                           Saving
                         </>
                       ) : (
-                        "Not saved"
+                        `Not saved${w.error ? `: ${w.error}` : "."}`
                       )}
                     </p>
                   </div>
@@ -154,11 +154,14 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
     setPicked(null);
     setFile(null);
     setFound(null);
+    // A picture read from an archive is that world's.
+    setPicture({ kind: "none" });
   };
   const pickFile = async (chosen: File) => {
     setError(null);
     setFile(chosen);
     setFound(null);
+    setPicture({ kind: "none" });
     setReading(true);
     const read = ++reads.current;
     try {
@@ -166,7 +169,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
       if (read !== reads.current) return;
       setFound(world);
       setName((was) => was || world.name);
-      if (world.icon) setPicture({ kind: "file", file: new File([world.icon.slice()], "icon.png", { type: "image/png" }) });
+      setPicture(world.icon ? { kind: "file", file: new File([world.icon.slice()], "icon.png", { type: "image/png" }) } : { kind: "none" });
     } catch (err) {
       if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
     } finally {
@@ -181,12 +184,12 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
       let made: LibraryWorld;
       if (from === "upload") {
         if (!file || !found) return setError("Choose a world archive.");
-        made = await send<LibraryWorld>(file.name, `/orgs/${org}/worlds/upload?${qs({ name, description, root: found.root, version: found.version, file: file.name })}`, file, "POST");
+        made = await send<LibraryWorld>(file.name, `/orgs/${org}/worlds/upload?${qs({ name, description, root: found.root, version: found.version, file: file.name, unpacked: found.size })}`, file, "POST");
       } else {
         if (!picked) return setError(from === "server" ? "Pick a server." : "Pick a snapshot.");
         made = await api.post<LibraryWorld>(`/orgs/${org}/worlds`, { name, description, ...(picked.server ? { server: picked.server } : { snapshot: picked.snapshot }) });
       }
-      if (picture.kind === "file") await api.putRaw(`/orgs/${org}/worlds/${made.id}/icon`, picture.file).catch(() => undefined);
+      if (from === "upload" && picture.kind === "file") await api.putRaw(`/orgs/${org}/worlds/${made.id}/icon`, picture.file).catch(() => undefined);
       await qc.invalidateQueries({ queryKey: keys.worlds(org) });
       onClose();
     } catch (err) {
