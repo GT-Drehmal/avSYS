@@ -47,10 +47,16 @@ func TestWorlds(t *testing.T) {
 	if err := s.UpdateWorld(ctx, arena); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetWorldArchive(ctx, a.ID, arena.ID, "world", "1.21.5", 42); err != nil {
+	if err := s.SetWorldFailed(ctx, a.ID, arena.ID, "no world"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.World(ctx, a.ID, arena.ID); err != nil || got.Name != "Arena 2" || got.Description != "Reset each round" || got.Root != "world" || got.Version != "1.21.5" || got.Size != 42 || got.Source != "server:arena" {
+	if got, err := s.World(ctx, a.ID, arena.ID); err != nil || got.Failed != "no world" {
+		t.Errorf("failed: %+v, %v", got, err)
+	}
+	if err := s.SetWorldArchive(ctx, a.ID, arena.ID, "world", "1.21.5", 42, 84); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.World(ctx, a.ID, arena.ID); err != nil || got.Name != "Arena 2" || got.Description != "Reset each round" || got.Root != "world" || got.Version != "1.21.5" || got.Size != 42 || got.Unpacked != 84 || got.Source != "server:arena" || got.Failed != "" {
 		t.Errorf("changed: %+v, %v", got, err)
 	}
 	// Its picture goes with it.
