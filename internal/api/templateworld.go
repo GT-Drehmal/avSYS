@@ -107,6 +107,12 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 		}
 		info = ownWorld{Root: root, Name: q.Get("name"), Version: q.Get("version"), File: q.Get("file")}
 		if kept, err = s.Backups.KeepFile(ctx, a.Org.Slug, worldHost(t.ID), ownWorldFile, u.Username, http.MaxBytesReader(w, r.Body, maxUpload)); err != nil {
+			// Not taken for its world: what was kept of it goes.
+			if kept != nil {
+				if derr := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); derr != nil {
+					s.Log.Error("could not remove a template's world sent in part", "template", t.ID, "snapshot", kept.ID, "error", derr)
+				}
+			}
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
 				return errBadRequest("Over 2 GB.")
