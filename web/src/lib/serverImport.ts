@@ -51,13 +51,16 @@ const starts = /(\.(sh|bat|cmd|command|ps1)|^user_jvm_args\.txt|^start)$/i;
 const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const dirname = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const depth = (p: string) => p.split("/").length;
+// The server's own jar, right in its folder or one down, which says inside
+// which game it is and whose.
+const serverJar = (path: string, size: number) => /\.jar$/i.test(path) && depth(path) <= 2 && !/^(mods|plugins|libraries|versions)\//i.test(path) && size <= 128 << 20;
 
 /** Reads an archive of a server's folder and makes out what it can. */
 export async function inspectServer(file: File): Promise<Found> {
   const contents = await readArchive(file, (path, size) =>
       !path.startsWith("__MACOSX/") &&
       depth(path) <= 5 &&
-      ((interesting.has(base(path)) && size < 8 << 20) || (starts.test(base(path)) && size < 64 << 10) || (jarIn.test(path) && size <= maxJar)),
+      ((interesting.has(base(path)) && size < 8 << 20) || (starts.test(base(path)) && size < 64 << 10) || (jarIn.test(path) && size <= maxJar) || serverJar(path, size)),
   );
   return await examine(contents);
 }
@@ -86,7 +89,18 @@ async function examine({ entries, files }: Contents): Promise<Found> {
   const level = world ? at(`${world}/level.dat`) : undefined;
   if (level) version = await worldVersion(level).catch(() => "");
 
-  const software = softwareOf(inside, text("version_history.json"));
+  let software = softwareOf(inside, text("version_history.json"));
+  // Not told by the names of its files: asked of its jar.
+  if (!software.version && (software.loader === null || software.loader === "vanilla" || software.loader === "paper" || software.loader === "purpur" || software.loader === "folia")) {
+    for (const e of inside) {
+      const data = !e.dir && depth(e.path) === 1 && /\.jar$/i.test(e.path) ? at(e.path) : undefined;
+      const says = data && (await jarSays(data).catch(() => null));
+      if (!says) continue;
+      // A Paper found otherwise stays Paper, as one whose jar was renamed.
+      software = { loader: software.loader === null || software.loader === "vanilla" ? says.loader : software.loader, version: says.version, loaderVersion: "" };
+      break;
+    }
+  }
   return {
     root,
     size: inside.reduce((sum, e) => sum + e.size, 0),
@@ -240,6 +254,27 @@ function softwareOf(entries: Entry[], history: string): { loader: Loader | null;
   if (has("mods")) return { loader: null, version: "", loaderVersion: "" };
   if (tops.has("server.jar")) return { loader: "vanilla", version: "", loaderVersion: "" };
   return { loader: null, version: "", loaderVersion: "" };
+}
+
+/**
+ * The game and software a server jar is for, as it says inside: Mojang's,
+ * Paper's and Purpur's list the game's jar they hold, by version and name,
+ * and older ones of Mojang's say which version they are.
+ */
+async function jarSays(data: Uint8Array): Promise<{ loader: Loader; version: string } | null> {
+  const { files } = await readArchive(new File([data as BlobPart], "server.jar"), (p) => p === "META-INF/versions.list" || p === "version.json");
+  const list = files.get("META-INF/versions.list");
+  if (list) {
+    const [, id = "", path = ""] = new TextDecoder().decode(list).split("\n")[0].trim().split("\t");
+    const name = base(path);
+    if (id) return { loader: name.startsWith("paper-") ? "paper" : name.startsWith("purpur-") ? "purpur" : name.startsWith("folia-") ? "folia" : "vanilla", version: id };
+  }
+  const version = files.get("version.json");
+  if (version) {
+    const id = (JSON.parse(new TextDecoder().decode(version)) as { id?: unknown }).id;
+    if (typeof id === "string" && id) return { loader: "vanilla", version: id };
+  }
+  return null;
 }
 
 /** The game version a NeoForge version is for: 21.1.77 is for 1.21.1, 21.0.x for 1.21. */
