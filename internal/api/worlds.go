@@ -309,8 +309,10 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 			return err
 		}
 		level, version, source = levelOf(&mc.Spec), mc.Spec.Version, "server:"+mc.Name
-		if mc.Status.Version != "" {
-			version = mc.Status.Version
+		// "Latest" is whichever it ran last: the game says, after its
+		// software's name.
+		if fields := strings.Fields(mc.Status.Version); version == "LATEST" && len(fields) > 0 {
+			version = fields[len(fields)-1]
 		}
 		take = func(ctx context.Context) (*backup.Snapshot, error) {
 			op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot, "")
