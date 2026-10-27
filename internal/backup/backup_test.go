@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -976,5 +978,67 @@ func TestKeepFile(t *testing.T) {
 	out.Reset()
 	if err := m.Stream(ctx, "alpha", copied.ID, "/world.archive", &out); err != nil || !bytes.Equal(out.Bytes(), archive) {
 		t.Errorf("the copy: %d bytes, %v", out.Len(), err)
+	}
+}
+
+// A snapshot's world folders come out as one archive, under the names they
+// are given, without the rest of the server's files.
+func TestArchive(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := m.ensure(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	for name, content := range map[string]string{
+		"data/server.properties":            "motd=hi",
+		"data/lobby/level.dat":              "a world",
+		"data/lobby/region/r.0.0.mca":       "land",
+		"data/lobby_nether/DIM-1/r.0.0.mca": "fire",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backup := exec.Command("restic", "--repo", m.repoDir("alpha"), "--password-file", m.keyFile("alpha"), "backup", "data", "--host", "survival", "--tag", "avsys", "--tag", "trigger=manual")
+	backup.Dir = root
+	if out, err := backup.CombinedOutput(); err != nil {
+		t.Fatalf("backup: %v: %s", err, out)
+	}
+	list, err := m.List(ctx, "alpha")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("snapshots: %v, %v", list, err)
+	}
+	var out bytes.Buffer
+	folders := []Folder{{"/data/lobby", "world"}, {"/data/lobby_nether", "world_nether"}, {"/data/lobby_the_end", "world_the_end"}}
+	if err := m.Archive(ctx, "alpha", list[0].ID, folders, &out); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	got := map[string]string{}
+	tr := tar.NewReader(&out)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(tr)
+		got[h.Name] = string(data)
+	}
+	want := map[string]string{"world/level.dat": "a world", "world/region/": "", "world/region/r.0.0.mca": "land", "world_nether/DIM-1/": "", "world_nether/DIM-1/r.0.0.mca": "fire"}
+	if !maps.Equal(got, want) {
+		t.Errorf("the archive holds %v, want %v", got, want)
+	}
+	// None of them there is nothing.
+	if err := m.Archive(ctx, "alpha", list[0].ID, []Folder{{"/data/elsewhere", "world"}}, io.Discard); !errors.Is(err, ErrNotFound) {
+		t.Errorf("no such folder: %v", err)
 	}
 }

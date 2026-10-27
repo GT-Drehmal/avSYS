@@ -11,6 +11,7 @@
 package backup
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -25,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -751,6 +753,98 @@ func (m *Manager) Stream(ctx context.Context, org, id, path string, w io.Writer)
 		return fmt.Errorf("restic dump: %w: %s", err, lastLine(stderr.String()))
 	}
 	return nil
+}
+
+// Folder is a folder of a snapshot to put in an archive, under the name it
+// is given there.
+type Folder struct{ Path, As string }
+
+// Archive writes the folders of a snapshot asked for to w as one tar, each
+// under its new name: only their files and folders, not links. A folder the
+// snapshot does not have is left out; ErrNotFound if it has none of them.
+func (m *Manager) Archive(ctx context.Context, org, id string, folders []Folder, w io.Writer) error {
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	snap, err := m.get(ctx, org, id)
+	if err != nil {
+		return err
+	}
+	tw := tar.NewWriter(w)
+	found := false
+	for _, f := range folders {
+		had, err := m.archiveFolder(ctx, org, snap.ID, f, tw)
+		if errors.Is(err, ErrNotFound) && !had {
+			continue
+		} else if err != nil {
+			return err
+		}
+		found = true
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return tw.Close()
+}
+
+// archiveFolder copies one folder of a snapshot into tw. had says whether
+// anything of it was.
+func (m *Manager) archiveFolder(ctx context.Context, org, id string, f Folder, tw *tar.Writer) (had bool, err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.Restic, "--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache", "dump", "--no-lock", "--archive", "tar", id, f.Path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return false, err
+	}
+	if err := cmd.Start(); err != nil {
+		return false, err
+	}
+	prefix := strings.TrimPrefix(path.Clean(f.Path), "/") + "/"
+	tr := tar.NewReader(out)
+	copyErr := func() error {
+		for {
+			h, err := tr.Next()
+			if err == io.EOF {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			rest, ok := strings.CutPrefix(h.Name, prefix)
+			if !ok || rest == "" || (h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir) {
+				continue
+			}
+			had = true
+			h.Name = f.As + "/" + rest
+			h.Uname, h.Gname, h.Uid, h.Gid = "", "", 0, 0
+			if err := tw.WriteHeader(h); err != nil {
+				return err
+			}
+			if h.Typeflag == tar.TypeReg {
+				if _, err := io.Copy(tw, tr); err != nil {
+					return err
+				}
+			}
+		}
+	}()
+	if copyErr != nil {
+		cancel()
+	}
+	// What is left unread is read, for restic to end.
+	_, _ = io.Copy(io.Discard, out)
+	waitErr := cmd.Wait()
+	if copyErr != nil {
+		return had, copyErr
+	}
+	if waitErr != nil {
+		if strings.Contains(stderr.String(), "not found") {
+			return had, ErrNotFound
+		}
+		return had, fmt.Errorf("restic dump: %w: %s", waitErr, lastLine(stderr.String()))
+	}
+	return had, nil
 }
 
 // Delete removes one snapshot and the data only it referred to.

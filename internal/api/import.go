@@ -271,6 +271,24 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
 		}
 	}
+	// So does one from the organization's library.
+	if from := r.URL.Query().Get("library"); from != "" {
+		if archive != nil {
+			return errBadRequest("A world comes from a template or from the library, not both.")
+		}
+		if r.URL.Query().Get("world") != "true" {
+			return errBadRequest("A world from the library is imported as a world: add world=true.")
+		}
+		world, snap, err := s.readyWorld(r.Context(), a, from)
+		if err != nil {
+			return err
+		}
+		root = world.Root
+		org := a.Org.Slug
+		archive = func(dst io.Writer) error {
+			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
+		}
+	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindImport, "")
 	if !ok {
 		if running := s.ops.current(a.Namespace, mc.Name); running != nil {

@@ -133,6 +133,21 @@ CREATE TABLE IF NOT EXISTS templates (
 	world       TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS templates_name ON templates(org_id, name);
+CREATE TABLE IF NOT EXISTS worlds (
+	id          TEXT PRIMARY KEY,
+	org_id      TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+	name        TEXT NOT NULL COLLATE NOCASE,
+	description TEXT NOT NULL DEFAULT '',
+	created_by  TEXT NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL,
+	updated_at  INTEGER NOT NULL,
+	root        TEXT NOT NULL DEFAULT '',
+	version     TEXT NOT NULL DEFAULT '',
+	file        TEXT NOT NULL DEFAULT '',
+	size        INTEGER NOT NULL DEFAULT 0,
+	source      TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS worlds_name ON worlds(org_id, name);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);
 CREATE INDEX IF NOT EXISTS audit_target ON audit(org_id, target, id);
 `
