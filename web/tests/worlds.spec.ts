@@ -317,6 +317,7 @@ test("a viewer has no world to save", async ({ page, as }) => {
   await page.goto("/o/friends/s/survival/backups");
   await expect(page.getByText(/snapshots?, the newest/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Save world" })).toHaveCount(0);
+});
 
 test("a new server asked for with a world that cannot be used yet says so, rather than making a new one", async ({ page, as }) => {
   await as("owner");
