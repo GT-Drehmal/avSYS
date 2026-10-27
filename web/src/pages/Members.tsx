@@ -4,10 +4,11 @@ import { useState } from "react";
 import { useParams } from "react-router";
 import { useOrg } from "../components/Shell";
 import { Picture } from "../components/Picture";
-import { Button, Chip, Confirm, CopyText, Field, Input, Modal, PageHeader, Select, Loading } from "../components/ui";
+import { Button, Chip, Confirm, CopyText, Field, Input, Modal, PageHeader, SearchBox, Select, Loading } from "../components/ui";
 import { api, atLeast, roles, roleSummary, type Invite, type Member, type Role } from "../lib/api";
 import { ago } from "../lib/format";
 import { keys, useAction, useMe } from "../lib/queries";
+import { matches, useSearch } from "../lib/search";
 
 const inviteURL = (token: string) => `${location.origin}/invite/${token}`;
 
@@ -92,12 +93,14 @@ export function Members() {
   const invites = useQuery({ queryKey: keys.invites(org), queryFn: () => api.get<Invite[]>(`/orgs/${org}/invites`), enabled: canManage });
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [query, setQuery] = useSearch();
 
   const setRole = useAction(({ userId, role }: { userId: string; role: Role }) => api.patch(`/orgs/${org}/members/${userId}`, { role }), [keys.members(org)]);
   const remove = useAction((userId: string) => api.del(`/orgs/${org}/members/${userId}`), [keys.members(org), keys.me]);
   const revoke = useAction((token: string) => api.del(`/orgs/${org}/invites/${token}`), [keys.invites(org)]);
 
   if (members.isPending) return <Loading />;
+  const shown = (members.data ?? []).filter((m) => matches(query, m.displayName, m.username, inGame(m), m.role, m.userId === me.user.id && "you"));
   return (
     <>
       <PageHeader
@@ -111,8 +114,10 @@ export function Members() {
           )
         }
       />
-      <ul className="overflow-hidden rounded-lg border border-line bg-surface">
-        {members.data?.map((m) => {
+      <SearchBox value={query} onChange={setQuery} label="Search members" className="mb-3 w-full sm:w-64" />
+      {shown.length === 0 && <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No members match.</p>}
+      <ul className="overflow-hidden rounded-lg border border-line bg-surface empty:hidden">
+        {shown.map((m) => {
           // Admins manage everyone below owner; owners manage everyone.
           const editable = canManage && (isOwner || m.role !== "owner");
           return (

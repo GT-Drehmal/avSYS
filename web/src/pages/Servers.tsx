@@ -7,7 +7,8 @@ import { Faces } from "../components/Faces";
 import { Picture } from "../components/Picture";
 import { ServerActions } from "../components/ServerActions";
 import { useOrg } from "../components/Shell";
-import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, SelectionBar, StatusDot, Loading, Toggle } from "../components/ui";
+import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, SearchBox, SelectionBar, StatusDot, Loading, Toggle } from "../components/ui";
+import { matches, useSearch } from "../lib/search";
 import { api, ApiError, atLeast, serverIcon, serverPath, type Server } from "../lib/api";
 import { describeSoftware, displayName } from "../lib/format";
 import { keys, useBackupPolicy, useMe, useMeta, useServers } from "../lib/queries";
@@ -154,7 +155,10 @@ export function Servers() {
   const canOperate = atLeast(membership?.role, "operator");
   const people = usePresence(org);
   const me = useMe().data?.user.id;
-  const selection = useSelection(servers.data?.map((s) => s.name) ?? [], org);
+  const [query, setQuery] = useSearch();
+  const shown = servers.data?.filter((s) => matches(query, s.name, displayName(s), describeSoftware(s), phaseWords[s.status.phase ?? "Stopped"], s.status.address)) ?? [];
+  // Only what is shown can be ticked: a search hides none of what is acted on.
+  const selection = useSelection(shown.map((s) => s.name), org);
   const chosen = servers.data?.filter((s) => selection.has(s.name)) ?? [];
 
   const newButton = canCreate && (
@@ -178,6 +182,11 @@ export function Servers() {
       ) : (
         // Room for the bar that the selection brings up, so it covers nothing.
         // On a narrow screen its buttons wrap onto a second row.
+        <div className="flex flex-col gap-3">
+        <SearchBox value={query} onChange={setQuery} label="Search servers" />
+        {shown.length === 0 ? (
+          <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No servers match.</p>
+        ) : (
         <div className="overflow-hidden rounded-lg border border-line bg-surface">
           <div className={`${columns} label-mono relative hidden h-9 border-b border-line md:grid ${canOperate ? "pl-10" : ""}`}>
             {canOperate && (
@@ -192,7 +201,7 @@ export function Servers() {
             <span />
           </div>
           <ul>
-            {servers.data.map((s) => (
+            {shown.map((s) => (
               <li key={s.name} className={`group relative border-b border-line last:border-b-0 ${selection.has(s.name) ? "bg-accent-wash" : ""}`}>
                 {canOperate && (
                   <label className="absolute inset-y-0 left-0 z-10 flex w-10 cursor-pointer items-center justify-center">
@@ -228,6 +237,8 @@ export function Servers() {
               </li>
             ))}
           </ul>
+        </div>
+        )}
         </div>
       )}
       <SelectionBar count={selection.count} noun="server" onClear={selection.clear}>
