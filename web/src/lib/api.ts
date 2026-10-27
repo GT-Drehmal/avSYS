@@ -479,13 +479,17 @@ export interface LibraryWorld {
   version?: string;
   /** The archive's name, for one uploaded. */
   file?: string;
+  /** How large its archive is, and the world out of it, where known. */
   size: number;
+  unpacked?: number;
   /** Where it came from: "upload", "server:<name>" or "snapshot:<server>". */
   source: string;
   /** While its archive is still being made. */
   saving?: boolean;
   /** Whether it can be used. */
   ready: boolean;
+  /** Why it could not be saved, for one that was not. */
+  error?: string;
 }
 
 /** Where a library world's picture is. */

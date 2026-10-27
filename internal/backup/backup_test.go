@@ -1041,4 +1041,23 @@ func TestArchive(t *testing.T) {
 	if err := m.Archive(ctx, "alpha", list[0].ID, []Folder{{"/data/elsewhere", "world"}}, io.Discard); !errors.Is(err, ErrNotFound) {
 		t.Errorf("no such folder: %v", err)
 	}
+	// Kept as a file of its own, the same.
+	kept, err := m.KeepArchive(ctx, "alpha", list[0].ID, folders, "world-w1", "world.archive", "owner")
+	if err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	var again bytes.Buffer
+	if err := m.Stream(ctx, "alpha", kept.ID, "/world.archive", &again); err != nil {
+		t.Fatal(err)
+	}
+	var first bytes.Buffer
+	if err := m.Archive(ctx, "alpha", list[0].ID, folders, &first); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(again.Bytes(), first.Bytes()) || kept.Server != "world-w1" || kept.Trigger != TriggerTemplate {
+		t.Errorf("kept as %+v, %d bytes, not the %d of the archive", kept, again.Len(), first.Len())
+	}
+	if _, err := m.KeepArchive(ctx, "alpha", list[0].ID, []Folder{{"/data/elsewhere", "world"}}, "world-w2", "world.archive", "owner"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("kept of no such folder: %v", err)
+	}
 }

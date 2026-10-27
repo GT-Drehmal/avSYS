@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +52,20 @@ func worldBusy(a *access, id string) bool {
 	return busy
 }
 
+// worldsBusy are an organization's worlds being saved or deleted now. It is
+// asked before the worlds are read: one whose work ends in between is then
+// seen as it was left, never as neither being saved nor saved.
+func worldsBusy(a *access) map[string]bool {
+	out := map[string]bool{}
+	worldsSaving.Range(func(key, _ any) bool {
+		if id, ok := strings.CutPrefix(key.(string), a.Org.ID+"/"); ok {
+			out[id] = true
+		}
+		return true
+	})
+	return out
+}
+
 // worldView is a world as it is shown.
 type worldView struct {
 	ID          string    `json:"id"`
@@ -66,7 +80,10 @@ type worldView struct {
 	Version string `json:"version,omitempty"`
 	// File is the archive's name, for one uploaded.
 	File string `json:"file,omitempty"`
-	Size int64  `json:"size"`
+	// Size is how large its archive is, and Unpacked how large the world is
+	// out of it, where known.
+	Size     int64 `json:"size"`
+	Unpacked int64 `json:"unpacked,omitempty"`
 	// Source is where it came from: "upload", "server:<name>" or
 	// "snapshot:<server>".
 	Source string `json:"source"`
@@ -74,6 +91,8 @@ type worldView struct {
 	Saving bool `json:"saving,omitempty"`
 	// Ready is for one whose archive is there to be used.
 	Ready bool `json:"ready"`
+	// Error says why its archive could not be made, for one that was not.
+	Error string `json:"error,omitempty"`
 }
 
 // librarySnapshots are the snapshots of the library's worlds, by world.
@@ -90,12 +109,13 @@ func librarySnapshots(list []backup.Snapshot) map[string]backup.Snapshot {
 	return out
 }
 
-func (s *Server) worldOf(a *access, w *store.World, snaps map[string]backup.Snapshot) worldView {
-	_, ready := snaps[w.ID]
+func worldOf(w *store.World, snaps map[string]backup.Snapshot, busy bool) worldView {
+	// One being saved has none yet, or one still being written.
+	_, kept := snaps[w.ID]
 	return worldView{
 		ID: w.ID, Name: w.Name, Description: w.Description, CreatedBy: w.CreatedBy, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
-		Root: w.Root, Version: w.Version, File: w.File, Size: w.Size, Source: w.Source,
-		Saving: !ready && worldBusy(a, w.ID), Ready: ready,
+		Root: w.Root, Version: w.Version, File: w.File, Size: w.Size, Unpacked: w.Unpacked, Source: w.Source,
+		Saving: busy && w.Failed == "", Ready: kept && !busy && w.Failed == "", Error: w.Failed,
 	}
 }
 
@@ -120,11 +140,15 @@ func (s *Server) libraryWorld(ctx context.Context, a *access, id string) (*store
 
 // readyWorld is one of the library's worlds that can be used now.
 func (s *Server) readyWorld(ctx context.Context, a *access, id string) (*store.World, *backup.Snapshot, error) {
+	busy := worldBusy(a, id)
 	w, snap, err := s.libraryWorld(ctx, a, id)
 	if err != nil {
 		return nil, nil, err
 	}
-	if snap == nil {
+	if w.Failed != "" {
+		return nil, nil, &Error{Status: http.StatusConflict, Code: "not_saved", Message: "This world was not saved: " + w.Failed}
+	}
+	if snap == nil || busy {
 		return nil, nil, &Error{Status: http.StatusConflict, Code: "not_ready", Message: "This world is still being saved."}
 	}
 	return w, snap, nil
@@ -135,6 +159,7 @@ func (s *Server) listWorlds(w http.ResponseWriter, r *http.Request, u *store.Use
 	if err != nil {
 		return err
 	}
+	busy := worldsBusy(a)
 	worlds, err := s.Store.Worlds(r.Context(), a.Org.ID)
 	if err != nil {
 		return err
@@ -146,7 +171,7 @@ func (s *Server) listWorlds(w http.ResponseWriter, r *http.Request, u *store.Use
 	snaps := librarySnapshots(list)
 	out := make([]worldView, len(worlds))
 	for i := range worlds {
-		out[i] = s.worldOf(a, &worlds[i], snaps)
+		out[i] = worldOf(&worlds[i], snaps, busy[worlds[i].ID])
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
@@ -157,20 +182,21 @@ func (s *Server) getWorld(w http.ResponseWriter, r *http.Request, u *store.User)
 	if err != nil {
 		return err
 	}
+	busy := worldBusy(a, r.PathValue("world"))
 	world, snap, err := s.libraryWorld(r.Context(), a, r.PathValue("world"))
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, s.worldOfSnap(a, world, snap))
+	writeJSON(w, http.StatusOK, worldOfSnap(world, snap, busy))
 	return nil
 }
 
-func (s *Server) worldOfSnap(a *access, w *store.World, snap *backup.Snapshot) worldView {
+func worldOfSnap(w *store.World, snap *backup.Snapshot, busy bool) worldView {
 	snaps := map[string]backup.Snapshot{}
 	if snap != nil {
 		snaps[w.ID] = *snap
 	}
-	return s.worldOf(a, w, snaps)
+	return worldOf(w, snaps, busy)
 }
 
 // worldWords checks a world's name and description, and gives them back
@@ -197,7 +223,8 @@ func worldNameTaken(name string) error {
 
 // uploadWorld puts an uploaded archive of a world in the library: the body,
 // with ?name=, ?description=, ?root= its world's folder in it, and what the
-// page read of it, ?version= and ?file=.
+// page read of it, ?version=, ?file= and ?unpacked=, how large the world is
+// out of it.
 func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleOperator)
 	if err != nil {
@@ -215,7 +242,8 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err != nil {
 		return err
 	}
-	world := &store.World{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username, Root: root, Version: q.Get("version"), File: q.Get("file"), Source: "upload"}
+	unpacked, _ := strconv.ParseInt(q.Get("unpacked"), 10, 64)
+	world := &store.World{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username, Root: root, Version: q.Get("version"), File: q.Get("file"), Unpacked: max(unpacked, 0), Source: "upload"}
 	if err := s.Store.CreateWorld(r.Context(), world); errors.Is(err, store.ErrWorldNameTaken) {
 		return worldNameTaken(name)
 	} else if err != nil {
@@ -230,7 +258,7 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	kept, err := s.Backups.KeepFile(ctx, a.Org.Slug, libraryHost(world.ID), ownWorldFile, u.Username, http.MaxBytesReader(w, r.Body, maxUpload))
 	if err == nil {
 		world.Size = kept.Size
-		err = s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, kept.Size)
+		err = s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, kept.Size, world.Unpacked)
 	}
 	if err != nil {
 		s.forgetWorld(ctx, a, world.ID, kept)
@@ -241,7 +269,7 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 		return snapshotError(err)
 	}
 	s.audit(ctx, u, a.Org, "world.create", world.Name, kept.ID)
-	writeJSON(w, http.StatusCreated, s.worldOfSnap(a, world, kept))
+	writeJSON(w, http.StatusCreated, worldOfSnap(world, kept, false))
 	return nil
 }
 
@@ -347,15 +375,30 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		s.forgetWorld(context.WithoutCancel(r.Context()), a, world.ID, nil)
 		return err
 	}
+	// Said before the work starts, which changes the world as it goes.
+	saving := worldOfSnap(world, nil, true)
+	saved := *world
 	work := func(ctx context.Context) (kept *backup.Snapshot, err error) {
 		defer release()
 		ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 		defer cancel()
 		defer func() {
-			if err != nil {
-				s.forgetWorld(context.WithoutCancel(ctx), a, world.ID, kept)
-				s.Log.Warn("a world was not saved to the library", "world", world.Name, "error", err)
+			if err == nil {
+				return
 			}
+			// Kept, with why, until it is deleted: whoever asked for it
+			// may not be there to be told.
+			ctx := context.WithoutCancel(ctx)
+			if kept != nil {
+				if derr := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); derr != nil {
+					s.Log.Error("could not remove a world's archive kept for nothing", "world", saved.ID, "snapshot", kept.ID, "error", derr)
+				}
+				kept = nil
+			}
+			if ferr := s.Store.SetWorldFailed(ctx, a.Org.ID, saved.ID, sentence(plainly(err))); ferr != nil && !errors.Is(ferr, store.ErrNotFound) {
+				s.Log.Warn("could not say why a world was not saved", "world", saved.ID, "error", ferr)
+			}
+			s.Log.Warn("a world was not saved to the library", "world", saved.Name, "error", err)
 		}()
 		from := snap
 		if take != nil {
@@ -367,38 +410,38 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		for _, dim := range []string{"_nether", "_the_end"} {
 			folders = append(folders, backup.Folder{Path: dataRoot + "/" + level + dim, As: libraryRoot + dim})
 		}
-		pr, pw := io.Pipe()
-		go func() { pw.CloseWithError(s.Backups.Archive(ctx, a.Org.Slug, from.ID, folders, pw)) }()
-		kept, err = s.Backups.KeepFile(ctx, a.Org.Slug, libraryHost(world.ID), ownWorldFile, u.Username, pr)
-		pr.Close()
+		kept, err = s.Backups.KeepArchive(ctx, a.Org.Slug, from.ID, folders, libraryHost(saved.ID), ownWorldFile, u.Username)
 		if errors.Is(err, backup.ErrNotFound) {
 			return kept, errBadRequest("Its world is not among its files.")
 		} else if err != nil {
 			return kept, err
 		}
-		world.Size = kept.Size
-		if err := s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, kept.Size); err != nil {
+		// A tar is as large as what is in it.
+		saved.Size, saved.Unpacked = kept.Size, kept.Size
+		if err := s.Store.SetWorldArchive(ctx, a.Org.ID, saved.ID, saved.Root, saved.Version, saved.Size, saved.Unpacked); err != nil {
 			return kept, err
 		}
 		// Its picture, as the server had one.
 		if raw, err := s.Backups.File(ctx, a.Org.Slug, from.ID, serverIconPath, snapshotIconLimit); err == nil && raw != nil {
 			if data, err := squarePNG(bytes.NewReader(raw), serverIconSide); err == nil {
-				_ = s.Store.SetImage(ctx, store.WorldImage(world.ID), data)
+				_ = s.Store.SetImage(ctx, store.WorldImage(saved.ID), data)
 			}
 		}
-		s.audit(ctx, u, a.Org, "world.create", world.Name, kept.ID)
+		s.audit(ctx, u, a.Org, "world.create", saved.Name, kept.ID)
 		return kept, nil
 	}
 	if r.URL.Query().Get("wait") == "true" {
 		kept, err := work(context.WithoutCancel(r.Context()))
 		if err != nil {
+			// Asked for and waited on, it is told here, and not kept.
+			s.forgetWorld(context.WithoutCancel(r.Context()), a, saved.ID, nil)
 			return operationFailed(err)
 		}
-		writeJSON(w, http.StatusCreated, s.worldOfSnap(a, world, kept))
+		writeJSON(w, http.StatusCreated, worldOfSnap(&saved, kept, false))
 		return nil
 	}
 	go func() { _, _ = work(context.Background()) }()
-	writeJSON(w, http.StatusAccepted, s.worldOfSnap(a, world, nil))
+	writeJSON(w, http.StatusAccepted, saving)
 	return nil
 }
 
@@ -408,6 +451,7 @@ func (s *Server) updateWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err != nil {
 		return err
 	}
+	busy := worldBusy(a, r.PathValue("world"))
 	world, snap, err := s.libraryWorld(r.Context(), a, r.PathValue("world"))
 	if err != nil {
 		return err
@@ -432,7 +476,7 @@ func (s *Server) updateWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "world.update", world.Name, "")
-	writeJSON(w, http.StatusOK, s.worldOfSnap(a, world, snap))
+	writeJSON(w, http.StatusOK, worldOfSnap(world, snap, busy))
 	return nil
 }
 

@@ -703,19 +703,26 @@ func (m *Manager) KeepFile(ctx context.Context, org, host, name, by string, r io
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	return m.keepFile(ctx, org, host, name, by, r)
+}
+
+// keepFile is KeepFile, with the repository's read lock held by the caller.
+//
+// What is read from r ending in an error leaves restic with less than it
+// should have, which it may keep all the same: that snapshot is given back
+// with the error, for the caller to remove.
+func (m *Manager) keepFile(ctx context.Context, org, host, name, by string, r io.Reader) (*Snapshot, error) {
 	args := []string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache",
 		"backup", "--stdin", "--stdin-filename", name, "--host", host, "--json", "--tag", "avsys", "--tag", "trigger=" + TriggerTemplate}
 	if by != "" {
 		args = append(args, "--tag", "by="+by)
 	}
 	cmd := exec.CommandContext(ctx, m.Restic, args...)
-	cmd.Stdin = r
+	in := &readFailure{r: r}
+	cmd.Stdin = in
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("restic backup: %w: %s", err, lastLine(stderr.String()))
-	}
 	var id string
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		var msg struct {
@@ -726,11 +733,37 @@ func (m *Manager) KeepFile(ctx context.Context, org, host, name, by string, r io
 			id = msg.ID
 		}
 	}
+	if id != "" {
+		m.touch(org)
+	}
+	if in.err != nil || err != nil {
+		var kept *Snapshot
+		if id != "" {
+			kept, _ = m.get(context.WithoutCancel(ctx), org, id)
+		}
+		if in.err != nil {
+			return kept, in.err
+		}
+		return kept, fmt.Errorf("restic backup: %w: %s", err, lastLine(stderr.String()))
+	}
 	if id == "" {
 		return nil, errors.New("restic backup: no snapshot was saved")
 	}
-	m.touch(org)
 	return m.get(ctx, org, id)
+}
+
+// readFailure notes the error, other than its end, a reader came to.
+type readFailure struct {
+	r   io.Reader
+	err error
+}
+
+func (f *readFailure) Read(p []byte) (int, error) {
+	n, err := f.r.Read(p)
+	if err != nil && err != io.EOF && f.err == nil {
+		f.err = err
+	}
+	return n, err
 }
 
 // Stream writes one file of a snapshot to w, as it is read out.
@@ -766,6 +799,42 @@ func (m *Manager) Archive(ctx context.Context, org, id string, folders []Folder,
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	return m.archive(ctx, org, id, folders, w)
+}
+
+// KeepArchive keeps the folders of a snapshot asked for, as Archive puts
+// them in one tar, as a file of its own, as KeepFile does: under one hold
+// of the repository, so that nothing waiting to change it comes between
+// the two halves of the copy, each waiting for the other.
+func (m *Manager) KeepArchive(ctx context.Context, org, id string, folders []Folder, host, name, by string) (*Snapshot, error) {
+	if !m.Available() {
+		return nil, ErrUnavailable
+	}
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	pr, pw := io.Pipe()
+	archived := make(chan error, 1)
+	go func() {
+		err := m.archive(ctx, org, id, folders, pw)
+		pw.CloseWithError(err)
+		archived <- err
+	}()
+	kept, err := m.keepFile(ctx, org, host, name, by, pr)
+	// Whatever it was in the middle of, the archive is let go.
+	pr.CloseWithError(io.ErrClosedPipe)
+	if aerr := <-archived; aerr != nil && !errors.Is(aerr, io.ErrClosedPipe) {
+		// What was kept of it, if anything, is incomplete: the caller's to
+		// remove, which takes the repository to itself.
+		return kept, aerr
+	}
+	return kept, err
+}
+
+// archive is Archive, with the repository's read lock held by the caller.
+func (m *Manager) archive(ctx context.Context, org, id string, folders []Folder, w io.Writer) error {
 	snap, err := m.get(ctx, org, id)
 	if err != nil {
 		return err

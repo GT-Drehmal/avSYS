@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 )
@@ -47,13 +49,13 @@ func TestWorldLibrary(t *testing.T) {
 	if code, _ := call("viewer", "POST", "/orgs/alpha/worlds/upload?name=Island&root=Island", "a world"); code != http.StatusForbidden {
 		t.Errorf("a viewer uploaded one: %d", code)
 	}
-	code, raw := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&description=Small&root=saves%2FIsland&version=1.21.4&file=island.zip", "a world")
+	code, raw := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&description=Small&root=saves%2FIsland&version=1.21.4&file=island.zip&unpacked=100", "a world")
 	if code != http.StatusCreated {
 		t.Fatalf("uploaded: %d %s", code, raw)
 	}
 	island := object(raw)
 	id := island["id"].(string)
-	if island["ready"] != true || island["root"] != "saves/Island" || island["version"] != "1.21.4" || island["file"] != "island.zip" || island["size"] != float64(len("a world")) || island["source"] != "upload" {
+	if island["ready"] != true || island["root"] != "saves/Island" || island["version"] != "1.21.4" || island["file"] != "island.zip" || island["size"] != float64(len("a world")) || island["source"] != "upload" || island["unpacked"] != float64(100) {
 		t.Errorf("uploaded as %v", island)
 	}
 	if code, _ := call("operator", "POST", "/orgs/alpha/worlds/upload?name=ISLAND&root=Island", "another"); code != http.StatusConflict {
@@ -131,7 +133,7 @@ func TestWorldLibrary(t *testing.T) {
 	}
 	saved := object(raw)
 	savedID := saved["id"].(string)
-	if saved["ready"] != true || saved["root"] != "world" || saved["version"] != "1.21.4" || saved["source"] != "snapshot:survival" {
+	if saved["ready"] != true || saved["root"] != "world" || saved["version"] != "1.21.4" || saved["source"] != "snapshot:survival" || saved["unpacked"] != saved["size"] {
 		t.Errorf("saved as %v", saved)
 	}
 	code, got := call("operator", "GET", "/orgs/alpha/worlds/"+savedID+"/archive", "")
@@ -160,6 +162,57 @@ func TestWorldLibrary(t *testing.T) {
 		t.Errorf("its picture: %d", code)
 	}
 
+	// One whose world is not among its files: waited on, it is told and not
+	// kept; not waited on, it says why it was not saved until deleted.
+	bare := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(bare, "data", ".avsys"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bare, "data", ".avsys", "snapshot.json"), []byte(strings.Replace(record, `"survival"`, `"empty"`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	take = exec.Command("restic", "--repo", filepath.Join(dir, "alpha"), "--password-file", filepath.Join(dir, "alpha.key"),
+		"backup", "data", "--host", "empty", "--tag", "avsys", "--tag", "trigger=manual")
+	take.Dir = bare
+	if out, err := take.CombinedOutput(); err != nil {
+		t.Fatalf("backup: %v: %s", err, out)
+	}
+	list, err = p.srv.Backups.List(t.Context(), "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var empty string
+	for _, s := range list {
+		if s.Server == "empty" {
+			empty = s.ID
+		}
+	}
+	if code, got := call("operator", "POST", "/orgs/alpha/worlds?wait=true", `{"name":"Nothing","snapshot":"`+empty+`"}`); code != http.StatusBadRequest || !strings.Contains(string(got), "not among its files") {
+		t.Errorf("waited on with no world: %d %s", code, got)
+	}
+	if code, got := call("viewer", "GET", "/orgs/alpha/worlds", ""); code != http.StatusOK || strings.Contains(string(got), `"Nothing"`) {
+		t.Errorf("one told it failed is kept: %s", got)
+	}
+	code, raw = call("operator", "POST", "/orgs/alpha/worlds", `{"name":"Nothing","snapshot":"`+empty+`"}`)
+	if code != http.StatusAccepted || object(raw)["saving"] != true {
+		t.Fatalf("not waited on: %d %s", code, raw)
+	}
+	failedID := object(raw)["id"].(string)
+	var failed map[string]any
+	for range 200 {
+		_, got := call("viewer", "GET", "/orgs/alpha/worlds/"+failedID, "")
+		if failed = object(got); failed["saving"] != true {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if failed["ready"] != false || !strings.Contains(fmt.Sprint(failed["error"]), "not among its files") {
+		t.Errorf("failed as %v", failed)
+	}
+	if code, _ := call("admin", "DELETE", "/orgs/alpha/worlds/"+failedID, ""); code != http.StatusNoContent {
+		t.Errorf("one that failed deleted: %d", code)
+	}
+
 	// Given to a template as its own world: a copy, which stays when the
 	// library's is deleted.
 	_, made := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Island base","spec":{"loader":"paper","version":"1.21.4","resources":{"memory":"4Gi"},"storage":{"size":"10Gi"}}}`)
@@ -181,11 +234,11 @@ func TestWorldLibrary(t *testing.T) {
 		}
 	}
 	list, err = p.srv.Backups.List(t.Context(), "alpha")
-	if err != nil || len(list) != 2 {
+	if err != nil || len(list) != 3 {
 		t.Errorf("left in the repository: %v %v", list, err)
 	}
 	for _, s := range list {
-		if s.Server != "survival" && s.Server != worldHost(tid) {
+		if s.Server != "survival" && s.Server != "empty" && s.Server != worldHost(tid) {
 			t.Errorf("left in the repository: %+v", s)
 		}
 	}
