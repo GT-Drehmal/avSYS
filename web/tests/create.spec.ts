@@ -1285,4 +1285,8 @@ test("a server brought back keeps its own world, with no choice of another", asy
   await page.goto(`/o/friends/new?from=snapshot:${final.id}`);
   await expect(page.getByRole("heading", { name: "Bring back oldworld" })).toBeVisible();
   await expect(page.getByRole("group", { name: "Its world" })).toHaveCount(0);
+  // How it was made is how it was made: its terrain is saved.
+  await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
+  await expect(page.getByLabel("Seed")).toBeDisabled();
+  await expect(page.getByRole("switch", { name: "Hardcore" })).toBeDisabled();
 });

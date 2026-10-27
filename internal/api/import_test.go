@@ -149,3 +149,64 @@ func TestWorldFillsAServerWithNone(t *testing.T) {
 		t.Errorf("left behind: %v", left)
 	}
 }
+
+// A world put among a server's files that did not finish left its datapacks
+// set aside: tried again, they still go into the world.
+func TestWorldFillTriedAgainKeepsDatapacks(t *testing.T) {
+	for _, tool := range []string{"bsdtar", "sh"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+	}
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(data, "mods", "a.jar"), "a mod")
+	// As the try before left it: the datapacks aside, and part of a world.
+	write(filepath.Join(data, ".avsys", "import.datapacks", "kept.zip"), "the server's")
+	write(filepath.Join(data, "world", "half"), "from the try before")
+	src := filepath.Join(root, "src")
+	write(filepath.Join(src, "MyWorld", "level.dat"), "my world")
+	script := regexp.MustCompile(regexp.QuoteMeta(dataRoot)+`\b`).ReplaceAllString(worldScript, data)
+	run := func(archive string) error {
+		t.Helper()
+		if out, err := exec.Command("bsdtar", "-cf", filepath.Join(data, ".avsys", "import.archive"), "-C", src, archive).CombinedOutput(); err != nil {
+			t.Fatalf("bsdtar: %v: %s", err, out)
+		}
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Stdin = strings.NewReader("MyWorld\n\n\nfill\nworld\n")
+		return cmd.Run()
+	}
+	// An archive without the world fails again, and keeps them aside.
+	write(filepath.Join(src, "Other", "level.dat"), "another")
+	if err := run("Other"); err == nil {
+		t.Fatal("an archive without the folder was taken")
+	}
+	if got, err := os.ReadFile(filepath.Join(data, ".avsys", "import.datapacks", "kept.zip")); err != nil || string(got) != "the server's" {
+		t.Fatalf("the datapacks set aside: %q, %v", got, err)
+	}
+	if err := run("MyWorld"); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		"world/level.dat":          "my world",
+		"world/datapacks/kept.zip": "the server's",
+		"mods/a.jar":               "a mod",
+	} {
+		got, err := os.ReadFile(filepath.Join(data, path))
+		if err != nil || string(got) != want {
+			t.Errorf("%s: %q, %v; want %q", path, got, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(data, "world", "half")); !os.IsNotExist(err) {
+		t.Errorf("what the try before left is still there: %v", err)
+	}
+}

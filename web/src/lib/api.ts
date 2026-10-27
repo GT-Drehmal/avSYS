@@ -399,6 +399,8 @@ export interface Template {
   world?: "new" | "own";
   /** The world it has of its own. */
   ownWorld?: OwnWorld;
+  /** The launch flags it was given itself, for one template asked for, to admins. */
+  extraFlags?: string;
   /** What a server made from it is: for one template asked for, and every one of settings alone. */
   spec?: ServerSpec;
 }

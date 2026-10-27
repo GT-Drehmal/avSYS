@@ -51,6 +51,10 @@ var (
 
 // importUnfinished reports whether an import started on this server's files
 // and never completed.
+// importFill marks an import that puts a world among the files a server has,
+// which are kept.
+const importFill = "fill"
+
 func importUnfinished(mc *avsysv1.MinecraftServer) bool {
 	_, marked := mc.Annotations[avsysv1.AnnotationImporting]
 	return marked
@@ -85,7 +89,8 @@ IFS= read -r level || true
 lv=${level:-world}
 a=` + importArchive + `
 s=` + importStaging + `
-rm -rf "$s" "$s.err" "$s.datapacks"
+rm -rf "$s" "$s.err"
+if [ "$replace" != fill ]; then rm -rf "$s.datapacks"; fi
 mkdir -p "$s"
 if ! bsdtar -xf "$a" -C "$s" 2>"$s.err"; then
   head -n 1 "$s.err" >&2
@@ -103,7 +108,7 @@ fi
 if [ "$replace" = replace ]; then
   rm -rf "` + dataRoot + `/$lv" "` + dataRoot + `/${lv}_nether" "` + dataRoot + `/${lv}_the_end"
 elif [ "$replace" = fill ]; then
-  if [ -d "` + dataRoot + `/$lv/datapacks" ]; then mv -- "` + dataRoot + `/$lv/datapacks" "$s.datapacks"; fi
+  if [ -d "` + dataRoot + `/$lv/datapacks" ] && [ ! -e "$s.datapacks" ]; then mv -- "` + dataRoot + `/$lv/datapacks" "$s.datapacks"; fi
   rm -rf "` + dataRoot + `/$lv" "` + dataRoot + `/${lv}_nether" "` + dataRoot + `/${lv}_the_end"
 else
   find ` + dataRoot + ` -mindepth 1 -maxdepth 1 ! -name .avsys ! -name .workspace ! -name lost+found -exec rm -rf {} +
@@ -333,6 +338,9 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	ctx := r.Context()
 	key := client.ObjectKeyFromObject(mc)
 	wasMarked := importUnfinished(mc)
+	// One that did not finish putting a world among files that were there
+	// left them there: tried again, it does the same.
+	wasFill := mc.Annotations[avsysv1.AnnotationImporting] == importFill
 	if r.URL.Query().Get("wait") == "true" {
 		waitCtx, cancel := context.WithTimeout(ctx, newServerIconWait)
 		err := s.ownPod(waitCtx, mc)
@@ -345,7 +353,11 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	// and it is marked: from here the game is not started.
 	s.setOperation(mc.Namespace, op, "Getting ready", 0)
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
-	mark := func(m *avsysv1.MinecraftServer) { m.Annotations[avsysv1.AnnotationImporting] = "true" }
+	mark := func(m *avsysv1.MinecraftServer) {
+		if m.Annotations[avsysv1.AnnotationImporting] == "" {
+			m.Annotations[avsysv1.AnnotationImporting] = "true"
+		}
+	}
 	if err := s.stopReplacing(ctx, key, stamp, mark); err != nil {
 		return undo, err
 	}
@@ -354,7 +366,7 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	touched := false
 	defer func() {
 		if !touched && !wasMarked {
-			if err := s.markImporting(context.WithoutCancel(ctx), key, false); err != nil {
+			if err := s.markImporting(context.WithoutCancel(ctx), key, ""); err != nil {
 				s.Log.Warn("could not take the import mark off a server", "server", mc.Name, "error", err)
 			}
 		}
@@ -381,7 +393,7 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	// Over a server whose import did not finish, what it left is replaced.
 	// A world replaced goes among files that are there, and so does one
 	// given to a server that has none yet, as one copied with a new world.
-	fill := false
+	fill := wasFill && !replace && r.URL.Query().Get("world") == "true"
 	if !wasMarked && !replace {
 		level := levelOf(&mc.Spec)
 		if has, err := hasFiles(sc); err != nil {
@@ -395,6 +407,14 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 			fill = true
 		} else if has {
 			return undo, errHasFiles
+		}
+	} else if wasFill && !fill && !replace {
+		// Anything else would empty the files it was to leave.
+		return undo, errBadRequest("Its world did not finish going in. Choose a world again.")
+	}
+	if fill && !wasFill {
+		if err := s.markImporting(ctx, key, importFill); err != nil {
+			return undo, err
 		}
 	}
 
@@ -498,7 +518,7 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 	}
 	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
-	return undo, s.markImporting(ctx, key, false)
+	return undo, s.markImporting(ctx, key, "")
 }
 
 // keepListed leaves in a list of players the game keeps, such as ops.json,
@@ -557,17 +577,17 @@ func keepListed(sc *sftp.Client, file string, names []string) error {
 }
 
 // markImporting sets or clears the mark of an import on a server.
-func (s *Server) markImporting(ctx context.Context, key client.ObjectKey, on bool) error {
+func (s *Server) markImporting(ctx context.Context, key client.ObjectKey, how string) error {
 	mc := &avsysv1.MinecraftServer{}
 	if err := s.Client.Get(ctx, key, mc); err != nil {
 		return err
 	}
 	orig := mc.DeepCopy()
-	if on {
+	if how != "" {
 		if mc.Annotations == nil {
 			mc.Annotations = map[string]string{}
 		}
-		mc.Annotations[avsysv1.AnnotationImporting] = "true"
+		mc.Annotations[avsysv1.AnnotationImporting] = how
 	} else {
 		delete(mc.Annotations, avsysv1.AnnotationImporting)
 	}

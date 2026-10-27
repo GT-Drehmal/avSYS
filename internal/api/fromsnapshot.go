@@ -300,9 +300,9 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 	if err := checkPackFormats(spec.ResourcePack, recorded.ResourcePack); err != nil {
 		return spec, err
 	}
-	changed := spec.Version != recorded.Version || spec.Loader != recorded.Loader || spec.LoaderVersion != recorded.LoaderVersion
-	if changed && spec.Modpack != nil {
-		return spec, errBadRequest("This server runs a modpack. Change the modpack's version after it is created.")
+	changed := softwareChanged(&spec, recorded)
+	if err := modpackSoftware(&spec, recorded); err != nil {
+		return spec, err
 	}
 	s.applyDefaults(a.Org.Slug, name, &spec)
 	// "Latest" is settled here, as for any new server.
@@ -374,7 +374,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return err
 	}
-	if err := worldLeavable(&spec, newWorld); err != nil {
+	if err := leaveWorld(&spec, &record.Spec, &requested, newWorld); err != nil {
 		return err
 	}
 	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
@@ -508,7 +508,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	if err != nil {
 		return err
 	}
-	if err := worldLeavable(&spec, newWorld); err != nil {
+	if err := leaveWorld(&spec, &mc.Spec, &requested, newWorld); err != nil {
 		return err
 	}
 	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
@@ -731,8 +731,14 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 		// All but the world, whose datapacks stay: content the server has.
 		// Its seed goes as well, for the game to pick one unless it is
 		// given one. The world is made as the server first starts.
-		level := levelOf(&created.Spec)
-		err = s.Backups.RestoreWithout(ctx, org, ws, snap.ID, worldFolders(level), []string{"/" + level + "/datapacks"}, progress)
+		// The world left is in the original's folder, and the new one is
+		// made in the copy's, where its datapacks go.
+		from, to := levelOf(original), levelOf(&created.Spec)
+		err = s.Backups.RestoreWithout(ctx, org, ws, snap.ID, worldFolders(from), []string{"/" + from + "/datapacks"}, progress)
+		if err == nil && from != to {
+			src, dst := shellQuote(from+"/datapacks"), shellQuote(to)
+			err = runIn(ws, "cd "+dataRoot+" && if [ -d "+src+" ]; then mkdir -p "+dst+" && mv -- "+src+" "+dst+"/ && rmdir "+shellQuote(from)+"; fi")
+		}
 		if err == nil {
 			err = runIn(ws, "cd "+dataRoot+" && if [ -f server.properties ]; then sed -i '/^level-seed=/d' server.properties; fi")
 		}
@@ -840,11 +846,34 @@ func worldFolders(level string) []string {
 	return []string{"/" + level, "/" + level + "_nether", "/" + level + "_the_end"}
 }
 
-// worldLeavable says whether a server copied with a new world can be: it can
-// when it is known which folder the world it leaves behind is in.
-func worldLeavable(spec *avsysv1.MinecraftServerSpec, newWorld bool) error {
-	if newWorld && levelOf(spec) == "" {
+// softwareChanged is whether a copy runs another game version or loader than
+// its original.
+func softwareChanged(spec, recorded *avsysv1.MinecraftServerSpec) bool {
+	return spec.Version != recorded.Version || spec.Loader != recorded.Loader || spec.LoaderVersion != recorded.LoaderVersion
+}
+
+// modpackSoftware refuses a copy of a server that runs a modpack another game
+// version or loader than its modpack's: that is changed with the modpack.
+func modpackSoftware(spec, recorded *avsysv1.MinecraftServerSpec) error {
+	if softwareChanged(spec, recorded) && spec.Modpack != nil {
+		return errBadRequest("This server runs a modpack. Change the modpack's version after it is created.")
+	}
+	return nil
+}
+
+// leaveWorld says whether a server copied from original with a new world can
+// be: it can when it is known which folder the world it leaves behind is in,
+// and which the new one is made in. The old world's seed is left behind as
+// well, unless the request asked for one.
+func leaveWorld(spec, original, requested *avsysv1.MinecraftServerSpec, newWorld bool) error {
+	if !newWorld {
+		return nil
+	}
+	if levelOf(spec) == "" || levelOf(original) == "" {
 		return errBadRequest("Which folder its world is in could not be told from its settings, so it cannot be given a new one.")
+	}
+	if _, asked := requested.Properties["level-seed"]; !asked {
+		delete(spec.Properties, "level-seed")
 	}
 	return nil
 }

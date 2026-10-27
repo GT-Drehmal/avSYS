@@ -306,6 +306,11 @@ func TestTemplateFromASnapshot(t *testing.T) {
 		t.Errorf("a newer version: %d %v", code, again)
 	}
 
+	// Its version, copied as a newer one of the same template.
+	if code, out := call("admin", "POST", "/orgs/alpha/templates/"+id+"/versions", `{"snapshot":"`+current["id"].(string)+`"}`); code != http.StatusCreated || len(out["versions"].([]any)) != 3 {
+		t.Errorf("its own version again: %d %v", code, out)
+	}
+
 	// The snapshot is as it was, and the failed one left no template behind.
 	if got, err := p.srv.Backups.Get(t.Context(), "alpha", src); err != nil || got.Server != "survival" || got.Trigger != "scheduled" {
 		t.Errorf("the snapshot is now %+v, %v", got, err)
@@ -343,6 +348,24 @@ func TestTemplateFromASnapshot(t *testing.T) {
 	}
 	if props := spec(peaceful)["properties"].(map[string]any); props["difficulty"] != "peaceful" || props["pvp"] != "false" {
 		t.Errorf("changed again: %v", props)
+	}
+	// Launch flags it is given are said apart, to admins, to be changed.
+	if code, out := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"jvm":{"extraFlags":"-Xss1m"}}}`); code != http.StatusOK {
+		t.Fatalf("given flags: %d %v", code, out)
+	}
+	if _, got := call("admin", "GET", "/orgs/alpha/templates/"+peaceful, ""); got["extraFlags"] != "-Xss1m" {
+		t.Errorf("its flags: %v", got["extraFlags"])
+	}
+	if _, got := call("viewer", "GET", "/orgs/alpha/templates/"+peaceful, ""); got["extraFlags"] != nil {
+		t.Errorf("its flags to a viewer: %v", got["extraFlags"])
+	}
+	if code, out := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"jvm":{"extraFlags":""}}}`); code != http.StatusOK {
+		t.Fatalf("flags taken off: %d %v", code, out)
+	}
+	if _, got := call("admin", "GET", "/orgs/alpha/templates/"+peaceful, ""); got["extraFlags"] != nil {
+		t.Errorf("its flags taken off: %v", got["extraFlags"])
+	} else if jvm, _ := got["spec"].(map[string]any)["jvm"].(map[string]any); jvm["extraFlags"] != nil {
+		t.Errorf("its flags taken off, on its servers: %v", jvm)
 	}
 	// Duplicated with changes of its own, over the other's.
 	code, again2 := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Peaceful big","template":"`+peaceful+`","changes":{"resources":{"memory":"6Gi"}}}`)
@@ -462,6 +485,22 @@ func TestTemplateOwnWorld(t *testing.T) {
 	if own := got["ownWorld"].(map[string]any); own["root"] != "saves/Island" || own["name"] != "Island" || own["version"] != "1.21.4" || own["file"] != "island.zip" || own["size"] != float64(len("a world")) {
 		t.Errorf("its world: %v", own)
 	}
+	// One at a time.
+	org, err := p.srv.Store.OrgBySlug(t.Context(), "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := claimTemplate(&access{Org: org}, worldHost(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := call("admin", "PUT", "/orgs/alpha/templates/"+id+"/world?root=Other", "another world"); code != http.StatusConflict {
+		t.Errorf("given one while another is: %d", code)
+	}
+	if code, _ := call("admin", "DELETE", "/orgs/alpha/templates/"+id+"/world", ""); code != http.StatusConflict {
+		t.Errorf("taken away while one is given: %d", code)
+	}
+	release()
 	// Given another, the one before goes.
 	if code, _ := call("admin", "PUT", "/orgs/alpha/templates/"+id+"/world?root=Other", "another world"); code != http.StatusOK || worlds(id) != 1 {
 		t.Errorf("given another: %d, %d kept", code, worlds(id))

@@ -85,6 +85,9 @@ type templateView struct {
 	World string `json:"world,omitempty"`
 	// OwnWorld is what is known of that world.
 	OwnWorld *ownWorld `json:"ownWorld,omitempty"`
+	// ExtraFlags are the launch flags it was given itself, for one template
+	// asked for: those its version's files brought are not said apart.
+	ExtraFlags string `json:"extraFlags,omitempty"`
 }
 
 // templateOf is a template as it is shown, with its versions found among
@@ -123,6 +126,9 @@ func templateOf(t *store.Template, list []backup.Snapshot) templateView {
 
 // templateFor is a template as someone of the given role is shown it.
 func templateFor(role store.Role, v templateView) templateView {
+	if !role.AtLeast(store.RoleAdmin) {
+		v.ExtraFlags = ""
+	}
 	if v.Spec != nil {
 		spec := recordFor(role, *v.Spec)
 		v.Spec = &spec
@@ -201,6 +207,14 @@ func (s *Server) getTemplate(w http.ResponseWriter, r *http.Request, u *store.Us
 		// As a server made from it is: its version, with what was changed.
 		if spec, ok := withChanges(&record.Spec, t.Changes); ok {
 			v.Spec = &spec
+		}
+		var changes struct {
+			JVM struct {
+				ExtraFlags string `json:"extraFlags"`
+			} `json:"jvm"`
+		}
+		if json.Unmarshal([]byte(t.Changes), &changes) == nil {
+			v.ExtraFlags = changes.JVM.ExtraFlags
 		}
 	}
 	writeJSON(w, http.StatusOK, templateFor(a.Role, v))
@@ -432,6 +446,9 @@ func (s *Server) templateChanges(ctx context.Context, a *access, base *avsysv1.M
 	// Checked as a copy with them would be, but for the address, which is
 	// each server's own.
 	spec := fromSnapshot(&requested, base, fields)
+	if err := modpackSoftware(&spec, base); err != nil {
+		return "", err
+	}
 	spec.Expose = avsysv1.ExposeSpec{Type: spec.Expose.Type}
 	if spec.Expose.Type == "" {
 		spec.Expose.Type = base.Expose.Type
@@ -440,7 +457,7 @@ func (s *Server) templateChanges(ctx context.Context, a *access, base *avsysv1.M
 	if err := s.validateSpec(ctx, a.Namespace, "", &spec); err != nil {
 		return "", err
 	}
-	if err := worldLeavable(&spec, newWorldIn(string(raw))); err != nil {
+	if err := leaveWorld(&spec, base, &requested, newWorldIn(string(raw))); err != nil {
 		return "", err
 	}
 	if err := checkPackSHA1(spec.ResourcePack, base.ResourcePack); err != nil {
@@ -808,7 +825,12 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 		return err
 	}
 	defer unclaim()
-	// Its own world goes with it.
+	// Its own world goes with it, and is not given another meanwhile.
+	unclaimWorld, err := claimTemplate(a, worldHost(t.ID))
+	if err != nil {
+		return err
+	}
+	defer unclaimWorld()
 	list, err := s.templateSnapshots(r.Context(), a.Org.Slug)
 	if err != nil {
 		return err

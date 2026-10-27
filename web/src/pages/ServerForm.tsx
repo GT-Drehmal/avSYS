@@ -59,6 +59,8 @@ export interface Source {
   world?: "new" | "own";
   /** That world. */
   ownWorld?: OwnWorld;
+  /** The launch flags a template was given in the panel, apart from those its files brought. */
+  flags?: string;
 }
 
 /** A template of settings alone, which a new server is made with: there are no files to copy. */
@@ -346,8 +348,9 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     node: "",
     aikar: launchOf(spec).aikar,
     // Not taken from a snapshot, which the server could have written: they
-    // run code. A copy of a server that is there takes its own.
-    extraFlags: source.origin.kind === "server" ? launchOf(spec).extraFlags : "",
+    // run code. A copy of a server that is there takes its own, and one of a
+    // template those it was given in the panel.
+    extraFlags: source.origin.kind === "server" ? launchOf(spec).extraFlags : (source.flags ?? ""),
     // A server's address is its own, and not taken along.
     hostname: "",
     exposeType: spec.expose?.type ?? "Router",
@@ -365,6 +368,8 @@ function presetValues(p: Preset, name: string | null): Values {
     displayName: p.name,
     customName: name,
     picture: { kind: "none" },
+    // Pinned in its settings, until another version or loader is picked.
+    loaderVersion: p.spec.loaderVersion ?? "",
     // There is nothing to copy it from: it is fetched from its address.
     packs: p.spec.resourcePack?.url ? [urlPack(p.spec.resourcePack)] : [],
     // Set in the panel by an admin, not written by a server.
@@ -496,6 +501,9 @@ export function ServerForm({
   // Whether the pack is required, and what is asked, as a request says it: a prompt only where there is or was one.
   const packSettings = { enforce: v.packRequired, ...(v.packPrompt || start.packPrompt ? { prompt: v.packPrompt } : {}) };
   const packWork = toAdd.length > 0 || (kept.length > 0 && kept.map((p) => p.id).join() !== start.packs.map((p) => p.id).join());
+  // A template keeps the packs its files have as they are, or none, or is
+  // given one from an address: there is nothing to put more in.
+  const packsKept = forTemplate && kept.length > 0;
   const toUpload = v.uploads.length > 0 || packWork || !!toImport || (!forTemplate && !!fromTheirs);
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
@@ -574,7 +582,8 @@ export function ServerForm({
   // new server it is the game's or the modpack's own default.
   const unset = source || importing ? "Server default" : v.kind === "modpack" ? "Modpack default" : undefined;
   // A world that is there already was made with its own seed and type.
-  const worldMade = (!!source && world === "kept") || !!found?.world || !!mine;
+  // One brought back has its own, whatever else it is given.
+  const worldMade = (!!source && (world === "kept" || !worldChoosable)) || !!found?.world || !!mine;
   // An import unpacks next to the archive, so both need room at once.
   const least = toImport ? Math.max(1, Math.ceil(((found?.size ?? mine?.found.size ?? 0) + toImport.file.size) / GiB)) : leastStorage;
   // Every version, in the order they came out, to tell which is newer.
@@ -704,11 +713,16 @@ export function ServerForm({
     const properties = propertiesOf(v);
     // Not on the whitelist is the game's own default.
     if (properties["white-list"] === "false") delete properties["white-list"];
+    // What the template's settings have that this form has no place for
+    // goes with them as it is.
+    const base = source ? undefined : (preset?.spec ?? editing?.spec);
     return {
       displayName: v.displayName,
       eula,
-      resources: { memory: fromGigabytes(v.memory) },
-      storage: { size: fromGigabytes(v.storage) },
+      resources: { memory: fromGigabytes(v.memory), ...(base?.resources?.cpu ? { cpu: base.resources.cpu } : {}) },
+      storage: { size: fromGigabytes(v.storage), ...(base?.storage?.storageClassName ? { storageClassName: base.storage.storageClassName } : {}) },
+      ...(base?.opMembers ? { opMembers: base.opMembers } : {}),
+      ...(base?.whitelistMembers ? { whitelistMembers: base.whitelistMembers } : {}),
       expose: v.exposeType === "None" ? { type: "None" } : { type: v.exposeType, hostname: v.hostname.trim() },
       mods: v.mods,
       // The rest are the server's once it is made.
@@ -1046,7 +1060,7 @@ export function ServerForm({
         // Answered at once: the panel takes the snapshot of a server copied
         // as it is now, and then puts the files in, which its page shows.
         // Without its world, for one to be made or put in.
-        const fresh = worldChoosable && world !== "kept" ? { world: "new" } : source.world === "new" ? { world: "kept" } : {};
+        const fresh = worldChoosable && world !== "kept" ? { world: "new" } : source.world ? { world: "kept" } : {};
         const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...fresh, ...pictured, ...placed });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files
@@ -1418,14 +1432,21 @@ export function ServerForm({
               );
             })}
             <section aria-label="Resource packs" className="flex flex-col gap-2.5">
-              <SectionHead sub title="Resource packs" count={v.packs.length > 1 ? v.packs.length : undefined} addLabel="Add resource pack" onAdd={() => setAddingMods("resourcepack")} />
+              <SectionHead
+                sub
+                title="Resource packs"
+                count={v.packs.length > 1 ? v.packs.length : undefined}
+                addLabel="Add resource pack"
+                onAdd={() => setAddingMods("resourcepack")}
+                addDisabled={forTemplate && v.packs.length > 0}
+              />
               {v.packs.length === 0 ? (
                 <p className="text-[13px] text-muted">None. A pack added here is offered to each player as they join.</p>
               ) : (
                 <>
                   <PackStack
                     stack={v.packs.map(shownPack)}
-                    canEdit
+                    canEdit={!packsKept}
                     busy={false}
                     note={(p) => (v.packs.find((x) => x.id === p.sha1)?.from === "file" ? "uploaded when created" : undefined)}
                     onOrder={async (order) => {
@@ -1433,6 +1454,13 @@ export function ServerForm({
                       return order;
                     }}
                   />
+                  {packsKept && (
+                    <div>
+                      <Button size="sm" variant="ghost" icon={<X className="size-4" />} onClick={() => set("packs", [])}>
+                        Remove {v.packs.length === 1 ? "it" : "them"}
+                      </Button>
+                    </div>
+                  )}
                   {onlyPack && <PackFit pack={onlyPack} version={v.kind === "modpack" ? v.modpack?.gameVersion : effective(v.version)} />}
                   <div className="flex flex-col gap-3 px-1">
                     <Toggle checked={v.packRequired} onChange={(on) => set("packRequired", on)} label="Required" hint="Players who decline the pack are disconnected." />
