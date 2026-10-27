@@ -544,13 +544,23 @@ func (m *Manager) CopyAs(ctx context.Context, org, id, host, by string) (*Snapsh
 	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
 		return nil, err
 	}
+	// What is there already, so that the one made is told apart from them:
+	// src itself may be under host, and so may a copy of it left by one
+	// that was cut short.
+	before, err := m.list(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	was := map[string]bool{}
+	for _, s := range before {
+		was[s.ID] = true
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if _, err := m.restic(ctx, org, "rewrite", "--new-host", host, "--new-time", now.Format("2006-01-02 15:04:05"), src.ID); err != nil {
 		return nil, err
 	}
-	// The one just made: under that host, from src and not yet given a
-	// lineage of its own. Held as this is, there is no other.
-	made, err := m.find(ctx, org, func(s Snapshot) bool { return s.Server == host && s.Lineage == src.Lineage })
+	// The one just made. Held as this is, there is no other.
+	made, err := m.find(ctx, org, func(s Snapshot) bool { return s.Server == host && !was[s.ID] })
 	if err != nil {
 		return nil, err
 	}
@@ -569,6 +579,7 @@ func (m *Manager) CopyAs(ctx context.Context, org, id, host, by string) (*Snapsh
 	if _, err := m.restic(ctx, org, append(args, made.ID)...); err != nil {
 		return nil, err
 	}
+	m.touch(org)
 	return m.find(ctx, org, func(s Snapshot) bool { return s.Lineage == made.ID })
 }
 
@@ -716,6 +727,7 @@ func (m *Manager) KeepFile(ctx context.Context, org, host, name, by string, r io
 	if id == "" {
 		return nil, errors.New("restic backup: no snapshot was saved")
 	}
+	m.touch(org)
 	return m.get(ctx, org, id)
 }
 

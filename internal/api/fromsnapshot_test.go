@@ -959,15 +959,59 @@ func TestNewWorldIsAskedForOnlyWithFiles(t *testing.T) {
 			t.Errorf("%s: %d %s", tc.why, rec.Code, rec.Body)
 		}
 	}
-	// One whose world's folder cannot be told is not given a new one.
+	// One whose world's folder cannot be told is not given a new one, nor
+	// one whose original's cannot.
 	spec := avsysv1.MinecraftServerSpec{Env: []corev1.EnvVar{{Name: "LEVEL", ValueFrom: &corev1.EnvVarSource{}}}}
-	if err := worldLeavable(&spec, true); err == nil {
+	plain := avsysv1.MinecraftServerSpec{}
+	if err := leaveWorld(&spec, &plain, &plain, true); err == nil {
 		t.Error("a world in a folder that cannot be told was left behind")
 	}
-	if err := worldLeavable(&spec, false); err != nil {
+	if err := leaveWorld(plain.DeepCopy(), &spec, &plain, true); err == nil {
+		t.Error("an original's world in a folder that cannot be told was left behind")
+	}
+	if err := leaveWorld(&spec, &spec, &plain, false); err != nil {
 		t.Errorf("kept: %v", err)
+	}
+	// The old world's seed goes with it, unless one is asked for.
+	seeded := avsysv1.MinecraftServerSpec{Properties: map[string]string{"level-seed": "42", "motd": "hi"}}
+	copied := seeded.DeepCopy()
+	if err := leaveWorld(copied, &seeded, &plain, true); err != nil || copied.Properties["level-seed"] != "" || copied.Properties["motd"] != "hi" {
+		t.Errorf("a new world's settings: %v, %v", copied.Properties, err)
+	}
+	asked := avsysv1.MinecraftServerSpec{Properties: map[string]string{"level-seed": "7"}}
+	copied = &asked
+	if err := leaveWorld(copied, &seeded, &asked, true); err != nil || copied.Properties["level-seed"] != "7" {
+		t.Errorf("a seed asked for: %v, %v", copied.Properties, err)
+	}
+	copied = seeded.DeepCopy()
+	if err := leaveWorld(copied, &seeded, &plain, false); err != nil || copied.Properties["level-seed"] != "42" {
+		t.Errorf("the world kept lost its seed: %v, %v", copied.Properties, err)
 	}
 	if got := worldFolders("world"); strings.Join(got, " ") != "/world /world_nether /world_the_end" {
 		t.Errorf("folders: %v", got)
+	}
+}
+
+// A copy of a server that runs a modpack, or a template of one, keeps the
+// modpack's game version and loader.
+func TestModpackSoftwareIsTheModpacks(t *testing.T) {
+	recorded := avsysv1.MinecraftServerSpec{Version: "1.20.1", Loader: "fabric", Modpack: &avsysv1.ModpackSpec{Project: "pack"}}
+	for _, change := range []func(*avsysv1.MinecraftServerSpec){
+		func(s *avsysv1.MinecraftServerSpec) { s.Version = "1.21.4" },
+		func(s *avsysv1.MinecraftServerSpec) { s.Loader = "forge" },
+		func(s *avsysv1.MinecraftServerSpec) { s.LoaderVersion = "0.16.0" },
+	} {
+		spec := *recorded.DeepCopy()
+		change(&spec)
+		if err := modpackSoftware(&spec, &recorded); err == nil {
+			t.Errorf("changed to %s %s %s", spec.Loader, spec.Version, spec.LoaderVersion)
+		}
+	}
+	if err := modpackSoftware(recorded.DeepCopy(), &recorded); err != nil {
+		t.Errorf("unchanged: %v", err)
+	}
+	plain := avsysv1.MinecraftServerSpec{Version: "1.21.4", Loader: "paper"}
+	if err := modpackSoftware(&plain, &avsysv1.MinecraftServerSpec{Version: "1.20.1", Loader: "paper"}); err != nil {
+		t.Errorf("no modpack: %v", err)
 	}
 }

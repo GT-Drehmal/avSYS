@@ -399,8 +399,17 @@ test("a template is duplicated in the form, filled in from it: one saved from a 
   await as("owner");
   const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
   const v = version("b".repeat(64), new Date().toISOString());
-  const saved = { id: "t1", name: "Lobby", description: "Where everyone starts.", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: v, versions: [v], settingsOnly: false };
-  const spec = { loader: "paper", version: "1.21.4", resources: { memory: "4Gi" }, storage: { size: "10Gi" } };
+  const saved = { id: "t1", name: "Lobby", description: "Where everyone starts.", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: v, versions: [v], settingsOnly: false, extraFlags: "-Xss1m" };
+  // With what the form has no place for, kept as it is.
+  const spec = {
+    loader: "paper",
+    version: "1.21.4",
+    loaderVersion: "120",
+    resources: { memory: "4Gi", cpu: "2" },
+    storage: { size: "10Gi", storageClassName: "fast" },
+    opMembers: { also: ["u1"] },
+    whitelistMembers: { except: ["u2"] },
+  };
   const settings = { id: "t2", name: "Skyblock", description: "", createdBy: "owner", createdAt: v.time, updatedAt: v.time, current: null, versions: [], settingsOnly: true, spec };
   const sent: unknown[] = [];
   await page.route(/\/api\/v1\/orgs\/friends\/templates(\/t[12])?$/, (route) => {
@@ -422,6 +431,9 @@ test("a template is duplicated in the form, filled in from it: one saved from a 
   await duplicate("Lobby");
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Lobby copy");
   await expect(page.getByText("LuckPerms", { exact: true })).toBeVisible();
+  // The flags it was given are shown, to change or take off.
+  await page.getByRole("button", { name: /Launch flags/ }).click();
+  await expect(page.getByLabel("Extra JVM flags")).toHaveValue("-Xss1m");
   await page.getByLabel("Memory (GB)").fill("8");
   await page.getByRole("button", { name: "Create template" }).click();
   await expect(page).toHaveURL(/\/o\/friends\/templates$/);
@@ -432,7 +444,7 @@ test("a template is duplicated in the form, filled in from it: one saved from a 
   await expect(page).toHaveURL(/\/o\/friends\/templates$/);
   expect(sent).toHaveLength(2);
   expect(sent[0]).toMatchObject({ name: "Lobby copy", template: "t1", changes: { resources: { memory: "8192Mi" } } });
-  expect(sent[1]).toMatchObject({ name: "Skyblock hard", spec: { loader: "paper", version: "1.21.4" } });
+  expect(sent[1]).toMatchObject({ name: "Skyblock hard", spec: { loader: "paper", version: "1.21.4", loaderVersion: "120", resources: { cpu: "2" }, storage: { storageClassName: "fast" }, opMembers: { also: ["u1"] }, whitelistMembers: { except: ["u2"] } } });
   expect(sent[1]).not.toHaveProperty("template");
 });
 
@@ -474,4 +486,31 @@ test("a template says whether its servers keep its world or start a new one, and
   expect(await create()).toMatchObject({ fromTemplate: "t1", world: "new" });
   await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep world" }).click();
   expect(await create()).toMatchObject({ fromTemplate: "t1", world: "kept" });
+
+  // One with a world of its own: kept, its version's is.
+  await page.route("**/api/v1/orgs/friends/templates/t1", async (route) => {
+    const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+    return route.fulfill({ json: { ...template, world: "own", ownWorld: { root: "Island", name: "Island", version: "1.21.4", file: "island.zip", size: 4096 }, spec: survival.spec } });
+  });
+  await page.goto("/o/friends/new?from=template:t1");
+  await expect(page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep world" }).click();
+  expect(await create()).toMatchObject({ fromTemplate: "t1", world: "kept" });
+});
+
+test("a template takes one resource pack from an address: no more are added to it", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  const made = await api("owner").post(`/orgs/${slug}/templates`, {
+    name: "Packed",
+    description: "",
+    spec: { loader: "paper", version: "1.21.4", resources: { memory: "4Gi" }, storage: { size: "10Gi" }, resourcePack: { url: "https://example.com/pack.zip", sha1: "a".repeat(40) } },
+  });
+  await as("owner");
+  await page.goto(`/o/${slug}/templates/${made.id}/edit`);
+  const packs = page.getByRole("region", { name: "Resource packs" });
+  await expect(packs.getByText("pack", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add resource pack" })).toBeDisabled();
+  // Taken off, another can be given.
+  await packs.getByRole("button", { name: "Remove pack" }).click();
+  await expect(page.getByRole("button", { name: "Add resource pack" })).toBeEnabled();
 });

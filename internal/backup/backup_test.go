@@ -867,6 +867,10 @@ func TestCopyAs(t *testing.T) {
 	if made.Lineage == src.Lineage || made.Lineage == "" {
 		t.Errorf("the copy's lineage is %q, the original's %q", made.Lineage, src.Lineage)
 	}
+	// Offsite, there is something new to copy.
+	if !m.Changed("alpha").After(before) {
+		t.Errorf("the repository is not noted as changed: %v", m.Changed("alpha"))
+	}
 	// A second copy of the same, as another version, is one of its own too.
 	again, err := m.CopyAs(ctx, "alpha", src.ID, "template-t1", "owner")
 	if err != nil {
@@ -874,6 +878,18 @@ func TestCopyAs(t *testing.T) {
 	}
 	if again.ID == made.ID || again.Lineage == made.Lineage {
 		t.Errorf("the second copy is the first: %+v", again)
+	}
+	// A version copied as another of the same template, which is under
+	// that host already, is told apart from it.
+	same, err := m.CopyAs(ctx, "alpha", made.ID, "template-t1", "owner")
+	if err != nil {
+		t.Fatalf("copy under its own host: %v", err)
+	}
+	if same.ID == made.ID || same.Lineage == made.Lineage || same.Server != "template-t1" {
+		t.Errorf("the copy under its own host is %+v", same)
+	}
+	if err := m.Delete(ctx, "alpha", same.ID); err != nil {
+		t.Fatal(err)
 	}
 	// A copy of a copy is one of its own as well.
 	twice, err := m.CopyAs(ctx, "alpha", made.ID, "template-t2", "owner")
@@ -931,9 +947,13 @@ func TestKeepFile(t *testing.T) {
 	defer cancel()
 	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	archive := bytes.Repeat([]byte("a world, zipped "), 1<<12)
+	before := time.Now().Add(-time.Second)
 	kept, err := m.KeepFile(ctx, "alpha", "template-t1-world", "world.archive", "owner", bytes.NewReader(archive))
 	if err != nil {
 		t.Fatalf("keep: %v", err)
+	}
+	if !m.Changed("alpha").After(before) {
+		t.Errorf("the repository is not noted as changed: %v", m.Changed("alpha"))
 	}
 	if kept.Server != "template-t1-world" || kept.Trigger != TriggerTemplate || kept.By != "owner" || kept.Size != int64(len(archive)) {
 		t.Errorf("kept as %+v", kept)

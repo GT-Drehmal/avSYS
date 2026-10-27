@@ -81,6 +81,12 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 	if !s.Backups.Available() {
 		return errNoBackups
 	}
+	// One world at a time: each would take the other's away.
+	unclaim, err := claimTemplate(a, worldHost(t.ID))
+	if err != nil {
+		return err
+	}
+	defer unclaim()
 	ctx := context.WithoutCancel(r.Context())
 	q := r.URL.Query()
 	var info ownWorld
@@ -162,6 +168,11 @@ func (s *Server) deleteTemplateWorld(w http.ResponseWriter, r *http.Request, u *
 	if err != nil {
 		return err
 	}
+	unclaim, err := claimTemplate(a, worldHost(t.ID))
+	if err != nil {
+		return err
+	}
+	defer unclaim()
 	ctx := context.WithoutCancel(r.Context())
 	if err := s.Store.SetTemplateWorld(ctx, a.Org.ID, t.ID, ""); err != nil {
 		return err

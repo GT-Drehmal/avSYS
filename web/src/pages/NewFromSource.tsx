@@ -37,7 +37,7 @@ export function NewFromSource({ org, origin, templating }: { org: string; origin
       {templating ? "Templates" : "Servers"}
     </Link>
   );
-  if (servers.isPending || snapshots.isPending || (origin.kind === "snapshot" && snapshot.isPending) || (origin.kind === "template" && template.isFetching)) return <Loading />;
+  if (servers.isPending || snapshots.isPending || (origin.kind === "snapshot" && snapshot.isPending) || (origin.kind === "template" && !template.isFetchedAfterMount)) return <Loading />;
   // Without the list of servers it cannot be said which names are taken, or
   // whether the original still exists: nothing is guessed from its absence.
   if (!servers.data) {
@@ -69,7 +69,7 @@ export function NewFromSource({ org, origin, templating }: { org: string; origin
         : null
       : origin.kind === "template"
         ? template.data?.spec && version
-          ? { origin, name: slugify(template.data.name) || "server", spec: { ...template.data.spec, displayName: template.data.name }, size: version.size, taken: version.time, snapshot: version.id, world: template.data.world, ownWorld: template.data.ownWorld }
+          ? { origin, name: slugify(template.data.name) || "server", spec: { ...template.data.spec, displayName: template.data.name }, size: version.size, taken: version.time, snapshot: version.id, world: template.data.world, ownWorld: template.data.ownWorld, flags: template.data.extraFlags }
           : null
         : snapshot.data
           ? { origin, name: snapshot.data.server, spec: snapshot.data.spec, size: snapshot.data.size, taken: snapshot.data.time, live: servers.data?.find((s) => s.name === snapshot.data.server) }
