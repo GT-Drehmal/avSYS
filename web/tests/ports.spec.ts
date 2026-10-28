@@ -90,3 +90,59 @@ test("a preset is not offered again under a name a port has, as one moved to ano
   await expect(page.getByRole("button", { name: "Geyser", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Simple Voice Chat", exact: true })).toBeVisible();
 });
+
+test("a new server is given its extra ports as it is made", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Voice");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
+  await page.getByRole("button", { name: "Add a port" }).click();
+  await page.getByLabel("Port name").fill("voice-chat");
+  await page.getByLabel("Port number").fill("24454");
+  await page.getByLabel("Protocol").selectOption("UDP");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/voice$`));
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/voice`);
+  expect(spec.ports).toEqual([{ name: "voice-chat", port: 24454, protocol: "UDP" }]);
+});
+
+test("a copy keeps its original's extra ports, and is given others when they are changed", async ({ page, as }) => {
+  await as("owner");
+  const made = () => page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.route("**/api/v1/orgs/friends/servers", (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
+  );
+  await page.goto("/o/friends/new?from=server:survival");
+  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
+  let request = made();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  expect((await request).postDataJSON().spec).not.toHaveProperty("ports");
+  await page.getByRole("button", { name: "Add a port" }).click();
+  await page.getByLabel("Port name").fill("map");
+  await page.getByLabel("Port number").fill("8100");
+  request = made();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  expect((await request).postDataJSON().spec.ports).toEqual([{ name: "map", port: 8100, protocol: "TCP" }]);
+});
+
+test("a template of settings alone keeps its extra ports, for the servers made from it", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  const made = await api("owner").post(`/orgs/${slug}/templates`, {
+    name: "Voice",
+    description: "",
+    spec: { loader: "fabric", version: "1.21.4", resources: { memory: "4Gi" }, storage: { size: "10Gi" }, ports: [{ name: "voice-chat", port: 24454, protocol: "UDP" }] },
+  });
+  await as("owner");
+  await page.goto(`/o/${slug}/templates/${made.id}/edit`);
+  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
+  await expect(page.getByLabel("Port name")).toHaveValue("voice-chat");
+  await page.getByLabel("Port number").fill("24455");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  const now = await api("owner").get(`/orgs/${slug}/templates/${made.id}`);
+  expect(now.spec.ports).toEqual([{ name: "voice-chat", port: 24455, protocol: "UDP" }]);
+});

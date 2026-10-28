@@ -1,5 +1,5 @@
 import { Plus, X } from "lucide-react";
-import type { ContentRef, ExposeType, PortStatus } from "../lib/api";
+import type { ContentRef, ExposeType, ExtraPort, PortStatus } from "../lib/api";
 import { Button, CopyText, Input, Select } from "./ui";
 
 /** A port being edited: its number is text while it is typed. */
@@ -8,6 +8,13 @@ export interface PortDraft {
   port: string;
   protocol: "TCP" | "UDP";
 }
+
+/** A server's ports, to edit. */
+export const portDrafts = (ports: ExtraPort[] | null | undefined): PortDraft[] => (ports ?? []).map((p) => ({ name: p.name, port: String(p.port), protocol: p.protocol ?? "TCP" }));
+
+/** The ports edited, as a server is given them: rows left empty are none. */
+export const portsOf = (drafts: PortDraft[]): ExtraPort[] =>
+  drafts.filter((p) => p.name.trim() || p.port.trim()).map((p) => ({ name: p.name.trim(), port: Number(p.port), protocol: p.protocol }));
 
 /** What well-known mods and plugins listen on, by their Modrinth slug. */
 const known: { slugs: string[]; label: string; port: PortDraft }[] = [
