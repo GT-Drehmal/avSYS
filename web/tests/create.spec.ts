@@ -1313,3 +1313,15 @@ test("a server set to an older version than its world was opened in is warned of
   await expect(page.getByText("Settings saved")).toBeVisible();
   expect((await api("owner").get(`/orgs/${slug}/servers/newer`)).spec.version).toBe("1.21.4");
 });
+
+test("Latest is the newest of the kind of server picked, which may be older than its world", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await api("owner").post(`/orgs/${slug}/servers`, { name: "paper", spec: { eula: true, loader: "paper", version: "26.3", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" } } });
+  await as("owner");
+  await page.goto(`/o/${slug}/s/paper/settings`);
+  await expect(page.getByLabel("Game version")).toHaveValue("26.3");
+  // Folia's newest is behind the game's.
+  await page.getByLabel("Type").selectOption("folia");
+  await page.getByLabel("Game version").selectOption("LATEST");
+  await expect(page.getByText("Its world was last opened in 26.3. 26.2 cannot open it, so the server will not start.")).toBeVisible();
+});

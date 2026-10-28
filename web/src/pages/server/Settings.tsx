@@ -180,12 +180,14 @@ export function Settings() {
   // Every version of the game, in the order they came out, to tell which is newer.
   const allVersions = useGameVersions();
   const order = allVersions.data?.ordered ?? [];
-  const resolved = (v: string) => (v === "LATEST" ? allVersions.data?.latest : v);
+  // "Latest" is each kind's own newest, which may be behind the game's.
+  const savedVersions = useGameVersions(server.spec.loader);
+  const latestOf = (list: typeof versions) => (list.isPlaceholderData ? undefined : list.data?.latest);
   // The version its world was last opened in, as far as is known: the one
   // the game says it runs, or else the one it was set to.
   const reported = server.status.version?.split(" ").at(-1);
-  const ranOn = reported && order.includes(reported) ? reported : resolved(server.spec.version);
-  const goingTo = resolved(draft.version);
+  const ranOn = reported && order.includes(reported) ? reported : server.spec.version === "LATEST" ? latestOf(savedVersions) : server.spec.version;
+  const goingTo = draft.version === "LATEST" ? latestOf(versions) : draft.version;
   // A world opened in a newer version cannot be opened in an older one.
   const older = !server.spec.modpack && !!ranOn && !!goingTo && order.includes(ranOn) && order.indexOf(goingTo) > order.indexOf(ranOn);
 
