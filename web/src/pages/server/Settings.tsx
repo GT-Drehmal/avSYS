@@ -177,9 +177,25 @@ export function Settings() {
   const keeps = !!meta.data?.snapshots && finalSnapshot;
   const remove = useAction(() => api.del(serverPath(server.org, server.name) + (keeps ? "" : "?snapshot=false")));
 
+  // Every version of the game, in the order they came out, to tell which is newer.
+  const allVersions = useGameVersions();
+  const order = allVersions.data?.ordered ?? [];
+  const resolved = (v: string) => (v === "LATEST" ? allVersions.data?.latest : v);
+  // The version its world was last opened in, as far as is known: the one
+  // the game says it runs, or else the one it was set to.
+  const reported = server.status.version?.split(" ").at(-1);
+  const ranOn = reported && order.includes(reported) ? reported : resolved(server.spec.version);
+  const goingTo = resolved(draft.version);
+  // A world opened in a newer version cannot be opened in an older one.
+  const older = !server.spec.modpack && !!ranOn && !!goingTo && order.includes(ranOn) && order.indexOf(goingTo) > order.indexOf(ranOn);
+
   const [opening, setOpening] = useState(false);
-  const save = (e?: React.FormEvent, sure = false) => {
+  const [downgrading, setDowngrading] = useState(false);
+  const save = (e?: React.FormEvent, sure = false, sureOlder = false) => {
     e?.preventDefault();
+    // Made older than its world, which it then cannot open: asked first.
+    if (!sureOlder && older && draft.version !== saved.version) return setDowngrading(true);
+    setDowngrading(false);
     // Opened to anyone by this change: asked first.
     if (!sure && isOpen(draft) && !isOpen(saved)) return setOpening(true);
     setOpening(false);
@@ -230,7 +246,9 @@ export function Settings() {
               hint={
                 noBuild
                   ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so it cannot start. The newest is ${versions.data?.latest}.`
-                  : onPreview(versions.data, draft.version)
+                  : older
+                    ? `Its world was last opened in ${ranOn}. ${goingTo} cannot open it, so the server will not start.`
+                    : onPreview(versions.data, draft.version)
                     ? previewWarning
                     : undefined
               }
@@ -423,7 +441,16 @@ export function Settings() {
         description={openWarning}
         action="Save without a whitelist"
         loading={update.isPending}
-        onConfirm={() => save(undefined, true)}
+        onConfirm={() => save(undefined, true, true)}
+      />
+      <Confirm
+        open={downgrading}
+        onOpenChange={setDowngrading}
+        title={`Go back to ${goingTo}?`}
+        description={`Its world was last opened in ${ranOn}, and ${goingTo} cannot open a world from a newer version: the server will not start. To go back, restore a snapshot from before ${ranOn} instead.`}
+        action={`Change to ${goingTo} anyway`}
+        loading={update.isPending}
+        onConfirm={() => save(undefined, false, true)}
       />
       <Confirm
         open={deleting}
