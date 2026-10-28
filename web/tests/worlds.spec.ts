@@ -348,3 +348,26 @@ test("a new server asked for with a world that cannot be used yet says so, rathe
   await page.goto("/o/friends/new?world=gone");
   await expect(page.getByText("There is no such world in the library.")).toBeVisible();
 });
+
+test("several worlds are selected and deleted together, by an admin", async ({ page, as }) => {
+  await as("admin");
+  const calls = await library(page, [world("w1", "Island"), world("w2", "Arena"), world("w3", "Lobby")]);
+  await page.goto("/o/friends/worlds");
+  await page.getByLabel("Select every world").click();
+  const bar = page.getByRole("region", { name: "Selection" });
+  await expect(bar).toContainText("3 worlds selected");
+  await page.getByLabel("Select Lobby").click();
+  await bar.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Delete 2 worlds" }).click();
+  await expect(page.getByText("Deleted 2 worlds")).toBeVisible();
+  expect(calls.filter((c) => c.method === "DELETE").map((c) => c.path).sort()).toEqual(["/worlds/w1", "/worlds/w2"]);
+  await expect(page.getByRole("listitem", { name: "Lobby" })).toBeVisible();
+});
+
+test("an operator has no worlds to select", async ({ page, as }) => {
+  await as("operator");
+  await library(page, [world("w1", "Island"), world("w2", "Arena")]);
+  await page.goto("/o/friends/worlds");
+  await expect(page.getByRole("listitem", { name: "Island" })).toBeVisible();
+  await expect(page.getByLabel(/^Select /)).toHaveCount(0);
+});

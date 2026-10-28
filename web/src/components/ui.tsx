@@ -13,6 +13,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import type { Phase } from "../lib/api";
+import type { Selection } from "../lib/selection";
 import { dismiss, toast, useToasts } from "../lib/toast";
 
 export const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" ");
@@ -444,6 +445,24 @@ export function RowCheckbox({ checked, partial, onChange, label, quiet, classNam
         className,
       )}
     />
+  );
+}
+
+/**
+ * Above a list whose rows can be ticked, in the same box: ticks every one
+ * of them, or none, and says how many there are.
+ */
+export function SelectAllRow({ selection, ids, noun, className }: { selection: Selection; ids: string[]; noun: string; className?: string }) {
+  const ticked = ids.filter((id) => selection.has(id)).length;
+  const all = ids.length > 0 && ticked === ids.length;
+  const plural = `${noun}${ids.length === 1 ? "" : "s"}`;
+  return (
+    <div className={cx("group flex h-9 items-center gap-4 border-b border-line px-4 text-xs text-muted", className)}>
+      <label className="flex cursor-pointer items-center gap-4">
+        <RowCheckbox checked={all} partial={ticked > 0} quiet={selection.count === 0} label={`Select every ${noun}`} onChange={() => selection.toggleSome(ids)} />
+        <span>{ticked > 0 ? `${ticked} of ${ids.length} ${plural} selected` : `${ids.length} ${plural}`}</span>
+      </label>
+    </div>
   );
 }
 

@@ -5,13 +5,15 @@ import { useNavigate, useParams } from "react-router";
 import { Picture, PictureChange } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { ServerPicker, SnapshotPicker } from "../components/StartPicker";
-import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox, Spinner, Textarea } from "../components/ui";
+import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SearchBox, SelectAllRow, SelectionBar, Spinner, Textarea } from "../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
 import { api, ApiError, atLeast, qs, type LibraryWorld, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes } from "../lib/format";
 import { keys, useMeta, useWorlds } from "../lib/queries";
 import { matches, useSearch } from "../lib/search";
+import { type Selection, useSelection } from "../lib/selection";
+import { toast } from "../lib/toast";
 import { worldSummary } from "../lib/worlds";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
 
@@ -30,6 +32,9 @@ export function Worlds() {
   // Making servers is admins' to do.
   const canMake = canDelete;
   const navigate = useNavigate();
+  const shownIds = (worlds.data ?? []).filter((w) => matches(query, w.name, w.description, worldSummary(w))).map((w) => w.id);
+  // Several at once, as servers are: admins delete them.
+  const selection = useSelection(canDelete ? shownIds : [], org);
 
   const header = (
     <PageHeader
@@ -69,9 +74,12 @@ export function Worlds() {
           {shown.length === 0 ? (
             <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No worlds match.</p>
           ) : (
-            <ul className="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface" aria-label="Worlds">
+            <div className="overflow-hidden rounded-lg border border-line bg-surface">
+              {canDelete && shown.length > 1 && <SelectAllRow selection={selection} ids={shownIds} noun="world" />}
+              <ul className="flex flex-col divide-y divide-line" aria-label="Worlds">
               {shown.map((w) => (
-                <li key={w.id} className="flex items-center gap-3 px-4 py-3" aria-label={w.name}>
+                <li key={w.id} className={cx("group flex items-center gap-3 px-4 py-3", selection.has(w.id) && "bg-accent-wash")} aria-label={w.name}>
+                  {canDelete && <RowCheckbox checked={selection.has(w.id)} quiet={selection.count === 0} label={`Select ${w.name}`} onChange={(range) => selection.toggle(w.id, range)} className="mr-1" />}
                   <Picture name={w.name} url={worldIcon(org, w.id)} retryKey={w.updatedAt} size={36} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-medium">{w.name}</p>
@@ -117,12 +125,14 @@ export function Worlds() {
                 </li>
               ))}
             </ul>
+            </div>
           )}
         </>
       )}
       {adding && <AddWorld org={org} onClose={() => setAdding(false)} />}
       {latest(editing) && <EditWorld key={editing?.id} org={org} world={latest(editing)!} onClose={() => setEditing(null)} />}
       <DeleteWorld org={org} world={deleting} onClose={() => setDeleting(null)} />
+      {canDelete && <DeleteWorlds org={org} chosen={list.filter((w) => selection.has(w.id))} selection={selection} />}
     </div>
   );
 }
@@ -379,5 +389,48 @@ function DeleteWorld({ org, world, onClose }: { org: string; world: LibraryWorld
         }
       }}
     />
+  );
+}
+
+/** Deletes the worlds ticked, one after another. */
+function DeleteWorlds({ org, chosen, selection }: { org: string; chosen: LibraryWorld[]; selection: Selection }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const many = `${chosen.length} world${chosen.length === 1 ? "" : "s"}`;
+  const remove = async () => {
+    setBusy(true);
+    const failed: string[] = [];
+    for (const w of chosen) {
+      try {
+        await api.del(`/orgs/${org}/worlds/${w.id}`);
+      } catch (err) {
+        failed.push(`${w.name}: ${err instanceof ApiError ? err.message : "not deleted"}`);
+      }
+    }
+    await qc.invalidateQueries({ queryKey: keys.worlds(org) });
+    setBusy(false);
+    setConfirming(false);
+    selection.clear();
+    if (failed.length > 0) toast.error(failed.join(" "));
+    else toast.info(`Deleted ${many}`);
+  };
+  return (
+    <>
+      <SelectionBar count={selection.count} noun="world" onClear={selection.clear}>
+        <Button size="sm" variant="danger" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirming(true)}>
+          Delete
+        </Button>
+      </SelectionBar>
+      <Confirm
+        open={confirming}
+        onOpenChange={(o) => !busy && setConfirming(o)}
+        title={`Delete ${many}?`}
+        description="Servers made with them keep theirs. This cannot be undone."
+        action={`Delete ${many}`}
+        loading={busy}
+        onConfirm={() => void remove()}
+      />
+    </>
   );
 }

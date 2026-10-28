@@ -13,7 +13,7 @@ import { toast } from "../lib/toast";
 import { Picture } from "./Picture";
 import { SaveTemplate } from "./SaveTemplate";
 import { SaveWorld } from "./SaveWorld";
-import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectionBar } from "./ui";
+import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectAllRow, SelectionBar } from "./ui";
 
 export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
@@ -103,7 +103,9 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
   return (
     <>
-      <ul className="overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      {canAdmin && selection && snapshots.length > 1 && <SelectAllRow selection={selection} ids={snapshots.map((s) => s.id)} noun="snapshot" />}
+      <ul>
         {snapshots.map((s) => (
           <li key={s.id} className={`group flex items-center gap-4 border-b border-line px-4 py-2.5 last:border-b-0 ${selection?.has(s.id) ? "bg-accent-wash" : ""}`}>
             {canAdmin && selection && (
@@ -158,6 +160,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
           </li>
         ))}
       </ul>
+      </div>
       <SnapshotDetails
         org={org}
         snapshot={looking}

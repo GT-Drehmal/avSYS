@@ -6,8 +6,10 @@ import { Picture } from "../components/Picture";
 import { SaveTemplate } from "../components/SaveTemplate";
 import { useOrg } from "../components/Shell";
 import { software } from "../components/Snapshots";
-import { Button, Chip, Confirm, cx, Empty, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox, Spinner } from "../components/ui";
+import { Button, Chip, Confirm, cx, Empty, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SearchBox, SelectAllRow, SelectionBar, Spinner } from "../components/ui";
 import { matches, useSearch } from "../lib/search";
+import { type Selection, useSelection } from "../lib/selection";
+import { toast } from "../lib/toast";
 import { api, ApiError, atLeast, qs, snapshotIcon, type Template } from "../lib/api";
 import { ago, bytes } from "../lib/format";
 import { newFrom } from "../lib/origin";
@@ -27,6 +29,9 @@ export function Templates() {
   const [versions, setVersions] = useState<Template | null>(null);
   const [deleting, setDeleting] = useState<Template | null>(null);
   const [query, setQuery] = useSearch();
+  const shownIds = (templates.data ?? []).filter((t) => matches(query, t.name, t.description, templateSummary(t))).map((t) => t.id);
+  // Several at once, as servers are: admins delete them.
+  const selection = useSelection(canAdmin ? shownIds : [], org);
 
   const header = (
     <PageHeader
@@ -68,9 +73,12 @@ export function Templates() {
         {shown.length === 0 ? (
           <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No templates match.</p>
         ) : (
-        <ul className="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface" aria-label="Templates">
+        <div className="overflow-hidden rounded-lg border border-line bg-surface">
+          {canAdmin && shown.length > 1 && <SelectAllRow selection={selection} ids={shownIds} noun="template" />}
+          <ul className="flex flex-col divide-y divide-line" aria-label="Templates">
           {shown.map((t) => (
-            <li key={t.id} className="flex items-center gap-3 px-4 py-3" aria-label={t.name}>
+            <li key={t.id} className={cx("group flex items-center gap-3 px-4 py-3", selection.has(t.id) && "bg-accent-wash")} aria-label={t.name}>
+              {canAdmin && <RowCheckbox checked={selection.has(t.id)} quiet={selection.count === 0} label={`Select ${t.name}`} onChange={(range) => selection.toggle(t.id, range)} className="mr-1" />}
               <Picture name={t.name} url={t.current ? snapshotIcon(org, t.current.id) : undefined} size={36} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium">{t.name}</p>
@@ -124,6 +132,7 @@ export function Templates() {
             </li>
           ))}
         </ul>
+        </div>
         )}
         </>
       )}
@@ -131,6 +140,7 @@ export function Templates() {
       {updating && <SaveTemplate key={updating.id} org={org} open onOpenChange={(o) => !o && setUpdating(null)} servers={servers.data} templates={list} into={updating} />}
       {latest(versions) && <Versions org={org} template={latest(versions)!} onClose={() => setVersions(null)} />}
       <DeleteTemplate org={org} template={deleting} onClose={() => setDeleting(null)} />
+      {canAdmin && <DeleteTemplates org={org} chosen={list.filter((t) => selection.has(t.id))} selection={selection} />}
     </div>
   );
 }
@@ -226,5 +236,49 @@ function DeleteTemplate({ org, template, onClose }: { org: string; template: Tem
         }
       }}
     />
+  );
+}
+
+/** Deletes the templates ticked, one after another, with their versions. */
+function DeleteTemplates({ org, chosen, selection }: { org: string; chosen: Template[]; selection: Selection }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const versions = chosen.reduce((n, t) => n + t.versions.length, 0);
+  const many = `${chosen.length} template${chosen.length === 1 ? "" : "s"}`;
+  const remove = async () => {
+    setBusy(true);
+    const failed: string[] = [];
+    for (const t of chosen) {
+      try {
+        await api.del(`/orgs/${org}/templates/${t.id}`);
+      } catch (err) {
+        failed.push(`${t.name}: ${err instanceof ApiError ? err.message : "not deleted"}`);
+      }
+    }
+    await qc.invalidateQueries({ queryKey: keys.templates(org) });
+    setBusy(false);
+    setConfirming(false);
+    selection.clear();
+    if (failed.length > 0) toast.error(failed.join(" "));
+    else toast.info(`Deleted ${many}`);
+  };
+  return (
+    <>
+      <SelectionBar count={selection.count} noun="template" onClear={selection.clear}>
+        <Button size="sm" variant="danger" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirming(true)}>
+          Delete
+        </Button>
+      </SelectionBar>
+      <Confirm
+        open={confirming}
+        onOpenChange={(o) => !busy && setConfirming(o)}
+        title={`Delete ${many}?`}
+        description={`${versions === 0 ? "" : versions === 1 ? "Its version is deleted too. " : `Their ${versions} versions are deleted too. `}Servers made from them stay as they are. This cannot be undone.`}
+        action={`Delete ${many}`}
+        loading={busy}
+        onConfirm={() => void remove()}
+      />
+    </>
   );
 }

@@ -514,3 +514,34 @@ test("a template takes one resource pack from an address: no more are added to i
   await packs.getByRole("button", { name: "Remove pack" }).click();
   await expect(page.getByRole("button", { name: "Add resource pack" })).toBeEnabled();
 });
+
+test("several templates are selected and deleted together", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  for (const name of ["Alpha", "Beta", "Gamma"]) {
+    await api("owner").post(`/orgs/${slug}/templates`, { name, description: "", spec: { loader: "paper", version: "1.21.4", resources: { memory: "4Gi" }, storage: { size: "10Gi" } } });
+  }
+  await as("owner");
+  await page.goto(`/o/${slug}/templates`);
+  await page.getByLabel("Select Alpha").click();
+  await page.getByLabel("Select Gamma", { exact: true }).click({ modifiers: ["Shift"] });
+  const bar = page.getByRole("region", { name: "Selection" });
+  await expect(bar).toContainText("3 templates selected");
+  await page.getByLabel("Select Beta").click();
+  await bar.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Delete 2 templates" }).click();
+  await expect(page.getByText("Deleted 2 templates")).toBeVisible();
+  await expect(page.getByRole("listitem", { name: "Beta" })).toBeVisible();
+  await expect(page.getByRole("listitem", { name: "Alpha" })).toHaveCount(0);
+  await expect(page.getByRole("listitem", { name: "Gamma" })).toHaveCount(0);
+});
+
+test("only admins select templates", async ({ page, as }) => {
+  await as("owner");
+  await lobby(page);
+  await page.goto("/o/friends/templates");
+  await expect(page.getByLabel("Select Lobby")).toBeVisible();
+  await as("operator");
+  await page.reload();
+  await expect(page.getByRole("listitem", { name: "Lobby" })).toBeVisible();
+  await expect(page.getByLabel("Select Lobby")).toHaveCount(0);
+});
