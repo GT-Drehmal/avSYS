@@ -261,7 +261,7 @@ func (t target) loadersFor(kind avsysv1.ContentKind) []string {
 	if kind == avsysv1.KindDatapack {
 		return []string{"datapack"}
 	}
-	return modrinthLoaders[t.loader]
+	return loadersOf(t.loader, t.gameVersion)
 }
 
 // candidatesToInspect is how far back the panel looks for a version that runs

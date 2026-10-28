@@ -192,8 +192,15 @@ func readNeoForge(body []byte) ([]string, error) {
 			out = append(out, game)
 		}
 	}
-	return out, nil
+	// Its first builds, for 1.20.1, are listed apart, as a fork of Forge's
+	// (net.neoforged:forge 47.1): the server image installs them all the
+	// same, and there will be no others for it.
+	return append(out, neoforgeForkVersion), nil
 }
+
+// neoforgeForkVersion is the game version NeoForge began on, as a fork of
+// Forge.
+const neoforgeForkVersion = "1.20.1"
 
 // neoforgeGame is the game version a NeoForge build is for, or "" for a
 // pre-release build, which the server image does not install unless asked
