@@ -62,8 +62,10 @@ export function Templates() {
   const latest = (t: Template | null) => (t ? (list.find((x) => x.id === t.id) ?? null) : null);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div>
       {header}
+      {/* As the servers' page has them: the search close under the title, and the list close under it. */}
+      <div className="flex flex-col gap-3">
       {meta && !meta.snapshots && <Notice>Saving a server as a template needs snapshots, which are not set up on this panel.</Notice>}
       {list.length === 0 ? (
         <Empty title="No templates yet">Make one from settings, a server or a snapshot.</Empty>
@@ -136,6 +138,7 @@ export function Templates() {
         )}
         </>
       )}
+      </div>
 
       {updating && <SaveTemplate key={updating.id} org={org} open onOpenChange={(o) => !o && setUpdating(null)} servers={servers.data} templates={list} into={updating} />}
       {latest(versions) && <Versions org={org} template={latest(versions)!} onClose={() => setVersions(null)} />}

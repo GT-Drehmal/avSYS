@@ -63,8 +63,10 @@ export function Worlds() {
   const latest = (w: LibraryWorld | null) => (w ? (list.find((x) => x.id === w.id) ?? null) : null);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div>
       {header}
+      {/* As the servers' page has them: the search close under the title, and the list close under it. */}
+      <div className="flex flex-col gap-3">
       {meta && !meta.snapshots && <Notice>Worlds are kept with snapshots, which are not set up on this panel.</Notice>}
       {list.length === 0 ? (
         <Empty title="No worlds yet">Upload a map, or save a server's world.</Empty>
@@ -129,6 +131,7 @@ export function Worlds() {
           )}
         </>
       )}
+      </div>
       {adding && <AddWorld org={org} onClose={() => setAdding(false)} />}
       {latest(editing) && <EditWorld key={editing?.id} org={org} world={latest(editing)!} onClose={() => setEditing(null)} />}
       <DeleteWorld org={org} world={deleting} onClose={() => setDeleting(null)} />
