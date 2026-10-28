@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit, packTitle, type PickKind, type Software } from "../components/Content";
 import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
+import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../components/ExtraPorts";
 import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
@@ -254,6 +255,8 @@ interface Values {
   extraFlags: string;
   hostname: string;
   exposeType: ExposeType;
+  /** What its mods and plugins listen on, opened beside the game. */
+  ports: PortDraft[];
   sleep: boolean;
   idleMinutes: string;
   schedule: Schedule;
@@ -305,6 +308,7 @@ const fresh: Values = {
   extraFlags: "",
   hostname: "",
   exposeType: "Router",
+  ports: [],
   sleep: false,
   idleMinutes: "15",
   schedule: "org",
@@ -364,6 +368,8 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     // A server's address is its own, and not taken along.
     hostname: "",
     exposeType: spec.expose?.type ?? "Router",
+    // What its mods listen on goes with them; where each is reached is a server's own.
+    ports: portDrafts(spec.ports),
     sleep: !!spec.sleep?.enabled,
     idleMinutes: String(spec.sleep?.idleMinutes || 15),
     schedule: !spec.backups ? "org" : spec.backups.enabled === false ? "off" : "own",
@@ -578,6 +584,7 @@ export function ServerForm({
   const software: Software | null =
     v.kind === "modpack" ? { loader: "vanilla", version: v.version, modpack: v.modpack ?? { source: "modrinth", project: "" } } : v.loader ? { loader: v.loader, version: v.version } : null;
   const modsChanged = JSON.stringify(v.mods) !== JSON.stringify(start.mods);
+  const portsChanged = JSON.stringify(portsOf(v.ports)) !== JSON.stringify(portsOf(start.ports));
   const takes = software ? kindsFor(software) : [];
   const contentKinds = [...takes, ...(["mod", "plugin", "datapack"] as const).filter((k) => !takes.includes(k) && (v.mods.some((m) => (m.kind ?? "mod") === k) || v.uploads.some((u) => u.kind === k)))];
   // The one pack there is, where it says which game versions it is made for.
@@ -743,6 +750,7 @@ export function ServerForm({
       ...(base?.opMembers ? { opMembers: base.opMembers } : {}),
       ...(base?.whitelistMembers ? { whitelistMembers: base.whitelistMembers } : {}),
       expose: v.exposeType === "None" ? { type: "None" } : { type: v.exposeType, hostname: v.hostname.trim() },
+      ...(portsOf(v.ports).length > 0 ? { ports: portsOf(v.ports) } : {}),
       mods: v.mods,
       // The rest are the server's once it is made.
       ...(requested?.from === "url" ? { resourcePack: { ...requested.pack, ...packSettings } } : {}),
@@ -790,6 +798,7 @@ export function ServerForm({
       changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : v.schedule === "own" ? ownBackups() : null;
     }
     if (modsChanged) changes.mods = v.mods;
+    if (portsChanged) changes.ports = portsOf(v.ports);
     // A template says whether its servers start a world of their own: one
     // of its own is one too, put in once its files are.
     if (forTemplate) Object.assign(changes, { world: world === "kept" ? null : "new" });
@@ -1214,7 +1223,8 @@ export function ServerForm({
         </option>
       ));
   const worldChanged = source ? (["maxPlayers", "pvp", "otherProperties"] as const).filter((k) => v[k] !== start[k]).length : 0;
-  const networkChanged = (v.exposeType !== start.exposeType ? 1 : 0) + ((v.sleep && routed) !== start.sleep || (v.sleep && routed && v.idleMinutes !== start.idleMinutes) ? 1 : 0);
+  const networkChanged =
+    (v.exposeType !== start.exposeType ? 1 : 0) + (portsChanged ? 1 : 0) + ((v.sleep && routed) !== start.sleep || (v.sleep && routed && v.idleMinutes !== start.idleMinutes) ? 1 : 0);
 
   return (
     <>
@@ -1818,7 +1828,7 @@ export function ServerForm({
           {(id) => <Input id={id} value={v.hostname} disabled={v.exposeType === "None"} onChange={(e) => set("hostname", e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
         </Field>
         )}
-        <More label="How it is reached, and sleep" changed={networkChanged} open={moreNetwork} onToggle={() => setMoreNetwork(!moreNetwork)} />
+        <More label="How it is reached, ports and sleep" changed={networkChanged} open={moreNetwork} onToggle={() => setMoreNetwork(!moreNetwork)} />
         {moreNetwork && (
           <>
             <Field label="How it is reached">
@@ -1840,6 +1850,10 @@ export function ServerForm({
                 {(id) => <Input id={id} type="number" min={1} value={v.idleMinutes} onChange={(e) => set("idleMinutes", e.target.value)} className="max-w-32" />}
               </Field>
             )}
+            {/* As in the server's settings; where each is reached is known once it is made. */}
+            <Field label="Extra ports" hint="For mods like voice chat, Geyser or a web map.">
+              {() => <ExtraPorts ports={v.ports} onChange={(ports) => set("ports", ports)} mods={v.mods} status={[]} expose={v.exposeType} sleeps={v.sleep && routed} />}
+            </Field>
           </>
         )}
       </Section>
