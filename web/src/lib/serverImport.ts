@@ -312,8 +312,14 @@ export async function inspectWorld(file: File): Promise<FoundWorld> {
   const beside = root ? [`${root}_nether/`, `${root}_the_end/`] : [];
   const size = entries.filter((e) => (root === "" || e.path.startsWith(`${root}/`) || beside.some((b) => e.path.startsWith(b))) && !e.path.startsWith("__MACOSX/")).reduce((sum, e) => sum + e.size, 0);
   const icon = files.get(root ? `${root}/icon.png` : "icon.png");
-  return { root, name: read.name || base(root) || file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, ""), version: read.version, size, ...(icon ? { icon } : {}) };
+  return { root, name: plainName(read.name) || base(root) || archiveName(file), version: read.version, size, ...(icon ? { icon } : {}) };
 }
+
+/** A name without the game's formatting codes: § and the letter after it, which colour and style it. */
+export const plainName = (name: string) => name.replace(/§[0-9a-fk-or]/gi, "").replace(/\s+/g, " ").trim();
+
+/** What an archive is called, without its extension: "Drehmal APOTHEOSIS.zip" is "Drehmal APOTHEOSIS". */
+export const archiveName = (file: File) => file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, "").trim();
 
 /** A world's name and the version that last opened it, from its level.dat. */
 async function levelInfo(levelDat: Uint8Array) {
