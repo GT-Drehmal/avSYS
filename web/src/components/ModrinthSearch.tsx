@@ -357,7 +357,7 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
           ) : versions.isError ? (
             <p className="text-xs text-danger">{versions.error.message}</p>
           ) : versions.data.length === 0 ? (
-            <p className="text-xs text-muted">None. It cannot be added to this server.</p>
+            <p className="text-xs text-muted">None fit this server, so it cannot be added.</p>
           ) : (
             <ul className="flex flex-col text-xs">
               {versions.data.slice(0, 5).map((v) => (
@@ -374,7 +374,7 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
         {needed.length + unnamed > 0 && (
           <section className="flex flex-col gap-1.5">
             <h3 className="text-[13px] font-medium">Needs</h3>
-            <p className="text-xs text-muted">What its newest version{fits ? ` for ${fits}` : ""} does not work without. They are not added for you.</p>
+            <p className="text-xs text-muted">What the newest version{fits ? ` for ${fits}` : ""} needs to work. These are not added for you.</p>
             <ul className="flex flex-col gap-1.5">
               {needs.data?.map((p) => (
                 <li key={p.id} className="flex items-center gap-2 text-[13px]">
@@ -392,10 +392,10 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
               {unnamed > 0 && (
                 <li className="text-xs text-muted">
                   {needed.length > 0 ? "And " : ""}
-                  {unnamed === 1 ? "one other project" : `${unnamed} other projects`}, named on its Modrinth page.
+                  {unnamed === 1 ? "one other project" : `${unnamed} other projects`}, named on the project's Modrinth page.
                 </li>
               )}
-              {needs.isError && <li className="text-xs text-muted">{needed.length === 1 ? "One other project" : `${needed.length} other projects`}, named on its Modrinth page.</li>}
+              {needs.isError && <li className="text-xs text-muted">{needed.length === 1 ? "One other project" : `${needed.length} other projects`}, named on the project's Modrinth page.</li>}
             </ul>
           </section>
         )}

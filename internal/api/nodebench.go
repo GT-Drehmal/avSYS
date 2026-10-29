@@ -67,7 +67,7 @@ func (s *Server) setNode(w http.ResponseWriter, r *http.Request, u *store.User) 
 		return err
 	}
 	if in.Automatic == nil {
-		return errBadRequest("Say whether it takes new servers.")
+		return errBadRequest("Say whether the node takes new servers.")
 	}
 	node := &corev1.Node{}
 	if err := s.nodeReader().Get(r.Context(), client.ObjectKey{Name: r.PathValue("node")}, node); apierrors.IsNotFound(err) {

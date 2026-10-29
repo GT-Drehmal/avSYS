@@ -26,7 +26,7 @@ test("an installed mod that needs a port is said, and opening it is one press an
   await page.getByRole("button", { name: "Open it" }).click();
   await expect(page.getByText("Simple Voice Chat is installed")).toHaveCount(0);
   await expect(page.getByLabel("Port name")).toHaveValue("voice-chat");
-  await expect(page.getByText(/Each gets its own public port/)).toBeVisible();
+  await expect(page.getByText(/Each gets a public port of its own/)).toBeVisible();
   // One of one's own as well.
   await page.getByRole("button", { name: "Add a port" }).click();
   await page.getByLabel("Port name").nth(1).fill("votifier");
@@ -54,7 +54,7 @@ test("an open port says where it is reached, and a port is taken off", async ({ 
 });
 
 test("a port that cannot be opened says why", async ({ page }) => {
-  const why = "Not open: all public ports from 25600 to 25609 are in use. It opens once one is free.";
+  const why = "Not open: all public ports from 25600 to 25609 are in use. The port opens once one is free.";
   await survivalWith(page, { ports: [{ name: "geyser", port: 19132, protocol: "UDP" }] }, { ports: [{ name: "geyser", port: 19132, protocol: "UDP", message: why }] });
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByText(why)).toBeVisible();
@@ -98,7 +98,7 @@ test("a new server is given its extra ports as it is made", async ({ page, as, o
   await page.getByLabel("Display name").fill("Voice");
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ }).click();
   await page.getByLabel("Game version").selectOption("1.21.4");
-  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
+  await page.getByRole("button", { name: /Connection, ports and sleep/ }).click();
   await page.getByRole("button", { name: "Add a port" }).click();
   await page.getByLabel("Port name").fill("voice-chat");
   await page.getByLabel("Port number").fill("24454");
@@ -117,7 +117,7 @@ test("a copy keeps its original's extra ports, and is given others when they are
     route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
   );
   await page.goto("/o/friends/new?from=server:survival");
-  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
+  await page.getByRole("button", { name: /Connection, ports and sleep/ }).click();
   let request = made();
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   expect((await request).postDataJSON().spec).not.toHaveProperty("ports");
@@ -138,7 +138,7 @@ test("a template of settings alone keeps its extra ports, for the servers made f
   });
   await as("owner");
   await page.goto(`/o/${slug}/templates/${made.id}/edit`);
-  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
+  await page.getByRole("button", { name: /Connection, ports and sleep/ }).click();
   await expect(page.getByLabel("Port name")).toHaveValue("voice-chat");
   await page.getByLabel("Port number").fill("24455");
   await page.getByRole("button", { name: "Save", exact: true }).click();

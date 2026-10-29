@@ -111,7 +111,7 @@ export function Nodes() {
                   checked={n.hosts}
                   onChange={(on) => setAutomatic(n.name, on)}
                   label={`New servers on ${n.name}`}
-                  hint={n.hosts ? "Picked when it is the fastest with room." : "Only when picked by hand."}
+                  hint={n.hosts ? "Picked when this node is the fastest with room." : "Only when picked by hand."}
                 />
               </div>
               {(n.servers?.length ?? 0) > 0 ? (

@@ -253,7 +253,7 @@ function EarlierLog({ path, name }: { path: string; name: string }) {
             </button>
           </div>
         )}
-        {first.data?.truncated && <p className="mt-2 font-sans text-xs text-muted">Only the first 64 MB of this log are shown. Download it for the rest.</p>}
+        {first.data?.truncated && <p className="mt-2 font-sans text-xs text-muted">Only the first 64 MB of this log are shown. Download the log for the rest.</p>}
       </div>
     </div>
   );

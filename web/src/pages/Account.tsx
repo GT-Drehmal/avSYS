@@ -26,7 +26,7 @@ function Profile() {
         }}
       >
         <PicturePicker name={me.user.username} shape="round" path="/me/avatar" has={me.user.avatarUrl === `/api/v1/users/${me.user.id}/avatar`} url={me.user.avatarUrl || undefined} onChange={() => qc.invalidateQueries({ queryKey: keys.me })} />
-        <Field label="Username" hint="It cannot be changed.">
+        <Field label="Username" hint="Cannot be changed.">
           {(id) => <Input id={id} disabled value={me.user.username} className="font-mono" />}
         </Field>
         <Field label="Display name">{(id) => <Input id={id} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}</Field>
@@ -118,7 +118,7 @@ function Minecraft() {
         >
           <p className="text-[13px]">
             In Minecraft, sign in as <span className="font-mono">{check.name}</span> and join{" "}
-            {check.address ? <span className="font-mono">{check.address}</span> : "this panel's address"}. Enter the code it shows.
+            {check.address ? <span className="font-mono">{check.address}</span> : "this panel's address"}. Enter the code the game shows.
           </p>
           <div className="flex items-center gap-2">
             <Input required value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-EFGH" className="w-36 font-mono" aria-label="Code" spellCheck={false} autoComplete="off" />
@@ -274,7 +274,7 @@ function APITokens() {
           Create token
         </Button>
       </form>
-      <Modal open={!!secret} onOpenChange={() => setSecret(null)} title="Your new token" description="Copy it now. It is not shown again.">
+      <Modal open={!!secret} onOpenChange={() => setSecret(null)} title="Your new token" description="Copy the token now. It is not shown again.">
         <div className="flex flex-col gap-4">
           <div className="rounded-md border border-line bg-bg px-3 py-2">{secret && <CopyText value={secret} className="text-xs" wrap />}</div>
           <div className="flex justify-end">

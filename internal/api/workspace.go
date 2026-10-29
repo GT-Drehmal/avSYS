@@ -99,7 +99,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request, u *store.User)
 	}
 	conn, err := s.Gateway.DialWorkspace(ctx, a.Namespace, mc.Name)
 	if err != nil {
-		return fail("The workspace is not reachable right now. It may be restarting.")
+		return fail("The workspace is not reachable right now. The server may be restarting.")
 	}
 	defer conn.Close()
 	session, err := conn.NewSession()
@@ -355,7 +355,7 @@ func (s *Server) openFiles(r *http.Request, a *access, mc *avsysv1.MinecraftServ
 	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
 	if err != nil {
 		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
-		return nil, "", nil, "", &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. It may be restarting."}
+		return nil, "", nil, "", &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. The server may be restarting."}
 	}
 	return a, mc.Name, sc, full, nil
 }

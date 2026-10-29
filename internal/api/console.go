@@ -156,7 +156,7 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 	// write the world out under it: the copy would hold files from before
 	// and after one another.
 	if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; paused && savesCommand(command) {
-		return &Error{Status: http.StatusConflict, Code: "snapshotting", Message: "A snapshot is being taken. Try again when it is done."}
+		return &Error{Status: http.StatusConflict, Code: "snapshotting", Message: "A snapshot is being taken. Try again when the snapshot is done."}
 	}
 	output := ""
 	typed := false

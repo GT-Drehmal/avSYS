@@ -22,16 +22,16 @@ test("members on a server see each other there, and the file each has open", asy
   // In the list, on its row only.
   await page.goto(`/o/${slug}`);
   const row = (name: string) => page.getByRole("listitem").filter({ has: page.getByRole("link", { name: new RegExp(`^${name}`) }) });
-  await expect(row("alpha").getByRole("img", { name: /^On it now: / })).toBeVisible();
-  await expect(row("beta").getByRole("img", { name: /^On it now/ })).toHaveCount(0);
+  await expect(row("alpha").getByRole("img", { name: /^On this server now: / })).toBeVisible();
+  await expect(row("beta").getByRole("img", { name: /^On this server now/ })).toHaveCount(0);
 
   // The same file open: said in the editor.
   await page.goto(`/o/${slug}/s/alpha/files?file=%2Fserver.properties`);
-  await expect(page.getByText(/also has it open$/)).toBeVisible();
+  await expect(page.getByText(/also has this file open$/)).toBeVisible();
 
   // Gone to another server, then closed: gone from here.
   await friend.goto(`/o/${slug}/s/beta`);
-  await expect(page.getByText(/also has it open$/)).toHaveCount(0);
+  await expect(page.getByText(/also has this file open$/)).toHaveCount(0);
   await expect(page.getByRole("img", { name: /^Also here/ })).toHaveCount(0);
   await page.goto(`/o/${slug}/s/beta`);
   await expect(page.getByRole("img", { name: /^Also here: / })).toBeVisible();
@@ -47,7 +47,7 @@ test("a file open in a folder is said too", async ({ page, as, api, org, pageAs 
   const friend = await pageAs("operator");
   await friend.goto(`/o/${slug}/s/alpha/files/plugins?file=%2Fplugins%2Fconfig.yml`);
   await page.goto(`/o/${slug}/s/alpha/files/plugins?file=%2Fplugins%2Fconfig.yml`);
-  await expect(page.getByText(/also has it open$/)).toBeVisible();
+  await expect(page.getByText(/also has this file open$/)).toBeVisible();
 });
 
 test("after the stream may have missed some, who is here is asked for again", async ({ page, as }) => {

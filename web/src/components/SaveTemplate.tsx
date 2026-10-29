@@ -161,13 +161,13 @@ export function SaveTemplate({
         )}
         {updating ? (
           <p className="text-[13px] text-muted">
-            {fromSnapshot ? "This snapshot" : `${fromServer ? displayName(fromServer) : "The server"} as it is now`} becomes the newest version of {updating.name}. Its earlier versions are kept.
+            {fromSnapshot ? "This snapshot" : `${fromServer ? displayName(fromServer) : "The server"} as it is now`} becomes the newest version of {updating.name}. Earlier versions are kept.
           </p>
         ) : (
           <>
             <Field label="Name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder={suggested} maxLength={60} />}</Field>
             <Field label="Description">{(id) => <Textarea id={id} value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={500} />}</Field>
-            <p className="text-[13px] text-muted">Its files, world and settings are saved. New servers can be made from it.</p>
+            <p className="text-[13px] text-muted">The server's files, world and settings are saved. New servers can be made from the template.</p>
           </>
         )}
         {error && <Notice tone="danger">{error}</Notice>}

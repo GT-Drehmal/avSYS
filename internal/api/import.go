@@ -47,7 +47,7 @@ var (
 	// files an import started on and did not finish.
 	errImportIncomplete = &Error{Status: http.StatusConflict, Code: "import_incomplete", Message: "An import did not finish, so files may be missing. Import again, restore a snapshot, or delete the server."}
 	errHasFiles         = &Error{Status: http.StatusConflict, Code: "has_files", Message: "This server has files already. Import into a new server."}
-	errHasWorld         = &Error{Status: http.StatusConflict, Code: "has_world", Message: "This server has a world already. Replace it in its settings instead."}
+	errHasWorld         = &Error{Status: http.StatusConflict, Code: "has_world", Message: "This server has a world already. Replace the world in the server's Settings instead."}
 )
 
 // importUnfinished reports whether an import started on this server's files
@@ -242,7 +242,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		return errCreateIncomplete
 	}
 	if replace && levelOf(&mc.Spec) == "" {
-		return errBadRequest("Which folder this server's world is in could not be told from its settings, so it cannot be replaced here.")
+		return errBadRequest("Which folder this server's world is in could not be told from the server's settings, so the world cannot be replaced here.")
 	}
 	if mc.Spec.State != avsysv1.StateStopped {
 		return &Error{Status: http.StatusConflict, Code: "running", Message: "Stop the server first."}
@@ -448,7 +448,7 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 			return undo, errBadRequest("Nothing was uploaded to import.")
 		}
 		if want := r.URL.Query().Get("size"); want != strconv.FormatInt(size, 10) {
-			return undo, errBadRequest("Only %s of the archive arrived. Send it again.", sizeOf(size))
+			return undo, errBadRequest("Only %s of the archive arrived. Send the archive again.", sizeOf(size))
 		}
 		_ = sc.Remove(importArchive)
 		if err := sc.Rename(importUpload, importArchive); err != nil {
@@ -502,7 +502,7 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		// It is the way back until the world is in: not to be deleted before.
 		if !s.ops.carry(mc.Namespace, op, undo.ID) {
 			_ = sc.Remove(importArchive)
-			return undo, &Error{Status: http.StatusConflict, Code: "snapshot_deleting", Message: "The snapshot just taken of it is being deleted, so nothing was changed."}
+			return undo, &Error{Status: http.StatusConflict, Code: "snapshot_deleting", Message: "The snapshot just taken of the server is being deleted, so nothing was changed."}
 		}
 	}
 	touched = true

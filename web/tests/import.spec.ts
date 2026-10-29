@@ -139,7 +139,7 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   await expect(page.getByTestId("archive-summary")).toContainText("1 mod");
   await expect(page.getByText("terrain", { exact: true })).toHaveCount(1);
   await expect(page.getByText("unused", { exact: true })).toBeVisible();
-  await expect(page.getByText(/15 B · uploaded when created · not on in its world before/)).toBeVisible();
+  await expect(page.getByText(/15 B · uploaded when created · not on in the world before/)).toBeVisible();
   await expect(page.getByText("resources", { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
@@ -232,7 +232,7 @@ test("an import the panel turns down takes its server away again, and says why",
   await expect(page.getByRole("region", { name: "Setting up broken" })).toContainText("Could not import broken: Could not unpack the archive: Truncated input file. Nothing was kept.");
   expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
   // Its page, where the form went on to, says it is gone.
-  await expect(page.getByText(/It may have been deleted/)).toBeVisible();
+  await expect(page.getByText(/The server may have been deleted/)).toBeVisible();
 });
 
 test("an archive is sent in parts, and a part lost on the way is sent again from where it got to", async ({ page, as, org, browserName }) => {
@@ -390,7 +390,7 @@ test("an archive with no world in it says so", async ({ page, as, org }) => {
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
   await page.getByRole("button", { name: "Upload world" }).click();
   await page.getByLabel("World archive").setInputFiles({ name: "pics.zip", mimeType: "application/zip", buffer: zip({ "a.png": "png" }) });
-  await expect(page.getByText("No world in this archive: it has no level.dat.")).toBeVisible();
+  await expect(page.getByText("No world in this archive: there is no level.dat.")).toBeVisible();
 });
 
 test("an archive picked can be taken away again", async ({ page, as, org }) => {
@@ -462,12 +462,12 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
   await expect(replace).toBeDisabled();
   // One with no world in it is turned down before anything is sent.
   await dialog.getByLabel("World archive").setInputFiles({ name: "notes.zip", mimeType: "application/zip", buffer: zip({ "notes.txt": "hello" }) });
-  await expect(dialog.getByText("No world in this archive: it has no level.dat.")).toBeVisible();
+  await expect(dialog.getByText("No world in this archive: there is no level.dat.")).toBeVisible();
   await expect(replace).toBeDisabled();
 
   await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "Map/level.dat": levelDat("1.21.5", "Adventure Map"), "Map/region/r.0.0.mca": "x" }) });
   await expect(dialog.getByTestId("world-summary")).toContainText('World "Adventure Map" · last opened in 1.21.5');
-  await expect(dialog.getByText("This server runs 1.21.4, older than the version this world was last opened in. The game cannot open it.")).toBeVisible();
+  await expect(dialog.getByText("This server runs 1.21.4, older than the version this world was last opened in. The game cannot open the world.")).toBeVisible();
   let sent: URL | null = null;
   await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
     sent = new URL(route.request().url());
@@ -595,7 +595,7 @@ test("a template is given a world of one's own, kept with it, as a server is", a
   await page.goto(`/o/${slug}/templates/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Name", { exact: true }).fill("Island");
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Upload world" }).click();
   const save = zip({ "saves/Island Save/level.dat": levelDat("1.21.4", "Island"), "saves/Island Save/region/r.0.0.mca": "region" });
   await page.getByLabel("World archive").setInputFiles({ name: "island.zip", mimeType: "application/zip", buffer: save });
   await expect(page.getByTestId("world-summary")).toContainText("Last opened in 1.21.4");
@@ -623,7 +623,7 @@ test("a server made from a template with a world of its own is given it once it 
   });
   await page.goto(`/o/${slug}/new?from=template:t9`);
   // Its world, kept with the template, is the one it is given.
-  const worldChoice = page.getByRole("group", { name: "Its world" });
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
   await expect(worldChoice.getByRole("button", { name: "Upload world" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("world-summary")).toContainText("kept with the template");
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
@@ -655,7 +655,7 @@ test("a template's own world is taken away in its form, for its servers to start
   // None chosen in its place: one is asked for, or a new one.
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Choose a world, or make a new one.")).toBeVisible();
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "New world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "New world" }).click();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
   expect(calls).toEqual(["PATCH /templates/t9", "DELETE /templates/t9/world"]);

@@ -86,7 +86,7 @@ export function NewFromSource({ org, origin, templating }: { org: string; origin
               ? template.error instanceof ApiError
                 ? template.error.message
                 : template.data
-                  ? "This template has no version yet. Wait for its first to be saved."
+                  ? "This template has no version yet. Wait for the first one to be saved."
                   : "Could not load the template."
               : snapshot.error instanceof ApiError
               ? snapshot.error.message

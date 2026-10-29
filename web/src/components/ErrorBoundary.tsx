@@ -67,7 +67,7 @@ export class ErrorBoundary extends Component<Props, { failed: boolean; error: un
           <p className="text-[13px] leading-relaxed text-muted">
             {stale
               ? "The panel was updated. Reload to continue."
-              : "Try reloading. If it keeps happening, please report it."}
+              : "Try reloading. If this keeps happening, please report it."}
           </p>
           {!stale && <p className="font-mono text-xs break-words text-faint">{error instanceof Error ? error.message : String(error)}</p>}
           <div className="flex gap-2">

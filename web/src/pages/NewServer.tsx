@@ -44,7 +44,7 @@ function NewFromNothing({ org, pick, world }: { org: string; pick?: StartKind; w
             : !asked
               ? "There is no such world in the library."
               : asked.saving
-                ? `${asked.name} is still being saved. This page goes on once it is.`
+                ? `${asked.name} is still being saved. This page continues once the world is ready.`
                 : `${asked.name} was not saved${asked.error ? `: ${asked.error}` : "."}`}
         </Notice>
       </>

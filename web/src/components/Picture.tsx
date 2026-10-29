@@ -194,7 +194,7 @@ export function PictureChange({ name, current, value, onChange, optional = "Opti
         : brought === false
           ? // With nothing to say of the one kept, there is simply none.
             kept
-            ? "Could not show its picture."
+            ? "Could not show the picture."
             : optional
           : kept;
   return (

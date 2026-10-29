@@ -596,7 +596,7 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 	sc, done, err := s.filesOf(r.Context(), mc, wait)
 	if err != nil {
 		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
-		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. It may be restarting."}
+		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. The server may be restarting."}
 	}
 	defer done()
 	if err := sc.MkdirAll(controller.ContentDir); err != nil {

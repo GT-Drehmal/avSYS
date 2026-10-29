@@ -218,7 +218,7 @@ export function Servers() {
                     <span className="min-w-0">
                       <span className="flex min-w-0 items-center gap-2">
                         <span className="truncate font-medium">{displayName(s)}</span>
-                        <Faces people={others(people, me, s.name)} label="On it now" size={18} ring="ring-surface" />
+                        <Faces people={others(people, me, s.name)} label="On this server now" size={18} ring="ring-surface" />
                       </span>
                       <span className="block truncate text-xs text-muted">
                         {phaseWords[s.status.phase ?? "Stopped"]}
