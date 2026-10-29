@@ -222,9 +222,9 @@ func worldNameTaken(name string) error {
 }
 
 // uploadWorld puts an uploaded archive of a world in the library: the body,
-// with ?name=, ?description=, ?root= its world's folder in it, and what the
-// page read of it, ?version=, ?file= and ?unpacked=, how large the world is
-// out of it.
+// or what was sent in parts as ?upload= of ?size=, with ?name=,
+// ?description=, ?root= its world's folder in it, and what the page read of
+// it, ?version=, ?file= and ?unpacked=, how large the world is out of it.
 func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleOperator)
 	if err != nil {
@@ -255,7 +255,13 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	defer release()
 	ctx := context.WithoutCancel(r.Context())
-	kept, err := s.Backups.KeepFile(ctx, a.Org.Slug, libraryHost(world.ID), ownWorldFile, u.Username, http.MaxBytesReader(w, r.Body, maxUpload))
+	body, done, err := s.uploadBody(w, r, a)
+	if err != nil {
+		s.forgetWorld(ctx, a, world.ID, nil)
+		return err
+	}
+	defer done()
+	kept, err := s.Backups.KeepFile(ctx, a.Org.Slug, libraryHost(world.ID), ownWorldFile, u.Username, body)
 	if err == nil {
 		world.Size = kept.Size
 		err = s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, kept.Size, world.Unpacked)
@@ -264,7 +270,7 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 		s.forgetWorld(ctx, a, world.ID, kept)
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return errBadRequest("Over 2 GB. Put it on a server with scp or rsync, then save that server's world to the library.")
+			return errBadRequest("Over 2 GB in one request: send it in parts.")
 		}
 		return snapshotError(err)
 	}
