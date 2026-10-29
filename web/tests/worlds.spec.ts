@@ -132,10 +132,10 @@ test("a world's own picture goes with it, not with another archive or a server's
 
 test("a world that could not be saved says why, until it is deleted", async ({ page, as }) => {
   await as("admin");
-  await library(page, [world("w1", "Nothing", { ready: false, error: "Its world is not among its files." })]);
+  await library(page, [world("w1", "Nothing", { ready: false, error: "The world is not among the server's files." })]);
   await page.goto("/o/friends/worlds");
   const row = page.getByRole("listitem", { name: "Nothing" });
-  await expect(row).toContainText("Not saved: Its world is not among its files.");
+  await expect(row).toContainText("Not saved: The world is not among the server's files.");
   await expect(row.getByRole("button", { name: "New server" })).toBeDisabled();
   await row.getByRole("button", { name: "Actions for Nothing" }).click();
   await expect(page.getByRole("menuitem", { name: "Download" })).toHaveAttribute("data-disabled", "");
@@ -349,12 +349,12 @@ test("a viewer has no world to save", async ({ page, as }) => {
 
 test("a new server asked for with a world that cannot be used yet says so, rather than making a new one", async ({ page, as }) => {
   await as("owner");
-  await library(page, [world("w1", "Island", { ready: false, saving: true }), world("w2", "Nothing", { ready: false, error: "Its world is not among its files." })]);
+  await library(page, [world("w1", "Island", { ready: false, saving: true }), world("w2", "Nothing", { ready: false, error: "The world is not among the server's files." })]);
   await page.goto("/o/friends/new?world=w1");
   await expect(page.getByText("Island is still being saved. This page continues once the world is ready.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create server" })).toHaveCount(0);
   await page.goto("/o/friends/new?world=w2");
-  await expect(page.getByText("Nothing was not saved: Its world is not among its files.")).toBeVisible();
+  await expect(page.getByText("Nothing was not saved: The world is not among the server's files.")).toBeVisible();
   await page.goto("/o/friends/new?world=gone");
   await expect(page.getByText("There is no such world in the library.")).toBeVisible();
 });

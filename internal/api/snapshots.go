@@ -264,15 +264,15 @@ var (
 	errDeleting     = &Error{Status: http.StatusConflict, Code: "deleting", Message: "This server is being deleted."}
 	errMoving       = &Error{Status: http.StatusConflict, Code: "moving", Message: "This server is being moved to another node. Wait for that to finish."}
 	errCreating     = &Error{Status: http.StatusConflict, Code: "creating", Message: "This server is still being created. Wait for that to finish."}
-	errSnapshotting = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot of this server is being taken. Try again when it has finished."}
+	errSnapshotting = &Error{Status: http.StatusConflict, Code: "busy", Message: "A snapshot of this server is being taken. Try again when the snapshot has finished."}
 	// errRestoreIncomplete is returned to anything that would run the game
 	// on files a restore started on and did not finish.
 	errRestoreIncomplete = &Error{Status: http.StatusConflict, Code: "restore_incomplete",
-		Message: "A restore did not finish, so files may be missing. Restore it again before starting it."}
+		Message: "A restore did not finish, so files may be missing. Restore the snapshot again before starting the server."}
 	// errCreateIncomplete is the same for a server that never received all of
 	// the files it was to be made from.
 	errCreateIncomplete = &Error{Status: http.StatusConflict, Code: "create_incomplete",
-		Message: "Creating this server did not finish, so files are missing. Delete it and create it again."}
+		Message: "Creating this server did not finish, so files are missing. Delete the server and create it again."}
 )
 
 // changing admits a request that changes a server. While a restore owns the
@@ -368,7 +368,7 @@ func settled(mc *avsysv1.MinecraftServer) error {
 	if state == "" {
 		state = "not ready"
 	}
-	return &Error{Status: http.StatusConflict, Code: "unsettled", Message: fmt.Sprintf("This server is %s. Wait until it is running or stopped, then try again.", state)}
+	return &Error{Status: http.StatusConflict, Code: "unsettled", Message: fmt.Sprintf("This server is %s. Wait until the server is running or stopped, then try again.", state)}
 }
 
 // snapshotRecord is stored inside every snapshot. It is what lets a server be
@@ -661,10 +661,10 @@ func (s *Server) takeSnapshotAs(ctx context.Context, org string, mc *avsysv1.Min
 		// in memory, or catch a file half written. That is not a snapshot
 		// anyone should restore from, so there is none.
 		if _, err := s.rconFor(ctx, mc, "save-off", 15*time.Second); err != nil {
-			return nil, failed(err, "the game did not answer, so its world could not be saved first (stop the server to snapshot it as it is)")
+			return nil, failed(err, "the game did not answer, so the world could not be saved first (stop the server to snapshot the files as they are)")
 		}
 		if _, err := s.rconFor(ctx, mc, "save-all flush", 5*time.Minute); err != nil {
-			return nil, failed(err, "the game did not finish writing its world out")
+			return nil, failed(err, "the game did not finish writing the world out")
 		}
 	}
 
@@ -836,9 +836,9 @@ func (s *Server) resumeSaving(ctx context.Context) {
 			if mc.Status.Snapshots == nil {
 				mc.Status.Snapshots = &avsysv1.SnapshotStatus{}
 			}
-			mc.Status.Snapshots.Error = "A restore was interrupted when the panel restarted, so this server's files may be incomplete. Restore it again before starting it; the state from before is in its newest snapshot."
+			mc.Status.Snapshots.Error = "A restore was interrupted when the panel restarted, so this server's files may be incomplete. Restore the snapshot again before starting the server; the state from before is in its newest snapshot."
 			if createUnfinished(mc) {
-				mc.Status.Snapshots.Error = "Creating this server did not finish, so files are missing. Delete it and create it again."
+				mc.Status.Snapshots.Error = "Creating this server did not finish, so files are missing. Delete the server and create it again."
 			}
 			if err := s.Client.Status().Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
 				s.Log.Error("could not report an interrupted restore", "server", mc.Name, "namespace", mc.Namespace, "error", err)
@@ -1090,7 +1090,7 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	// pod may take a while to be scheduled and have its volume attached.
 	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, 5*time.Minute)
 	if err != nil {
-		return undo, failed(err, "the server was stopped, but its files did not become reachable, so nothing was restored")
+		return undo, failed(err, "the server was stopped, but the server's files did not become reachable, so nothing was restored")
 	}
 	defer ws.Close()
 	// From here the files are in between two states until the restore is

@@ -54,7 +54,7 @@ test("an open port says where it is reached, and a port is taken off", async ({ 
 });
 
 test("a port that cannot be opened says why", async ({ page }) => {
-  const why = "Not open: all public ports from 25600 to 25609 are in use. It opens once one is free.";
+  const why = "Not open: all public ports from 25600 to 25609 are in use. The port opens once one is free.";
   await survivalWith(page, { ports: [{ name: "geyser", port: 19132, protocol: "UDP" }] }, { ports: [{ name: "geyser", port: 19132, protocol: "UDP", message: why }] });
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByText(why)).toBeVisible();

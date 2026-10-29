@@ -61,7 +61,7 @@ func (s *Server) addURLToStack(w http.ResponseWriter, r *http.Request, u *store.
 		return err
 	}
 	if in.Project != nil && (in.Project.Source != "modrinth" || in.Project.ID == "") {
-		return errBadRequest("A resource pack picked from a project names it: source modrinth, and its id.")
+		return errBadRequest("A resource pack picked from a project names the project: source modrinth, and the project's id.")
 	}
 	return s.addPackTo(w, r, u, func(to *os.File, limit int64) (avsysv1.StackedPack, error) {
 		stacked, err := downloadPack(r.Context(), to, in.URL, in.SHA1, limit)
@@ -307,7 +307,7 @@ func (s *Server) joinStack(ctx context.Context, sc *sftp.Client, stack []avsysv1
 		// The server's files are anyone's with a shell there: a pack is
 		// joined only as it was when it was added.
 		if sha != p.SHA1 {
-			return nil, errBadRequest("The file of %s has changed since it was added. Take it off and add it again.", stackedName(p))
+			return nil, errBadRequest("The file of %s has changed since it was added. Take the pack off and add it again.", stackedName(p))
 		}
 		z, err := zip.NewReader(local, size)
 		if err != nil {

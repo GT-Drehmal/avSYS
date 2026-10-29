@@ -785,7 +785,7 @@ func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 		}
 		if placed != nil {
 			s.Log.Warn("a new server's picture was not put in place", "server", key, "error", placed)
-			return &Error{Status: http.StatusGatewayTimeout, Code: "not_ready", Message: "The server was not ready for its picture. Set it in Settings."}
+			return &Error{Status: http.StatusGatewayTimeout, Code: "not_ready", Message: "The server was not ready for the picture. Set the picture in Settings."}
 		}
 	}
 	s.serverIcons.set(key, data)

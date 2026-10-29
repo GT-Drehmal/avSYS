@@ -60,7 +60,7 @@ func (s *Server) listLogs(w http.ResponseWriter, r *http.Request, u *store.User)
 	}
 	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
 	if err != nil {
-		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. It may be restarting."}
+		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. The server may be restarting."}
 	}
 	entries := []logEntry{}
 	for _, dir := range []string{"logs", "crash-reports"} {
@@ -244,7 +244,7 @@ func (s *Server) readLogFile(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
 	if err != nil {
-		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. It may be restarting."}
+		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. The server may be restarting."}
 	}
 	full := path.Join(dataRoot, name)
 	// The folders are the server's, which anyone with a shell there can fill.

@@ -68,7 +68,7 @@ func packLimit(version string) int64 {
 func checkPack(f io.ReaderAt, size int64) (*avsysv1.PackFormats, error) {
 	z, err := zip.NewReader(f, size)
 	if err != nil {
-		return nil, errBadRequest("That is not a zip file. A resource pack is a .zip with pack.mcmeta at its top.")
+		return nil, errBadRequest("That is not a zip file. A resource pack is a .zip with pack.mcmeta at the top.")
 	}
 	folders := map[string]bool{}
 	var nested string
@@ -94,7 +94,7 @@ func checkPack(f io.ReaderAt, size int64) (*avsysv1.PackFormats, error) {
 // version takes, as after the version is changed.
 func packFits(spec *avsysv1.MinecraftServerSpec) error {
 	if rp := spec.ResourcePack; rp != nil && rp.Uploaded != nil && rp.Uploaded.Size > packLimit(spec.Version) {
-		return errBadRequest("Its resource pack is over %d MB, the most the game takes for %s. Upload a smaller one, or remove it first.", packLimit(spec.Version)>>20, spec.Version)
+		return errBadRequest("The server's resource pack is over %d MB, the most the game takes for %s. Upload a smaller pack, or remove the pack first.", packLimit(spec.Version)>>20, spec.Version)
 	}
 	return nil
 }

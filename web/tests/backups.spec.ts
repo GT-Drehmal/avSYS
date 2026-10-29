@@ -343,7 +343,7 @@ test("coming back to a server's page asks again what is being done to it", async
 
 test("a scheduled snapshot that failed is shown on the server, not popped up", async ({ page }) => {
   const scheduled = { kind: "snapshot", org: "friends", server: "survival", scheduled: true, error: "the server's files are not reachable" };
-  const byHand = { kind: "snapshot", org: "friends", server: "creative", error: "the game did not finish writing its world out" };
+  const byHand = { kind: "snapshot", org: "friends", server: "creative", error: "the game did not finish writing the world out" };
   await page.route("**/api/v1/events?*", (route) =>
     route.fulfill({
       status: 200,
@@ -352,6 +352,6 @@ test("a scheduled snapshot that failed is shown on the server, not popped up", a
     }),
   );
   await page.goto("/o/friends");
-  await expect(page.getByText("Snapshot of creative failed: the game did not finish writing its world out")).toBeVisible();
+  await expect(page.getByText("Snapshot of creative failed: the game did not finish writing the world out")).toBeVisible();
   await expect(page.getByText(/Snapshot of survival failed/)).toHaveCount(0);
 });

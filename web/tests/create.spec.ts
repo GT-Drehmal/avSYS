@@ -932,7 +932,7 @@ test("a copy whose own files did not all come is not given the rest, and says wh
   });
   await page.route("**/api/v1/orgs/friends/servers/survival-copy", async (route) => {
     const made = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
-    return route.fulfill({ json: { ...made, name: "survival-copy", unfinished: "Creating this server did not finish, so files are missing. Delete it and create it again." } });
+    return route.fulfill({ json: { ...made, name: "survival-copy", unfinished: "Creating this server did not finish, so files are missing. Delete the server and create it again." } });
   });
   await page.route("**/api/v1/orgs/friends/servers/survival-copy/**", async (route) => {
     if (route.request().url().endsWith("/operation")) return route.fulfill({ contentType: "application/json", body: "null" });
