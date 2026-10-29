@@ -1290,3 +1290,38 @@ test("a server brought back keeps its own world, with no choice of another", asy
   await expect(page.getByLabel("Seed")).toBeDisabled();
   await expect(page.getByRole("switch", { name: "Hardcore" })).toBeDisabled();
 });
+
+test("a server set to an older version than its world was opened in is warned of, and asked about before it is saved", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await api("owner").post(`/orgs/${slug}/servers`, { name: "newer", spec: { eula: true, loader: "paper", version: "1.21.5", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" } } });
+  await as("owner");
+  await page.goto(`/o/${slug}/s/newer/settings`);
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.5");
+  // Newer is fine.
+  await page.getByLabel("Game version").selectOption("26.3");
+  await expect(page.getByText(/cannot open it/)).toHaveCount(0);
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await expect(page.getByText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Go back to 1.21.4?" }).or(page.getByRole("dialog", { name: "Go back to 1.21.4?" }));
+  await expect(dialog).toContainText("restore a snapshot from before 1.21.5");
+  // Not saved unless asked to.
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  expect((await api("owner").get(`/orgs/${slug}/servers/newer`)).spec.version).toBe("1.21.5");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Change to 1.21.4 anyway" }).click();
+  await expect(page.getByText("Settings saved")).toBeVisible();
+  expect((await api("owner").get(`/orgs/${slug}/servers/newer`)).spec.version).toBe("1.21.4");
+});
+
+test("Latest is the newest of the kind of server picked, which may be older than its world", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await api("owner").post(`/orgs/${slug}/servers`, { name: "paper", spec: { eula: true, loader: "paper", version: "26.3", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" } } });
+  await as("owner");
+  await page.goto(`/o/${slug}/s/paper/settings`);
+  await expect(page.getByLabel("Game version")).toHaveValue("26.3");
+  // Folia's newest is behind the game's.
+  await page.getByLabel("Type").selectOption("folia");
+  await page.getByLabel("Game version").selectOption("LATEST");
+  await expect(page.getByText("The world was last opened in 26.3. 26.2 cannot open the world, so the server will not start.")).toBeVisible();
+});
