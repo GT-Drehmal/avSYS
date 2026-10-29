@@ -249,7 +249,7 @@ export function Settings() {
                 noBuild
                   ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so it cannot start. The newest is ${versions.data?.latest}.`
                   : older
-                    ? `Its world was last opened in ${ranOn}. ${goingTo} cannot open it, so the server will not start.`
+                    ? `The world was last opened in ${ranOn}. ${goingTo} cannot open the world, so the server will not start.`
                     : onPreview(versions.data, draft.version)
                     ? previewWarning
                     : undefined
@@ -449,7 +449,7 @@ export function Settings() {
         open={downgrading}
         onOpenChange={setDowngrading}
         title={`Go back to ${goingTo}?`}
-        description={`Its world was last opened in ${ranOn}, and ${goingTo} cannot open a world from a newer version: the server will not start. To go back, restore a snapshot from before ${ranOn} instead.`}
+        description={`The world was last opened in ${ranOn}, and ${goingTo} cannot open a world from a newer version: the server will not start. To go back, restore a snapshot from before ${ranOn} instead.`}
         action={`Change to ${goingTo} anyway`}
         loading={update.isPending}
         onConfirm={() => save(undefined, false, true)}

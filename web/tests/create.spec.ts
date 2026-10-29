@@ -1301,7 +1301,7 @@ test("a server set to an older version than its world was opened in is warned of
   await page.getByLabel("Game version").selectOption("26.3");
   await expect(page.getByText(/cannot open it/)).toHaveCount(0);
   await page.getByLabel("Game version").selectOption("1.21.4");
-  await expect(page.getByText("Its world was last opened in 1.21.5. 1.21.4 cannot open it, so the server will not start.")).toBeVisible();
+  await expect(page.getByText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   const dialog = page.getByRole("alertdialog", { name: "Go back to 1.21.4?" }).or(page.getByRole("dialog", { name: "Go back to 1.21.4?" }));
   await expect(dialog).toContainText("restore a snapshot from before 1.21.5");
@@ -1323,5 +1323,5 @@ test("Latest is the newest of the kind of server picked, which may be older than
   // Folia's newest is behind the game's.
   await page.getByLabel("Type").selectOption("folia");
   await page.getByLabel("Game version").selectOption("LATEST");
-  await expect(page.getByText("Its world was last opened in 26.3. 26.2 cannot open it, so the server will not start.")).toBeVisible();
+  await expect(page.getByText("The world was last opened in 26.3. 26.2 cannot open the world, so the server will not start.")).toBeVisible();
 });
