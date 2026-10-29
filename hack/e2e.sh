@@ -354,6 +354,17 @@ expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written b
 expect "managed server.properties" "$(call "$SRV/files/content?path=/server.properties")" "motd=e2e probe"
 # A save from the editor is written only over the file it opened. A file
 # of its own: e2e.txt is looked for as it is later.
+# A file sent in parts, as a large one is: each after the one before, kept
+# aside until it is whole, and then in place, where it never was in half.
+FUP="$SRV/files/content?path=/e2e-parts.bin&upload=e2e-parts-one&size=12"
+expect "a first part is taken" "$(printf 'part one,' | call -X PUT --data-binary @- "$FUP&offset=0&length=9")" '"received":9'
+expect "and is not yet in place" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/e2e-parts.bin")" 404
+expect "nor listed" "$(call "$SRV/files?path=/" | field "[e['name'] for e in d['entries'] if 'e2e-parts' in e['name']]")" "[]"
+expect "a part out of turn says how much is there" "$(printf 'x' | call -X PUT --data-binary @- "$FUP&offset=3" | field "(d.get('code'), d.get('received'))")" "('offset', 9)"
+expect "how much is there is said" "$(call "$SRV/files/upload?path=/e2e-parts.bin&upload=e2e-parts-one")" '"received":9'
+expect "the last part puts it in place" "$(printf ' 2!' | call -X PUT --data-binary @- "$FUP&offset=9")" '"received":12'
+expect "whole" "$(call "$SRV/files/content?path=/e2e-parts.bin")" "part one, 2!"
+call -X DELETE "$SRV/files?path=/e2e-parts.bin" >/dev/null
 echo "opened in the editor" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e-editor.txt" >/dev/null
 tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-editor.txt" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')
 [ -n "$tag" ] || fail "a file that can be edited has no tag"
