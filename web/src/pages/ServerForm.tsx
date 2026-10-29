@@ -579,6 +579,18 @@ export function ServerForm({
   const open = isOpen(v);
   const ask = open && !(source?.origin.kind === "server" && isOpen(start));
   const [askOpen, setAskOpen] = useState(false);
+  // What is made, said in the bar along the bottom: its name, what it runs, and its memory.
+  const making = [
+    v.displayName.trim() || (forTemplate ? "New template" : "New server"),
+    v.kind === "modpack"
+      ? v.modpack?.title || (v.modpack?.project ? v.modpack.project : "a modpack")
+      : v.loader
+        ? `${loaderNames[v.loader] ?? v.loader}${v.version === "LATEST" ? ", latest" : ` ${v.version}`}`
+        : null,
+    `${v.memory} GB`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   // What content fits. Until a pack is picked, what it will accept is still
   // that of a modpack, whose own loader is the one that counts.
   const software: Software | null =
@@ -1228,7 +1240,7 @@ export function ServerForm({
 
   return (
     <>
-    <form onSubmit={submit}>
+    <form onSubmit={submit} className={picking ? undefined : "pb-20"}>
       <Link to={forTemplate ? `/o/${org}/templates` : `/o/${org}`} className="mb-3 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
         <ChevronLeft className="size-3.5" />
         {forTemplate ? "Templates" : "Servers"}
@@ -1879,8 +1891,9 @@ export function ServerForm({
         )}
       </Section>
 
-      <Section title={forTemplate ? "Save" : !source ? "Minecraft EULA" : duplicating ? "Duplicate" : "Create"}>
-        {forTemplate ? null : !source ? (
+      {!forTemplate && (
+      <Section title={!source ? "Minecraft EULA" : duplicating ? "Duplicate" : "Create"}>
+        {!source ? (
           <label className="flex items-start gap-2.5 text-[13px] leading-relaxed">
             <input type="checkbox" required checked={eula} onChange={(e) => setEula(e.target.checked)} className="mt-1 size-3.5 accent-(--color-accent)" />
             <span>
@@ -1917,20 +1930,34 @@ export function ServerForm({
             )}
           </>
         )}
-        {error && <Notice tone="danger">{error}</Notice>}
-        <div className="flex gap-2">
-          <Button type="submit" variant="primary" loading={busy}>
-            {sent !== null ? `Sending its world, ${Math.round(sent * 100)}%` : forTemplate ? (editing ? "Save" : "Create template") : !source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
-          </Button>
-          <Link
-            to={forTemplate || templated || preset ? `/o/${org}/templates` : source?.live ? `/o/${org}/s/${source.live.name}` : source ? `/o/${org}/backups` : `/o/${org}`}
-            className="inline-flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-muted hover:bg-raised hover:text-fg"
-          >
-            Cancel
-          </Link>
-        </div>
       </Section>
+      )}
       </div>
+      {/* Along the bottom wherever the form is scrolled to, as the server's settings have theirs: what is made, and the button that makes it. */}
+      {!picking && (
+      <div data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-3 md:px-10">
+          {error ? (
+            <p className="min-w-0 text-[13px] text-danger" role="alert">
+              {error}
+            </p>
+          ) : (
+            <p className="min-w-0 truncate text-[13px] text-muted">{making}</p>
+          )}
+          <div className="flex shrink-0 gap-2">
+            <Link
+              to={forTemplate || templated || preset ? `/o/${org}/templates` : source?.live ? `/o/${org}/s/${source.live.name}` : source ? `/o/${org}/backups` : `/o/${org}`}
+              className="inline-flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-muted hover:bg-raised hover:text-fg"
+            >
+              Cancel
+            </Link>
+            <Button type="submit" variant="primary" loading={busy}>
+              {sent !== null ? `Sending its world, ${Math.round(sent * 100)}%` : forTemplate ? (editing ? "Save" : "Create template") : !source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
+            </Button>
+          </div>
+        </div>
+      </div>
+      )}
     </form>
       <Confirm
         open={askOpen}
