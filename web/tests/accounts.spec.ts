@@ -102,7 +102,7 @@ test("an account is verified with the code the game shows", async ({ page }) => 
   await page.goto("/account");
   const section = page.locator("section").filter({ hasText: "Minecraft accounts" });
   await section.getByRole("button", { name: "Verify" }).click();
-  await expect(section.getByText("In Minecraft, sign in as Steve and join verify.mc.example.org. Enter the code it shows.")).toBeVisible();
+  await expect(section.getByText("In Minecraft, sign in as Steve and join verify.mc.example.org. Enter the code the game shows.")).toBeVisible();
   expect(s.asked).toContain("POST /uuid-Steve/verify");
   // A wrong code is said so, and the box stays.
   await section.getByLabel("Code").fill("WXYZ-WXYZ");

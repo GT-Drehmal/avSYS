@@ -47,7 +47,7 @@ export function ServerActions({ server, compact }: { server: Server; compact?: b
   // Being given its files from this tab: it is started once they are in.
   if (sending && server.spec.state === "Stopped") {
     return (
-      <Button size={size} variant={compact ? "default" : "primary"} icon={<Upload className="size-3.5" />} loading disabled title="It starts once its files are in">
+      <Button size={size} variant={compact ? "default" : "primary"} icon={<Upload className="size-3.5" />} loading disabled title="Starts once the files are in">
         Sending files
       </Button>
     );

@@ -46,7 +46,7 @@ test("a server whose files are not tied to a node is only started again there", 
   await expect(page.getByText("Runs on fast.")).toBeVisible();
   await page.getByLabel("Move to").selectOption("pi");
   await page.getByRole("button", { name: "Move", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("It starts again on pi");
+  await expect(page.getByRole("dialog")).toContainText("The server starts again on pi");
 });
 
 test("a server kept to nodes by labels set outside the panel is not offered a move", async ({ page }) => {
@@ -61,6 +61,6 @@ test("with one node there is nowhere to move it", async ({ page }) => {
   await page.route("**/api/v1/nodes?*", (route) => route.fulfill({ json: { automatic: "fast", nodes: nodes.nodes.slice(0, 1) } }));
   await page.route("**/api/v1/orgs/friends/servers/survival/placement", (route) => route.fulfill({ json: { node: "fast", local: true } }));
   await page.goto("/o/friends/s/survival/settings");
-  await expect(page.getByText("No other node to move it to.")).toBeVisible();
+  await expect(page.getByText("No other node to move the server to.")).toBeVisible();
   await expect(page.getByLabel("Move to")).toHaveCount(0);
 });

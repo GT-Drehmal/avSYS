@@ -569,7 +569,7 @@ export function ServerForm({
     ? `There is already a server named ${name}.`
     : history.has(name) && !bringingBack
       ? `A deleted server used this name. Choose another${source ? "" : ", or bring it back from Backups"}.`
-      : "It cannot be changed later.";
+      : "Cannot be changed later.";
   const routed = v.exposeType === "Router";
   // Reachable with no whitelist: anyone who finds it can join. Said while
   // it is picked, and asked about when this form opens it: not for a copy
@@ -883,24 +883,24 @@ export function ServerForm({
   /** Puts the world picked from the library into a server just made. */
   const importLibrary = async (w: SetupWork, server: string, title: string) => {
     if (!fromLibrary) return;
-    w.say("Putting its world in");
+    w.say("Putting the world in");
     try {
       await api.put<Server>(`${serverPath(org, server)}/import?${qs({ world: "true", library: fromLibrary.id, wait: "true" })}`, undefined);
     } catch (err) {
-      const why = err instanceof ApiError ? err.message : "it did not go.";
-      throw new SetupFailed(`${title} was made without ${fromLibrary.name}: ${why} Replace its world in its settings, then start it.`, `/o/${org}/s/${server}/settings`);
+      const why = err instanceof ApiError ? err.message : "something went wrong.";
+      throw new SetupFailed(`${title} was made without ${fromLibrary.name}: ${why} Replace the world in the server's Settings, then start the server.`, `/o/${org}/s/${server}/settings`);
     }
   };
 
   /** Puts the world kept with the template it is made from into a server just made, from where the panel keeps it. */
   const importTheirs = async (w: SetupWork, server: string, title: string) => {
     if (!fromTheirs) return;
-    w.say("Putting its world in");
+    w.say("Putting the world in");
     try {
       await api.put<Server>(`${serverPath(org, server)}/import?${qs({ world: "true", template: fromTheirs, wait: "true" })}`, undefined);
     } catch (err) {
-      const why = err instanceof ApiError ? err.message : "it did not go.";
-      throw new SetupFailed(`${title} was made without the template's world: ${why} Replace its world in its settings, then start it.`, `/o/${org}/s/${server}/settings`);
+      const why = err instanceof ApiError ? err.message : "something went wrong.";
+      throw new SetupFailed(`${title} was made without the template's world: ${why} Replace the world in the server's Settings, then start the server.`, `/o/${org}/s/${server}/settings`);
     }
   };
 
@@ -927,10 +927,10 @@ export function ServerForm({
         const why = cancelled(err) ? "the upload was stopped." : err.message;
         const removed = await removeServer(server);
         await qc.invalidateQueries({ queryKey: keys.servers(org) });
-        if (!removed) throw new SetupFailed(`Could not import ${title}: ${why} It could not be removed: delete it in its Settings.`, `/o/${org}/s/${server}/settings`);
+        if (!removed) throw new SetupFailed(`Could not import ${title}: ${why} The server could not be removed either: delete it in Settings.`, `/o/${org}/s/${server}/settings`);
         throw new SetupFailed(`Could not import ${title}: ${why} Nothing was kept.`);
       }
-      throw new SetupFailed(`Lost touch with the panel while importing ${title}. Check its files before starting it.`, `/o/${org}/s/${server}/files`);
+      throw new SetupFailed(`Lost touch with the panel while importing ${title}. Check the server's files before starting it.`, `/o/${org}/s/${server}/files`);
     }
   };
 
@@ -970,7 +970,7 @@ export function ServerForm({
       if (packWork) await givePacks(w, path, label);
     } catch (err) {
       const why = cancelled(err) ? "the upload was stopped." : err instanceof Error ? err.message : "an upload failed.";
-      throw new SetupFailed(`Not started: ${why} Add the rest on its Content page, then start it.`, `/o/${org}/s/${server}/content`);
+      throw new SetupFailed(`Not started: ${why} Add the rest on the Content page, then start the server.`, `/o/${org}/s/${server}/content`);
     } finally {
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
     }
@@ -1032,7 +1032,7 @@ export function ServerForm({
     const path = serverPath(org, server);
     const since = Date.now();
     let lost = 0;
-    const stopped = () => new SetupFailed("Not started: the upload was stopped. Add the files on its Content page, then start it.", `/o/${org}/s/${server}/content`);
+    const stopped = () => new SetupFailed("Not started: the upload was stopped. Add the files on the Content page, then start the server.", `/o/${org}/s/${server}/content`);
     for (;;) {
       if (w.signal.aborted) throw stopped();
       const op = await api.get<Operation | null>(`${path}/operation`).then(
@@ -1040,13 +1040,13 @@ export function ServerForm({
         (err) => {
           // Gone, as when it was deleted meanwhile: there is nothing to give
           // files to. Just made, the panel may not have caught up with it.
-          if (err instanceof ApiError && err.status === 404 && Date.now() - since > 15_000) throw new SetupFailed("It is gone: nothing was uploaded.");
+          if (err instanceof ApiError && err.status === 404 && Date.now() - since > 15_000) throw new SetupFailed("The server is gone: nothing was uploaded.");
           return "unknown" as const;
         },
       );
       lost = op === "unknown" ? lost + 1 : 0;
       // Asked again for a minute, then given up on.
-      if (lost > 60) throw new SetupFailed("Lost touch with the panel while its files were copied. Nothing was uploaded.", `/o/${org}/s/${server}`);
+      if (lost > 60) throw new SetupFailed("Lost touch with the panel while the files were copied. Nothing was uploaded.", `/o/${org}/s/${server}`);
       if (op === null) break;
       await new Promise((r) => setTimeout(r, 1000));
     }
@@ -1055,7 +1055,7 @@ export function ServerForm({
     for (let tries = 0; ; tries++) {
       const made = await api.get<Server>(path).catch(() => null);
       if (made && !made.unfinished) return;
-      if (tries >= 5) throw new SetupFailed(made?.unfinished ?? "Could not tell whether its files were copied. Nothing was uploaded.", `/o/${org}/s/${server}`);
+      if (tries >= 5) throw new SetupFailed(made?.unfinished ?? "Could not tell whether the files were copied. Nothing was uploaded.", `/o/${org}/s/${server}`);
       await new Promise((r) => setTimeout(r, 1000));
     }
   };
@@ -1111,14 +1111,14 @@ export function ServerForm({
       await qc.invalidateQueries({ queryKey: keys.templates(org) });
       navigate(`/o/${org}/templates`);
     } catch (err) {
-      const why = err instanceof ApiError ? err.message : "it did not go.";
+      const why = err instanceof ApiError ? err.message : "something went wrong.";
       setSent(null);
       setBusy(false);
       // Made, but without its world: it is changed from here on.
       if (!editing && id) {
         await qc.invalidateQueries({ queryKey: keys.templates(org) });
         navigate(`/o/${org}/templates/${id}/edit`);
-        toast.error(`Its world was not kept: ${why} Choose it again.`);
+        toast.error(`The template's world was not kept: ${why} Choose the world again.`);
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not save the template.");
@@ -1191,11 +1191,11 @@ export function ServerForm({
           // the panel waits for it, puts the picture in place and starts
           // the server.
           try {
-            await w.send(`Its picture`, `${serverPath(org, server.name)}/icon?wait=true&start=true`, picture);
+            await w.send(`Picture`, `${serverPath(org, server.name)}/icon?wait=true&start=true`, picture);
             qc.setQueryData(["picture-version"], Date.now());
           } catch (err) {
-            const why = cancelled(err) ? "the upload was stopped." : err instanceof ApiError ? err.message : "it did not go.";
-            throw new SetupFailed(`Not started: could not set its picture: ${why} Set it in Settings, then start it.`, `/o/${org}/s/${server.name}/settings`);
+            const why = cancelled(err) ? "the upload was stopped." : err instanceof ApiError ? err.message : "something went wrong.";
+            throw new SetupFailed(`Not started: could not set the picture: ${why} Set it in Settings, then start the server.`, `/o/${org}/s/${server.name}/settings`);
           }
           return;
         }
@@ -1229,7 +1229,7 @@ export function ServerForm({
           : (source || found) && versionChanged
             ? "A world opened in a newer version cannot open in an older one."
             : (found?.version || mine?.found.version) && effective(v.version) === (found?.version || mine?.found.version)
-              ? "The version its world was last opened in."
+              ? "The version the world was last opened in."
               : undefined
       }
     >
@@ -1391,7 +1391,7 @@ export function ServerForm({
                     <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz of the server's folder.</p>
                   </div>
                 )}
-                {found && !found.version && <p className="text-xs text-muted">Could not tell the game version. Pick the one it ran.</p>}
+                {found && !found.version && <p className="text-xs text-muted">Could not tell the game version. Pick the one the server ran.</p>}
               </>
             )}
             </>
@@ -1482,7 +1482,7 @@ export function ServerForm({
             }}
           />
         )}
-        <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from it are called this." : undefined}>
+        <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from this template are called this." : undefined}>
           {(id) => <Input id={id} required maxLength={forTemplate ? 60 : undefined} value={v.displayName} onChange={(e) => set("displayName", e.target.value)} />}
         </Field>
         {forTemplate ? (
@@ -1499,7 +1499,7 @@ export function ServerForm({
 
       <Section
         title="Content"
-        description={found ? "What it has comes with it. Optional." : !source ? "Optional." : v.modpack ? "On top of its modpack. Copied from the original." : "Copied from the original."}
+        description={found ? "Comes from the archive. Optional." : !source ? "Optional." : v.modpack ? "On top of its modpack. Copied from the original." : "Copied from the original."}
       >
         {!software ? (
           <p className="text-[13px] text-muted">{v.kind === "modpack" ? "Pick a modpack first." : "Choose a server type first."}</p>
@@ -1522,7 +1522,7 @@ export function ServerForm({
                       showKind={false}
                       note={(_, j) => {
                         const upload = j >= mods.length ? v.uploads[ups[j - mods.length]] : null;
-                        const off = v.unused.includes(upload ? upload.file.name : v.mods[mods[j]].project) && "not on in its world before";
+                        const off = v.unused.includes(upload ? upload.file.name : v.mods[mods[j]].project) && "not on in the world before";
                         return [upload && `${bytes(upload.file.size)} · uploaded when created`, off].filter(Boolean).join(" · ") || undefined;
                       }}
                       onRemove={(j) => (j < mods.length ? set("mods", v.mods.filter((_, i) => i !== mods[j])) : set("uploads", v.uploads.filter((_, i) => i !== ups[j - mods.length])))}
@@ -1652,7 +1652,7 @@ export function ServerForm({
       >
         {(worldChoosable || (!source && v.kind === "game")) && (
           <>
-            <div role="group" aria-label="Its world" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
+            <div role="group" aria-label="World" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
               {worldChoosable && (
                 <button type="button" aria-pressed={world === "kept"} className={segment(world === "kept")} onClick={() => chooseWorld("kept")}>
                   Keep world
@@ -1789,7 +1789,7 @@ export function ServerForm({
         {moreWorld && (
           <>
             <fieldset disabled={worldMade} className="flex flex-col gap-4 rounded-md border border-line p-4 disabled:opacity-60">
-              <p className="text-xs text-muted">{worldMade ? "Set when its world was created." : "Cannot be changed after the world is created."}</p>
+              <p className="text-xs text-muted">{worldMade ? "Set when the world was created." : "Cannot be changed after the world is created."}</p>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="World type">
                   {(id) => (
@@ -1864,10 +1864,10 @@ export function ServerForm({
         title="Resources"
         description={
           found
-            ? `Its files use ${(found.size / GiB).toFixed(1)} GB.`
+            ? `The archive's files use ${(found.size / GiB).toFixed(1)} GB.`
             : source
               ? source.size > 0
-                ? `Its files use ${(source.size / GiB).toFixed(1)} GB.`
+                ? `The original's files use ${(source.size / GiB).toFixed(1)} GB.`
                 : undefined
               : v.kind === "modpack"
                 ? "Large modpacks need 6 GB or more."
@@ -1888,7 +1888,7 @@ export function ServerForm({
         <Field
           label="Hostname"
           hint={[
-            source ? "Optional. Not copied from the original." : "Optional. Point its DNS at the avSYS router.",
+            source ? "Optional. Not copied from the original." : "Optional. Point the hostname's DNS at the avSYS router.",
             (domains.data?.domains.length ?? 0) > 0 ? `Your domains: ${domains.data?.domains.join(", ")}.` : "",
           ]
             .filter(Boolean)
@@ -1897,10 +1897,10 @@ export function ServerForm({
           {(id) => <Input id={id} value={v.hostname} disabled={v.exposeType === "None"} onChange={(e) => set("hostname", e.target.value)} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
         </Field>
         )}
-        <More label="How it is reached, ports and sleep" changed={networkChanged} open={moreNetwork} onToggle={() => setMoreNetwork(!moreNetwork)} />
+        <More label="Connection, ports and sleep" changed={networkChanged} open={moreNetwork} onToggle={() => setMoreNetwork(!moreNetwork)} />
         {moreNetwork && (
           <>
-            <Field label="How it is reached">
+            <Field label="Connection">
               {(id) => (
                 <Select id={id} value={v.exposeType} onChange={(e) => set("exposeType", e.target.value as ExposeType)}>
                   {exposeOptions}
@@ -1912,7 +1912,7 @@ export function ServerForm({
               disabled={!routed}
               onChange={(on) => set("sleep", on)}
               label="Sleep when empty"
-              hint={routed ? "Stops when nobody is playing. The first player to join wakes it, then joins again." : "Needs the shared address."}
+              hint={routed ? "Stops when nobody is playing. The first player to join wakes the server, then joins again." : "Needs the shared address."}
             />
             {v.sleep && routed && (
               <Field label="After minutes with no players">
@@ -1932,7 +1932,7 @@ export function ServerForm({
           {(id) => (
             <Select id={id} value={v.schedule} onChange={(e) => set("schedule", e.target.value as Schedule)}>
               <option value="org">Same as the organization</option>
-              <option value="own">Its own schedule</option>
+              <option value="own">Custom schedule</option>
               <option value="off">Off</option>
             </Select>
           )}
@@ -1968,7 +1968,7 @@ export function ServerForm({
               <Toggle
                 checked={keepCustom}
                 onChange={setKeepCustom}
-                label="Keep its custom image and environment"
+                label="Keep the original's custom image and environment"
                 hint={
                   <>
                     {spec?.image && (
@@ -2009,7 +2009,7 @@ export function ServerForm({
               Cancel
             </Link>
             <Button type="submit" variant="primary" loading={busy}>
-              {sent !== null ? `Sending its world, ${Math.round(sent * 100)}%` : forTemplate ? (editing ? "Save" : "Create template") : !source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
+              {sent !== null ? `Sending the world, ${Math.round(sent * 100)}%` : forTemplate ? (editing ? "Save" : "Create template") : !source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
             </Button>
           </div>
         </div>
@@ -2019,7 +2019,7 @@ export function ServerForm({
       <Confirm
         open={askOpen}
         onOpenChange={setAskOpen}
-        title="Open it to anyone?"
+        title="Open the server to anyone?"
         description={openWarning}
         action="Create without a whitelist"
         onConfirm={() => void submit(undefined, true)}

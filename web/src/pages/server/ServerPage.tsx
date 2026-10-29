@@ -121,7 +121,7 @@ export function ServerPage() {
   if (!server || !membership) {
     return (
       <Empty title="Server not found" action={<Link to={`/o/${org}`} className="text-[13px] text-accent hover:underline">Back to servers</Link>}>
-        It may have been deleted, or you may not have access to it.
+        The server may have been deleted, or you may not have access to it.
       </Empty>
     );
   }

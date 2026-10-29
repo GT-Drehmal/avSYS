@@ -112,8 +112,8 @@ function FileEditor({
           </span>
           {alsoOpen.length > 0 && (
             <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted max-sm:hidden">
-              <Faces people={alsoOpen} label="Also has it open" size={18} ring="ring-surface" />
-              {alsoOpen.length === 1 ? `${alsoOpen[0].user.name} also has it open` : "Others also have it open"}
+              <Faces people={alsoOpen} label="Also has this file open" size={18} ring="ring-surface" />
+              {alsoOpen.length === 1 ? `${alsoOpen[0].user.name} also has this file open` : "Others also have this file open"}
             </span>
           )}
         </span>

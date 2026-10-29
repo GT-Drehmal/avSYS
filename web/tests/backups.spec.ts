@@ -83,10 +83,10 @@ test("by time: everything in order, each with its server, and narrowed by server
   await page.getByLabel("Server", { exact: true }).selectOption("creative");
   await expect(snapshots).toHaveCount(1);
   await page.getByLabel("Server", { exact: true }).selectOption("");
-  await page.getByLabel("Why it was taken").selectOption("final");
+  await page.getByLabel("Reason", { exact: true }).selectOption("final");
   await expect(snapshots).toHaveCount(1);
   await expect(rows.first()).toContainText("oldworld");
-  await page.getByLabel("Why it was taken").selectOption("copy");
+  await page.getByLabel("Reason", { exact: true }).selectOption("copy");
   await expect(page.getByText("No matching snapshots.")).toBeVisible();
 });
 

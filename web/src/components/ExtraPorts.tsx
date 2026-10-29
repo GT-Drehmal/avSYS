@@ -95,12 +95,12 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
           ))}
       </div>
       {ports.length > 0 && sleeps && (
-        <p className="text-xs text-warn">These ports do not work while the server sleeps. Bedrock players through Geyser cannot wake it.</p>
+        <p className="text-xs text-warn">These ports do not work while the server sleeps. Bedrock players through Geyser cannot wake the server.</p>
       )}
       {ports.length > 0 && (
         <p className="text-xs text-muted">
           {expose === "Router"
-            ? "Each gets its own public port. Allow it through your firewall."
+            ? "Each gets a public port of its own. Allow those through your firewall."
             : "Opened on the server's address."}
         </p>
       )}

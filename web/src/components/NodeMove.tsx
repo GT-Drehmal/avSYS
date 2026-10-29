@@ -51,7 +51,7 @@ export function NodeMove({ server }: { server: Server }) {
         )}
       </p>
       {others.length === 0 ? (
-        <p className="text-xs text-muted">No other node to move it to.</p>
+        <p className="text-xs text-muted">No other node to move the server to.</p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <Select aria-label="Move to" value={target} onChange={(e) => setTarget(e.target.value)} className="w-72 max-sm:w-full">
@@ -74,8 +74,8 @@ export function NodeMove({ server }: { server: Server }) {
         title={`Move ${server.name} to ${target}?`}
         description={
           local
-            ? `It stops, its files move to ${target}, and it starts again if it was running. Big worlds take longer.`
-            : `It starts again on ${target}.`
+            ? `The server stops, its files move to ${target}, and it starts again if it was running. Big worlds take longer.`
+            : `The server starts again on ${target}.`
         }
         action="Move"
         loading={move.isPending}

@@ -55,7 +55,7 @@ export function Setups() {
           )}
         </p>
       )}
-      {!s.error && <p className="text-[11px] text-faint">Closing this tab stops it.</p>}
+      {!s.error && <p className="text-[11px] text-faint">Closing this tab stops the setup.</p>}
     </section>
   ));
 }

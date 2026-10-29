@@ -366,7 +366,7 @@ function PackPane({
             <>
               <Upload className="size-5 text-muted" />
               <p className="text-[13px] font-medium">Choose a .zip</p>
-              <p className="max-w-sm text-xs leading-relaxed text-muted">With pack.mcmeta at its top.</p>
+              <p className="max-w-sm text-xs leading-relaxed text-muted">A .zip with pack.mcmeta at the top.</p>
             </>
           )}
         </label>
@@ -387,7 +387,7 @@ function PackPane({
               let formats: PackFormats | null = null;
               if (!hash) {
                 const got = await api.post<{ sha1: string; formats?: PackFormats }>("/catalog/sha1", { url: address }).catch((err) => {
-                  toast.info(`Could not get its SHA-1 (${err instanceof Error ? err.message : "could not download it"}). Players download it on every join until you enter one.`);
+                  toast.info(`Could not get the pack's SHA-1 (${err instanceof Error ? err.message : "could not download the pack"}). Players download the pack on every join until you enter one.`);
                   return null;
                 });
                 hash = got?.sha1 ?? "";

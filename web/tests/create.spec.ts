@@ -39,7 +39,7 @@ test("everything a server can be given later can be given when it is made", asyn
   await page.getByLabel("Message of the day").fill("Come on in");
   await page.getByLabel("Who can join").selectOption("admin");
   await page.getByLabel("Operators by role").selectOption("owner");
-  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
+  await page.getByRole("button", { name: /Connection, ports and sleep/ }).click();
   await page.getByRole("switch", { name: /Sleep when empty/ }).click();
   await page.getByLabel("After minutes with no players").fill("5");
   await page.getByLabel("Scheduled snapshots").selectOption("off");
@@ -76,15 +76,15 @@ test("a server open to anyone has no whitelist, and one that is not routed does 
   await page.getByLabel("Display name").fill("Open");
   await page.getByLabel("Who can join").selectOption("anyone");
   await expect(page.getByText(/Bots look for open servers/)).toBeVisible();
-  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
+  await page.getByRole("button", { name: /Connection, ports and sleep/ }).click();
   await page.getByRole("switch", { name: /Sleep when empty/ }).click();
-  await page.getByLabel("How it is reached").selectOption("NodePort");
+  await page.getByLabel("Connection", { exact: true }).selectOption("NodePort");
   await expect(page.getByRole("switch", { name: /Sleep when empty/ })).toBeDisabled();
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   // Opening it to anyone is warned of, and asked about.
   const asked = page.getByRole("dialog");
-  await expect(asked.getByText(/Anyone who finds its address can join/)).toBeVisible();
+  await expect(asked.getByText(/Anyone who finds the server's address can join/)).toBeVisible();
   await asked.getByRole("button", { name: "Create without a whitelist" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/open$`));
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/open`);
@@ -225,7 +225,7 @@ test("a name that snapshots of a deleted server are under is not suggested, and 
   );
   await page.goto("/o/friends/new?from=server:survival");
   await expect(page.getByLabel("Short name")).toHaveValue("survival-copy-2");
-  await expect(page.getByText("It cannot be changed later.")).toBeVisible();
+  await expect(page.getByText("Cannot be changed later.")).toBeVisible();
   await page.getByLabel("Short name").fill("survival-copy");
   await expect(page.getByText("A deleted server used this name. Choose another.")).toBeVisible();
   await page.getByLabel("Short name").fill("survival");
@@ -447,7 +447,7 @@ test("the new-server form starts from a snapshot picked in it, its server first,
   await servers.first().click();
   await expect(page.getByLabel("Search snapshots")).toHaveValue("");
   await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toContainText("Before it was deleted");
+  await expect(rows.first()).toContainText("Before the server was deleted");
   await rows.first().click();
   await expect(page).toHaveURL(/\/o\/friends\/new\?from=snapshot:g1$/);
 });
@@ -492,7 +492,7 @@ test("a copy's picture can be taken away even when it could not be shown", async
     return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
   });
   await page.goto("/o/friends/new?from=server:survival");
-  await expect(page.getByText("Could not show its picture.")).toBeVisible();
+  await expect(page.getByText("Could not show the picture.")).toBeVisible();
   await page.getByRole("button", { name: "Remove", exact: true }).click();
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect.poll(() => sent.length).toBe(1);
@@ -832,7 +832,7 @@ test("a new server's files go on being sent while one goes elsewhere in the pane
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
   const setup = page.getByRole("region", { name: "Setting up Up" });
   await expect(setup).toContainText("slow.jar");
-  await expect(setup).toContainText("Closing this tab stops it.");
+  await expect(setup).toContainText("Closing this tab stops the setup.");
   // It is started once they are in, and not before.
   await expect(page.getByRole("main").getByRole("button", { name: "Sending files" })).toBeDisabled();
 
@@ -866,7 +866,7 @@ test("a new server whose upload is refused is left stopped, saying why, with the
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up$`));
   const setup = page.getByRole("region", { name: "Setting up Up" });
-  await expect(setup).toContainText("Not started: broken.jar is not a valid .jar file. Add the rest on its Content page, then start it.");
+  await expect(setup).toContainText("Not started: broken.jar is not a valid .jar file. Add the rest on the Content page, then start the server.");
   expect(asked).toEqual(["create Stopped", "PUT /content broken.jar true"]);
   await setup.getByRole("link", { name: "Open it" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/up/content$`));
@@ -1082,7 +1082,7 @@ test("a server's whitelist is turned off only once that is confirmed", async ({ 
   await page.getByLabel("Whitelist", { exact: true }).selectOption("false");
   await page.getByRole("button", { name: /^Save/ }).click();
   const asked = page.getByRole("dialog");
-  await expect(asked.getByText(/Anyone who finds its address can join/)).toBeVisible();
+  await expect(asked.getByText(/Anyone who finds the server's address can join/)).toBeVisible();
   await asked.getByRole("button", { name: "Cancel" }).click();
   expect((await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("TRUE");
   await page.getByRole("button", { name: /^Save/ }).click();
@@ -1122,7 +1122,7 @@ test("a copy of an open server is warned of but not asked about; one brought bac
   );
   await page.goto(`/o/friends/new?from=snapshot:${id}`);
   await page.getByRole("button", { name: "Create server" }).click();
-  await expect(page.getByRole("dialog").getByText(/Anyone who finds its address can join/)).toBeVisible();
+  await expect(page.getByRole("dialog").getByText(/Anyone who finds the server's address can join/)).toBeVisible();
   expect(sent.length).toBe(1);
   await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
   await expect.poll(() => sent.length).toBe(2);
@@ -1240,7 +1240,7 @@ test("a copy keeps its original's own schedule unless it is changed", async ({ p
 test("a copy keeps its original's world, or is given a new one with a seed of its own", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new?from=server:survival");
-  const worldChoice = page.getByRole("group", { name: "Its world" });
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
   await expect(worldChoice.getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
   // Its world was made already, with its own seed.
@@ -1264,12 +1264,12 @@ test("a copy keeps its original's world, or is given a new one with a seed of it
 test("a copy made with a world of one's own has it put in once its files are", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new?from=server:survival");
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Upload world" }).click();
   // Nothing is sent without one.
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect(page.getByText("Choose a world, or make a new one.")).toBeVisible();
   // Back to keeping its own, nothing more is asked.
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Keep world" }).click();
   const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
   await page.route("**/api/v1/orgs/friends/servers", (route) =>
     route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
@@ -1284,7 +1284,7 @@ test("a server brought back keeps its own world, with no choice of another", asy
   const final = list.snapshots.find((s: { server: string }) => s.server === "oldworld");
   await page.goto(`/o/friends/new?from=snapshot:${final.id}`);
   await expect(page.getByRole("heading", { name: "Bring back oldworld" })).toBeVisible();
-  await expect(page.getByRole("group", { name: "Its world" })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "World", exact: true })).toHaveCount(0);
   // How it was made is how it was made: its terrain is saved.
   await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
   await expect(page.getByLabel("Seed")).toBeDisabled();
@@ -1304,7 +1304,7 @@ test("what is made and the button that makes it stay along the bottom, wherever 
   await page.getByLabel("Memory (GB)").fill("6");
   await expect(bar).toContainText("6 GB");
   // What is wrong is said there too.
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Upload world" }).click();
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await bar.getByRole("button", { name: "Create server" }).click();
   await expect(bar).toContainText("Choose a world, or make a new one.");

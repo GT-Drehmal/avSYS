@@ -153,7 +153,7 @@ export function ServerSchedule({ server, canAdmin }: { server: Server; canAdmin:
         </label>
         <Select id="server-schedule" value={mode} disabled={update.isPending} onChange={(e) => choose(e.target.value as Mode)} className="w-56">
           <option value="org">Same as the organization</option>
-          <option value="own">Its own schedule</option>
+          <option value="own">Custom schedule</option>
           <option value="off">Off</option>
         </Select>
         {hint && <span className="text-[13px] text-muted">{hint}</span>}

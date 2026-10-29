@@ -115,7 +115,7 @@ test("a template is edited, updated from a server, gone back to an earlier versi
 
   await menu("Delete");
   dialog = page.getByRole("dialog", { name: "Delete Lobby?" });
-  await expect(dialog).toContainText("Its 2 versions are deleted too.");
+  await expect(dialog).toContainText("All 2 of its versions are deleted too.");
   await dialog.getByRole("button", { name: "Delete" }).click();
   await expect.poll(() => calls.at(-1)).toEqual({ method: "DELETE", path: "/templates/t1", body: null });
 });
@@ -165,7 +165,7 @@ test("a new template starts from a server picked from the servers, each with its
   await expect(page.getByLabel("Short name")).toHaveCount(0);
   await expect(page.getByLabel("Hostname")).toHaveCount(0);
   // Its world kept, unless its servers are to start one of their own.
-  await expect(page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
   await page.getByLabel("Difficulty").selectOption("peaceful");
   await page.getByRole("button", { name: "Create template" }).click();
   await expect(page).toHaveURL(/\/o\/friends\/templates$/);
@@ -236,7 +236,7 @@ test("a template is made from settings alone, and a new server made from it has 
   // Nothing that is a server's own: its files, its name in addresses, its address, its node, the EULA.
   // A world it can have, kept with it, as a new server can.
   await expect(page.getByRole("button", { name: "Import" })).toHaveCount(0);
-  await expect(page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Upload world" })).toBeVisible();
   for (const gone of ["Short name", "Hostname"]) await expect(page.getByLabel(gone)).toHaveCount(0);
   await expect(page.getByRole("checkbox", { name: /End User License Agreement/ })).toHaveCount(0);
 
@@ -457,7 +457,7 @@ test("a template says whether its servers keep its world or start a new one, and
     return route.fulfill({ status: 202, json: {} });
   });
   await page.goto("/o/friends/templates/new?from=server%3Asurvival");
-  const worldChoice = page.getByRole("group", { name: "Its world" });
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
   await expect(worldChoice.getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
   await worldChoice.getByRole("button", { name: "New world" }).click();
   await page.getByRole("button", { name: "Create template" }).click();
@@ -475,7 +475,7 @@ test("a template says whether its servers keep its world or start a new one, and
     route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
   );
   await page.goto("/o/friends/new?from=template:t1");
-  await expect(page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "New world" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "New world" })).toHaveAttribute("aria-pressed", "true");
   // Asked first, as it would be open to anyone: either way, it is sent.
   const create = async () => {
     const request = made();
@@ -484,7 +484,7 @@ test("a template says whether its servers keep its world or start a new one, and
     return (await request).postDataJSON();
   };
   expect(await create()).toMatchObject({ fromTemplate: "t1", world: "new" });
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Keep world" }).click();
   expect(await create()).toMatchObject({ fromTemplate: "t1", world: "kept" });
 
   // One with a world of its own: kept, its version's is.
@@ -493,8 +493,8 @@ test("a template says whether its servers keep its world or start a new one, and
     return route.fulfill({ json: { ...template, world: "own", ownWorld: { root: "Island", name: "Island", version: "1.21.4", file: "island.zip", size: 4096 }, spec: survival.spec } });
   });
   await page.goto("/o/friends/new?from=template:t1");
-  await expect(page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Keep world" }).click();
+  await expect(page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Upload world" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Keep world" }).click();
   expect(await create()).toMatchObject({ fromTemplate: "t1", world: "kept" });
 });
 

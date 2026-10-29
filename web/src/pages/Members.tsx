@@ -185,7 +185,7 @@ export function Members() {
         open={!!removing}
         onOpenChange={() => setRemoving(null)}
         title={removing?.userId === me.user.id ? `Leave ${membership?.name}?` : `Remove ${removing?.username}?`}
-        description={removing?.userId === me.user.id ? "You lose access to its servers." : "They lose access to its servers. Their account is kept."}
+        description={removing?.userId === me.user.id ? "You lose access to the organization's servers." : "They lose access to the organization's servers. Their account is kept."}
         action={removing?.userId === me.user.id ? "Leave" : "Remove"}
         loading={remove.isPending}
         onConfirm={() => removing && remove.mutate(removing.userId, { onSuccess: () => setRemoving(null) })}

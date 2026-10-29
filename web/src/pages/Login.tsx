@@ -108,7 +108,7 @@ export function Login() {
 
   if (meta.data.setupRequired) {
     return (
-      <AuthFrame title="Set up avSYS" subtitle="Create the first account. It will be the administrator.">
+      <AuthFrame title="Set up avSYS" subtitle="Create the first account. This account will be the administrator.">
         <AuthForm meta={meta.data} mode="register" next="/" />
       </AuthFrame>
     );

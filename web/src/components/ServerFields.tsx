@@ -109,7 +109,7 @@ export const memberRoleOptions = (
 export const exposeOptions = (
   <>
     <option value="Router">Shared address, routed by hostname</option>
-    <option value="LoadBalancer">Its own IP address (LoadBalancer)</option>
+    <option value="LoadBalancer">A dedicated IP address (LoadBalancer)</option>
     <option value="NodePort">A port on every node (NodePort)</option>
     <option value="None">Inside the cluster only</option>
   </>
@@ -127,7 +127,7 @@ export type Join = "anyone" | "viewer" | "operator" | "admin" | "owner" | "list"
 
 /** What "who can join" says under its control. */
 /** What is said before a server is opened to anyone. */
-export const openWarning = "Anyone who finds its address can join, with no whitelist. Bots look for open servers to grief.";
+export const openWarning = "Anyone who finds the server's address can join, with no whitelist. Bots look for open servers to grief.";
 
 export const joinHint = (join: Join) =>
   join === "anyone" ? "No whitelist." : join === "list" ? undefined : "Members need a linked Minecraft account. Whitelisted players can join too.";
@@ -137,7 +137,7 @@ export const joinOptions = (
   <>
     <option value="anyone">Anyone with the address</option>
     {memberRoleOptions}
-    <option value="list">Only its whitelist</option>
+    <option value="list">Only the whitelist</option>
   </>
 );
 
