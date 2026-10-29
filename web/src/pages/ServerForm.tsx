@@ -585,7 +585,7 @@ export function ServerForm({
     v.kind === "modpack"
       ? v.modpack?.title || (v.modpack?.project ? v.modpack.project : "a modpack")
       : v.loader
-        ? `${loaderNames[v.loader] ?? v.loader} ${v.version === "LATEST" ? "latest" : v.version}`
+        ? `${loaderNames[v.loader] ?? v.loader}${v.version === "LATEST" ? ", latest" : ` ${v.version}`}`
         : null,
     `${v.memory} GB`,
   ]
