@@ -42,8 +42,8 @@ export function Button({ variant = "default", size = "md", loading, icon, childr
       disabled={disabled || loading}
       className={cx(
         "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors select-none disabled:opacity-50",
-        size === "sm" ? "h-7 px-2 text-xs" : "h-8 px-3 text-[13px]",
-        !children && (size === "sm" ? "w-7 px-0" : "w-8 px-0"),
+        size === "sm" ? "h-7 text-xs" : "h-8 text-[13px]",
+        children ? (size === "sm" ? "px-2" : "px-3") : size === "sm" ? "w-7" : "w-8",
         buttonVariants[variant],
         className,
       )}
@@ -346,7 +346,7 @@ export function MenuContent({ children, align = "end" }: { children: ReactNode; 
       <Dropdown.Content
         align={align}
         sideOffset={6}
-        className="z-50 min-w-44 animate-rise rounded-md border border-line-strong bg-surface p-1 shadow-xl shadow-black/50"
+        className="z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-44 animate-rise overflow-y-auto rounded-md border border-line-strong bg-surface p-1 shadow-xl shadow-black/50"
       >
         {children}
       </Dropdown.Content>
@@ -375,6 +375,37 @@ export function MenuItem({ children, icon, onSelect, danger, disabled }: MenuIte
       <span className="flex size-4 items-center justify-center text-muted [&>svg]:size-4">{icon}</span>
       {children}
     </Dropdown.Item>
+  );
+}
+
+const choiceClass = "flex h-8 cursor-pointer items-center gap-2 rounded-sm px-2 text-[13px] text-fg outline-none select-none data-[highlighted]:bg-hover";
+const ticked = (
+  <span className="flex size-4 items-center justify-center text-accent">
+    <Dropdown.ItemIndicator>
+      <Check className="size-4" />
+    </Dropdown.ItemIndicator>
+  </span>
+);
+
+export const MenuRadioGroup = Dropdown.RadioGroup;
+
+/** One of several, of which one is chosen. */
+export function MenuRadio({ value, children }: { value: string; children: ReactNode }) {
+  return (
+    <Dropdown.RadioItem value={value} className={choiceClass}>
+      {ticked}
+      {children}
+    </Dropdown.RadioItem>
+  );
+}
+
+/** One that is on or off. The menu stays open, for others to be ticked too. */
+export function MenuCheck({ checked, onChange, children }: { checked: boolean; onChange: () => void; children: ReactNode }) {
+  return (
+    <Dropdown.CheckboxItem checked={checked} onCheckedChange={onChange} onSelect={(e) => e.preventDefault()} className={choiceClass}>
+      {ticked}
+      {children}
+    </Dropdown.CheckboxItem>
   );
 }
 
