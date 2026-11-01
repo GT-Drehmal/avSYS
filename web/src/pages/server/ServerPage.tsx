@@ -35,8 +35,10 @@ function ConnectDialog({ server, open, onOpenChange }: { server: Server; open: b
     <Modal open={open} onOpenChange={onOpenChange} title="Connect">
       <div className="flex flex-col gap-5">
         <div className={row}>
-          <span className="label-mono">Players join at</span>
+          {/* Named as the game names it, where it is pasted. */}
+          <span className="label-mono">Server address</span>
           <div className={box}>{server.status.address ? <CopyText value={server.status.address} /> : <span className="text-[13px] text-muted">No address yet. Set one under Settings.</span>}</div>
+          {server.status.address && <p className="text-xs text-muted">In Minecraft: Multiplayer, then Add Server.</p>}
         </div>
         <div className={row}>
           <span className="label-mono">SSH</span>
