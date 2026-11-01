@@ -13,6 +13,7 @@ import (
 // OrgImage and UserImage name whose picture one is.
 func OrgImage(orgID string) string   { return "org:" + orgID }
 func UserImage(userID string) string { return "user:" + userID }
+func WorldImage(id string) string    { return "world:" + id }
 
 // Image returns a stored picture and when it was last set, or ErrNotFound.
 func (s *Store) Image(ctx context.Context, key string) ([]byte, time.Time, error) {
