@@ -665,6 +665,9 @@ export function ServerForm({
     // keeps has the seed it was made with.
     if (worldChoosable) set("seed", next === "kept" ? start.seed : "");
     setWorld(next);
+    // Its picture goes with it, and comes back with it.
+    if (next === "library" && libraryPick) void libraryPicture(libraryPick);
+    else pictureFromWorld(null);
   };
 
   /** Reads an archive of a world, to start the server with. */
@@ -684,12 +687,35 @@ export function ServerForm({
         version: !source && w.version && versions.data?.all.has(w.version) ? w.version : was.version,
         storage: String(Math.max(Number(was.storage) || 10, Math.ceil((w.size * 1.5 + file.size) / GiB))),
       }));
+      pictureFromWorld(w.icon ? new File([w.icon.slice()], "icon.png", { type: "image/png" }) : null);
     } catch (err) {
       if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
     } finally {
       if (read === reads.current) setReadingWorld(false);
     }
   };
+
+  // The picture a world brings, unless one was chosen here, none included:
+  // a new server looks as its world does. A copy keeps its original's.
+  const pictureChosen = useRef(false);
+  const pictureFromWorld = (file: File | null) => {
+    if (forTemplate || source || pictureChosen.current) return;
+    setValues((was) => ({ ...was, picture: file ? { kind: "file", file } : { kind: "none" } }));
+  };
+  /** The picture of a world in the library, as a file, or none. */
+  const libraryPicture = async (w: LibraryWorld) => {
+    try {
+      const res = await fetch(worldIcon(org, w.id));
+      pictureFromWorld(res.ok ? new File([await res.blob()], "icon.png", { type: res.headers.get("content-type") ?? "image/png" }) : null);
+    } catch {
+      pictureFromWorld(null);
+    }
+  };
+  // One picked where it is kept has its picture to begin with.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, for the world it was opened with
+  useEffect(() => {
+    if (given) void libraryPicture(given);
+  }, []);
 
   /** Reads an archive of a server and fills the form in with what it says. */
   const pickArchive = async (file: File) => {
@@ -850,6 +876,7 @@ export function ServerForm({
   /** Picks a world from the library, with room on the server for it. */
   const pickLibrary = (w: LibraryWorld) => {
     setLibraryPick(w);
+    void libraryPicture(w);
     if (!forTemplate) setValues((was) => ({ ...was, storage: String(Math.max(Number(was.storage) || 0, leastStorage, roomFor(w))) }));
   };
 
@@ -1443,7 +1470,18 @@ export function ServerForm({
       {/* Picking what to start from goes on to a form filled in from it: the rest is not filled in here. */}
       <div className={picking ? "hidden" : "contents"}>
       <Section title={forTemplate ? "Name" : "Name and picture"}>
-        {!forTemplate && <PictureChange name={v.displayName || source?.name || ""} current={brought} value={v.picture} onChange={(change) => set("picture", change)} />}
+        {!forTemplate && (
+          <PictureChange
+            name={v.displayName || source?.name || ""}
+            current={brought}
+            value={v.picture}
+            onChange={(change) => {
+              // Chosen here, it is kept whatever world is picked.
+              pictureChosen.current = true;
+              set("picture", change);
+            }}
+          />
+        )}
         <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from it are called this." : undefined}>
           {(id) => <Input id={id} required maxLength={forTemplate ? 60 : undefined} value={v.displayName} onChange={(e) => set("displayName", e.target.value)} />}
         </Field>
@@ -1642,7 +1680,13 @@ export function ServerForm({
                       {worldSummary(libraryPick)}
                     </p>
                   </div>
-                  <Button size="sm" onClick={() => setLibraryPick(null)}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setLibraryPick(null);
+                      pictureFromWorld(null);
+                    }}
+                  >
                     Change
                   </Button>
                 </div>
@@ -1680,7 +1724,17 @@ export function ServerForm({
                     <Button size="sm" disabled={readingWorld} onClick={() => worldInput.current?.click()}>
                       Change
                     </Button>
-                    <Button size="sm" variant="ghost" disabled={readingWorld} icon={<X className="size-4" />} aria-label="Remove the world" onClick={() => set("myWorld", null)} />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={readingWorld}
+                      icon={<X className="size-4" />}
+                      aria-label="Remove the world"
+                      onClick={() => {
+                        set("myWorld", null);
+                        pictureFromWorld(null);
+                      }}
+                    />
                   </div>
                 ) : keepTheirs && theirs ? (
                   <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
