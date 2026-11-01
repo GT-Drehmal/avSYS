@@ -28,7 +28,7 @@ export function Invite() {
   const gone = invite.data ? !invite.data.usable : invite.error instanceof ApiError && invite.error.status === 404;
   if (gone) {
     return (
-      <AuthFrame title="This invite is no longer valid" subtitle="It may have expired or been revoked. Ask for a new one.">
+      <AuthFrame title="This invite is no longer valid" subtitle="The invite may have expired or been revoked. Ask for a new one.">
         <Link to="/" className="text-[13px] text-accent hover:underline">
           Go to avSYS
         </Link>

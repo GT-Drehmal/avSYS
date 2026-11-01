@@ -1,5 +1,6 @@
 import { gzipSync } from "node:zlib";
 import type { Page } from "@playwright/test";
+import { levelDat, tar, zip } from "./archives";
 import { expect, test } from "./panel";
 
 /**
@@ -32,100 +33,6 @@ async function parts(page: Page) {
 test.beforeEach(async ({ page }) => {
   await parts(page);
 });
-
-// Archives are made here, byte by byte, as a server's folder would be packed
-// on another host: the page reads them itself, before anything is sent.
-
-/** A level.dat: gzipped NBT with Data.Version.Name. */
-function levelDat(version: string, name = "world") {
-  const str = (s: string) => {
-    const b = Buffer.from(s);
-    const len = Buffer.alloc(2);
-    len.writeUInt16BE(b.length);
-    return Buffer.concat([len, b]);
-  };
-  const tag = (type: number, name: string, payload: Buffer) => Buffer.concat([Buffer.from([type]), str(name), payload]);
-  const int = (n: number) => {
-    const b = Buffer.alloc(4);
-    b.writeInt32BE(n);
-    return b;
-  };
-  const end = Buffer.from([0]);
-  const data = Buffer.concat([
-    tag(1, "hardcore", Buffer.from([0])),
-    tag(9, "ServerBrands", Buffer.concat([Buffer.from([8]), int(1), str("Paper")])),
-    tag(3, "DataVersion", int(3839)),
-    // Arrays before the version, as 1.21.9 and later write the spawn point.
-    tag(10, "spawn", Buffer.concat([tag(11, "pos", Buffer.concat([int(3), int(0), int(64), int(0)])), tag(8, "dimension", str("minecraft:overworld")), end])),
-    tag(7, "bytes", Buffer.concat([int(2), Buffer.from([1, 2])])),
-    tag(12, "longs", Buffer.concat([int(1), Buffer.alloc(8)])),
-    tag(8, "LevelName", str(name)),
-    tag(10, "Version", Buffer.concat([tag(3, "Id", int(3839)), tag(8, "Name", str(version)), end])),
-    end,
-  ]);
-  return gzipSync(Buffer.concat([tag(10, "", Buffer.concat([tag(10, "Data", data), end]))]));
-}
-
-type Files = Record<string, string | Buffer>;
-
-function tar(files: Files) {
-  const blocks: Buffer[] = [];
-  for (const [name, content] of Object.entries(files)) {
-    const data = Buffer.from(content);
-    const h = Buffer.alloc(512);
-    h.write(name, 0, 100);
-    h.write("0000644\0", 100);
-    h.write("0001750\0", 108);
-    h.write("0001750\0", 116);
-    h.write(`${data.length.toString(8).padStart(11, "0")}\0`, 124);
-    h.write("00000000000\0", 136);
-    h.write("        ", 148);
-    h.write("0", 156);
-    h.write("ustar\0", 257);
-    h.write("00", 263);
-    let sum = 0;
-    for (const b of h) sum += b;
-    h.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
-    blocks.push(h, data, Buffer.alloc((512 - (data.length % 512)) % 512));
-  }
-  blocks.push(Buffer.alloc(1024));
-  return Buffer.concat(blocks);
-}
-
-function zip(files: Files) {
-  const locals: Buffer[] = [];
-  const central: Buffer[] = [];
-  let offset = 0;
-  for (const [name, content] of Object.entries(files)) {
-    const data = Buffer.from(content);
-    const n = Buffer.from(name);
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(n.length, 26);
-    const c = Buffer.alloc(46);
-    c.writeUInt32LE(0x02014b50, 0);
-    c.writeUInt16LE(20, 4);
-    c.writeUInt16LE(20, 6);
-    c.writeUInt32LE(data.length, 20);
-    c.writeUInt32LE(data.length, 24);
-    c.writeUInt16LE(n.length, 28);
-    c.writeUInt32LE(offset, 42);
-    locals.push(local, n, data);
-    central.push(c, n);
-    offset += 30 + n.length + data.length;
-  }
-  const dir = Buffer.concat(central);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(Object.keys(files).length, 8);
-  end.writeUInt16LE(Object.keys(files).length, 10);
-  end.writeUInt32LE(dir.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, dir, end]);
-}
 
 test("an existing server is imported from a .tar.gz, its settings read from it", async ({ page, as, org, api }) => {
   const slug = await org([]);
@@ -232,7 +139,7 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   await expect(page.getByTestId("archive-summary")).toContainText("1 mod");
   await expect(page.getByText("terrain", { exact: true })).toHaveCount(1);
   await expect(page.getByText("unused", { exact: true })).toBeVisible();
-  await expect(page.getByText(/15 B · uploaded when created · not on in its world before/)).toBeVisible();
+  await expect(page.getByText(/15 B · uploaded when created · not on in the world before/)).toBeVisible();
   await expect(page.getByText("resources", { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Fabric/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
@@ -325,7 +232,7 @@ test("an import the panel turns down takes its server away again, and says why",
   await expect(page.getByRole("region", { name: "Setting up broken" })).toContainText("Could not import broken: Could not unpack the archive: Truncated input file. Nothing was kept.");
   expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
   // Its page, where the form went on to, says it is gone.
-  await expect(page.getByText(/It may have been deleted/)).toBeVisible();
+  await expect(page.getByText(/The server may have been deleted/)).toBeVisible();
 });
 
 test("an archive is sent in parts, and a part lost on the way is sent again from where it got to", async ({ page, as, org, browserName }) => {
@@ -483,7 +390,7 @@ test("an archive with no world in it says so", async ({ page, as, org }) => {
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Vanilla/ }).click();
   await page.getByRole("button", { name: "Upload world" }).click();
   await page.getByLabel("World archive").setInputFiles({ name: "pics.zip", mimeType: "application/zip", buffer: zip({ "a.png": "png" }) });
-  await expect(page.getByText("No world in this archive: it has no level.dat.")).toBeVisible();
+  await expect(page.getByText("No world in this archive: there is no level.dat.")).toBeVisible();
 });
 
 test("an archive picked can be taken away again", async ({ page, as, org }) => {
@@ -555,12 +462,12 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
   await expect(replace).toBeDisabled();
   // One with no world in it is turned down before anything is sent.
   await dialog.getByLabel("World archive").setInputFiles({ name: "notes.zip", mimeType: "application/zip", buffer: zip({ "notes.txt": "hello" }) });
-  await expect(dialog.getByText("No world in this archive: it has no level.dat.")).toBeVisible();
+  await expect(dialog.getByText("No world in this archive: there is no level.dat.")).toBeVisible();
   await expect(replace).toBeDisabled();
 
   await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "Map/level.dat": levelDat("1.21.5", "Adventure Map"), "Map/region/r.0.0.mca": "x" }) });
   await expect(dialog.getByTestId("world-summary")).toContainText('World "Adventure Map" · last opened in 1.21.5');
-  await expect(dialog.getByText("This server runs 1.21.4, older than the version this world was last opened in. The game cannot open it.")).toBeVisible();
+  await expect(dialog.getByText("This server runs 1.21.4, older than the version this world was last opened in. The game cannot open the world.")).toBeVisible();
   let sent: URL | null = null;
   await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
     sent = new URL(route.request().url());
@@ -668,20 +575,27 @@ test("a template is given a world of one's own, kept with it, as a server is", a
   const slug = await org([]);
   await as("owner");
   let made: unknown = null;
-  let kept: { params: URLSearchParams; size: number } | null = null;
+  let kept: URLSearchParams | null = null;
+  // Sent in parts beside the organization's snapshots, then taken from there.
+  let sent = 0;
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/uploads\\?`), (route) => {
+    const length = Number(new URL(route.request().url()).searchParams.get("length") ?? 0);
+    sent += length;
+    return route.fulfill({ json: { received: sent } });
+  });
   await page.route(`**/api/v1/orgs/${slug}/templates`, (route) => {
     if (route.request().method() !== "POST") return route.fulfill({ json: [] });
     made = route.request().postDataJSON();
     return route.fulfill({ status: 201, json: { id: "t9" } });
   });
   await page.route(`**/api/v1/orgs/${slug}/templates/t9/world?*`, (route) => {
-    kept = { params: new URL(route.request().url()).searchParams, size: route.request().postDataBuffer()?.length ?? 0 };
+    kept = new URL(route.request().url()).searchParams;
     return route.fulfill({ json: {} });
   });
   await page.goto(`/o/${slug}/templates/new`);
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Name", { exact: true }).fill("Island");
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Upload world" }).click();
   const save = zip({ "saves/Island Save/level.dat": levelDat("1.21.4", "Island"), "saves/Island Save/region/r.0.0.mca": "region" });
   await page.getByLabel("World archive").setInputFiles({ name: "island.zip", mimeType: "application/zip", buffer: save });
   await expect(page.getByTestId("world-summary")).toContainText("Last opened in 1.21.4");
@@ -689,10 +603,8 @@ test("a template is given a world of one's own, kept with it, as a server is", a
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
   expect(made).toMatchObject({ name: "Island", spec: { loader: "paper" } });
   expect(kept).not.toBeNull();
-  const { params, size } = kept!;
-  expect(Object.fromEntries(params)).toEqual({ root: "saves/Island Save", name: "Island", version: "1.21.4", file: "island.zip" });
-  // WebKit does not show what was sent of a file.
-  if (size > 0) expect(size).toBe(save.length);
+  expect(Object.fromEntries(kept!)).toEqual({ root: "saves/Island Save", name: "Island", version: "1.21.4", file: "island.zip", upload: expect.stringMatching(/^[0-9a-f]{32}$/), size: String(save.length) });
+  expect(sent).toBe(save.length);
 });
 
 test("a server made from a template with a world of its own is given it once it is made", async ({ page, as, org, api }) => {
@@ -711,7 +623,7 @@ test("a server made from a template with a world of its own is given it once it 
   });
   await page.goto(`/o/${slug}/new?from=template:t9`);
   // Its world, kept with the template, is the one it is given.
-  const worldChoice = page.getByRole("group", { name: "Its world" });
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
   await expect(worldChoice.getByRole("button", { name: "Upload world" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("world-summary")).toContainText("kept with the template");
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
@@ -743,7 +655,7 @@ test("a template's own world is taken away in its form, for its servers to start
   // None chosen in its place: one is asked for, or a new one.
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Choose a world, or make a new one.")).toBeVisible();
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "New world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "New world" }).click();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
   expect(calls).toEqual(["PATCH /templates/t9", "DELETE /templates/t9/world"]);

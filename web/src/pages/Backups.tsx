@@ -180,7 +180,7 @@ export function Backups() {
                       </option>
                     ))}
                   </Select>
-                  <Select aria-label="Why it was taken" value={onlyReason} onChange={(e) => setOnlyReason(e.target.value)} className="w-44">
+                  <Select aria-label="Reason" value={onlyReason} onChange={(e) => setOnlyReason(e.target.value)} className="w-44">
                     <option value="">Any reason</option>
                     {reasons.map(([trigger, label]) => (
                       <option key={trigger} value={trigger}>
@@ -200,6 +200,7 @@ export function Backups() {
                   org={org}
                   snapshots={filtered}
                   canAdmin={canAdmin}
+                  canSaveWorld={canOperate}
                   selection={selection}
                   {...restoreProps}
                   lead={(s) => (
@@ -346,7 +347,7 @@ function ServerGroup({ org, name, server, known, items, concern, open, onToggle,
       </div>
       {open && newest && (
         <div className="flex flex-col gap-2 border-t border-line bg-bg p-3">
-          <SnapshotRows org={org} snapshots={shown} canAdmin={canAdmin} selection={selection} {...restore} />
+          <SnapshotRows org={org} snapshots={shown} canAdmin={canAdmin} canSaveWorld={canOperate} selection={selection} {...restore} />
           <div className="flex items-center gap-4 px-1 text-xs">
             {items.length > firstFew && (
               <button type="button" onClick={onShowAll} className="text-accent hover:underline">

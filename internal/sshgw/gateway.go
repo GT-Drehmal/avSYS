@@ -148,7 +148,7 @@ func (g *Gateway) handle(ctx context.Context, nc net.Conn, cfg *ssh.ServerConfig
 	if err != nil {
 		log.Warn("workspace unreachable", "error", err)
 		go ssh.DiscardRequests(downReqs)
-		refuse(downChans, "The workspace for this server is not reachable right now. It may be restarting; try again in a moment.\r\n")
+		refuse(downChans, "The workspace for this server is not reachable right now. The server may be restarting; try again in a moment.\r\n")
 		return
 	}
 	defer up.Close()

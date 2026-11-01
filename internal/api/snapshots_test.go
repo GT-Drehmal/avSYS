@@ -81,8 +81,8 @@ func TestPlainly(t *testing.T) {
 		want string
 	}{
 		{unreachable, "the server's files are not reachable"},
-		{failed(unreachable, "its files could not be saved, so it was not moved"),
-			"its files could not be saved, so it was not moved: the server's files are not reachable"},
+		{failed(unreachable, "the server's files could not be saved, so the server was not moved"),
+			"the server's files could not be saved, so the server was not moved: the server's files are not reachable"},
 		{failed(fmt.Errorf("checking: %w", backup.ErrOldWorkspace), "the current state could not be saved first, so nothing was changed"),
 			"the current state could not be saved first, so nothing was changed: " + backup.ErrOldWorkspace.Error()},
 		{failed(errCreating, "the server did not stop"),

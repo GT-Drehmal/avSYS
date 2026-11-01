@@ -83,10 +83,10 @@ test("by time: everything in order, each with its server, and narrowed by server
   await page.getByLabel("Server", { exact: true }).selectOption("creative");
   await expect(snapshots).toHaveCount(1);
   await page.getByLabel("Server", { exact: true }).selectOption("");
-  await page.getByLabel("Why it was taken").selectOption("final");
+  await page.getByLabel("Reason", { exact: true }).selectOption("final");
   await expect(snapshots).toHaveCount(1);
   await expect(rows.first()).toContainText("oldworld");
-  await page.getByLabel("Why it was taken").selectOption("copy");
+  await page.getByLabel("Reason", { exact: true }).selectOption("copy");
   await expect(page.getByText("No matching snapshots.")).toBeVisible();
 });
 
@@ -122,6 +122,33 @@ test("several snapshots, of more than one server, are deleted in one request", a
   await expect(page.getByText("Deleted 2 snapshots")).toBeVisible();
   expect(asked?.ids).toHaveLength(2);
   await expect(bar).toHaveCount(0);
+});
+
+test("every snapshot listed is selected at once, and none again", async ({ page }) => {
+  await page.getByRole("button", { name: "By time" }).click();
+  const all = page.getByLabel("Select every snapshot");
+  await all.click();
+  const bar = page.getByRole("region", { name: "Selection" });
+  await expect(bar).toContainText("6 snapshots selected");
+  await expect(page.getByText("6 of 6 snapshots selected")).toBeVisible();
+  // Some of them: it fills in the rest.
+  await page.getByLabel(/^Select the snapshot of oldworld/).click();
+  await expect(bar).toContainText("5 snapshots selected");
+  await expect(all).not.toBeChecked();
+  await all.click();
+  await expect(bar).toContainText("6 snapshots selected");
+  await all.click();
+  await expect(bar).toHaveCount(0);
+  // Only those searched for.
+  await page.getByRole("searchbox", { name: "Search backups" }).fill("survival");
+  await all.click();
+  await expect(bar).toContainText("4 snapshots selected");
+});
+
+test("a server's snapshots are selected at once on its Backups tab", async ({ page }) => {
+  await page.goto("/o/friends/s/survival/backups");
+  await page.getByLabel("Select every snapshot").click();
+  await expect(page.getByRole("region", { name: "Selection" })).toContainText("4 snapshots selected");
 });
 
 test("a viewer sees the snapshots and is offered nothing to do to them", async ({ page, as }) => {
@@ -316,7 +343,7 @@ test("coming back to a server's page asks again what is being done to it", async
 
 test("a scheduled snapshot that failed is shown on the server, not popped up", async ({ page }) => {
   const scheduled = { kind: "snapshot", org: "friends", server: "survival", scheduled: true, error: "the server's files are not reachable" };
-  const byHand = { kind: "snapshot", org: "friends", server: "creative", error: "the game did not finish writing its world out" };
+  const byHand = { kind: "snapshot", org: "friends", server: "creative", error: "the game did not finish writing the world out" };
   await page.route("**/api/v1/events?*", (route) =>
     route.fulfill({
       status: 200,
@@ -325,6 +352,6 @@ test("a scheduled snapshot that failed is shown on the server, not popped up", a
     }),
   );
   await page.goto("/o/friends");
-  await expect(page.getByText("Snapshot of creative failed: the game did not finish writing its world out")).toBeVisible();
+  await expect(page.getByText("Snapshot of creative failed: the game did not finish writing the world out")).toBeVisible();
   await expect(page.getByText(/Snapshot of survival failed/)).toHaveCount(0);
 });

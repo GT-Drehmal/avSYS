@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, ChevronsUpDown, Cpu, LayoutTemplate, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
+import { Archive, Check, ChevronsUpDown, Cpu, Globe, LayoutTemplate, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
@@ -69,7 +69,7 @@ export function NewOrgDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         }}
       >
         <Field label="Name">{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-        <Field label="Short name" hint="Used in links and SSH logins. It cannot be changed later.">
+        <Field label="Short name" hint="Used in links and SSH logins. Cannot be changed later.">
           {(id) => <Input id={id} required value={effectiveSlug} onChange={(e) => setSlug(e.target.value)} className="font-mono" pattern="[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?" />}
         </Field>
         <div className="flex justify-end gap-2">
@@ -232,6 +232,9 @@ export function Shell() {
             </NavItem>
             <NavItem to={`/o/${navOrg.slug}/templates`} icon={<LayoutTemplate />}>
               Templates
+            </NavItem>
+            <NavItem to={`/o/${navOrg.slug}/worlds`} icon={<Globe />}>
+              Worlds
             </NavItem>
             <NavItem to={`/o/${navOrg.slug}/members`} icon={<Users />}>
               Members

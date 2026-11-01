@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CopyPlus, History, LayoutTemplate, Trash2 } from "lucide-react";
+import { CopyPlus, Globe, History, LayoutTemplate, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
@@ -12,13 +12,14 @@ import type { Selection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { Picture } from "./Picture";
 import { SaveTemplate } from "./SaveTemplate";
-import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectionBar } from "./ui";
+import { SaveWorld } from "./SaveWorld";
+import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectAllRow, SelectionBar } from "./ui";
 
 export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
   if (s.trigger === "pre-restore") return "Before a restore";
   if (s.trigger === "pre-replace") return "Before the world was replaced";
-  if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
+  if (s.trigger === "final") return s.by ? `Before ${s.by} deleted the server` : "Before the server was deleted";
   if (s.trigger === "copy") return s.by ? `For a copy ${s.by} made` : "For a copy";
   if (s.trigger === "move") return s.by ? `For a move ${s.by} made` : "For a move";
   if (s.trigger === "template") return s.by ? `Saved by ${s.by}` : "Saved";
@@ -74,6 +75,8 @@ export interface RowsProps {
   snapshots: Snapshot[];
   /** Admins can delete and make a new server; restore is offered where onRestore is given. */
   canAdmin: boolean;
+  /** Operators can save a snapshot's world to the library. */
+  canSaveWorld?: boolean;
   /** True while something is running on its server, which rules out a restore. */
   busy?: boolean | ((snapshot: Snapshot) => boolean);
   /** Offers a restore, of the snapshots it is asked for; on a list that mixes servers, only those whose server still exists. */
@@ -86,7 +89,7 @@ export interface RowsProps {
 }
 
 /** A list of snapshots, newest first, as rows of one bordered box. */
-export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restorable, selection, lead }: RowsProps) {
+export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin, busy, onRestore, restorable, selection, lead }: RowsProps) {
   const isBusy = (s: Snapshot) => (typeof busy === "function" ? busy(s) : !!busy);
   const canRestore = (s: Snapshot) => canAdmin && !!onRestore && (restorable?.(s) ?? true);
   const [deleting, setDeleting] = useState<Snapshot | null>(null);
@@ -95,11 +98,14 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
   const setCreating = (s: Snapshot) => navigate(newFrom(org, { kind: "snapshot", id: s.id }));
   const [looking, setLooking] = useState<Snapshot | null>(null);
   const [templating, setTemplating] = useState<Snapshot | null>(null);
+  const [saving, setSaving] = useState<Snapshot | null>(null);
   const servers = useServers(org);
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
   return (
     <>
-      <ul className="overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      {canAdmin && selection && snapshots.length > 1 && <SelectAllRow selection={selection} ids={snapshots.map((s) => s.id)} noun="snapshot" />}
+      <ul>
         {snapshots.map((s) => (
           <li key={s.id} className={`group flex items-center gap-4 border-b border-line px-4 py-2.5 last:border-b-0 ${selection?.has(s.id) ? "bg-accent-wash" : ""}`}>
             {canAdmin && selection && (
@@ -154,13 +160,14 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
           </li>
         ))}
       </ul>
+      </div>
       <SnapshotDetails
         org={org}
         snapshot={looking}
         onClose={() => setLooking(null)}
         actions={
           looking &&
-          canAdmin && (
+          (canAdmin || canSaveWorld) && (
             <>
               {canRestore(looking) && (
                 <Button
@@ -174,38 +181,57 @@ export function SnapshotRows({ org, snapshots, canAdmin, busy, onRestore, restor
                   Restore
                 </Button>
               )}
-              <Button
-                icon={<CopyPlus className="size-3.5" />}
-                onClick={() => {
-                  setLooking(null);
-                  setCreating(looking);
-                }}
-              >
-                New server
-              </Button>
-              <Button
-                icon={<LayoutTemplate className="size-3.5" />}
-                onClick={() => {
-                  setLooking(null);
-                  setTemplating(looking);
-                }}
-              >
-                Save as template
-              </Button>
-              <Button
-                variant="danger"
-                icon={<Trash2 className="size-3.5" />}
-                onClick={() => {
-                  setLooking(null);
-                  setDeleting(looking);
-                }}
-              >
-                Delete
-              </Button>
+              {canAdmin && (
+                <>
+                  <Button
+                    icon={<CopyPlus className="size-3.5" />}
+                    onClick={() => {
+                      setLooking(null);
+                      setCreating(looking);
+                    }}
+                  >
+                    New server
+                  </Button>
+                  <Button
+                    icon={<LayoutTemplate className="size-3.5" />}
+                    onClick={() => {
+                      setLooking(null);
+                      setTemplating(looking);
+                    }}
+                  >
+                    Save as template
+                  </Button>
+                </>
+              )}
+              {/* Its world, kept to start servers with, is operators' to save too. */}
+              {canSaveWorld && (
+                <Button
+                  icon={<Globe className="size-3.5" />}
+                  onClick={() => {
+                    setLooking(null);
+                    setSaving(looking);
+                  }}
+                >
+                  Save world
+                </Button>
+              )}
+              {canAdmin && (
+                <Button
+                  variant="danger"
+                  icon={<Trash2 className="size-3.5" />}
+                  onClick={() => {
+                    setLooking(null);
+                    setDeleting(looking);
+                  }}
+                >
+                  Delete
+                </Button>
+              )}
             </>
           )
         }
       />
+      {saving && <SaveWorld key={saving.id} org={org} snapshot={saving} onClose={() => setSaving(null)} />}
       {templating && <SaveTemplate key={templating.id} org={org} open onOpenChange={(o) => !o && setTemplating(null)} snapshot={templating} servers={servers.data} />}
       <Confirm
         open={!!deleting}
@@ -235,8 +261,8 @@ function keptFor(detail: SnapshotDetail) {
   // Off is not the same as never: running the schedule by hand applies its rules.
   if (paused) {
     return kept.length === 0
-      ? "Scheduled snapshots are off, so it stays for now. It is removed when they run again."
-      : `Scheduled snapshots are off, so it stays for now. When they run again, it is kept as the newest of its ${rules}.`;
+      ? "Scheduled snapshots are off, so this snapshot stays for now, and is removed when they run again."
+      : `Scheduled snapshots are off, so this snapshot stays for now. When they run again, it is kept as the newest of its ${rules}.`;
   }
   if (kept.length === 0) return "Removed the next time the schedule runs.";
   return `Kept by the schedule, as the newest of its ${rules}.`;
@@ -286,7 +312,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
             <Fact label="Why">{s.trigger === "manual" ? (s.by ? `Taken by hand, by ${s.by}` : "Taken by hand") : triggerLabel(s)}</Fact>
             <Fact label="Size">
               {bytes(s.size)} in {s.files.toLocaleString()} file{s.files === 1 ? "" : "s"}.{" "}
-              <span className="text-muted">It added {bytes(s.added)} to storage.</span>
+              <span className="text-muted">This snapshot added {bytes(s.added)} to storage.</span>
             </Fact>
             {detail.data && <Fact label="Kept">{keptFor(detail.data)}</Fact>}
             {offsite.data?.configured && <Fact label="Offsite">{copied ? "In the offsite copy." : "Not in the offsite copy yet."}</Fact>}
@@ -299,12 +325,12 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
             <h3 className="flex items-center gap-2 text-[13px] font-semibold">
               {/* The picture among its files, which a server made from it has. */}
               <Picture name={detail.data?.spec.displayName || s.server} url={snapshotIcon(org, s.id)} size={24} />
-              {s.server} as it was
+              {s.server} as the server was
             </h3>
             {detail.isPending ? (
               <Loading />
             ) : !spec ? (
-              <Notice tone="danger">{detail.error instanceof ApiError ? detail.error.message : "Could not load its details."}</Notice>
+              <Notice tone="danger">{detail.error instanceof ApiError ? detail.error.message : "Could not load the snapshot's details."}</Notice>
             ) : (
               <>
                 <dl className="divide-y divide-line">
@@ -423,12 +449,12 @@ export function RestoreDialog({ server, snapshot, onClose }: { server: Server; s
       open={!!snapshot}
       onOpenChange={(open) => !open && onClose()}
       title={`Restore ${server.name}?`}
-      description={snapshot ? `To how it was ${ago(snapshot.time)}, on ${new Date(snapshot.time).toLocaleString()}.` : ""}
+      description={snapshot ? `Back to how the server was ${ago(snapshot.time)}, on ${new Date(snapshot.time).toLocaleString()}.` : ""}
     >
       <div className="flex flex-col gap-4">
         <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-relaxed text-muted">
           <li>The server stops while its files are restored{server.spec.state === "Stopped" ? "" : ", then starts again"}.</li>
-          <li>Its world, files, version and mods go back to how they were. Anything newer is removed.</li>
+          <li>The server's world, files, version and mods go back to how they were. Anything newer is removed.</li>
           <li>A snapshot is taken first, so you can undo this.</li>
         </ul>
         <div className="flex justify-end gap-2">

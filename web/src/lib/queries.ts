@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
+import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
 import { presenceKey, tab, tellAgain, type Present } from "./presence";
 import { toast } from "./toast";
 
@@ -33,6 +33,8 @@ export const keys = {
   /** An organization's templates, and under it each one asked for alone. */
   templates: (org: string) => ["templates", org] as const,
   template: (org: string, id: string) => ["templates", org, id] as const,
+  /** An organization's library of worlds. */
+  worlds: (org: string) => ["worlds", org] as const,
 };
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
@@ -218,6 +220,14 @@ export const useRunning = (org: string, server: string) =>
 export const useActivity = (org: string, server: string) =>
   useQuery({ queryKey: keys.activity(org, server), queryFn: () => api.get<Activity[]>(`${serverPath(org, server)}/activity`) });
 
+/** The library's worlds, asked for again while one is being saved. */
+export const useWorlds = (org: string, enabled = true) =>
+  useQuery({
+    queryKey: keys.worlds(org),
+    queryFn: () => api.get<LibraryWorld[]>(`/orgs/${org}/worlds`),
+    enabled,
+    refetchInterval: (q) => (q.state.data?.some((w) => w.saving) ? 3000 : false),
+  });
 export const useTemplates = (org: string, enabled = true) => useQuery({ queryKey: keys.templates(org), queryFn: () => api.get<Template[]>(`/orgs/${org}/templates`), enabled });
 
 export const useOrgSnapshots = (org: string) =>

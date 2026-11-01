@@ -111,7 +111,7 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 			how = fmt.Sprint(count)
 		}
 		return &Error{Status: http.StatusConflict, Code: "has_snapshots",
-			Message: fmt.Sprintf("This organization still has snapshots (%s). Deleting it deletes them too; confirm with ?snapshots=delete.", how)}
+			Message: fmt.Sprintf("This organization still has snapshots (%s). Deleting the organization deletes them too; confirm with ?snapshots=delete.", how)}
 	}
 	// The repository goes first. If it cannot be removed the organization
 	// stays, name included: a later organization of the same name would

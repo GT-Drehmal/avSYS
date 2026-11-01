@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -339,5 +340,26 @@ func TestVersionsCarryTheirJava(t *testing.T) {
 	}
 	if noted, runs := java("weekly"); noted != 0 || runs != 25 {
 		t.Errorf("after moving to 26.3: noted %v, runs on %v, want none and 25", noted, runs)
+	}
+}
+
+// NeoForge runs 1.20.1 too, from builds listed apart as a fork of Forge's,
+// and takes the Forge mods made for it there.
+func TestNeoForgeBeganOn1201(t *testing.T) {
+	got, err := readNeoForge([]byte(`{"versions":["20.2.86","21.4.38","20.2.3-beta"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"1.20.2", "1.21.4", "1.20.1"}) {
+		t.Errorf("versions: %v", got)
+	}
+	if got := loadersOf("neoforge", "1.20.1"); !slices.Equal(got, []string{"neoforge", "forge"}) {
+		t.Errorf("mods for 1.20.1: %v", got)
+	}
+	if got := loadersOf("neoforge", "1.21.4"); !slices.Equal(got, []string{"neoforge"}) {
+		t.Errorf("mods for 1.21.4: %v", got)
+	}
+	if got := loadersOf("forge", "1.20.1"); !slices.Equal(got, []string{"forge"}) {
+		t.Errorf("Forge's own: %v", got)
 	}
 }

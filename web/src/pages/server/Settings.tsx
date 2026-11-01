@@ -12,7 +12,7 @@ import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../..
 import { PicturePicker } from "../../components/Picture";
 import { PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, triState } from "../../components/ServerFields";
-import { ExtraPorts, type PortDraft } from "../../components/ExtraPorts";
+import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { ReplaceWorld } from "../../components/ReplaceWorld";
 import { useServerContext } from "./ServerPage";
@@ -73,7 +73,7 @@ function toDraft(spec: ServerSpec): Draft {
     exposeType: spec.expose.type,
     hostname: spec.expose.hostname ?? "",
     loadBalancerIP: spec.expose.loadBalancerIP ?? "",
-    ports: (spec.ports ?? []).map((p) => ({ name: p.name, port: String(p.port), protocol: p.protocol ?? "TCP" })),
+    ports: portDrafts(spec.ports),
     sleepEnabled: !!spec.sleep.enabled,
     idleMinutes: String(spec.sleep.idleMinutes),
     motd: p["motd"] ?? "",
@@ -125,7 +125,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     resources: { ...current.resources, memory: fromGigabytes(d.memory) },
     storage: { ...current.storage, size: fromGigabytes(d.storage) },
     expose: { type: d.exposeType, hostname: d.hostname.trim(), loadBalancerIP: d.loadBalancerIP.trim() },
-    ports: d.ports.filter((p) => p.name.trim() || p.port.trim()).map((p) => ({ name: p.name.trim(), port: Number(p.port), protocol: p.protocol })),
+    ports: portsOf(d.ports),
     sleep: { enabled: d.sleepEnabled, idleMinutes: Number(d.idleMinutes) || 15 },
     properties: properties as Record<string, string>,
     ops: lines(d.ops),
@@ -229,7 +229,7 @@ export function Settings() {
 
       <Section title="Software" description={server.spec.modpack ? undefined : "Changing the type or going to an older version can break the world. Take a snapshot first."}>
         {server.spec.modpack ? (
-          <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change its version under Content.</Notice>
+          <Notice tone="info">Running the {server.spec.modpack.title || server.spec.modpack.project} modpack. Change the modpack's version under Content.</Notice>
         ) : (
           <div className="grid grid-cols-2 gap-4">
             <Field label="Type">
@@ -247,7 +247,7 @@ export function Settings() {
               label="Game version"
               hint={
                 noBuild
-                  ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so it cannot start. The newest is ${versions.data?.latest}.`
+                  ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so the server cannot start. The newest is ${versions.data?.latest}.`
                   : older
                     ? `The world was last opened in ${ranOn}. ${goingTo} cannot open the world, so the server will not start.`
                     : onPreview(versions.data, draft.version)
@@ -362,7 +362,7 @@ export function Settings() {
         <LaunchFlags aikar={draft.aikar} extra={draft.extraFlags} onAikar={(on) => set("aikar", on)} onExtra={(text) => set("extraFlags", text)} />
       </Section>
 
-      <Section title="Node" description="Moving it stops the server for a while.">
+      <Section title="Node" description="Moving stops the server for a while.">
         <NodeMove server={server} />
       </Section>
 
@@ -375,7 +375,7 @@ export function Settings() {
           )}
         </Field>
         {draft.exposeType !== "None" && (
-          <Field label="Hostname" hint={usesRouter ? "Point its DNS at the avSYS router." : "Optional."}>
+          <Field label="Hostname" hint={usesRouter ? "Point the hostname's DNS at the avSYS router." : "Optional."}>
             {(id) => <Input id={id} required={usesRouter} {...text("hostname")} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
           </Field>
         )}
@@ -395,7 +395,7 @@ export function Settings() {
           disabled={!usesRouter}
           onChange={(v) => set("sleepEnabled", v)}
           label="Sleep when empty"
-          hint={usesRouter ? "The first player to join wakes it, then joins again." : "Needs the shared address."}
+          hint={usesRouter ? "The first player to join wakes the server, then joins again." : "Needs the shared address."}
         />
         {draft.sleepEnabled && usesRouter && <Field label="After minutes with no players">{(id) => <Input id={id} type="number" min={1} {...text("idleMinutes")} className="max-w-32" />}</Field>}
       </Section>
@@ -409,7 +409,7 @@ export function Settings() {
         </Field>
       </Section>
 
-      <Section title="World" description="Replace it with one you have, as a .zip or .tar.gz.">
+      <Section title="World" description="Replace the world with one you have, as a .zip or .tar.gz.">
         <ReplaceWorld server={server} />
       </Section>
 
@@ -439,7 +439,7 @@ export function Settings() {
       <Confirm
         open={opening}
         onOpenChange={setOpening}
-        title="Open it to anyone?"
+        title="Open the server to anyone?"
         description={openWarning}
         action="Save without a whitelist"
         loading={update.isPending}
@@ -458,7 +458,7 @@ export function Settings() {
         open={deleting}
         onOpenChange={setDeleting}
         title={`Delete ${server.name}?`}
-        description={keeps ? "A final snapshot is taken, so you can bring it back from Backups." : "Its world and files are deleted. This cannot be undone."}
+        description={keeps ? "A final snapshot is taken, so you can bring the server back from Backups." : "The server's world and files are deleted. This cannot be undone."}
         action={remove.isPending && keeps ? "Taking a snapshot" : "Delete server"}
         typeToConfirm={server.name}
         loading={remove.isPending}

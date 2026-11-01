@@ -13,6 +13,7 @@ import { Nodes } from "./pages/Nodes";
 import { Backups } from "./pages/Backups";
 import { TemplateForm } from "./pages/TemplateForm";
 import { Templates } from "./pages/Templates";
+import { Worlds } from "./pages/Worlds";
 import { Home } from "./pages/Home";
 import { Invite } from "./pages/Invite";
 import { Login } from "./pages/Login";
@@ -66,6 +67,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="templates" element={<Templates />} />
                 <Route path="templates/new" element={<TemplateForm />} />
                 <Route path="templates/:template/edit" element={<TemplateForm />} />
+                <Route path="worlds" element={<Worlds />} />
                 <Route path="members" element={<Members />} />
                 <Route path="settings" element={<OrgSettings />} />
                 <Route path="s/:server" element={<ServerPage />}>

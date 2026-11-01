@@ -294,23 +294,32 @@ export interface FoundWorld {
   version: string;
   /** How large it is unpacked, the Nether and the End beside it included. */
   size: number;
+  /** The picture it has in its folder, as a save made in the game does. */
+  icon?: Uint8Array;
 }
 
 /** Finds the world in an archive, wherever it is in it. */
 export async function inspectWorld(file: File): Promise<FoundWorld> {
-  const { entries, files } = await readArchive(file, (path, size) => base(path) === "level.dat" && size < 8 << 20 && !path.startsWith("__MACOSX/"));
+  const { entries, files } = await readArchive(file, (path, size) => (base(path) === "level.dat" || base(path) === "icon.png") && size < 8 << 20 && !path.startsWith("__MACOSX/"));
   const levels = entries.filter((e) => !e.dir && base(e.path) === "level.dat" && !e.path.startsWith("__MACOSX/"));
   // The shallowest: the Nether's folder in Paper's way has one of its own.
   const level = levels.sort((a, b) => depth(a.path) - depth(b.path) || a.path.length - b.path.length)[0];
-  if (!level) throw new ArchiveError("No world in this archive: it has no level.dat.");
+  if (!level) throw new ArchiveError("No world in this archive: there is no level.dat.");
   const root = dirname(level.path);
   const data = files.get(level.path);
   const read = data ? await levelInfo(data).catch(() => ({ name: "", version: "" })) : { name: "", version: "" };
   // Paper keeps the Nether and the End beside the world, as world_nether and world_the_end.
   const beside = root ? [`${root}_nether/`, `${root}_the_end/`] : [];
   const size = entries.filter((e) => (root === "" || e.path.startsWith(`${root}/`) || beside.some((b) => e.path.startsWith(b))) && !e.path.startsWith("__MACOSX/")).reduce((sum, e) => sum + e.size, 0);
-  return { root, name: read.name || base(root) || file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, ""), version: read.version, size };
+  const icon = files.get(root ? `${root}/icon.png` : "icon.png");
+  return { root, name: plainName(read.name) || base(root) || archiveName(file), version: read.version, size, ...(icon ? { icon } : {}) };
 }
+
+/** A name without the game's formatting codes: § and the letter after it, which colour and style it. */
+export const plainName = (name: string) => name.replace(/§[0-9a-fk-or]/gi, "").replace(/\s+/g, " ").trim();
+
+/** What an archive is called, without its extension: "Drehmal APOTHEOSIS.zip" is "Drehmal APOTHEOSIS". */
+export const archiveName = (file: File) => file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, "").trim();
 
 /** A world's name and the version that last opened it, from its level.dat. */
 async function levelInfo(levelDat: Uint8Array) {

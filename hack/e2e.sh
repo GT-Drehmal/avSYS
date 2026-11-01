@@ -354,6 +354,17 @@ expect "file round trip" "$(call "$SRV/files/content?path=/e2e.txt")" "written b
 expect "managed server.properties" "$(call "$SRV/files/content?path=/server.properties")" "motd=e2e probe"
 # A save from the editor is written only over the file it opened. A file
 # of its own: e2e.txt is looked for as it is later.
+# A file sent in parts, as a large one is: each after the one before, kept
+# aside until it is whole, and then in place, where it never was in half.
+FUP="$SRV/files/content?path=/e2e-parts.bin&upload=e2e-parts-one&size=12"
+expect "a first part is taken" "$(printf 'part one,' | call -X PUT --data-binary @- "$FUP&offset=0&length=9")" '"received":9'
+expect "and is not yet in place" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/e2e-parts.bin")" 404
+expect "nor listed" "$(call "$SRV/files?path=/" | field "[e['name'] for e in d['entries'] if 'e2e-parts' in e['name']]")" "[]"
+expect "a part out of turn says how much is there" "$(printf 'x' | call -X PUT --data-binary @- "$FUP&offset=3" | field "(d.get('code'), d.get('received'))")" "('offset', 9)"
+expect "how much is there is said" "$(call "$SRV/files/upload?path=/e2e-parts.bin&upload=e2e-parts-one")" '"received":9'
+expect "the last part puts it in place" "$(printf ' 2!' | call -X PUT --data-binary @- "$FUP&offset=9")" '"received":12'
+expect "whole" "$(call "$SRV/files/content?path=/e2e-parts.bin")" "part one, 2!"
+call -X DELETE "$SRV/files?path=/e2e-parts.bin" >/dev/null
 echo "opened in the editor" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e-editor.txt" >/dev/null
 tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-editor.txt" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')
 [ -n "$tag" ] || fail "a file that can be edited has no tag"
@@ -751,6 +762,21 @@ call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$
 expect "a world of one's own is the server's" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat")" 200
 expect "with its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" 200
 expect "and not locked" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/session.lock")" 404
+# Saved to the organization's library from the server, a snapshot of it
+# taken first: its world and its Nether, and nothing else. Given to a
+# server of another kind, the Nether goes where that one keeps it.
+lib=$(call -d '{"name":"E2E island","server":"own-world"}' "$API/orgs/$ORG/worlds?wait=true")
+LIB=$(echo "$lib" | field "d['id']") || fail "the world was not saved to the library: $lib"
+expect "a world is saved to the library" "$(echo "$lib" | field "(d['ready'], d['root'], d['source'])")" "(True, 'world', 'server:own-world')"
+expect "with a snapshot of the server taken first" "$(call "$OWN/snapshots" | field "[s['trigger'] for s in d['snapshots']]")" manual
+call -o "$WORK/library.tar" "$API/orgs/$ORG/worlds/$LIB/archive"
+expect "its archive holds its world and its Nether, and nothing else" "$(tar -tf "$WORK/library.tar" | cut -d/ -f1 | sort -u | tr '\n' ' ')" "world world_nether "
+call -d '{"name":"from-library","spec":{"eula":true,"loader":"vanilla","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
+call -X PUT "$API/orgs/$ORG/servers/from-library/import?world=true&library=$LIB&wait=true" >/dev/null
+expect "a world from the library is a new server's" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/from-library/files/content?path=/world/level.dat")" 200
+expect "with its Nether where the game itself keeps it" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/from-library/files/content?path=/world/DIM-1/region/r.0.0.mca")" 200
+call -X DELETE "$API/orgs/$ORG/servers/from-library?snapshot=false" >/dev/null
+expect "a world is taken out of the library" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/worlds/$LIB")" 204
 # Its world replaced by another: a snapshot is taken first, only the world's
 # folders are replaced, and the snapshot puts the old one back.
 echo "kept" | call -X PUT --data-binary @- "$OWN/files/content?path=/kept.txt" >/dev/null

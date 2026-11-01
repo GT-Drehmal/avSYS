@@ -11,6 +11,7 @@
 package backup
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -25,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -701,19 +703,26 @@ func (m *Manager) KeepFile(ctx context.Context, org, host, name, by string, r io
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	return m.keepFile(ctx, org, host, name, by, r)
+}
+
+// keepFile is KeepFile, with the repository's read lock held by the caller.
+//
+// What is read from r ending in an error leaves restic with less than it
+// should have, which it may keep all the same: that snapshot is given back
+// with the error, for the caller to remove.
+func (m *Manager) keepFile(ctx context.Context, org, host, name, by string, r io.Reader) (*Snapshot, error) {
 	args := []string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache",
 		"backup", "--stdin", "--stdin-filename", name, "--host", host, "--json", "--tag", "avsys", "--tag", "trigger=" + TriggerTemplate}
 	if by != "" {
 		args = append(args, "--tag", "by="+by)
 	}
 	cmd := exec.CommandContext(ctx, m.Restic, args...)
-	cmd.Stdin = r
+	in := &readFailure{r: r}
+	cmd.Stdin = in
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("restic backup: %w: %s", err, lastLine(stderr.String()))
-	}
 	var id string
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		var msg struct {
@@ -724,11 +733,37 @@ func (m *Manager) KeepFile(ctx context.Context, org, host, name, by string, r io
 			id = msg.ID
 		}
 	}
+	if id != "" {
+		m.touch(org)
+	}
+	if in.err != nil || err != nil {
+		var kept *Snapshot
+		if id != "" {
+			kept, _ = m.get(context.WithoutCancel(ctx), org, id)
+		}
+		if in.err != nil {
+			return kept, in.err
+		}
+		return kept, fmt.Errorf("restic backup: %w: %s", err, lastLine(stderr.String()))
+	}
 	if id == "" {
 		return nil, errors.New("restic backup: no snapshot was saved")
 	}
-	m.touch(org)
 	return m.get(ctx, org, id)
+}
+
+// readFailure notes the error, other than its end, a reader came to.
+type readFailure struct {
+	r   io.Reader
+	err error
+}
+
+func (f *readFailure) Read(p []byte) (int, error) {
+	n, err := f.r.Read(p)
+	if err != nil && err != io.EOF && f.err == nil {
+		f.err = err
+	}
+	return n, err
 }
 
 // Stream writes one file of a snapshot to w, as it is read out.
@@ -751,6 +786,134 @@ func (m *Manager) Stream(ctx context.Context, org, id, path string, w io.Writer)
 		return fmt.Errorf("restic dump: %w: %s", err, lastLine(stderr.String()))
 	}
 	return nil
+}
+
+// Folder is a folder of a snapshot to put in an archive, under the name it
+// is given there.
+type Folder struct{ Path, As string }
+
+// Archive writes the folders of a snapshot asked for to w as one tar, each
+// under its new name: only their files and folders, not links. A folder the
+// snapshot does not have is left out; ErrNotFound if it has none of them.
+func (m *Manager) Archive(ctx context.Context, org, id string, folders []Folder, w io.Writer) error {
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	return m.archive(ctx, org, id, folders, w)
+}
+
+// KeepArchive keeps the folders of a snapshot asked for, as Archive puts
+// them in one tar, as a file of its own, as KeepFile does: under one hold
+// of the repository, so that nothing waiting to change it comes between
+// the two halves of the copy, each waiting for the other.
+func (m *Manager) KeepArchive(ctx context.Context, org, id string, folders []Folder, host, name, by string) (*Snapshot, error) {
+	if !m.Available() {
+		return nil, ErrUnavailable
+	}
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	pr, pw := io.Pipe()
+	archived := make(chan error, 1)
+	go func() {
+		err := m.archive(ctx, org, id, folders, pw)
+		pw.CloseWithError(err)
+		archived <- err
+	}()
+	kept, err := m.keepFile(ctx, org, host, name, by, pr)
+	// Whatever it was in the middle of, the archive is let go.
+	pr.CloseWithError(io.ErrClosedPipe)
+	if aerr := <-archived; aerr != nil && !errors.Is(aerr, io.ErrClosedPipe) {
+		// What was kept of it, if anything, is incomplete: the caller's to
+		// remove, which takes the repository to itself.
+		return kept, aerr
+	}
+	return kept, err
+}
+
+// archive is Archive, with the repository's read lock held by the caller.
+func (m *Manager) archive(ctx context.Context, org, id string, folders []Folder, w io.Writer) error {
+	snap, err := m.get(ctx, org, id)
+	if err != nil {
+		return err
+	}
+	tw := tar.NewWriter(w)
+	found := false
+	for _, f := range folders {
+		had, err := m.archiveFolder(ctx, org, snap.ID, f, tw)
+		if errors.Is(err, ErrNotFound) && !had {
+			continue
+		} else if err != nil {
+			return err
+		}
+		found = true
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return tw.Close()
+}
+
+// archiveFolder copies one folder of a snapshot into tw. had says whether
+// anything of it was.
+func (m *Manager) archiveFolder(ctx context.Context, org, id string, f Folder, tw *tar.Writer) (had bool, err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.Restic, "--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache", "dump", "--no-lock", "--archive", "tar", id, f.Path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return false, err
+	}
+	if err := cmd.Start(); err != nil {
+		return false, err
+	}
+	prefix := strings.TrimPrefix(path.Clean(f.Path), "/") + "/"
+	tr := tar.NewReader(out)
+	copyErr := func() error {
+		for {
+			h, err := tr.Next()
+			if err == io.EOF {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			rest, ok := strings.CutPrefix(h.Name, prefix)
+			if !ok || rest == "" || (h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir) {
+				continue
+			}
+			had = true
+			h.Name = f.As + "/" + rest
+			h.Uname, h.Gname, h.Uid, h.Gid = "", "", 0, 0
+			if err := tw.WriteHeader(h); err != nil {
+				return err
+			}
+			if h.Typeflag == tar.TypeReg {
+				if _, err := io.Copy(tw, tr); err != nil {
+					return err
+				}
+			}
+		}
+	}()
+	if copyErr != nil {
+		cancel()
+	}
+	// What is left unread is read, for restic to end.
+	_, _ = io.Copy(io.Discard, out)
+	waitErr := cmd.Wait()
+	if copyErr != nil {
+		return had, copyErr
+	}
+	if waitErr != nil {
+		if strings.Contains(stderr.String(), "not found") {
+			return had, ErrNotFound
+		}
+		return had, fmt.Errorf("restic dump: %w: %s", waitErr, lastLine(stderr.String()))
+	}
+	return had, nil
 }
 
 // Delete removes one snapshot and the data only it referred to.

@@ -39,7 +39,7 @@ const kindTemplate = "template"
 
 // errTemplateVersion is for a template's snapshot asked to be deleted as if
 // it were a server's.
-var errTemplateVersion = &Error{Status: http.StatusConflict, Code: "template", Message: "That snapshot is a version of a template. Delete it on the Templates page."}
+var errTemplateVersion = &Error{Status: http.StatusConflict, Code: "template", Message: "That snapshot is a version of a template. Delete the version on the Templates page."}
 
 // errTemplateBusy is for a template a version is being saved to or deleted
 // from, which is let finish first.
@@ -286,7 +286,7 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request, u *store
 		return errBadRequest("A template is made from one server, snapshot, template or set of settings.")
 	}
 	if len(in.Changes) > 0 && in.Server == "" && in.Snapshot == "" && in.Template == "" {
-		return errBadRequest("Changes are made to a server, snapshot or template it is made from.")
+		return errBadRequest("Changes are made to the server, snapshot or template the template is made from.")
 	}
 	if in.Snapshot != "" || in.Template != "" {
 		if !s.Backups.Available() {
@@ -369,13 +369,13 @@ func (s *Server) templateSettings(ctx context.Context, a *access, raw json.RawMe
 		}
 	}
 	if rp := spec.ResourcePack; rp != nil && rp.Uploaded != nil {
-		return "", errBadRequest("A template of settings alone cannot have an uploaded resource pack. Save a server that has it instead.")
+		return "", errBadRequest("A template of settings alone cannot have an uploaded resource pack. Save a server that has the pack instead.")
 	}
 	if rp := spec.ResourcePack; rp != nil {
 		rp.Stack = nil
 	}
 	spec.DisplayName, spec.State, spec.EULA, spec.GameJava = "", "", false, 0
-	spec.Image, spec.Env, spec.NodeSelector, spec.Ports = "", nil, nil, nil
+	spec.Image, spec.Env, spec.NodeSelector = "", nil, nil
 	spec.Expose = avsysv1.ExposeSpec{Type: spec.Expose.Type}
 	if spec.Modpack == nil && spec.Loader == "" {
 		return "", errBadRequest("Choose a server type, or a modpack.")
@@ -412,7 +412,9 @@ func (s *Server) templateChanges(ctx context.Context, a *access, base *avsysv1.M
 			return "", errBadRequest("Invalid changes: %v", err)
 		}
 	}
-	for _, own := range []string{"displayName", "state", "eula", "nodeSelector", "image", "env", "gameJava", "ports"} {
+	// What its mods listen on stays: each server made from it is given
+	// public ports of its own.
+	for _, own := range []string{"displayName", "state", "eula", "nodeSelector", "image", "env", "gameJava"} {
 		delete(fields, own)
 	}
 	// Whether its servers start a world of their own: "new", or not at all.
@@ -752,7 +754,7 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request, u *store
 	}
 	if len(in.Changes) > 0 {
 		if v.SettingsOnly || v.Current == nil {
-			return errBadRequest("This template has settings alone. Change them as its spec.")
+			return errBadRequest("This template has settings alone. Change them as the template's spec.")
 		}
 		record, err := s.recordOf(r.Context(), a.Org.Slug, v.Current.ID)
 		if err != nil {
@@ -768,7 +770,7 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request, u *store
 	}
 	if len(in.Spec) > 0 {
 		if !v.SettingsOnly {
-			return errBadRequest("This template was saved from a server. Change its settings as changes, or give it a new version.")
+			return errBadRequest("This template was saved from a server. Change the template's settings as changes, or give the template a new version.")
 		}
 		if t.Settings, err = s.templateSettings(r.Context(), a, in.Spec); err != nil {
 			return err
@@ -939,10 +941,10 @@ func (s *Server) templateVersionToMake(ctx context.Context, a *access, id string
 		return "", nil, err
 	}
 	if v.SettingsOnly {
-		return "", nil, &Error{Status: http.StatusConflict, Code: "settings_only", Message: "This template has settings alone, with no files to copy: make a new server with its settings."}
+		return "", nil, &Error{Status: http.StatusConflict, Code: "settings_only", Message: "This template has settings alone, with no files to copy: make a new server with the template's settings."}
 	}
 	if v.Current == nil {
-		return "", nil, &Error{Status: http.StatusConflict, Code: "no_version", Message: "This template has no version yet. Wait for its first to be saved."}
+		return "", nil, &Error{Status: http.StatusConflict, Code: "no_version", Message: "This template has no version yet. Wait for the first one to be saved."}
 	}
 	if t.Changes != "" {
 		changes = json.RawMessage(t.Changes)

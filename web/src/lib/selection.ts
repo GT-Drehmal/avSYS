@@ -9,6 +9,8 @@ export interface Selection {
   toggle: (id: string, range?: boolean) => void;
   /** Selects everything, or nothing if everything already is. */
   toggleAll: () => void;
+  /** Selects these, or none of them if all of them already are: one part of the list. */
+  toggleSome: (ids: string[]) => void;
   clear: () => void;
   /** Leaves only these selected, of the ones that are. */
   keep: (ids: string[]) => void;
@@ -66,6 +68,16 @@ export function useSelection(ids: string[], scope: string): Selection {
   const keep = useCallback((ids: string[]) => setPicked((now) => new Set(ids.filter((id) => now.has(id)))), []);
   const all = order.length > 0 && order.every((id) => picked.has(id));
   const toggleAll = useCallback(() => setPicked(all ? new Set() : new Set(order)), [all, order]);
+  const toggleSome = useCallback(
+    (ids: string[]) =>
+      setPicked((now) => {
+        const next = new Set(now);
+        const every = ids.every((id) => now.has(id));
+        for (const id of ids) every ? next.delete(id) : next.add(id);
+        return next;
+      }),
+    [],
+  );
 
   const count = picked.size;
   useEffect(() => {
@@ -84,6 +96,7 @@ export function useSelection(ids: string[], scope: string): Selection {
     has: (id) => picked.has(id),
     toggle,
     toggleAll,
+    toggleSome,
     clear,
     keep,
     all,

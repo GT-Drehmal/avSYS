@@ -124,7 +124,7 @@ func errNoRecord(err error) error {
 // files, and one not uploaded there has to wait until the server exists.
 func checkCopiedContent(requested, recorded *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage) error {
 	if requested.Modpack != nil {
-		return errBadRequest("A copy keeps its modpack. Change the modpack's version after it is created.")
+		return errBadRequest("A copy keeps the original's modpack. Change the modpack's version after the copy is created.")
 	}
 	if _, said := given["mods"]; !said {
 		return nil
@@ -453,7 +453,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		defer cancel()
 		err := s.populate(ctx, a.Org.Slug, mc, snap, op, final, &record.Spec, picture, newWorld)
 		if err != nil {
-			err = failed(err, "making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again")
+			err = failed(err, "making this server from the snapshot did not finish, so the server's files are incomplete; delete the server and make it again")
 		}
 		s.finishOperation(ctx, a.Namespace, name, kindCreate, snap, nil, err)
 		return err
@@ -593,7 +593,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 		if err == nil {
 			err = s.populate(ctx, a.Org.Slug, created, snap, op, final, original, picture, newWorld)
 			if err != nil {
-				err = failed(err, "making this server from the snapshot did not finish, so its files are incomplete; delete it and make it again")
+				err = failed(err, "making this server from the snapshot did not finish, so the server's files are incomplete; delete the server and make it again")
 			}
 		}
 		s.finishOperation(ctx, a.Namespace, name, kindCreate, snap, nil, err)
@@ -856,7 +856,7 @@ func softwareChanged(spec, recorded *avsysv1.MinecraftServerSpec) bool {
 // version or loader than its modpack's: that is changed with the modpack.
 func modpackSoftware(spec, recorded *avsysv1.MinecraftServerSpec) error {
 	if softwareChanged(spec, recorded) && spec.Modpack != nil {
-		return errBadRequest("This server runs a modpack. Change the modpack's version after it is created.")
+		return errBadRequest("This server runs a modpack. Change the modpack's version after the server is created.")
 	}
 	return nil
 }
@@ -870,7 +870,7 @@ func leaveWorld(spec, original, requested *avsysv1.MinecraftServerSpec, newWorld
 		return nil
 	}
 	if levelOf(spec) == "" || levelOf(original) == "" {
-		return errBadRequest("Which folder its world is in could not be told from its settings, so it cannot be given a new one.")
+		return errBadRequest("Which folder the world is in could not be told from the server's settings, so the copy cannot be given a new world.")
 	}
 	if _, asked := requested.Properties["level-seed"]; !asked {
 		delete(spec.Properties, "level-seed")

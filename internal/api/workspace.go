@@ -99,7 +99,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request, u *store.User)
 	}
 	conn, err := s.Gateway.DialWorkspace(ctx, a.Namespace, mc.Name)
 	if err != nil {
-		return fail("The workspace is not reachable right now. It may be restarting.")
+		return fail("The workspace is not reachable right now. The server may be restarting.")
 	}
 	defer conn.Close()
 	session, err := conn.NewSession()
@@ -355,7 +355,7 @@ func (s *Server) openFiles(r *http.Request, a *access, mc *avsysv1.MinecraftServ
 	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
 	if err != nil {
 		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
-		return nil, "", nil, "", &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. It may be restarting."}
+		return nil, "", nil, "", &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. The server may be restarting."}
 	}
 	return a, mc.Name, sc, full, nil
 }
@@ -401,6 +401,10 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	entries := make([]fileEntry, 0, len(infos))
 	for _, fi := range infos {
+		// A file still being sent, or one whose sending was given up on.
+		if strings.Contains(fi.Name(), ".avsys-upload") {
+			continue
+		}
 		e := fileEntry{Name: fi.Name(), Size: fi.Size(), Dir: fi.IsDir(), ModTime: fi.ModTime().UTC()}
 		if fi.Mode()&fs.ModeSymlink != 0 {
 			e.Link = true
@@ -499,8 +503,8 @@ func tagNow(sc *sftp.Client, full string) (string, error) {
 	return fileTag(b.Bytes()), nil
 }
 
-// maxUpload bounds a single file write. World archives can be large; anything
-// beyond this is better moved with rsync or scp over SSH.
+// maxUpload bounds what is sent in one request. Anything larger is sent in
+// parts, each kept as it comes, and is bounded only by the room there is.
 const maxUpload = 2 << 30
 
 func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User) error {
@@ -511,6 +515,9 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 	defer release()
 	if full == dataRoot {
 		return errBadRequest("Name a file to write.")
+	}
+	if r.URL.Query().Get("upload") != "" {
+		return s.writeFilePart(w, r, u, a, server, sc, full)
 	}
 	// Saved from the editor, it is written only over the file it opened,
 	// and is no bigger than the editor opens: one that was would have no
@@ -555,7 +562,7 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 MB can't be saved here. Upload the file instead."}
 		}
 		if errors.As(err, &tooLarge) {
-			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 GB must be copied over SSH, with scp or rsync."}
+			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Over 2 GB in one request: send it in parts."}
 		}
 		return fileError(err)
 	}
