@@ -12,7 +12,7 @@ import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../..
 import { PicturePicker } from "../../components/Picture";
 import { PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, triState } from "../../components/ServerFields";
-import { ExtraPorts, type PortDraft } from "../../components/ExtraPorts";
+import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { ReplaceWorld } from "../../components/ReplaceWorld";
 import { useServerContext } from "./ServerPage";
@@ -73,7 +73,7 @@ function toDraft(spec: ServerSpec): Draft {
     exposeType: spec.expose.type,
     hostname: spec.expose.hostname ?? "",
     loadBalancerIP: spec.expose.loadBalancerIP ?? "",
-    ports: (spec.ports ?? []).map((p) => ({ name: p.name, port: String(p.port), protocol: p.protocol ?? "TCP" })),
+    ports: portDrafts(spec.ports),
     sleepEnabled: !!spec.sleep.enabled,
     idleMinutes: String(spec.sleep.idleMinutes),
     motd: p["motd"] ?? "",
@@ -125,7 +125,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
     resources: { ...current.resources, memory: fromGigabytes(d.memory) },
     storage: { ...current.storage, size: fromGigabytes(d.storage) },
     expose: { type: d.exposeType, hostname: d.hostname.trim(), loadBalancerIP: d.loadBalancerIP.trim() },
-    ports: d.ports.filter((p) => p.name.trim() || p.port.trim()).map((p) => ({ name: p.name.trim(), port: Number(p.port), protocol: p.protocol })),
+    ports: portsOf(d.ports),
     sleep: { enabled: d.sleepEnabled, idleMinutes: Number(d.idleMinutes) || 15 },
     properties: properties as Record<string, string>,
     ops: lines(d.ops),

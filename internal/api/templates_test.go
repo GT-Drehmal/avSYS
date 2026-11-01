@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -125,7 +126,8 @@ func TestTemplateOfSettingsAlone(t *testing.T) {
 	const settings = `{"loader":"fabric","version":"LATEST","resources":{"memory":"4Gi"},"storage":{"size":"10Gi"},` +
 		`"eula":true,"state":"Running","displayName":"Not this","image":"someone/else","nodeSelector":{"disk":"fast"},` +
 		`"expose":{"type":"Router","hostname":"play.example.com"},"jvm":{"extraFlags":"-XX:+UseZGC"},` +
-		`"mods":[{"source":"modrinth","kind":"mod","project":"lithium"}],"properties":{"difficulty":"hard"}}`
+		`"mods":[{"source":"modrinth","kind":"mod","project":"lithium"}],"properties":{"difficulty":"hard"},` +
+		`"ports":[{"name":"voice-chat","port":24454,"protocol":"UDP"}]}`
 
 	code, made := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Survival base","description":"Hard, with Lithium.","spec":`+settings+`}`)
 	if code != http.StatusCreated || made["settingsOnly"] != true {
@@ -147,6 +149,11 @@ func TestTemplateOfSettingsAlone(t *testing.T) {
 	}
 	if spec["version"] != "LATEST" || len(spec["mods"].([]any)) != 1 || spec["properties"].(map[string]any)["difficulty"] != "hard" {
 		t.Errorf("not kept as given: %v", spec)
+	}
+	// What its mods listen on is kept: each server made from it is given
+	// public ports of its own.
+	if ports := spec["ports"]; fmt.Sprint(ports) != "[map[name:voice-chat port:24454 protocol:UDP]]" {
+		t.Errorf("its ports: %v", ports)
 	}
 
 	// Seen by everyone in the organization, the launch flags by admins only.
@@ -343,8 +350,11 @@ func TestTemplateFromASnapshot(t *testing.T) {
 		t.Errorf("a server's own kept: %v", got)
 	}
 	// Changed again, over what it had.
-	if code, out := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"properties":{"pvp":"false"}}}`); code != http.StatusOK {
+	if code, out := call("admin", "PATCH", "/orgs/alpha/templates/"+peaceful, `{"changes":{"properties":{"pvp":"false"},"ports":[{"name":"map","port":8100,"protocol":"TCP"}]}}`); code != http.StatusOK {
 		t.Fatalf("changed again: %d %v", code, out)
+	}
+	if ports := spec(peaceful)["ports"]; fmt.Sprint(ports) != "[map[name:map port:8100 protocol:TCP]]" {
+		t.Errorf("its ports: %v", ports)
 	}
 	if props := spec(peaceful)["properties"].(map[string]any); props["difficulty"] != "peaceful" || props["pvp"] != "false" {
 		t.Errorf("changed again: %v", props)

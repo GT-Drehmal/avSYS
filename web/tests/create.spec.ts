@@ -39,7 +39,7 @@ test("everything a server can be given later can be given when it is made", asyn
   await page.getByLabel("Message of the day").fill("Come on in");
   await page.getByLabel("Who can join").selectOption("admin");
   await page.getByLabel("Operators by role").selectOption("owner");
-  await page.getByRole("button", { name: /How it is reached, and sleep/ }).click();
+  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
   await page.getByRole("switch", { name: /Sleep when empty/ }).click();
   await page.getByLabel("After minutes with no players").fill("5");
   await page.getByLabel("Scheduled snapshots").selectOption("off");
@@ -76,7 +76,7 @@ test("a server open to anyone has no whitelist, and one that is not routed does 
   await page.getByLabel("Display name").fill("Open");
   await page.getByLabel("Who can join").selectOption("anyone");
   await expect(page.getByText(/Bots look for open servers/)).toBeVisible();
-  await page.getByRole("button", { name: /How it is reached, and sleep/ }).click();
+  await page.getByRole("button", { name: /How it is reached, ports and sleep/ }).click();
   await page.getByRole("switch", { name: /Sleep when empty/ }).click();
   await page.getByLabel("How it is reached").selectOption("NodePort");
   await expect(page.getByRole("switch", { name: /Sleep when empty/ })).toBeDisabled();
