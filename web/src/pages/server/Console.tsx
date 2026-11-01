@@ -14,6 +14,9 @@ interface Line {
 }
 
 const maxLines = 3000;
+/** How long the log so far may go quiet before it is taken as all there, and how long it is held at most, in ms. */
+const historyQuiet = 120;
+const historyLimit = 1000;
 let nextLineId = 1;
 const toLines = (texts: string[], kind: Line["kind"]): Line[] => texts.map((text) => ({ id: nextLineId++, text: plain(text), kind }));
 
@@ -277,16 +280,43 @@ function LiveConsole() {
   useEffect(() => {
     setLines([]);
     const source = new EventSource(`/api/v1${path}/console`);
+    // What follows a reset is the log so far, in as many batches as it takes:
+    // held and shown whole, in place of what was there, rather than scrolled
+    // through. It is over once nothing has come for a moment, or, for a
+    // server that never goes quiet, soon after it began.
+    let held: Line[] | null = null;
+    let quiet: ReturnType<typeof setTimeout> | undefined;
+    let limit: ReturnType<typeof setTimeout> | undefined;
+    const show = () => {
+      clearTimeout(quiet);
+      clearTimeout(limit);
+      if (held) setLines(held.slice(-maxLines));
+      held = null;
+    };
     source.addEventListener("reset", () => {
       setWaiting(false);
-      setLines([]);
+      show();
+      held = [];
+      quiet = setTimeout(show, historyQuiet);
+      limit = setTimeout(show, historyLimit);
     });
     source.addEventListener("lines", (e) => {
       setWaiting(false);
-      append(toLines((JSON.parse(e.data) as string[]).filter((l) => !rconNoise.test(l)), "log"));
+      const more = toLines((JSON.parse(e.data) as string[]).filter((l) => !rconNoise.test(l)), "log");
+      if (!held) return append(more);
+      held.push(...more);
+      clearTimeout(quiet);
+      quiet = setTimeout(show, historyQuiet);
     });
-    source.addEventListener("waiting", () => setWaiting(true));
-    return () => source.close();
+    source.addEventListener("waiting", () => {
+      show();
+      setWaiting(true);
+    });
+    return () => {
+      clearTimeout(quiet);
+      clearTimeout(limit);
+      source.close();
+    };
   }, [path, append]);
 
   // Follow new output unless the reader has scrolled up to look at something.
