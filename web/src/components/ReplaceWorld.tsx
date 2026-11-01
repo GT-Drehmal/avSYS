@@ -1,12 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { api, ApiError, qs, serverPath, type Server } from "../lib/api";
+import { api, ApiError, type LibraryWorld, qs, serverPath, type Server, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { bytes } from "../lib/format";
-import { keys, watchReplace } from "../lib/queries";
+import { keys, useMeta, watchReplace } from "../lib/queries";
 import { useGameVersions } from "../lib/software";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
-import { Button, Modal, Notice } from "./ui";
+import { worldSummary } from "../lib/worlds";
+import { Picture } from "./Picture";
+import { WorldPicker } from "./StartPicker";
+import { Button, cx, Modal, Notice } from "./ui";
 import { cancelled, UploadProgress, useUpload } from "./Uploading";
 
 /**
@@ -17,6 +20,10 @@ import { cancelled, UploadProgress, useUpload } from "./Uploading";
 export function ReplaceWorld({ server }: { server: Server }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const meta = useMeta().data;
+  // One of one's own, uploaded, or one from the organization's library.
+  const [from, setFrom] = useState<"upload" | "library">("upload");
+  const [picked, setPicked] = useState<LibraryWorld | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [world, setWorld] = useState<FoundWorld | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,12 +55,14 @@ export function ReplaceWorld({ server }: { server: Server }) {
     if (!o) {
       setFile(null);
       setWorld(null);
+      setPicked(null);
+      setFrom("upload");
       setError(null);
     }
   };
 
   const replace = async () => {
-    if (!file || !world) return;
+    if (from === "library" ? !picked : !file || !world) return;
     setBusy(true);
     setError(null);
     // Answered once the archive is in. The panel does the rest, which the
@@ -61,7 +70,8 @@ export function ReplaceWorld({ server }: { server: Server }) {
     const watch = watchReplace(server.org, server.name, server.spec.displayName || server.name);
     try {
       const path = serverPath(server.org, server.name);
-      await sendParts<Server>(file.name, path, file, (upload) => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", from: "upload", upload, size: file.size })}`, {}));
+      if (from === "library" && picked) await api.put<Server>(`${path}/import?${qs({ world: "true", replace: "true", library: picked.id })}`, undefined);
+      else if (file && world) await sendParts<Server>(file.name, path, file, (upload) => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", from: "upload", upload, size: file.size })}`, {}));
       watch.taken();
       setBusy(false);
       close(false);
@@ -79,7 +89,9 @@ export function ReplaceWorld({ server }: { server: Server }) {
   const versions = useGameVersions();
   const version = server.spec.version === "LATEST" ? (versions.data?.latest ?? "") : server.spec.version;
   const order = versions.data?.ordered ?? [];
-  const newer = !!world?.version && order.includes(world.version) && order.includes(version) && order.indexOf(world.version) < order.indexOf(version);
+  const given = from === "library" ? picked?.version : world?.version;
+  const newer = !!given && order.includes(given) && order.includes(version) && order.indexOf(given) < order.indexOf(version);
+  const segment = (on: boolean) => cx("h-7 rounded-sm px-3 text-xs font-medium", on ? "bg-hover text-fg" : "text-muted hover:text-fg");
   return (
     <>
       <div className="flex flex-wrap items-center gap-3">
@@ -97,6 +109,35 @@ export function ReplaceWorld({ server }: { server: Server }) {
             void replace();
           }}
         >
+          {meta?.snapshots && (
+            <div role="group" aria-label="From" className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
+              <button type="button" aria-pressed={from === "upload"} className={segment(from === "upload")} disabled={busy} onClick={() => setFrom("upload")}>
+                Upload
+              </button>
+              <button type="button" aria-pressed={from === "library"} className={segment(from === "library")} disabled={busy} onClick={() => setFrom("library")}>
+                Library
+              </button>
+            </div>
+          )}
+          {from === "library" ? (
+            picked ? (
+              <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                <Picture name={picked.name} url={worldIcon(server.org, picked.id)} size={32} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{picked.name}</p>
+                  <p className="truncate text-xs text-muted" data-testid="world-summary">
+                    {worldSummary(picked)}
+                  </p>
+                </div>
+                <Button size="sm" disabled={busy} onClick={() => setPicked(null)}>
+                  Change
+                </Button>
+              </div>
+            ) : (
+              <WorldPicker org={server.org} onPick={setPicked} />
+            )
+          ) : (
+          <>
           <label className="flex flex-col gap-1.5 text-[13px]">
             <span className="font-medium">World archive</span>
             <input
@@ -112,6 +153,8 @@ export function ReplaceWorld({ server }: { server: Server }) {
               World "{world.name}"{world.version ? ` · last opened in ${world.version}` : ""} · {bytes(world.size)}
             </p>
           )}
+          </>
+          )}
           {newer && <Notice>This server runs {version}, older than the version this world was last opened in. The game cannot open it.</Notice>}
           {error && <Notice tone="danger">{error}</Notice>}
           {sending && <UploadProgress sending={sending} onCancel={cancel} />}
@@ -119,7 +162,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
             <Button onClick={() => close(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" variant="danger" disabled={!world || !file} loading={busy}>
+            <Button type="submit" variant="danger" disabled={from === "library" ? !picked : !world || !file} loading={busy}>
               Replace the world
             </Button>
           </div>
