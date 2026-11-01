@@ -829,3 +829,20 @@ test("a large file is uploaded in parts, each after the one before, and sent aga
   expect(parts.every((p) => p.size === big.length)).toBe(true);
   expect(parts.at(-1)!.offset + parts.at(-1)!.length).toBe(big.length);
 });
+
+test("what was sent of a large file given up on is taken away", async ({ page }) => {
+  await files(page);
+  const discarded: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*upload=*", (route) => route.fulfill({ status: 400, json: { code: "invalid", message: "Turned down." } }));
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/upload?*", (route) => {
+    discarded.push(route.request().method());
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  const file = path.join(test.info().outputDir, "world.zip");
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, Buffer.alloc(40 << 20, 7));
+  await page.getByLabel("Files to upload").setInputFiles(file);
+  await expect(page.getByText("Turned down.")).toBeVisible();
+  await expect.poll(() => discarded).toEqual(["DELETE"]);
+});

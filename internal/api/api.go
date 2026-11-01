@@ -444,6 +444,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/servers/{server}/files/content", s.authed(s.readFile))
 	api("PUT /orgs/{org}/servers/{server}/files/content", s.authed(s.writeFile))
 	api("GET /orgs/{org}/servers/{server}/files/upload", s.authed(s.fileReceived))
+	api("DELETE /orgs/{org}/servers/{server}/files/upload", s.authed(s.discardFileParts))
 	api("POST /orgs/{org}/servers/{server}/files/mkdir", s.authed(s.makeDir))
 	api("POST /orgs/{org}/servers/{server}/files/rename", s.authed(s.renameFile))
 	api("POST /orgs/{org}/servers/{server}/files/extract", s.authed(s.extractArchive))

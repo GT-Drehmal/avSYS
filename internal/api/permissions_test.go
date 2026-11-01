@@ -307,6 +307,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET " + server + "/files/content", "", "", store.RoleOperator, 0},
 		{"PUT " + server + "/files/content", "", "x", store.RoleOperator, 0},
 		{"GET " + server + "/files/upload", "", "", store.RoleOperator, 0},
+		{"DELETE " + server + "/files/upload", "", "", store.RoleOperator, 0},
 		{"POST " + server + "/files/mkdir", "", "", store.RoleOperator, 0},
 		{"POST " + server + "/files/rename", "", `{"to":"/b"}`, store.RoleOperator, 0},
 		{"POST " + server + "/files/extract", "", "", store.RoleOperator, 0},
