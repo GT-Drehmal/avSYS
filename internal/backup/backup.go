@@ -29,6 +29,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -130,6 +131,10 @@ type Manager struct {
 	// changed is when an organization's snapshots last changed, as far as
 	// this process has seen.
 	changed map[string]time.Time
+	// answers is what restic last said of each repository; see repoState.
+	answers map[string]repoAnswers
+	// records are the records read out of snapshots, which never change.
+	records map[string][]byte
 }
 
 // Snapshot is one saved state of a server.
@@ -481,6 +486,10 @@ func (m *Manager) listAll(ctx context.Context, org string) ([]Snapshot, error) {
 	if !m.exists(org) {
 		return []Snapshot{}, nil
 	}
+	state := m.repoState(org)
+	if list, ok := m.keptList(org, state); ok {
+		return list, nil
+	}
 	out, err := m.restic(ctx, org, "snapshots", "--json", "--no-lock")
 	if err != nil {
 		return nil, err
@@ -494,6 +503,7 @@ func (m *Manager) listAll(ctx context.Context, org string) ([]Snapshot, error) {
 		list = append(list, r.snapshot())
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Time.After(list[j].Time) })
+	m.keep(org, state, func(a *repoAnswers) { a.list = slices.Clone(list) })
 	return list, nil
 }
 
@@ -620,6 +630,10 @@ func (m *Manager) Usage(ctx context.Context, org string) (Usage, error) {
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	state := m.repoState(org)
+	if a, ok := m.kept(org, state); ok && a.usage != nil {
+		return *a.usage, nil
+	}
 	out, err := m.restic(ctx, org, "stats", "--mode", "raw-data", "--json", "--no-lock")
 	if err != nil {
 		return Usage{}, err
@@ -631,7 +645,9 @@ func (m *Manager) Usage(ctx context.Context, org string) (Usage, error) {
 	if err := json.Unmarshal(out, &stats); err != nil {
 		return Usage{}, err
 	}
-	return Usage{Bytes: stats.TotalSize, Snapshots: stats.Snapshots}, nil
+	usage := Usage{Bytes: stats.TotalSize, Snapshots: stats.Snapshots}
+	m.keep(org, state, func(a *repoAnswers) { a.usage = &usage })
+	return usage, nil
 }
 
 // Record returns the description of the server stored inside a snapshot.
@@ -645,7 +661,14 @@ func (m *Manager) Record(ctx context.Context, org, id string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return m.restic(ctx, org, "dump", "--no-lock", snap.ID, RecordPath)
+	if record, ok := m.keptRecord(org, snap.ID); ok {
+		return record, nil
+	}
+	record, err := m.restic(ctx, org, "dump", "--no-lock", snap.ID, RecordPath)
+	if err == nil {
+		m.keepRecord(org, snap.ID, record)
+	}
+	return record, err
 }
 
 // ErrTooLarge is returned for a file in a snapshot larger than was asked for.
