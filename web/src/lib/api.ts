@@ -124,14 +124,32 @@ const pause = (ms: number, signal?: AbortSignal) =>
   });
 
 /**
- * Sends an archive to a server in parts, to `${server}/import/upload`, each
- * written after the one before: one lost on the way is sent again from where
- * the panel says it got to, and a file larger than a request can carry
- * still goes. The first, with wait, waits for a server made a moment ago.
- * Gives up once the panel has not been reached for a few minutes. Resolves
- * to the upload's name, which the import is asked for by.
+ * Sends an archive to a server in parts, to `${server}/import/upload`. The
+ * first, with wait, waits for a server made a moment ago. Resolves to the
+ * upload's name, which the import is asked for by.
  */
-export async function uploadParts(server: string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal, wait = false): Promise<string> {
+export const uploadParts = (server: string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal, wait = false) =>
+  sendInParts(
+    (q) => `${server}/import/upload?${qs(q)}`,
+    (q) => `${server}/import/upload?${qs(q)}`,
+    file,
+    onProgress,
+    signal,
+    wait,
+  );
+
+type PartQuery = Record<string, string | number | undefined>;
+
+/**
+ * Sends a file in parts, each written after the one before: one lost on the
+ * way is sent again from where the panel says it got to, and a file larger
+ * than a request can carry still goes, as large as there is room for. part
+ * is where each part goes and received where how much arrived is asked;
+ * both are given the upload's name, and part where it goes and how large
+ * the whole is. Gives up once the panel has not been reached for a few
+ * minutes. Resolves to the upload's name.
+ */
+export async function sendInParts(part: (q: PartQuery) => string, received: (q: PartQuery) => string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal, wait = false): Promise<string> {
   // Named, so that its parts are never mixed with another's.
   const name = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
   const stopped = () => {
@@ -139,35 +157,36 @@ export async function uploadParts(server: string, file: Blob, onProgress: (p: Pr
   };
   let at = 0;
   let failing = 0;
-  while (at < file.size) {
+  // Even an empty file is sent once, for it to be there.
+  do {
     const from = at;
-    const part = file.slice(from, Math.min(from + partSize, file.size));
+    const piece = file.slice(from, Math.min(from + partSize, file.size));
     try {
       const got = await upload<{ received: number }>(
-        `${server}/import/upload?${qs({ upload: name, offset: from, length: part.size, wait: wait && from === 0 ? "true" : undefined })}`,
-        part,
+        part({ upload: name, offset: from, length: piece.size, size: file.size, wait: wait && from === 0 ? "true" : undefined }),
+        piece,
         (p) => onProgress({ sent: from + p.sent, total: file.size }),
         signal,
       );
       // Taken, and no further: as one lost.
-      if (got.received <= from) throw new ApiError(0, "lost", "The part did not arrive.");
+      if (got.received <= from && file.size > 0) throw new ApiError(0, "lost", "The part did not arrive.");
       at = got.received;
       failing = 0;
     } catch (err) {
       // Lost on the way, or the panel or the server's files out of reach
       // for a moment: again, from where it got to. Turned down: not.
-      const lost = err instanceof ApiError && (err.status === 0 || err.status >= 502 || err.code === "offset") && err.code !== "aborted";
+      const lost = err instanceof ApiError && (err.status === 0 || err.status >= 502 || err.code === "offset") && err.code !== "aborted" && err.status !== 507;
       if (!lost || ++failing > 10) throw err;
       onProgress({ sent: from, total: file.size });
       await pause(Math.min(30_000, 500 * 2 ** failing), signal);
       try {
-        at = (await request<{ received: number }>("GET", `${server}/import/upload?${qs({ upload: name })}`)).received;
+        at = (await request<{ received: number }>("GET", received({ upload: name }))).received;
       } catch {
         // Asked again on the next try.
       }
       stopped();
     }
-  }
+  } while (at < file.size);
   stopped();
   return name;
 }

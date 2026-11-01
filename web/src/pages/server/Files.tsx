@@ -551,7 +551,7 @@ export default function Files() {
       </>
     );
   };
-  const { sending, send, cancel } = useUpload();
+  const { sending, send, sendStaged, cancel } = useUpload();
   const [dropOn, setDropOn] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   // After a file or folder is renamed or moved: what was open in it, chosen
@@ -651,7 +651,21 @@ export default function Files() {
     if (dir !== "/") toggle(dir, true);
     try {
       for (const [i, file] of all.entries()) {
-        await send(all.length > 1 ? `${file.name} (${i + 1} of ${all.length})` : file.name, `${base}/content?${qs({ path: join(dir, file.name) })}`, file);
+        const label = all.length > 1 ? `${file.name} (${i + 1} of ${all.length})` : file.name;
+        const path = join(dir, file.name);
+        // A large one in parts, as large as the server has room for, and
+        // again from where it got to if the connection drops.
+        if (file.size > 32 << 20) {
+          await sendStaged(
+            label,
+            file,
+            (q) => `${base}/content?${qs({ path, ...q })}`,
+            (q) => `${base}/upload?${qs({ path, ...q })}`,
+            async () => undefined,
+          );
+        } else {
+          await send(label, `${base}/content?${qs({ path })}`, file);
+        }
       }
     } catch (err) {
       if (!cancelled(err)) toast.error(err instanceof Error ? err.message : "Upload failed.");

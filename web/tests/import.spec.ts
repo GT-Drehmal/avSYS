@@ -575,14 +575,21 @@ test("a template is given a world of one's own, kept with it, as a server is", a
   const slug = await org([]);
   await as("owner");
   let made: unknown = null;
-  let kept: { params: URLSearchParams; size: number } | null = null;
+  let kept: URLSearchParams | null = null;
+  // Sent in parts beside the organization's snapshots, then taken from there.
+  let sent = 0;
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/uploads\\?`), (route) => {
+    const length = Number(new URL(route.request().url()).searchParams.get("length") ?? 0);
+    sent += length;
+    return route.fulfill({ json: { received: sent } });
+  });
   await page.route(`**/api/v1/orgs/${slug}/templates`, (route) => {
     if (route.request().method() !== "POST") return route.fulfill({ json: [] });
     made = route.request().postDataJSON();
     return route.fulfill({ status: 201, json: { id: "t9" } });
   });
   await page.route(`**/api/v1/orgs/${slug}/templates/t9/world?*`, (route) => {
-    kept = { params: new URL(route.request().url()).searchParams, size: route.request().postDataBuffer()?.length ?? 0 };
+    kept = new URL(route.request().url()).searchParams;
     return route.fulfill({ json: {} });
   });
   await page.goto(`/o/${slug}/templates/new`);
@@ -596,10 +603,8 @@ test("a template is given a world of one's own, kept with it, as a server is", a
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
   expect(made).toMatchObject({ name: "Island", spec: { loader: "paper" } });
   expect(kept).not.toBeNull();
-  const { params, size } = kept!;
-  expect(Object.fromEntries(params)).toEqual({ root: "saves/Island Save", name: "Island", version: "1.21.4", file: "island.zip" });
-  // WebKit does not show what was sent of a file.
-  if (size > 0) expect(size).toBe(save.length);
+  expect(Object.fromEntries(kept!)).toEqual({ root: "saves/Island Save", name: "Island", version: "1.21.4", file: "island.zip", upload: expect.stringMatching(/^[0-9a-f]{32}$/), size: String(save.length) });
+  expect(sent).toBe(save.length);
 });
 
 test("a server made from a template with a world of its own is given it once it is made", async ({ page, as, org, api }) => {

@@ -237,6 +237,11 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"DELETE /orgs/{org}/templates/{template}/versions/{id}", "/orgs/alpha/templates/nope/versions/aaaa1111", "", store.RoleAdmin, 404},
 		{"PUT /orgs/{org}/templates/{template}/world", "/orgs/alpha/templates/nope/world?root=World", "", store.RoleAdmin, 404},
 		{"DELETE /orgs/{org}/templates/{template}/world", "/orgs/alpha/templates/nope/world", "", store.RoleAdmin, 404},
+		// 400: allowed, and no upload was named. 503: allowed, and there is
+		// nowhere to keep it.
+		{"GET /orgs/{org}/uploads", "", "", store.RoleOperator, 400},
+		{"PUT /orgs/{org}/uploads", "/orgs/alpha/uploads?upload=abcdef0123456789&offset=0", "x", store.RoleOperator, 503},
+		{"DELETE /orgs/{org}/uploads", "", "", store.RoleOperator, 400},
 		{"GET /orgs/{org}/worlds", "", "", store.RoleViewer, 200},
 		{"POST /orgs/{org}/worlds", "", `{"name":"Island","server":"world"}`, store.RoleOperator, 503},
 		{"POST /orgs/{org}/worlds/upload", "/orgs/alpha/worlds/upload?name=Island&root=Island", "a world", store.RoleOperator, 503},
@@ -301,6 +306,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"DELETE " + server + "/files", "", "", store.RoleOperator, 0},
 		{"GET " + server + "/files/content", "", "", store.RoleOperator, 0},
 		{"PUT " + server + "/files/content", "", "x", store.RoleOperator, 0},
+		{"GET " + server + "/files/upload", "", "", store.RoleOperator, 0},
 		{"POST " + server + "/files/mkdir", "", "", store.RoleOperator, 0},
 		{"POST " + server + "/files/rename", "", `{"to":"/b"}`, store.RoleOperator, 0},
 		{"POST " + server + "/files/extract", "", "", store.RoleOperator, 0},

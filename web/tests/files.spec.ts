@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./panel";
 
@@ -796,4 +798,34 @@ test("several moved, one failing: trying again is for those left", async ({ page
   await left.getByRole("button", { name: "Move" }).click();
   await expect(left).toHaveCount(0);
   expect(moves).toEqual(["/eula.txt -> /world/eula.txt", "/server.jar -> /world/server.jar"]);
+});
+
+test("a large file is uploaded in parts, each after the one before, and sent again from where it got to when one is lost", async ({ page }) => {
+  await files(page);
+  const parts: { offset: number; length: number; size: number }[] = [];
+  let received = 0;
+  let lost = false;
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*upload=*", async (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    const part = { offset: Number(q.get("offset")), length: Number(q.get("length")), size: Number(q.get("size")) };
+    // The second part is lost on the way, once.
+    if (parts.length === 1 && !lost) {
+      lost = true;
+      return route.abort();
+    }
+    parts.push(part);
+    received = part.offset + part.length;
+    return route.fulfill({ json: { received } });
+  });
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/upload?*", (route) => route.fulfill({ json: { received } }));
+  await page.goto("/o/friends/s/survival/files");
+  const big = Buffer.alloc(70 << 20, 7);
+  const file = path.join(test.info().outputDir, "world.zip");
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, big);
+  await page.getByLabel("Files to upload").setInputFiles(file);
+  await expect.poll(() => parts.length, { timeout: 30_000 }).toBe(3);
+  expect(parts.map((p) => p.offset)).toEqual([0, 32 << 20, 64 << 20]);
+  expect(parts.every((p) => p.size === big.length)).toBe(true);
+  expect(parts.at(-1)!.offset + parts.at(-1)!.length).toBe(big.length);
 });

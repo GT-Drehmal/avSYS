@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, upload, uploadParts, type Progress } from "../lib/api";
+import { ApiError, sendInParts, upload, uploadParts, type Progress } from "../lib/api";
 import { bytes } from "../lib/format";
 import { Spinner } from "./ui";
 
@@ -38,7 +38,10 @@ export function useUpload() {
   /** Sends an archive to a server in parts, then asks for what finish does. */
   const sendParts = <T,>(label: string, server: string, file: Blob, finish: (upload: string) => Promise<T>) =>
     run<T>(label, file, async (p, signal) => finish(await uploadParts(server, file, p, signal)));
-  return { sending, send, sendParts, cancel: () => stop.current?.abort() };
+  /** Sends a file in parts to where part says, then asks for what finish does with its name. */
+  const sendStaged = <T,>(label: string, file: Blob, part: (q: Record<string, string | number | undefined>) => string, received: (q: Record<string, string | number | undefined>) => string, finish: (upload: string) => Promise<T>) =>
+    run<T>(label, file, async (p, signal) => finish(await sendInParts(part, received, file, p, signal)));
+  return { sending, send, sendParts, sendStaged, cancel: () => stop.current?.abort() };
 }
 
 export const cancelled = (err: unknown) => err instanceof ApiError && err.code === "aborted";

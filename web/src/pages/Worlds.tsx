@@ -155,7 +155,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
   const [picture, setPicture] = useState<PictureChange>({ kind: "none" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { sending, send, cancel } = useUpload();
+  const { sending, sendStaged, cancel } = useUpload();
   const input = useRef<HTMLInputElement>(null);
   const reads = useRef(0);
 
@@ -195,7 +195,12 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
       let made: LibraryWorld;
       if (from === "upload") {
         if (!file || !found) return setError("Choose a world archive.");
-        made = await send<LibraryWorld>(file.name, `/orgs/${org}/worlds/upload?${qs({ name, description, root: found.root, version: found.version, file: file.name, unpacked: found.size })}`, file, "POST");
+        // In parts, as large as there is room for, and again from where it
+        // got to if the connection drops.
+        const uploads = (q: Record<string, string | number | undefined>) => `/orgs/${org}/uploads?${qs(q)}`;
+        made = await sendStaged(file.name, file, uploads, uploads, (upload) =>
+          api.post<LibraryWorld>(`/orgs/${org}/worlds/upload?${qs({ name, description, root: found.root, version: found.version, file: file.name, unpacked: found.size, upload, size: file.size })}`, undefined),
+        );
       } else {
         if (!picked) return setError(from === "server" ? "Pick a server." : "Pick a snapshot.");
         made = await api.post<LibraryWorld>(`/orgs/${org}/worlds`, { name, description, ...(picked.server ? { server: picked.server } : { snapshot: picked.snapshot }) });
@@ -265,7 +270,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
                 <Button icon={<Upload className="size-4" />} loading={reading} onClick={() => input.current?.click()}>
                   Choose a world
                 </Button>
-                <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz of a world or a save, up to 2 GB.</p>
+                <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz of a world or a save.</p>
               </div>
             )}
           </>

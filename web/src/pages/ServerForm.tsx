@@ -13,7 +13,7 @@ import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines
 import { Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, upload, worldIcon } from "../lib/api";
+import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { launchOf } from "../lib/launch";
@@ -1070,7 +1070,10 @@ export function ServerForm({
       const path = `/orgs/${org}/templates/${id}/world`;
       if (mine) {
         const { found, file } = mine;
-        await upload(`${path}?${qs({ root: found.root, name: found.name, version: found.version ?? "", file: file.name })}`, file, (p) => setSent(p.total ? p.sent / p.total : 0));
+        // In parts, as large as there is room for.
+        const uploads = (q: Record<string, string | number | undefined>) => `/orgs/${org}/uploads?${qs(q)}`;
+        const upload = await sendInParts(uploads, uploads, file, (p) => setSent(p.total ? p.sent / p.total : 0));
+        await api.put(`${path}?${qs({ root: found.root, name: found.name, version: found.version ?? "", file: file.name, upload, size: file.size })}`, undefined);
       } else if (fromLibrary) {
         await api.put(`${path}?${qs({ library: fromLibrary.id })}`, undefined);
       } else if (keepsTheirs && theirsFrom && theirsFrom !== id) {
