@@ -3,7 +3,7 @@ import { type ComponentType, lazy, StrictMode, Suspense, useEffect } from "react
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import "./app.css";
-import { ErrorBoundary, reloadOnce } from "./components/ErrorBoundary";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Shell } from "./components/Shell";
 import { Setups } from "./components/Setups";
 import { Spinner, Toaster } from "./components/ui";
@@ -69,12 +69,10 @@ function fetchPages() {
   else setTimeout(fetchAll, 2000);
 }
 
-// A part of the app that could not be fetched belongs to a version that is
-// no longer served: the panel was updated under this tab. Loading the page
-// again gets the current one.
-window.addEventListener("vite:preloadError", (event) => {
-  if (reloadOnce()) event.preventDefault();
-});
+// A page that could not be fetched is seen to by the error boundary around
+// it, which loads the panel again. Nothing else may do that: a page fetched
+// ahead fails all the time, as when it is left midway, and that must not
+// reload the one open, with whatever has been typed into it.
 
 function RequireAuth() {
   const me = useMe();

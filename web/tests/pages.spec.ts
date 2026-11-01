@@ -332,3 +332,22 @@ test("a page that could not be fetched, as after the panel was updated, is loade
   await expect(backups).toBeVisible({ timeout: 15_000 });
   expect(refused).toBeGreaterThan(1);
 });
+
+test("a page fetched ahead that fails to arrive leaves the page open alone", async ({ page, as }) => {
+  await as("owner");
+  let refused = 0;
+  await page.route("**/assets/Worlds-*.js", (route) => {
+    refused++;
+    return route.abort();
+  });
+  let loads = 0;
+  page.on("load", () => loads++);
+  await page.goto("/o/friends");
+  await expect(page.getByRole("heading", { name: "Servers" })).toBeVisible();
+  // Something typed is still there once the fetch has failed.
+  await page.getByLabel("Search servers").fill("kept");
+  await expect.poll(() => refused, { timeout: 15_000 }).toBeGreaterThan(0);
+  await page.waitForTimeout(1000);
+  expect(loads).toBe(1);
+  await expect(page.getByLabel("Search servers")).toHaveValue("kept");
+});
