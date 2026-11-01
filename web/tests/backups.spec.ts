@@ -124,6 +124,33 @@ test("several snapshots, of more than one server, are deleted in one request", a
   await expect(bar).toHaveCount(0);
 });
 
+test("every snapshot listed is selected at once, and none again", async ({ page }) => {
+  await page.getByRole("button", { name: "By time" }).click();
+  const all = page.getByLabel("Select every snapshot");
+  await all.click();
+  const bar = page.getByRole("region", { name: "Selection" });
+  await expect(bar).toContainText("6 snapshots selected");
+  await expect(page.getByText("6 of 6 snapshots selected")).toBeVisible();
+  // Some of them: it fills in the rest.
+  await page.getByLabel(/^Select the snapshot of oldworld/).click();
+  await expect(bar).toContainText("5 snapshots selected");
+  await expect(all).not.toBeChecked();
+  await all.click();
+  await expect(bar).toContainText("6 snapshots selected");
+  await all.click();
+  await expect(bar).toHaveCount(0);
+  // Only those searched for.
+  await page.getByRole("searchbox", { name: "Search backups" }).fill("survival");
+  await all.click();
+  await expect(bar).toContainText("4 snapshots selected");
+});
+
+test("a server's snapshots are selected at once on its Backups tab", async ({ page }) => {
+  await page.goto("/o/friends/s/survival/backups");
+  await page.getByLabel("Select every snapshot").click();
+  await expect(page.getByRole("region", { name: "Selection" })).toContainText("4 snapshots selected");
+});
+
 test("a viewer sees the snapshots and is offered nothing to do to them", async ({ page, as }) => {
   await as("viewer");
   await page.reload();
