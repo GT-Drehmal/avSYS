@@ -131,6 +131,16 @@ var modrinthLoaders = map[string][]string{
 	"folia":    {"folia"},
 }
 
+// loadersOf are the Modrinth loader names that fit a server running loader
+// on a game version. NeoForge began on 1.20.1 as a fork of Forge, which it
+// still runs the mods of there; most mods for it are tagged Forge alone.
+func loadersOf(loader, version string) []string {
+	if loader == "neoforge" && version == neoforgeForkVersion {
+		return []string{"neoforge", "forge"}
+	}
+	return modrinthLoaders[loader]
+}
+
 func facet(prefix string, values ...string) []string {
 	out := make([]string, len(values))
 	for i, v := range values {
@@ -170,7 +180,7 @@ func modrinthSearchParams(q url.Values) (url.Values, error) {
 	// A datapack is loader-independent, and a resource pack is not installed
 	// on the server at all, so neither is filtered by loader or side.
 	if kind == "mod" || kind == "plugin" || kind == "modpack" {
-		if loaders := modrinthLoaders[q.Get("loader")]; len(loaders) > 0 {
+		if loaders := loadersOf(q.Get("loader"), q.Get("gameVersion")); len(loaders) > 0 {
 			facets = append(facets, facet("categories", loaders...))
 		}
 	}
@@ -391,7 +401,7 @@ func (s *Server) modrinthVersions(w http.ResponseWriter, r *http.Request, _ *sto
 	// Nothing shown from this list is a changelog, and on a project with
 	// years of versions they are most of the answer.
 	params := url.Values{"include_changelog": {"false"}}
-	if loaders := modrinthLoaders[q.Get("loader")]; len(loaders) > 0 {
+	if loaders := loadersOf(q.Get("loader"), q.Get("gameVersion")); len(loaders) > 0 {
 		encoded, _ := json.Marshal(loaders)
 		params.Set("loaders", string(encoded))
 	} else if q.Get("loader") == "datapack" {
