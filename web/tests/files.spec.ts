@@ -843,6 +843,7 @@ test("what was sent of a large file given up on is taken away", async ({ page })
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, Buffer.alloc(40 << 20, 7));
   await page.getByLabel("Files to upload").setInputFiles(file);
-  await expect(page.getByText("Turned down.")).toBeVisible();
+  // A part this large takes the browser a while to hand over.
+  await expect(page.getByText("Turned down.")).toBeVisible({ timeout: 30_000 });
   await expect.poll(() => discarded).toEqual(["DELETE"]);
 });

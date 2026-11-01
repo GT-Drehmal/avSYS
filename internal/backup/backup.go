@@ -320,6 +320,10 @@ func (m *Manager) Holds(ctx context.Context, org string) (count int, known bool)
 	return 0, len(entries) == 0
 }
 
+// UploadsDir is where an organization's files sent in parts are put
+// together: beside its repository, on the same disk.
+func (m *Manager) UploadsDir(org string) string { return filepath.Join(m.Dir, ".uploads", org) }
+
 // exists reports whether the organization has a repository yet.
 func (m *Manager) exists(org string) bool {
 	_, err := os.Stat(filepath.Join(m.repoDir(org), "config"))
@@ -1129,6 +1133,9 @@ func (m *Manager) Destroy(org string) error {
 		return err
 	}
 	if err := os.Remove(m.keyFile(org)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.RemoveAll(m.UploadsDir(org)); err != nil {
 		return err
 	}
 	// The offsite copy is left as it is: nothing here says to remove it.

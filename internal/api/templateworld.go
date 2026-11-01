@@ -75,6 +75,7 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 	if err != nil {
 		return err
 	}
+	defer s.dropStaged(a, r.URL.Query().Get("upload"))
 	t, _, err := s.template(r.Context(), a, r.PathValue("template"))
 	if err != nil {
 		return err
