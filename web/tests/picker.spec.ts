@@ -88,3 +88,32 @@ test("picking one adds it to the server", async ({ page, org, api, as }) => {
   await page.keyboard.press("Escape");
   await expect(content(page).getByText("Chunky", { exact: true })).toBeVisible();
 });
+
+test("what is searched for runs on the server, the client, or both, and each result says so where it is one side", async ({ page }) => {
+  const sides: (string | null)[] = [];
+  await page.route("**/api/v1/catalog/modrinth/search?*", async (route) => {
+    sides.push(new URL(route.request().url()).searchParams.get("side"));
+    const response = await route.fetch();
+    const body = await response.json();
+    body.hits[0] = { ...body.hits[0], client_side: "required", server_side: "unsupported" };
+    await route.fulfill({ response, json: body });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: /^Add/ }).first().click();
+  await expect(page.getByText("client only").first()).toBeVisible();
+  await page.getByRole("button", { name: /^Filters/ }).click();
+  const server = page.getByRole("checkbox", { name: "Server", exact: true });
+  const client = page.getByRole("checkbox", { name: "Client", exact: true });
+  await expect(server).toBeChecked();
+  await expect(client).not.toBeChecked();
+  expect(sides.at(-1)).toBeNull();
+  await client.check();
+  await expect.poll(() => sides.at(-1)).toBe("both");
+  await server.uncheck();
+  await expect.poll(() => sides.at(-1)).toBe("client");
+  await client.uncheck();
+  await expect.poll(() => sides.at(-1)).toBe("any");
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(server).toBeChecked();
+  await expect(client).not.toBeChecked();
+});
