@@ -1,36 +1,73 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { lazy, StrictMode, Suspense } from "react";
+import { type ComponentType, lazy, StrictMode, Suspense, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import "./app.css";
 import { ErrorBoundary, reloadOnce } from "./components/ErrorBoundary";
 import { Shell } from "./components/Shell";
 import { Setups } from "./components/Setups";
-import { Loading, Spinner, Toaster } from "./components/ui";
+import { Spinner, Toaster } from "./components/ui";
 import { queryClient, useMe } from "./lib/queries";
-import { Account } from "./pages/Account";
-import { Nodes } from "./pages/Nodes";
-import { Backups } from "./pages/Backups";
-import { TemplateForm } from "./pages/TemplateForm";
-import { Templates } from "./pages/Templates";
-import { Worlds } from "./pages/Worlds";
-import { Home } from "./pages/Home";
-import { Invite } from "./pages/Invite";
-import { Login } from "./pages/Login";
-import { Members } from "./pages/Members";
-import { NewServer } from "./pages/NewServer";
-import { OrgSettings } from "./pages/OrgSettings";
-import { ServerPage } from "./pages/server/ServerPage";
-import { Servers } from "./pages/Servers";
-import { Console } from "./pages/server/Console";
-import { Mods } from "./pages/server/Mods";
-import { Settings } from "./pages/server/Settings";
-import { Snapshots } from "./pages/server/Snapshots";
-import { Usage } from "./pages/server/Usage";
 
-// The editor and terminal pull in large libraries, so they load on demand.
+// Each page is fetched as it is needed, so that the first load is the frame
+// and the page opened. The rest follow once there is nothing else to do, so
+// that going to them is as quick as it was.
+const pages = {
+  Account: () => import("./pages/Account"),
+  Backups: () => import("./pages/Backups"),
+  Console: () => import("./pages/server/Console"),
+  Home: () => import("./pages/Home"),
+  Invite: () => import("./pages/Invite"),
+  Login: () => import("./pages/Login"),
+  Members: () => import("./pages/Members"),
+  Mods: () => import("./pages/server/Mods"),
+  NewServer: () => import("./pages/NewServer"),
+  Nodes: () => import("./pages/Nodes"),
+  OrgSettings: () => import("./pages/OrgSettings"),
+  ServerPage: () => import("./pages/server/ServerPage"),
+  Servers: () => import("./pages/Servers"),
+  Settings: () => import("./pages/server/Settings"),
+  Snapshots: () => import("./pages/server/Snapshots"),
+  TemplateForm: () => import("./pages/TemplateForm"),
+  Templates: () => import("./pages/Templates"),
+  Usage: () => import("./pages/server/Usage"),
+  Worlds: () => import("./pages/Worlds"),
+};
+const page = <K extends keyof typeof pages>(name: K) => lazy(() => pages[name]().then((m) => ({ default: (m as unknown as Record<K, ComponentType>)[name] })));
+
+const Account = page("Account");
+const Backups = page("Backups");
+const Console = page("Console");
+const Home = page("Home");
+const Invite = page("Invite");
+const Login = page("Login");
+const Members = page("Members");
+const Mods = page("Mods");
+const NewServer = page("NewServer");
+const Nodes = page("Nodes");
+const OrgSettings = page("OrgSettings");
+const ServerPage = page("ServerPage");
+const Servers = page("Servers");
+const Settings = page("Settings");
+const Snapshots = page("Snapshots");
+const TemplateForm = page("TemplateForm");
+const Templates = page("Templates");
+const Usage = page("Usage");
+const Worlds = page("Worlds");
+
+// The editor and terminal pull in large libraries: not until they are opened.
 const Files = lazy(() => import("./pages/server/Files"));
 const Terminal = lazy(() => import("./pages/server/Terminal"));
+
+/** Fetches the other pages when the browser is idle, unless asked to save data. */
+function fetchPages() {
+  if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return;
+  const fetchAll = () => {
+    for (const load of Object.values(pages)) void load().catch(() => undefined);
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(fetchAll, { timeout: 5000 });
+  else setTimeout(fetchAll, 2000);
+}
 
 // A part of the app that could not be fetched belongs to a version that is
 // no longer served: the panel was updated under this tab. Loading the page
@@ -42,6 +79,10 @@ window.addEventListener("vite:preloadError", (event) => {
 function RequireAuth() {
   const me = useMe();
   const location = useLocation();
+  const signedIn = !!me.data;
+  useEffect(() => {
+    if (signedIn) fetchPages();
+  }, [signedIn]);
   if (me.isPending) return <div className="flex h-dvh items-center justify-center"><Spinner /></div>;
   if (!me.data) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
   return <Outlet />;
@@ -52,6 +93,7 @@ createRoot(document.getElementById("root")!).render(
     <ErrorBoundary full>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <Suspense fallback={<div className="flex h-dvh items-center justify-center"><Spinner /></div>}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/invite/:token" element={<Invite />} />
@@ -72,8 +114,8 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="settings" element={<OrgSettings />} />
                 <Route path="s/:server" element={<ServerPage />}>
                   <Route index element={<Console />} />
-                  <Route path="files/*" element={<Suspense fallback={<Loading />}><Files /></Suspense>} />
-                  <Route path="terminal" element={<Suspense fallback={<Loading />}><Terminal /></Suspense>} />
+                  <Route path="files/*" element={<Files />} />
+                  <Route path="terminal" element={<Terminal />} />
                   <Route path="content" element={<Mods />} />
                   <Route path="usage" element={<Usage />} />
                   {/* Where it was before it was called Content. */}
@@ -86,6 +128,7 @@ createRoot(document.getElementById("root")!).render(
             </Route>
           </Route>
         </Routes>
+        </Suspense>
         <Toaster>
           <Setups />
         </Toaster>

@@ -293,3 +293,41 @@ test("a server's content is its Content tab, and a link to where it was before s
   await expect(page).toHaveURL(/\/o\/friends\/s\/survival\/content$/);
   await expect(content(page).getByText("LuckPerms").first()).toBeVisible();
 });
+
+test("the first load is the page opened, and the others follow when there is nothing else to do", async ({ page, as }) => {
+  const fetched: string[] = [];
+  page.on("request", (r) => {
+    const name = /\/assets\/([A-Za-z]+)-.*\.js$/.exec(r.url())?.[1];
+    if (name) fetched.push(name);
+  });
+  await page.goto("/login");
+  await expect(page.getByRole("button", { name: /sign in|log in/i })).toBeVisible();
+  // Signing in has not happened, so nothing of the panel itself is asked for.
+  expect(fetched).not.toContain("Servers");
+  expect(fetched).not.toContain("Backups");
+  await as("owner");
+  await page.goto("/o/friends");
+  await expect(page.getByRole("heading", { name: "Servers" })).toBeVisible();
+  await expect.poll(() => fetched, { timeout: 15_000 }).toEqual(expect.arrayContaining(["Servers", "Backups", "Worlds", "Templates"]));
+  // The editor and the terminal wait until they are opened.
+  expect(fetched).not.toContain("Terminal");
+});
+
+test("a page that could not be fetched, as after the panel was updated, is loaded again", async ({ page, as }) => {
+  await as("owner");
+  let refused = 0;
+  await page.route("**/assets/Backups-*.js", (route) => {
+    if (refused++ === 0) return route.abort();
+    return route.continue();
+  });
+  await page.goto("/o/friends/backups");
+  const backups = page.getByRole("heading", { name: "Backups" });
+  // WebKit remembers the failure for that address through the reload that
+  // comes straight after it, which an update does not meet, as its parts have
+  // new addresses. The button is there for what a reload does not cure.
+  const reload = page.getByRole("button", { name: "Reload" });
+  await expect(backups.or(reload)).toBeVisible({ timeout: 15_000 });
+  if (await reload.isVisible()) await reload.click();
+  await expect(backups).toBeVisible({ timeout: 15_000 });
+  expect(refused).toBeGreaterThan(1);
+});
