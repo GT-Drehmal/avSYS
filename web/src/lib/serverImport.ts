@@ -304,7 +304,7 @@ export async function inspectWorld(file: File): Promise<FoundWorld> {
   const levels = entries.filter((e) => !e.dir && base(e.path) === "level.dat" && !e.path.startsWith("__MACOSX/"));
   // The shallowest: the Nether's folder in Paper's way has one of its own.
   const level = levels.sort((a, b) => depth(a.path) - depth(b.path) || a.path.length - b.path.length)[0];
-  if (!level) throw new ArchiveError("No world in this archive: it has no level.dat.");
+  if (!level) throw new ArchiveError("No world in this archive: there is no level.dat.");
   const root = dirname(level.path);
   const data = files.get(level.path);
   const read = data ? await levelInfo(data).catch(() => ({ name: "", version: "" })) : { name: "", version: "" };

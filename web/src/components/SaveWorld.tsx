@@ -36,7 +36,7 @@ export function SaveWorld({ org, server, snapshot, onClose }: { org: string; ser
       open
       onOpenChange={(o) => !o && !busy && onClose()}
       title="Save world to library"
-      description={server ? "A snapshot is taken first, and its world saved from that." : "Its world is kept in Worlds, to start servers from."}
+      description={server ? "A snapshot of the server is taken first, and the world is saved from that." : "The snapshot's world is kept in Worlds, to start servers from."}
     >
       <form
         className="flex flex-col gap-4"

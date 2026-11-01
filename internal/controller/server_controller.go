@@ -414,7 +414,7 @@ func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, strin
 		switch {
 		case gameInPod:
 			if loading(pod) {
-				return avsysv1.PhaseStopping, "The game is still loading. It stops once it has loaded."
+				return avsysv1.PhaseStopping, "The game is still loading. The server stops once the game has loaded."
 			}
 			return avsysv1.PhaseStopping, ""
 		// Before its stopped state, which a move sets too.
@@ -521,7 +521,7 @@ func startFailure(pod *corev1.Pod, t *corev1.ContainerStateTerminated, restarts 
 	if waited := notReadyFor(pod); restarts >= lookupRetries && waited >= lookupGrace {
 		return avsysv1.PhaseError, fmt.Sprintf("The game could not look up %s for %d minutes. Check that the cluster can reach the internet.", host, int(waited.Minutes())), true
 	}
-	return avsysv1.PhaseStarting, fmt.Sprintf("The game could not look up %s to download its files. Trying again.", host), true
+	return avsysv1.PhaseStarting, fmt.Sprintf("The game could not look up %s to download the server's files. Trying again.", host), true
 }
 
 // lookupAtEnd is the name in the last failed lookup in a log, if that is how

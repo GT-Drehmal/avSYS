@@ -38,7 +38,7 @@ export function OrgSettings() {
         >
           <PicturePicker name={membership.name} path={`/orgs/${org}/icon`} has={membership.hasIcon} onChange={() => qc.invalidateQueries({ queryKey: keys.me })} />
           <Field label="Name">{(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-          <Field label="Short name" hint="Used in links and SSH logins. It cannot be changed.">
+          <Field label="Short name" hint="Used in links and SSH logins. Cannot be changed.">
             {(id) => <Input id={id} disabled value={membership.slug} className="font-mono" />}
           </Field>
           <div>
@@ -49,7 +49,7 @@ export function OrgSettings() {
         </form>
       </Section>
       <Domains org={org} />
-      <Section title="Delete organization" description="Delete its servers first. Its snapshots are deleted too.">
+      <Section title="Delete organization" description="Delete the organization's servers first. Their snapshots are deleted too.">
         <div>
           <Button variant="danger" onClick={() => setDeleting(true)}>
             Delete {membership.name}

@@ -19,7 +19,7 @@ export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
   if (s.trigger === "pre-restore") return "Before a restore";
   if (s.trigger === "pre-replace") return "Before the world was replaced";
-  if (s.trigger === "final") return s.by ? `Before ${s.by} deleted it` : "Before it was deleted";
+  if (s.trigger === "final") return s.by ? `Before ${s.by} deleted the server` : "Before the server was deleted";
   if (s.trigger === "copy") return s.by ? `For a copy ${s.by} made` : "For a copy";
   if (s.trigger === "move") return s.by ? `For a move ${s.by} made` : "For a move";
   if (s.trigger === "template") return s.by ? `Saved by ${s.by}` : "Saved";
@@ -261,8 +261,8 @@ function keptFor(detail: SnapshotDetail) {
   // Off is not the same as never: running the schedule by hand applies its rules.
   if (paused) {
     return kept.length === 0
-      ? "Scheduled snapshots are off, so it stays for now. It is removed when they run again."
-      : `Scheduled snapshots are off, so it stays for now. When they run again, it is kept as the newest of its ${rules}.`;
+      ? "Scheduled snapshots are off, so this snapshot stays for now, and is removed when they run again."
+      : `Scheduled snapshots are off, so this snapshot stays for now. When they run again, it is kept as the newest of its ${rules}.`;
   }
   if (kept.length === 0) return "Removed the next time the schedule runs.";
   return `Kept by the schedule, as the newest of its ${rules}.`;
@@ -312,7 +312,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
             <Fact label="Why">{s.trigger === "manual" ? (s.by ? `Taken by hand, by ${s.by}` : "Taken by hand") : triggerLabel(s)}</Fact>
             <Fact label="Size">
               {bytes(s.size)} in {s.files.toLocaleString()} file{s.files === 1 ? "" : "s"}.{" "}
-              <span className="text-muted">It added {bytes(s.added)} to storage.</span>
+              <span className="text-muted">This snapshot added {bytes(s.added)} to storage.</span>
             </Fact>
             {detail.data && <Fact label="Kept">{keptFor(detail.data)}</Fact>}
             {offsite.data?.configured && <Fact label="Offsite">{copied ? "In the offsite copy." : "Not in the offsite copy yet."}</Fact>}
@@ -325,12 +325,12 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
             <h3 className="flex items-center gap-2 text-[13px] font-semibold">
               {/* The picture among its files, which a server made from it has. */}
               <Picture name={detail.data?.spec.displayName || s.server} url={snapshotIcon(org, s.id)} size={24} />
-              {s.server} as it was
+              {s.server} as the server was
             </h3>
             {detail.isPending ? (
               <Loading />
             ) : !spec ? (
-              <Notice tone="danger">{detail.error instanceof ApiError ? detail.error.message : "Could not load its details."}</Notice>
+              <Notice tone="danger">{detail.error instanceof ApiError ? detail.error.message : "Could not load the snapshot's details."}</Notice>
             ) : (
               <>
                 <dl className="divide-y divide-line">
@@ -449,12 +449,12 @@ export function RestoreDialog({ server, snapshot, onClose }: { server: Server; s
       open={!!snapshot}
       onOpenChange={(open) => !open && onClose()}
       title={`Restore ${server.name}?`}
-      description={snapshot ? `To how it was ${ago(snapshot.time)}, on ${new Date(snapshot.time).toLocaleString()}.` : ""}
+      description={snapshot ? `Back to how the server was ${ago(snapshot.time)}, on ${new Date(snapshot.time).toLocaleString()}.` : ""}
     >
       <div className="flex flex-col gap-4">
         <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-relaxed text-muted">
           <li>The server stops while its files are restored{server.spec.state === "Stopped" ? "" : ", then starts again"}.</li>
-          <li>Its world, files, version and mods go back to how they were. Anything newer is removed.</li>
+          <li>The server's world, files, version and mods go back to how they were. Anything newer is removed.</li>
           <li>A snapshot is taken first, so you can undo this.</li>
         </ul>
         <div className="flex justify-end gap-2">

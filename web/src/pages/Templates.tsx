@@ -222,7 +222,7 @@ function DeleteTemplate({ org, template, onClose }: { org: string; template: Tem
         }
       }}
       title={template ? `Delete ${template.name}?` : ""}
-      description={error ?? `${n === 0 ? "" : n === 1 ? "Its version is deleted too. " : `Its ${n} versions are deleted too. `}Servers made from it stay as they are. This cannot be undone.`}
+      description={error ?? `${n === 0 ? "" : n === 1 ? "The template's version is deleted too. " : `All ${n} of its versions are deleted too. `}Servers made from the template stay as they are. This cannot be undone.`}
       action="Delete"
       loading={busy}
       onConfirm={async () => {
@@ -277,7 +277,7 @@ function DeleteTemplates({ org, chosen, selection }: { org: string; chosen: Temp
         open={confirming}
         onOpenChange={(o) => !busy && setConfirming(o)}
         title={`Delete ${many}?`}
-        description={`${versions === 0 ? "" : versions === 1 ? "Its version is deleted too. " : `Their ${versions} versions are deleted too. `}Servers made from them stay as they are. This cannot be undone.`}
+        description={`${versions === 0 ? "" : versions === 1 ? "The template's version is deleted too. " : `Their ${versions} versions are deleted too. `}Servers made from them stay as they are. This cannot be undone.`}
         action={`Delete ${many}`}
         loading={busy}
         onConfirm={() => void remove()}

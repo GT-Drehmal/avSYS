@@ -180,7 +180,7 @@ export function Backups() {
                       </option>
                     ))}
                   </Select>
-                  <Select aria-label="Why it was taken" value={onlyReason} onChange={(e) => setOnlyReason(e.target.value)} className="w-44">
+                  <Select aria-label="Reason" value={onlyReason} onChange={(e) => setOnlyReason(e.target.value)} className="w-44">
                     <option value="">Any reason</option>
                     {reasons.map(([trigger, label]) => (
                       <option key={trigger} value={trigger}>

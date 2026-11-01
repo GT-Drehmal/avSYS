@@ -121,7 +121,7 @@ test("one at a URL is given its SHA-1, or taken without one when the panel canno
   await dialog.getByRole("button", { name: "From URL" }).click();
   await dialog.getByLabel("Download URL").fill("https://players-only.example.org/other.zip");
   await dialog.getByRole("button", { name: "Use this pack" }).click();
-  await expect(page.getByText(/Could not get its SHA-1 \(The panel could not reach that address\.\)/)).toBeVisible();
+  await expect(page.getByText(/Could not get the pack's SHA-1 \(The panel could not reach that address\.\)/)).toBeVisible();
   expect(hashed).toBe(1);
   expect(state.sent[1].resourcePack).toMatchObject({ url: "https://players-only.example.org/other.zip", sha1: "" });
 });

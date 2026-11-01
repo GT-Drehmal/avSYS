@@ -144,7 +144,7 @@ func (s *Server) importUploadPart(w http.ResponseWriter, r *http.Request, u *sto
 	}
 	// What is sent must fit in the server's storage, with room to unpack it.
 	if room := mc.Spec.Storage.Size.Value(); room > 0 && offset+r.ContentLength > room {
-		return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "The archive is larger than the server's storage. Give it more."}
+		return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "The archive is larger than the server's storage. Give the server more."}
 	}
 	lock, _ := uploadLocks.LoadOrStore(a.Namespace+"/"+mc.Name, &sync.Mutex{})
 	lock.(*sync.Mutex).Lock()

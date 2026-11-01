@@ -132,10 +132,10 @@ test("a world's own picture goes with it, not with another archive or a server's
 
 test("a world that could not be saved says why, until it is deleted", async ({ page, as }) => {
   await as("admin");
-  await library(page, [world("w1", "Nothing", { ready: false, error: "Its world is not among its files." })]);
+  await library(page, [world("w1", "Nothing", { ready: false, error: "The world is not among the server's files." })]);
   await page.goto("/o/friends/worlds");
   const row = page.getByRole("listitem", { name: "Nothing" });
-  await expect(row).toContainText("Not saved: Its world is not among its files.");
+  await expect(row).toContainText("Not saved: The world is not among the server's files.");
   await expect(row.getByRole("button", { name: "New server" })).toBeDisabled();
   await row.getByRole("button", { name: "Actions for Nothing" }).click();
   await expect(page.getByRole("menuitem", { name: "Download" })).toHaveAttribute("data-disabled", "");
@@ -152,7 +152,7 @@ test("a server's world, or a snapshot's, is saved to the library", async ({ page
   let dialog = page.getByRole("dialog", { name: "Add a world" });
   await dialog.getByRole("button", { name: "Server", exact: true }).click();
   await dialog.getByRole("button", { name: /Survival/ }).first().click();
-  await expect(dialog.getByText("A snapshot of it is taken first")).toBeVisible();
+  await expect(dialog.getByText("A snapshot of the server is taken first")).toBeVisible();
   await expect(dialog.getByLabel("Name")).toHaveValue("Survival");
   await dialog.getByLabel("Name").fill("Spawn");
   await dialog.getByRole("button", { name: "Add world" }).click();
@@ -214,7 +214,7 @@ test("a new server starts with a world from the library, picked where it is kept
   await page.goto(`/o/${slug}/worlds`);
   await page.getByRole("listitem", { name: "Island" }).getByRole("button", { name: "New server" }).click();
   await expect(page.getByRole("heading", { name: "New server" })).toBeVisible();
-  const worldChoice = page.getByRole("group", { name: "Its world" });
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
   await expect(worldChoice.getByRole("button", { name: "Library world" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("world-summary")).toContainText("1.21.4 · 3.0 GB · uploaded");
   await expect(page.getByLabel("Display name")).toHaveValue("Island");
@@ -239,7 +239,7 @@ test("a world from the library newer than the game picked is warned of, and one 
   await page.getByLabel("Display name").fill("Picked");
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Game version").selectOption("1.21.4");
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
   const picker = page.getByRole("list", { name: "Worlds" });
   // One still being saved cannot be picked.
   await expect(picker.getByRole("button", { name: /Lobby/ })).toBeDisabled();
@@ -265,7 +265,7 @@ test("a template is given a world from the library, kept with it", async ({ page
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Game version").selectOption("1.21.4");
   await page.getByLabel("Name", { exact: true }).fill("Island base");
-  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
   await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
   await page.getByRole("button", { name: "Create template" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
@@ -301,7 +301,7 @@ test("a server's world is saved to the library from its Backups tab, named after
   await expect(page.getByRole("button", { name: "Save as template" })).toHaveCount(0);
   await page.getByRole("button", { name: "Save world" }).click();
   const dialog = page.getByRole("dialog", { name: "Save world to library" });
-  await expect(dialog).toContainText("A snapshot is taken first");
+  await expect(dialog).toContainText("A snapshot of the server is taken first");
   await expect(dialog.getByLabel("Name")).toHaveAttribute("placeholder", "Survival");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toHaveCount(0);
@@ -349,12 +349,12 @@ test("a viewer has no world to save", async ({ page, as }) => {
 
 test("a new server asked for with a world that cannot be used yet says so, rather than making a new one", async ({ page, as }) => {
   await as("owner");
-  await library(page, [world("w1", "Island", { ready: false, saving: true }), world("w2", "Nothing", { ready: false, error: "Its world is not among its files." })]);
+  await library(page, [world("w1", "Island", { ready: false, saving: true }), world("w2", "Nothing", { ready: false, error: "The world is not among the server's files." })]);
   await page.goto("/o/friends/new?world=w1");
-  await expect(page.getByText("Island is still being saved. This page goes on once it is.")).toBeVisible();
+  await expect(page.getByText("Island is still being saved. This page continues once the world is ready.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create server" })).toHaveCount(0);
   await page.goto("/o/friends/new?world=w2");
-  await expect(page.getByText("Nothing was not saved: Its world is not among its files.")).toBeVisible();
+  await expect(page.getByText("Nothing was not saved: The world is not among the server's files.")).toBeVisible();
   await page.goto("/o/friends/new?world=gone");
   await expect(page.getByText("There is no such world in the library.")).toBeVisible();
 });
@@ -390,7 +390,7 @@ test("a new server looks as the world it is made with does, unless given a pictu
   await page.route("**/api/v1/orgs/friends/worlds/w1/icon*", (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }));
   await page.goto("/o/friends/new");
   const picture = page.getByRole("button", { name: "Replace" });
-  const choices = page.getByRole("group", { name: "Its world" });
+  const choices = page.getByRole("group", { name: "World", exact: true });
   // A save of one's own, with its picture.
   await choices.getByRole("button", { name: "Upload world" }).click();
   await page.getByLabel("World archive").setInputFiles({ name: "save.zip", mimeType: "application/zip", buffer: zip({ "Save/level.dat": levelDat("1.21.4", "Save"), "Save/icon.png": png }) });

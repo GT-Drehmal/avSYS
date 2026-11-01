@@ -206,7 +206,7 @@ func (s *Server) takeStaged(a *access, q interface{ Get(string) string }) (f *os
 		if fi != nil {
 			got = fi.Size()
 		}
-		return nil, nil, errBadRequest("Only %s of it arrived. Send it again.", sizeOf(got))
+		return nil, nil, errBadRequest("Only %s of the file arrived. Send the file again.", sizeOf(got))
 	}
 	return f, func() {
 		f.Close()

@@ -314,7 +314,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
             }}
           />
         )}
-        {from === "server" && picked && <p className="text-xs text-muted">A snapshot of it is taken first, and the world saved from that.</p>}
+        {from === "server" && picked && <p className="text-xs text-muted">A snapshot of the server is taken first, and the world is saved from that.</p>}
         <Field label="Name">
           {(id) => (
             <Input
@@ -409,7 +409,7 @@ function DeleteWorld({ org, world, onClose }: { org: string; world: LibraryWorld
         }
       }}
       title={world ? `Delete ${world.name}?` : ""}
-      description={error ?? "Servers made with it keep theirs. This cannot be undone."}
+      description={error ?? "Servers made with this world keep theirs. This cannot be undone."}
       action="Delete"
       loading={busy}
       onConfirm={async () => {

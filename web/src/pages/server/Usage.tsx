@@ -88,7 +88,7 @@ function Chart({ title, samples: all, every, value, format, limit, whole, hover,
   const values = samples.map((s) => value(s) ?? 0);
   const now = values[values.length - 1];
   // Not running now: its last figure is from when it last ran.
-  const when = Date.now() - new Date(samples[samples.length - 1].t).getTime() > every * 3000 ? "when it last ran" : "now";
+  const when = Date.now() - new Date(samples[samples.length - 1].t).getTime() > every * 3000 ? "when the server last ran" : "now";
   const peak = Math.max(...values);
   const top = Math.max(limit ?? 0, peak, whole ? 1 : 0) * 1.1 || 1;
   // Over the same hours as the other charts, so they line up.

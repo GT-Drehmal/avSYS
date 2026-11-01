@@ -267,7 +267,7 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 
 // noneFree says a port has no public port as every one is given out.
 func (r *Reconciler) noneFree() string {
-	return fmt.Sprintf("Not open: all public ports from %d to %d are in use. It opens once one is free.", r.Config.PortRange.First, r.Config.PortRange.Last)
+	return fmt.Sprintf("Not open: all public ports from %d to %d are in use. The port opens once one is free.", r.Config.PortRange.First, r.Config.PortRange.Last)
 }
 
 // ownAddress is the address a server's Service of extra ports was given by

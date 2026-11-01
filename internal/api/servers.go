@@ -225,7 +225,7 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	seen := map[string]bool{}
 	for _, m := range spec.Mods {
 		if strings.TrimSpace(m.Project) == "" {
-			return errBadRequest("A mod entry is missing its project.")
+			return errBadRequest("A mod entry is missing a project.")
 		}
 		if m.Source == avsysv1.SourceUpload {
 			// Uploads are named by the upload endpoint; anything else here
@@ -245,7 +245,7 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	}
 	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
 		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
-			return errBadRequest("A resource pack picked from a project names it: source modrinth, and its id.")
+			return errBadRequest("A resource pack picked from a project names the project: source modrinth, and the project's id.")
 		}
 	}
 	// These end up in the game's commands, one per name.
@@ -457,7 +457,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture, newWorld, raw.Node)
 	}
 	if len(raw.Picture) > 0 {
-		return errBadRequest("A new server is given its picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once it is made.")
+		return errBadRequest("A new server is given a picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once the server is made.")
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// A new server has Aikar's flags unless asked not to. Only here: one
@@ -572,7 +572,7 @@ func (s *Server) nameIsFree(ctx context.Context, a *access, name string) error {
 }
 
 func errNameHasHistory(name string) error {
-	return &Error{Status: http.StatusConflict, Code: "name_has_history", Message: fmt.Sprintf("A deleted server named %s still has snapshots. Bring it back, or choose another name.", name)}
+	return &Error{Status: http.StatusConflict, Code: "name_has_history", Message: fmt.Sprintf("A deleted server named %s still has snapshots. Bring that server back, or choose another name.", name)}
 }
 
 // updateServer applies a JSON merge patch to the server's spec: fields left
@@ -970,7 +970,7 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 		return nil
 	}
 	if rp.SHA1 != was.SHA1 {
-		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another to change it.")
+		return errBadRequest("An uploaded resource pack's SHA-1 is that of the file. Upload another pack to change the SHA-1.")
 	}
 	rp.Uploaded = was.Uploaded.DeepCopy()
 	// Its formats are what its file says.

@@ -324,7 +324,7 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 			return snapshotError(err)
 		}
 		if isTemplate(snap) {
-			return errBadRequest("That snapshot is a template's. Make a server from the template, then save its world.")
+			return errBadRequest("That snapshot is a template's. Make a server from the template, then save that server's world.")
 		}
 		record, err := s.recordOf(r.Context(), a.Org.Slug, snap.ID)
 		if err != nil {
@@ -365,7 +365,7 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		}
 	}
 	if level == "" {
-		return errBadRequest("Which folder its world is in could not be told from its settings, so it cannot be saved here.")
+		return errBadRequest("Which folder the world is in could not be told from the server's settings, so the world cannot be saved here.")
 	}
 	if version == "LATEST" {
 		version = ""
@@ -418,7 +418,7 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		}
 		kept, err = s.Backups.KeepArchive(ctx, a.Org.Slug, from.ID, folders, libraryHost(saved.ID), ownWorldFile, u.Username)
 		if errors.Is(err, backup.ErrNotFound) {
-			return kept, errBadRequest("Its world is not among its files.")
+			return kept, errBadRequest("The world is not among the server's files.")
 		} else if err != nil {
 			return kept, err
 		}

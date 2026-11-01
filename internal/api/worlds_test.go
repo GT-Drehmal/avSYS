@@ -187,7 +187,7 @@ func TestWorldLibrary(t *testing.T) {
 			empty = s.ID
 		}
 	}
-	if code, got := call("operator", "POST", "/orgs/alpha/worlds?wait=true", `{"name":"Nothing","snapshot":"`+empty+`"}`); code != http.StatusBadRequest || !strings.Contains(string(got), "not among its files") {
+	if code, got := call("operator", "POST", "/orgs/alpha/worlds?wait=true", `{"name":"Nothing","snapshot":"`+empty+`"}`); code != http.StatusBadRequest || !strings.Contains(string(got), "not among the server's files") {
 		t.Errorf("waited on with no world: %d %s", code, got)
 	}
 	if code, got := call("viewer", "GET", "/orgs/alpha/worlds", ""); code != http.StatusOK || strings.Contains(string(got), `"Nothing"`) {
@@ -206,7 +206,7 @@ func TestWorldLibrary(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if failed["ready"] != false || !strings.Contains(fmt.Sprint(failed["error"]), "not among its files") {
+	if failed["ready"] != false || !strings.Contains(fmt.Sprint(failed["error"]), "not among the server's files") {
 		t.Errorf("failed as %v", failed)
 	}
 	if code, _ := call("admin", "DELETE", "/orgs/alpha/worlds/"+failedID, ""); code != http.StatusNoContent {

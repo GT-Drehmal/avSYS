@@ -101,7 +101,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
         {!stopped && <p className="text-xs text-muted">Stop the server first.</p>}
         {held && <p className="text-xs text-muted">{held}</p>}
       </div>
-      <Modal open={open} onOpenChange={close} title="Replace the world?" description="A snapshot is taken first. Its other files stay as they are.">
+      <Modal open={open} onOpenChange={close} title="Replace the world?" description="A snapshot is taken first. The server's other files stay as they are.">
         <form
           className="flex flex-col gap-4"
           onSubmit={(e) => {
@@ -155,7 +155,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
           )}
           </>
           )}
-          {newer && <Notice>This server runs {version}, older than the version this world was last opened in. The game cannot open it.</Notice>}
+          {newer && <Notice>This server runs {version}, older than the version this world was last opened in. The game cannot open the world.</Notice>}
           {error && <Notice tone="danger">{error}</Notice>}
           {sending && <UploadProgress sending={sending} onCancel={cancel} />}
           <div className="flex justify-end gap-2">
