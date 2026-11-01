@@ -1290,3 +1290,22 @@ test("a server brought back keeps its own world, with no choice of another", asy
   await expect(page.getByLabel("Seed")).toBeDisabled();
   await expect(page.getByRole("switch", { name: "Hardcore" })).toBeDisabled();
 });
+
+test("what is made and the button that makes it stay along the bottom, wherever the form is scrolled to", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  const bar = page.locator("[data-bottom-bar]");
+  await page.getByLabel("Display name").fill("Survival");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await expect(bar).toContainText("Survival · Paper, latest · 4 GB");
+  // At the top of the form, the button is there already.
+  await expect(bar.getByRole("button", { name: "Create server" })).toBeInViewport();
+  await page.getByLabel("Memory (GB)").fill("6");
+  await expect(bar).toContainText("6 GB");
+  // What is wrong is said there too.
+  await page.getByRole("group", { name: "Its world" }).getByRole("button", { name: "Upload world" }).click();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await bar.getByRole("button", { name: "Create server" }).click();
+  await expect(bar).toContainText("Choose a world, or make a new one.");
+});
