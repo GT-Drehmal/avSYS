@@ -71,7 +71,7 @@ test("the library lists its worlds, found by searching", async ({ page, as }) =>
   await expect(page.getByText("No worlds match.")).toBeVisible();
 });
 
-test("a world is uploaded to the library, named as it calls itself, with its own picture", async ({ page, as }) => {
+test("a world is uploaded to the library, named as its file is, with its own picture", async ({ page, as }) => {
   await as("operator");
   const calls = await library(page, []);
   await page.goto("/o/friends/worlds");
@@ -81,12 +81,22 @@ test("a world is uploaded to the library, named as it calls itself, with its own
   await expect(dialog.getByRole("button", { name: "Add world" })).toBeDisabled();
   // A save made in the game, one folder down, with a picture of its own.
   const icon = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  // What it calls itself is coloured as the game shows it: said plainly.
+  await dialog.getByLabel("World archive").setInputFiles({
+    name: "Island Adventure.zip",
+    mimeType: "application/zip",
+    buffer: zip({ "Island Save/level.dat": levelDat("1.21.4", "§6§lIsland§r Save"), "Island Save/region/r.0.0.mca": "land", "Island Save/icon.png": icon }),
+  });
+  await expect(dialog.getByTestId("world-summary")).toContainText('World "Island Save" · last opened in 1.21.4');
+  await expect(dialog.getByLabel("Name")).toHaveValue("Island Adventure");
+  // A name typed in is kept when another file is chosen.
+  await dialog.getByLabel("Name").fill("Island");
   await dialog.getByLabel("World archive").setInputFiles({
     name: "island.zip",
     mimeType: "application/zip",
     buffer: zip({ "Island Save/level.dat": levelDat("1.21.4", "Island"), "Island Save/region/r.0.0.mca": "land", "Island Save/icon.png": icon }),
   });
-  await expect(dialog.getByTestId("world-summary")).toContainText('World "Island" · last opened in 1.21.4');
+  await expect(dialog.getByTestId("world-summary")).toContainText('World "Island"');
   await expect(dialog.getByLabel("Name")).toHaveValue("Island");
   await dialog.getByLabel("Description").fill("Where we started");
   await dialog.getByRole("button", { name: "Add world" }).click();

@@ -15,7 +15,7 @@ import { matches, useSearch } from "../lib/search";
 import { type Selection, useSelection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { worldSummary } from "../lib/worlds";
-import { type FoundWorld, inspectWorld } from "../lib/serverImport";
+import { archiveName, type FoundWorld, inspectWorld } from "../lib/serverImport";
 
 /** An organization's library of worlds: maps kept to start servers from. */
 export function Worlds() {
@@ -151,6 +151,11 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
   const [reading, setReading] = useState(false);
   const [picked, setPicked] = useState<{ server?: string; snapshot?: string; label: string } | null>(null);
   const [name, setName] = useState("");
+  // A name typed in is kept; one filled in follows what is picked.
+  const typed = useRef(false);
+  const fillName = (named: string) => {
+    if (!typed.current) setName(named.slice(0, 60));
+  };
   const [description, setDescription] = useState("");
   const [picture, setPicture] = useState<PictureChange>({ kind: "none" });
   const [busy, setBusy] = useState(false);
@@ -173,13 +178,15 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
     setFile(chosen);
     setFound(null);
     setPicture({ kind: "none" });
+    // Named as the file is, at once: what it was downloaded as says what it
+    // is better than what it calls itself.
+    fillName(archiveName(chosen));
     setReading(true);
     const read = ++reads.current;
     try {
       const world = await inspectWorld(chosen);
       if (read !== reads.current) return;
       setFound(world);
-      setName((was) => was || world.name);
       setPicture(world.icon ? { kind: "file", file: new File([world.icon.slice()], "icon.png", { type: "image/png" }) } : { kind: "none" });
     } catch (err) {
       if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
@@ -258,7 +265,16 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-medium">{file.name}</p>
                   <p className="truncate text-xs text-muted" data-testid="world-summary">
-                    {found ? [`World "${found.name}"`, found.version && `last opened in ${found.version}`, bytes(found.size)].filter(Boolean).join(" · ") : reading ? "Reading…" : ""}
+                    {found ? (
+                      [`World "${found.name}"`, found.version && `last opened in ${found.version}`, bytes(found.size)].filter(Boolean).join(" · ")
+                    ) : reading ? (
+                      <span className="flex items-center gap-1.5">
+                        <Spinner className="size-3" />
+                        Reading the world…
+                      </span>
+                    ) : (
+                      ""
+                    )}
                   </p>
                 </div>
                 <Button size="sm" disabled={busy || reading} onClick={() => input.current?.click()}>
@@ -286,7 +302,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
             org={org}
             onPick={(s) => {
               setPicked({ server: s.name, label: s.spec.displayName || s.name });
-              setName((was) => was || s.spec.displayName || s.name);
+              fillName(s.spec.displayName || s.name);
             }}
           />
         ) : (
@@ -294,12 +310,25 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
             org={org}
             onPick={(s) => {
               setPicked({ snapshot: s.id, label: `${s.server} · ${new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` });
-              setName((was) => was || s.server);
+              fillName(s.server);
             }}
           />
         )}
         {from === "server" && picked && <p className="text-xs text-muted">A snapshot of it is taken first, and the world saved from that.</p>}
-        <Field label="Name">{(id) => <Input id={id} required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
+        <Field label="Name">
+          {(id) => (
+            <Input
+              id={id}
+              required
+              maxLength={60}
+              value={name}
+              onChange={(e) => {
+                typed.current = e.target.value.trim() !== "";
+                setName(e.target.value);
+              }}
+            />
+          )}
+        </Field>
         <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
         {from === "upload" && <PictureChange name={name} value={picture} onChange={setPicture} optional="Optional. Shown in the library." />}
         {error && <Notice tone="danger">{error}</Notice>}
