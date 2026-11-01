@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
@@ -467,13 +468,11 @@ export function SelectAllRow({ selection, ids, noun, className }: { selection: S
 }
 
 /**
- * The bar that appears along the bottom while rows are selected, with what
- * can be done to them.
+ * A bar fixed to the bottom of the window, as tall as what is in it needs. As
+ * much room as it takes is left where it is placed, after the page's content,
+ * so that it never covers the end of it.
  */
-export function SelectionBar({ count, noun, onClear, children }: { count: number; noun: string; onClear: () => void; children: ReactNode }) {
-  // The bar is fixed to the bottom of the window and wraps to as many rows
-  // as its buttons need. As much room as it takes is left where it is
-  // placed, after the page's content, so that it never covers the end of it.
+export function BottomBar({ children, ...rest }: HTMLAttributes<HTMLDivElement>) {
   const bar = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   useLayoutEffect(() => {
@@ -483,12 +482,25 @@ export function SelectionBar({ count, noun, onClear, children }: { count: number
     const watch = new ResizeObserver(() => setHeight(el.offsetHeight));
     watch.observe(el);
     return () => watch.disconnect();
-  }, [count]);
-  if (count === 0) return null;
+  }, []);
   return (
     <>
       <div aria-hidden style={{ height }} />
-      <div ref={bar} role="region" aria-label="Selection" data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+      <div ref={bar} {...rest} data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+        {children}
+      </div>
+    </>
+  );
+}
+
+/**
+ * The bar that appears along the bottom while rows are selected, with what
+ * can be done to them.
+ */
+export function SelectionBar({ count, noun, onClear, children }: { count: number; noun: string; onClear: () => void; children: ReactNode }) {
+  if (count === 0) return null;
+  return (
+      <BottomBar role="region" aria-label="Selection">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3 md:px-10">
           <p className="flex items-center gap-3 text-[13px]">
             <span className="font-medium" aria-live="polite">
@@ -501,8 +513,7 @@ export function SelectionBar({ count, noun, onClear, children }: { count: number
           </p>
           <div className="flex flex-wrap gap-2">{children}</div>
         </div>
-      </div>
-    </>
+      </BottomBar>
   );
 }
 

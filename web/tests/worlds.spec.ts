@@ -382,6 +382,57 @@ test("an operator has no worlds to select", async ({ page, as }) => {
   await expect(page.getByLabel(/^Select /)).toHaveCount(0);
 });
 
+test("a world's picture that comes late does not land on what was picked since", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island"), world("w2", "Arena")]);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  // Held until the test says, and answered with Island's picture.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let asked = false;
+  await page.route("**/api/v1/orgs/friends/worlds/w1/icon*", async (route) => {
+    asked = true;
+    await held;
+    await route.fulfill({ status: 200, contentType: "image/png", body: png });
+  });
+  await page.route("**/api/v1/orgs/friends/worlds/w2/icon*", (route) => route.fulfill({ status: 404, json: { code: "not_found", message: "None." } }));
+  await page.goto("/o/friends/new");
+  const picture = page.getByRole("button", { name: "Replace" });
+  const choices = page.getByRole("group", { name: "World", exact: true });
+  await choices.getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect.poll(() => asked).toBe(true);
+  // Arena, which has no picture, is picked while Island's is on its way.
+  await page.getByRole("button", { name: "Change" }).last().click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Arena/ }).click();
+  await expect(page.getByText("Arena").first()).toBeVisible();
+  const landed = page.waitForResponse("**/worlds/w1/icon*");
+  release();
+  await landed;
+  await page.waitForTimeout(200);
+  await expect(picture).toHaveCount(0);
+});
+
+test("a world's picture goes when the world does, and comes back with it", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island")]);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route("**/api/v1/orgs/friends/worlds/w1/icon*", (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }));
+  await page.goto("/o/friends/new");
+  const picture = page.getByRole("button", { name: "Replace" });
+  const type = page.getByRole("group", { name: "Server type" });
+  await type.getByRole("button", { name: /^Paper/ }).click();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect(picture).toBeVisible();
+  await page.getByRole("button", { name: "Modpack", exact: true }).click();
+  await expect(picture).toHaveCount(0);
+  await page.getByRole("button", { name: "Game version", exact: true }).click();
+  await expect(picture).toBeVisible();
+});
+
 test("a new server looks as the world it is made with does, unless given a picture of its own", async ({ page, as }) => {
   await as("owner");
   await library(page, [world("w1", "Island")]);
