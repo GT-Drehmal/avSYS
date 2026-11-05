@@ -153,7 +153,9 @@ jobs:
   # In three parts side by side.
   browser-part:
     name: browser (${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    # Playwright's WebKit is built for Ubuntu 24.04 (ICU 74). ubuntu-latest
+    # moved to 26.04, where it cannot start.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -186,7 +188,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/apt-archives
-          key: apt-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+          key: apt-${{ runner.os }}-ubuntu-24.04-${{ steps.playwright.outputs.version }}
       # Each try has a few minutes, and what one fetched is kept for the next.
       - name: Browsers
         working-directory: web
