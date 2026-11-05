@@ -317,7 +317,12 @@ ME=$(call "$API/me" | field "d['user']['id']")
 PLAYER=$(call "$API/me" | field "(d.get('minecraft') or {}).get('name', '')")
 linked_here=""
 if [ -z "$PLAYER" ]; then
-  PLAYER=$(call -X PUT -d '{"name":"Notch"}' "$API/me/minecraft" | field "d['name']")
+  # Looked up with Mojang, which turns requests down now and then.
+  for _ in $(seq 1 6); do
+    PLAYER=$(call -X PUT -d '{"name":"Notch"}' "$API/me/minecraft" | field "d['name']" 2>/dev/null) && break
+    sleep 10
+  done
+  [ -n "$PLAYER" ] || fail "a player could not be linked"
   linked_here=1
 fi
 whitelisted() { call -d '{"command":"whitelist list"}' "$SRV/console" | field "d['output']"; }
@@ -330,7 +335,12 @@ case "$(whitelisted)" in *"$PLAYER"*) fail "a member left out stays off the whit
 # Every account a member plays as is on it, their alts too, and an alt
 # unlinked is taken off.
 set_spec '{"spec":{"autoWhitelist":"viewer","whitelistMembers":null}}'
-ALT=$(call -d '{"name":"jeb_"}' "$API/me/minecraft-accounts" | field "[a['uuid'] for a in d if a['name'].lower() == 'jeb_'][0]") || fail "an alt could not be linked"
+ALT=""
+for _ in $(seq 1 6); do
+  ALT=$(call -d '{"name":"jeb_"}' "$API/me/minecraft-accounts" | field "[a['uuid'] for a in d if a['name'].lower() == 'jeb_'][0]" 2>/dev/null) && break
+  sleep 10
+done
+[ -n "$ALT" ] || fail "an alt could not be linked"
 for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" && break; sleep 1; done
 expect "a member's alt is on the whitelist with them" "$(whitelisted)" "jeb_"
 expect "and so is their main one" "$(whitelisted)" "$PLAYER"
