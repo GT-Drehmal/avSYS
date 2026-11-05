@@ -343,3 +343,52 @@ test("the console shows the log so far whole, at its end, and keeps it on screen
   await expect(page.getByText("after the reconnect")).toBeVisible();
   await expect(page.getByText("a new line")).toHaveCount(0);
 });
+
+test("a command run while the log so far is coming in keeps its answer once the log shows", async ({ page, as }) => {
+  await as("owner");
+  await page.addInitScript(() => {
+    const Real = window.EventSource;
+    class Fake {
+      listeners: Record<string, ((e: { data: string }) => void)[]> = {};
+      addEventListener(type: string, f: (e: { data: string }) => void) {
+        this.listeners[type] = [...(this.listeners[type] ?? []), f];
+      }
+      emit(type: string, data: unknown) {
+        for (const f of this.listeners[type] ?? []) f({ data: JSON.stringify(data) });
+      }
+      close() {}
+    }
+    window.EventSource = function (url: string) {
+      if (!url.includes("/console")) return new Real(url);
+      const fake = new Fake();
+      (window as unknown as { consoleStream: Fake }).consoleStream = fake;
+      return fake;
+    } as unknown as typeof EventSource;
+  });
+  await page.route("**/servers/*/console", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "busy", message: "A snapshot is being taken." }) })
+      : route.continue(),
+  );
+  await page.clock.install();
+  await page.goto("/o/friends/s/survival");
+  await page.waitForFunction(() => "consoleStream" in window);
+  const emit = (type: string, data: unknown) => page.evaluate(([t, d]) => (window as unknown as { consoleStream: { emit: (t: unknown, d: unknown) => void } }).consoleStream.emit(t, d), [type, data]);
+  // Time stands still, so the log so far is still held while the command runs.
+  await page.clock.pauseAt(Date.now() + 60_000);
+  await emit("reset", null);
+  await emit("lines", ["[12:00:00 INFO]: the log so far"]);
+  const input = page.getByLabel("Server command");
+  await input.fill("say hi");
+  await input.press("Enter");
+  await expect(page.getByText("A snapshot is being taken.")).toBeVisible();
+  await expect(page.getByText("the log so far")).toHaveCount(0);
+  // The hold ends: the log so far shows, and the command and its answer stay, after it.
+  await page.clock.runFor(2000);
+  await expect(page.getByText("the log so far")).toBeVisible();
+  await expect(page.getByText("> say hi")).toBeVisible();
+  await expect(page.getByText("A snapshot is being taken.")).toBeVisible();
+  const text = await page.getByText("the log so far").locator("xpath=..").innerText();
+  expect(text.indexOf("the log so far")).toBeLessThan(text.indexOf("> say hi"));
+  expect(text.indexOf("> say hi")).toBeLessThan(text.indexOf("A snapshot is being taken."));
+});

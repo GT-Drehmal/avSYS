@@ -285,18 +285,24 @@ function LiveConsole() {
     // through. It is over once nothing has come for a moment, or, for a
     // server that never goes quiet, soon after it began.
     let held: Line[] | null = null;
+    // Lines from the stream go to `held` meanwhile, so any line newer than
+    // the reset is a command run here, or its answer: those are kept, in
+    // the order they came.
+    let since = 0;
     let quiet: ReturnType<typeof setTimeout> | undefined;
     let limit: ReturnType<typeof setTimeout> | undefined;
     const show = () => {
       clearTimeout(quiet);
       clearTimeout(limit);
-      if (held) setLines(held.slice(-maxLines));
+      const sofar = held;
+      if (sofar) setLines((prev) => [...sofar,...prev.filter((l) => l.id >= since)].sort((a, b) => a.id - b.id).slice(-maxLines));
       held = null;
     };
     source.addEventListener("reset", () => {
       setWaiting(false);
       show();
       held = [];
+      since = nextLineId;
       quiet = setTimeout(show, historyQuiet);
       limit = setTimeout(show, historyLimit);
     });
