@@ -185,9 +185,21 @@ func modrinthSearchParams(q url.Values) (url.Values, error) {
 		}
 	}
 	// Mods that only do something on the player's own game are left out,
-	// unless they are asked for.
-	if (kind == "mod" || kind == "modpack") && q.Get("side") != "any" {
-		facets = append(facets, facet("server_side", "required", "optional"))
+	// unless they are asked for: ?side= is "server", the default, "client",
+	// "both" for what runs on each, or "any".
+	if kind == "mod" || kind == "modpack" {
+		side := q.Get("side")
+		switch side {
+		case "", "server", "client", "both", "any":
+		default:
+			return nil, errBadRequest("A side is server, client, both or any.")
+		}
+		if side == "" || side == "server" || side == "both" {
+			facets = append(facets, facet("server_side", "required", "optional"))
+		}
+		if side == "client" || side == "both" {
+			facets = append(facets, facet("client_side", "required", "optional"))
+		}
 	}
 	if v := q.Get("gameVersion"); v != "" && v != "LATEST" {
 		facets = append(facets, facet("versions", v))

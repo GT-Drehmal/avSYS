@@ -24,6 +24,13 @@ function hueOf(name: string) {
 }
 
 /** A project's icon, or for one without, a mark of its kind tinted by its name. */
+/** Where a project runs, where that is one side or needs both. */
+function sideOf(hit: ModrinthHit) {
+  if (hit.server_side === "unsupported") return "client only";
+  if (hit.client_side === "unsupported") return "server only";
+  return hit.client_side === "required" && hit.server_side === "required" ? "client and server" : null;
+}
+
 export function ProjectIcon({ url, size = 36, kind, name = "" }: { url?: string | null; size?: number; kind?: string; name?: string }) {
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [url]);
@@ -92,7 +99,10 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
   const sort = order ?? (q ? "relevance" : "downloads");
   const [filtering, setFiltering] = useState(false);
   const [chosen, setChosen] = useState<string[]>([]);
-  const [clientToo, setClientToo] = useState(false);
+  // Where a mod is to run, as Modrinth's own Client and Server boxes ask.
+  const [onServer, setOnServer] = useState(true);
+  const [onClient, setOnClient] = useState(false);
+  const side = onServer ? (onClient ? "both" : undefined) : onClient ? "client" : "any";
   const [looking, setLooking] = useState<ModrinthHit | null>(null);
 
   const categories = useQuery({
@@ -100,7 +110,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
     queryFn: () => api.get<string[]>(`/catalog/modrinth/categories?${qs({ type })}`),
     staleTime: 60 * 60_000,
   });
-  const filters = { type, loader, gameVersion, q, sort, categories: chosen.join(",") || undefined, side: clientToo ? "any" : undefined };
+  const filters = { type, loader, gameVersion, q, sort, categories: chosen.join(",") || undefined, side };
   const results = useInfiniteQuery({
     queryKey: ["modrinth", filters],
     queryFn: ({ pageParam }) => api.get<ModrinthResults>(`/catalog/modrinth/search?${qs({ ...filters, offset: pageParam || undefined })}`),
@@ -156,7 +166,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
     );
   }
 
-  const narrowed = chosen.length + (clientToo ? 1 : 0);
+  const narrowed = chosen.length + (side ? 1 : 0);
   return (
     <div className="flex h-full min-h-0 flex-col gap-2.5">
       <div className="flex gap-2">
@@ -197,13 +207,20 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
             {categories.isError && <span className="text-xs text-muted">The categories could not be loaded.</span>}
           </div>
           {type === "mod" && (
-            <label className="flex w-fit items-start gap-2 text-xs">
-              <input type="checkbox" checked={clientToo} onChange={(e) => setClientToo(e.target.checked)} className="mt-0.5 size-3.5 accent-(--color-accent)" />
-              <span>
-                Include client-only mods
-                <span className="block text-muted">Mods such as Sodium and Mod Menu, which run in each player's game and usually do nothing on a server. Hidden unless this is ticked.</span>
-              </span>
-            </label>
+            <fieldset className="flex flex-col gap-1 text-xs">
+              <legend className="mb-1 font-medium">Runs on</legend>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={onServer} onChange={(e) => setOnServer(e.target.checked)} className="size-3.5 accent-(--color-accent)" />
+                  Server
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={onClient} onChange={(e) => setOnClient(e.target.checked)} className="size-3.5 accent-(--color-accent)" />
+                  Client
+                </label>
+              </div>
+              <span className="text-muted">Client mods run in each player's game, such as Sodium, and usually do nothing on a server.</span>
+            </fieldset>
           )}
           {narrowed > 0 && (
             <button
@@ -211,7 +228,8 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
               className="w-fit text-xs text-accent hover:underline"
               onClick={() => {
                 setChosen([]);
-                setClientToo(false);
+                setOnServer(true);
+                setOnClient(false);
               }}
             >
               Clear filters
@@ -241,6 +259,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
                   <span className="flex items-baseline gap-2">
                     <span className="truncate text-[13px] font-medium">{hit.title}</span>
                     <span className="shrink-0 text-xs text-faint">by {hit.author}</span>
+                    {sideOf(hit) && <Chip>{sideOf(hit)}</Chip>}
                   </span>
                   <span className="block truncate text-xs text-muted">{hit.description}</span>
                 </span>
