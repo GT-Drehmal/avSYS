@@ -114,7 +114,7 @@ export function useList<T>(items: T[], { said, sorts, filters = [], then }: List
       setParams(
         (now) => {
           const p = new URLSearchParams(now);
-          const had = p.getAll(key);
+          const had = p.getAll(key).filter(Boolean);
           p.delete(key);
           for (const each of had.includes(value) ? had.filter((v) => v !== value) : [...had, value]) p.append(key, each);
           return p;
@@ -124,7 +124,9 @@ export function useList<T>(items: T[], { said, sorts, filters = [], then }: List
     [setParams],
   );
 
-  const wanted = filters.map((f) => ({ filter: f, values: params.getAll(f.key) })).filter((w) => w.values.length > 0);
+  // What an address asks for, less anything empty, as ?role= is: that asks for nothing.
+  const asked = (key: string) => params.getAll(key).filter(Boolean);
+  const wanted = filters.map((f) => ({ filter: f, values: asked(f.key) })).filter((w) => w.values.length > 0);
   const shown = items
     .filter((item) => matches(query, ...said(item)) && wanted.every(({ filter, values }) => filter.values(item).some((v) => !!v && values.includes(v))))
     .sort((a, b) => sort.compare(a, b) || (then?.(a, b) ?? 0));
@@ -138,7 +140,7 @@ export function useList<T>(items: T[], { said, sorts, filters = [], then }: List
     sort: sort.key,
     setSort,
     filters: filters.map((f) => {
-      const on = params.getAll(f.key);
+      const on = asked(f.key);
       const nameOf = (value: string) => f.name?.(value) ?? value;
       // A value asked for in the address stays, for it to be taken off.
       const values = new Set([...items.flatMap((item) => f.values(item).filter((v): v is string => !!v)), ...on]);

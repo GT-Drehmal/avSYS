@@ -199,3 +199,20 @@ test("members are put in order and narrowed", async ({ page, as }) => {
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Ada");
 });
+
+test("an address with a filter left empty shows everything, on every list", async ({ page, as }) => {
+  await as("owner");
+  for (const [path, heading] of [
+    ["/o/friends?status=&software", "Servers"],
+    ["/o/friends/members?role=&minecraft", "Members"],
+    ["/o/friends/templates?kind=", "Templates"],
+    ["/o/friends/worlds?source=&version=", "Worlds"],
+    ["/o/friends/backups?reason=&age=", "Backups"],
+  ]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Stop filtering by/ })).toHaveCount(0);
+  }
+  await expect(page.getByRole("main").getByRole("listitem")).not.toHaveCount(0);
+});
