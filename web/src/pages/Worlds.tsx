@@ -161,6 +161,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { sending, sendStaged, cancel } = useUpload();
+  const worlds = useWorlds(org);
   const input = useRef<HTMLInputElement>(null);
   const reads = useRef(0);
 
@@ -196,6 +197,9 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
   };
 
   const save = async () => {
+    // Said now rather than after a large file has been sent.
+    const wanted = name.trim();
+    if (worlds.data?.some((w) => w.name.toLowerCase() === wanted.toLowerCase())) return setError(`There is already a world called ${wanted}.`);
     setBusy(true);
     setError(null);
     try {

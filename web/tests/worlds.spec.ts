@@ -106,6 +106,26 @@ test("a world is uploaded to the library, named as its file is, with its own pic
   expect(calls[1]).toMatchObject({ method: "PUT", path: "/worlds/w9/icon" });
 });
 
+test("a name already taken is said before a file is sent", async ({ page, as }) => {
+  await as("operator");
+  const calls = await library(page, [world("w1", "Island")]);
+  const parts: string[] = [];
+  await page.route(/\/api\/v1\/orgs\/friends\/uploads/, (route) => {
+    parts.push(route.request().url());
+    return route.fulfill({ json: { received: 0 } });
+  });
+  await page.goto("/o/friends/worlds");
+  await page.getByRole("button", { name: "Add world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add a world" });
+  await dialog.getByLabel("World archive").setInputFiles({ name: "island.zip", mimeType: "application/zip", buffer: zip({ "Save/level.dat": levelDat("1.21.4", "Save") }) });
+  await expect(dialog.getByTestId("world-summary")).toBeVisible();
+  await dialog.getByLabel("Name").fill("ISLAND");
+  await dialog.getByRole("button", { name: "Add world" }).click();
+  await expect(dialog.getByText("There is already a world called ISLAND.")).toBeVisible();
+  expect(parts).toEqual([]);
+  expect(calls).toEqual([]);
+});
+
 test("a world's own picture goes with it, not with another archive or a server's world", async ({ page, as }) => {
   await as("operator");
   const calls = await library(page, []);
