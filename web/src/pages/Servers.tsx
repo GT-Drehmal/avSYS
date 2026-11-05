@@ -5,12 +5,13 @@ import { Link, useNavigate, useParams } from "react-router";
 import { BackupMark, scheduleOf } from "../components/BackupSchedule";
 import { Faces } from "../components/Faces";
 import { Picture } from "../components/Picture";
+import { ListBar } from "../components/ListBar";
 import { ServerActions } from "../components/ServerActions";
 import { useOrg } from "../components/Shell";
-import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, SearchBox, SelectionBar, StatusDot, Loading, Toggle } from "../components/ui";
-import { matches, useSearch } from "../lib/search";
+import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, SelectionBar, StatusDot, Loading, Toggle } from "../components/ui";
+import { byCount, byPlace, byText, byTime, type ListOptions, useList } from "../lib/list";
 import { api, ApiError, atLeast, serverIcon, serverPath, type Server } from "../lib/api";
-import { describeSoftware, displayName } from "../lib/format";
+import { describeSoftware, displayName, loaderNames } from "../lib/format";
 import { keys, useBackupPolicy, useMe, useMeta, useServers } from "../lib/queries";
 import { others, usePresence } from "../lib/presence";
 import { newFrom } from "../lib/origin";
@@ -35,6 +36,26 @@ const phaseWords: Record<string, string> = {
   Sleeping: "Asleep",
   Stopped: "Offline",
   Error: "Error",
+};
+
+/** From most to least alive, as a server's status puts them. */
+const phaseOrder = ["Running", "Starting", "Sleeping", "Stopping", "Error", "Stopped"];
+const phaseOf = (s: Server) => s.status.phase ?? "Stopped";
+
+const serverList: ListOptions<Server> = {
+  said: (s) => [s.name, displayName(s), describeSoftware(s), phaseWords[phaseOf(s)], s.status.address],
+  then: byText(displayName),
+  sorts: [
+    { key: "name", label: "Name", compare: byText(displayName) },
+    { key: "status", label: "Status", compare: byPlace(phaseOf, phaseOrder) },
+    { key: "players", label: "Players", compare: byCount((s) => s.status.players?.online) },
+    { key: "active", label: "Last activity", compare: byTime((s) => s.status.lastActive) },
+  ],
+  filters: [
+    { key: "status", label: "Status", values: (s) => [phaseOf(s)], name: (phase) => phaseWords[phase] ?? phase, order: phaseOrder },
+    { key: "software", label: "Software", values: (s) => [s.spec.modpack ? "Modpack" : (loaderNames[s.spec.loader] ?? s.spec.loader)] },
+    { key: "node", label: "Node", values: (s) => [s.status.node] },
+  ],
 };
 
 const columns = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_72px_minmax(0,1.3fr)_112px] items-center gap-4 px-4";
@@ -155,8 +176,8 @@ export function Servers() {
   const canOperate = atLeast(membership?.role, "operator");
   const people = usePresence(org);
   const me = useMe().data?.user.id;
-  const [query, setQuery] = useSearch();
-  const shown = servers.data?.filter((s) => matches(query, s.name, displayName(s), describeSoftware(s), phaseWords[s.status.phase ?? "Stopped"], s.status.address)) ?? [];
+  const list = useList(servers.data ?? [], serverList);
+  const { shown } = list;
   // Only what is shown can be ticked: a search hides none of what is acted on.
   const selection = useSelection(shown.map((s) => s.name), org);
   const chosen = servers.data?.filter((s) => selection.has(s.name)) ?? [];
@@ -183,7 +204,7 @@ export function Servers() {
         // Room for the bar that the selection brings up, so it covers nothing.
         // On a narrow screen its buttons wrap onto a second row.
         <div className="flex flex-col gap-3">
-        <SearchBox value={query} onChange={setQuery} label="Search servers" />
+        <ListBar list={list} label="Search servers" />
         {shown.length === 0 ? (
           <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No servers match.</p>
         ) : (

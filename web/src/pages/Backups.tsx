@@ -1,17 +1,19 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Camera, ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { backupConcern, BackupSchedule, scheduleOf } from "../components/BackupSchedule";
+import { ListBar } from "../components/ListBar";
 import { OffsiteCopy } from "../components/OffsiteCopy";
 import { Picture } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, software, triggerLabel, type RowsProps } from "../components/Snapshots";
-import { Button, Chip, cx, Empty, Loading, Notice, PageHeader, SearchBox, Select } from "../components/ui";
+import { Button, Chip, cx, Empty, Loading, Notice, PageHeader } from "../components/ui";
 import { api, atLeast, serverIcon, serverPath, snapshotIcon, type Operation, type Server, type Snapshot } from "../lib/api";
 import { ago, bytes, displayName } from "../lib/format";
 import { keys, useAction, useBackupPolicy, useOrgSnapshots, useServers } from "../lib/queries";
-import { matches, useSearch } from "../lib/search";
+import { byCount, byTime, type ListOptions, useList } from "../lib/list";
+import { matches } from "../lib/search";
 import { useSelection, type Selection } from "../lib/selection";
 
 /** How the page lays the snapshots out: a row to a server, or all of them in order of time. */
@@ -28,14 +30,28 @@ function storedView(): View {
 }
 
 /** Why a snapshot was taken, as the filter names it. */
-const reasons: [trigger: string, label: string][] = [
-  ["scheduled", "Scheduled"],
-  ["manual", "By hand"],
-  ["pre-restore", "Before a restore"],
-  ["pre-replace", "Before the world was replaced"],
-  ["final", "Before a delete"],
-  ["copy", "For a copy"],
-  ["move", "For a move"],
+const reasons: Record<string, string> = {
+  scheduled: "Scheduled",
+  manual: "By hand",
+  "pre-restore": "Before a restore",
+  "pre-replace": "Before the world was replaced",
+  final: "Before a delete",
+  copy: "For a copy",
+  move: "For a move",
+};
+
+/** How old a snapshot can be asked to be at least, in days. */
+const ages = ["7", "30", "90"];
+const day = 24 * 60 * 60 * 1000;
+const olderThan = (s: Snapshot) => ages.filter((days) => Date.now() - Date.parse(s.time) > Number(days) * day);
+
+/** What arranges and narrows the list by time, and so what in an address asks for it. */
+const timeParams = ["sort", "server", "reason", "age"];
+
+const sortsByTime: ListOptions<Snapshot>["sorts"] = [
+  { key: "newest", label: "Newest", compare: byTime((s) => s.time) },
+  { key: "oldest", label: "Oldest", compare: (a, b) => byTime<Snapshot>((s) => s.time)(b, a) },
+  { key: "size", label: "Size", compare: byCount((s) => s.size) },
 ];
 
 /** How many snapshots are shown of a server before "show all". */
@@ -55,13 +71,11 @@ export function Backups() {
   const policy = useBackupPolicy(org);
   const canAdmin = atLeast(membership?.role, "admin");
   const canOperate = atLeast(membership?.role, "operator");
-  const [view, setView] = useState<View>(storedView);
+  const [address] = useSearchParams();
+  // A link that asks for an order or a filter is about the list by time.
+  const [view, setView] = useState<View>(() => (timeParams.some((p) => address.has(p)) ? "time" : storedView()));
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [all, setAll] = useState<ReadonlySet<string>>(new Set());
-  const [onlyServer, setOnlyServer] = useState("");
-  const [onlyReason, setOnlyReason] = useState("");
-  const [query, setQuery] = useSearch();
-
   const snapshots = list.data?.snapshots ?? [];
   const byName = new Map(servers.data?.map((s) => [s.name, s]));
   // A snapshot of a server that still exists can put it back. One that is
@@ -91,13 +105,17 @@ export function Backups() {
     const s = byName.get(name);
     return [name, s && displayName(s), !s && servers.data && "deleted"];
   };
+  const byTimeList = useList(snapshots, {
+    said: (s) => [...serverSaid(s.server), triggerLabel(s), software(s), new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })],
+    sorts: sortsByTime,
+    filters: [
+      { key: "server", label: "Server", values: (s) => [s.server] },
+      { key: "reason", label: "Reason", values: (s) => [s.trigger], name: (trigger) => reasons[trigger] ?? trigger, order: Object.keys(reasons) },
+      { key: "age", label: "Age", values: olderThan, name: (days) => `Older than ${days} days`, order: ages },
+    ],
+  });
+  const { query, shown: filtered } = byTimeList;
   const ordered = [...byServer].filter(([name]) => matches(query, ...serverSaid(name))).sort(([a, as], [b, bs]) => Number(!!concernOf(b)) - Number(!!concernOf(a)) || newestTime(bs) - newestTime(as) || a.localeCompare(b));
-  const filtered = snapshots.filter(
-    (s) =>
-      (!onlyServer || s.server === onlyServer) &&
-      (!onlyReason || s.trigger === onlyReason) &&
-      matches(query, ...serverSaid(s.server), triggerLabel(s), software(s), new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })),
-  );
   // What can be ticked is what is on the page, in its order.
   const listed = view === "time" ? filtered : ordered.flatMap(([name, items]) => (open.has(name) ? (all.has(name) ? items : items.slice(0, firstFew)) : []));
   const selection = useSelection(listed.map((s) => s.id), `${org}/${view}`);
@@ -158,8 +176,7 @@ export function Backups() {
 
         {byServer.size > 0 && (
           <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
+            <ListBar list={byTimeList} label="Search backups" plain={view !== "time"}>
               <div role="group" aria-label="Arrange by" className="flex gap-1 rounded-md border border-line bg-bg p-0.5">
                 <button type="button" aria-pressed={view === "servers"} className={tab(view === "servers")} onClick={() => choose("servers")}>
                   By server
@@ -168,29 +185,7 @@ export function Backups() {
                   By time
                 </button>
               </div>
-              <SearchBox value={query} onChange={setQuery} label="Search backups" className="w-full sm:w-56" />
-              </div>
-              {view === "time" && (
-                <div className="flex gap-2">
-                  <Select aria-label="Server" value={onlyServer} onChange={(e) => setOnlyServer(e.target.value)} className="w-44">
-                    <option value="">Every server</option>
-                    {[...groups.keys()].sort().map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </Select>
-                  <Select aria-label="Reason" value={onlyReason} onChange={(e) => setOnlyReason(e.target.value)} className="w-44">
-                    <option value="">Any reason</option>
-                    {reasons.map(([trigger, label]) => (
-                      <option key={trigger} value={trigger}>
-                        {label}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              )}
-            </div>
+            </ListBar>
 
             {view === "time" ? (
               filtered.length === 0 ? (

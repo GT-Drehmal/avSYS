@@ -2,19 +2,42 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Copy, History, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
+import { ListBar } from "../components/ListBar";
 import { Picture } from "../components/Picture";
 import { SaveTemplate } from "../components/SaveTemplate";
 import { useOrg } from "../components/Shell";
 import { software } from "../components/Snapshots";
-import { Button, Chip, Confirm, cx, Empty, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SearchBox, SelectAllRow, SelectionBar, Spinner } from "../components/ui";
-import { matches, useSearch } from "../lib/search";
+import { Button, Chip, Confirm, cx, Empty, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SelectAllRow, SelectionBar, Spinner } from "../components/ui";
+import { byCount, byText, byTime, type ListOptions, useList } from "../lib/list";
 import { type Selection, useSelection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { api, ApiError, atLeast, qs, snapshotIcon, type Template } from "../lib/api";
-import { ago, bytes } from "../lib/format";
+import { ago, bytes, loaderNames } from "../lib/format";
 import { newFrom } from "../lib/origin";
 import { keys, useMeta, useServers, useTemplates } from "../lib/queries";
 import { ready, templateSummary } from "../lib/templates";
+
+const softwareOf = (t: Template) => {
+  if (t.spec?.modpack) return "Modpack";
+  const loader = t.spec?.loader ?? t.current?.loader;
+  return loader ? (loaderNames[loader as keyof typeof loaderNames] ?? loader) : null;
+};
+
+const kinds: Record<string, string> = { settings: "Settings only", files: "With files", world: "With its own world" };
+
+const templateList: ListOptions<Template> = {
+  said: (t) => [t.name, t.description, templateSummary(t)],
+  then: byText((t) => t.name),
+  sorts: [
+    { key: "name", label: "Name", compare: byText((t) => t.name) },
+    { key: "saved", label: "Last saved", compare: byTime((t) => t.current?.time ?? t.updatedAt) },
+    { key: "size", label: "Size", compare: byCount((t) => t.current?.size) },
+  ],
+  filters: [
+    { key: "kind", label: "Kind", values: (t) => [t.settingsOnly ? "settings" : "files", t.world === "own" && "world"], name: (kind) => kinds[kind] ?? kind, order: Object.keys(kinds) },
+    { key: "software", label: "Software", values: (t) => [softwareOf(t)] },
+  ],
+};
 
 /** An organization's templates: servers kept to make others from. */
 export function Templates() {
@@ -28,8 +51,9 @@ export function Templates() {
   const [updating, setUpdating] = useState<Template | null>(null);
   const [versions, setVersions] = useState<Template | null>(null);
   const [deleting, setDeleting] = useState<Template | null>(null);
-  const [query, setQuery] = useSearch();
-  const shownIds = (templates.data ?? []).filter((t) => matches(query, t.name, t.description, templateSummary(t))).map((t) => t.id);
+  const listed = useList(templates.data ?? [], templateList);
+  const { shown } = listed;
+  const shownIds = shown.map((t) => t.id);
   // Several at once, as servers are: admins delete them.
   const selection = useSelection(canAdmin ? shownIds : [], org);
 
@@ -57,7 +81,6 @@ export function Templates() {
     );
   }
   const list = templates.data;
-  const shown = list.filter((t) => matches(query, t.name, t.description, templateSummary(t)));
   // Kept fresh on the dialogs, which are opened with the one clicked.
   const latest = (t: Template | null) => (t ? (list.find((x) => x.id === t.id) ?? null) : null);
 
@@ -71,7 +94,7 @@ export function Templates() {
         <Empty title="No templates yet">Make one from settings, a server or a snapshot.</Empty>
       ) : (
         <>
-        <SearchBox value={query} onChange={setQuery} label="Search templates" />
+        <ListBar list={listed} label="Search templates" />
         {shown.length === 0 ? (
           <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No templates match.</p>
         ) : (
