@@ -435,13 +435,22 @@ func (s *Server) writeFilePart(w http.ResponseWriter, r *http.Request, u *store.
 		}
 	}
 	if offset+n == size {
-		if err := sc.PosixRename(tmp, full); err != nil {
-			return s.filePartError(err, server)
+		if err := s.placeFileParts(r, u, a, server, sc, tmp, full, key, size); err != nil {
+			return err
 		}
-		keptSentWhole(key, size)
-		s.audit(r.Context(), u, a.Org, "files.write", server, relPath(full))
 	}
 	writeJSON(w, http.StatusOK, uploaded{Received: offset + n})
+	return nil
+}
+
+// placeFileParts moves a file sent in parts, all of it there, into place,
+// and remembers that it arrived.
+func (s *Server) placeFileParts(r *http.Request, u *store.User, a *access, server string, sc *sftp.Client, tmp, full, key string, size int64) error {
+	if err := sc.PosixRename(tmp, full); err != nil {
+		return s.filePartError(err, server)
+	}
+	keptSentWhole(key, size)
+	s.audit(r.Context(), u, a.Org, "files.write", server, relPath(full))
 	return nil
 }
 
@@ -486,14 +495,36 @@ func (s *Server) fileReceived(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	defer release()
-	name := r.URL.Query().Get("upload")
+	return s.filePartsReceived(w, r, u, a, server, sc, full)
+}
+
+// filePartsReceived says how much of the file ?upload= names has arrived.
+// Asked with ?size=, the whole of it, one all written but not yet moved into
+// place, as when the files went out of reach just after its last part, is
+// moved now: said to be all there, it would otherwise be left under its
+// upload's name.
+func (s *Server) filePartsReceived(w http.ResponseWriter, r *http.Request, u *store.User, a *access, server string, sc *sftp.Client, full string) error {
+	q := r.URL.Query()
+	name := q.Get("upload")
 	if !uploadName.MatchString(name) {
 		return errBadRequest("Say which upload this is, as ?upload=.")
 	}
 	tmp := fileUpload(full, name)
-	got, err := fileSent(a.Namespace+"/"+server+"/"+tmp, sc, tmp)
+	key := a.Namespace + "/" + server + "/" + tmp
+	lock, _ := stagedLocks.LoadOrStore(key, &sync.Mutex{})
+	lock.(*sync.Mutex).Lock()
+	defer lock.(*sync.Mutex).Unlock()
+
+	got, err := fileSent(key, sc, tmp)
 	if err != nil {
 		return s.filePartError(err, server)
+	}
+	if _, whole := sentWhole.Load(key); !whole {
+		if size, err := strconv.ParseInt(q.Get("size"), 10, 64); err == nil && size > 0 && got == size {
+			if err := s.placeFileParts(r, u, a, server, sc, tmp, full, key, size); err != nil {
+				return err
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, uploaded{Received: got})
 	return nil

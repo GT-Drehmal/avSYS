@@ -279,3 +279,95 @@ func TestPartWhenFilesGoOutOfReach(t *testing.T) {
 		t.Error("files out of reach were taken for nothing being there")
 	}
 }
+
+// The last part can be written and the files go out of reach before it is
+// moved into place. Asked once they are back, with how large the whole is,
+// it is moved then, and only once: not said to be all there while it is
+// still under its upload's name.
+func TestLastPartWrittenNotMoved(t *testing.T) {
+	p := newPanel(t)
+	s, sc := p.srv, memFiles(t)
+	const full, name = "/world.zip", "unmoved0123456789a"
+	tmp := fileUpload(full, name)
+	f, err := sc.Create(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	askAt := func(full, query string) (int, map[string]any) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/x?"+query, nil)
+		if err := s.filePartsReceived(rec, req, &store.User{Username: "someone"}, &access{Namespace: "mc-" + t.Name(), Org: &store.Org{Slug: "alpha"}}, "survival", sc, full); err != nil {
+			var said *Error
+			if !errors.As(err, &said) {
+				return http.StatusInternalServerError, nil
+			}
+			return said.Status, nil
+		}
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	ask := func(query string) (int, map[string]any) { t.Helper(); return askAt(full, query) }
+	if code, out := ask("upload=" + name + "&size=5"); code != http.StatusOK || out["received"] != float64(5) {
+		t.Fatalf("asked: %d %v", code, out)
+	}
+	b, err := func() ([]byte, error) {
+		f, err := sc.Open(full)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		return io.ReadAll(f)
+	}()
+	if err != nil || string(b) != "hello" {
+		t.Errorf("not moved into place: %q %v", b, err)
+	}
+	if _, err := sc.Stat(tmp); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("left under its upload's name: %v", err)
+	}
+	// Asked again, or its last part sent again, it is done, and written once.
+	if code, out := ask("upload=" + name + "&size=5"); code != http.StatusOK || out["received"] != float64(5) {
+		t.Errorf("asked again: %d %v", code, out)
+	}
+	if code, out := filePart(t, s, sc, full, "upload="+name+"&offset=0&size=5", "hello"); code != http.StatusOK || out["received"] != float64(5) {
+		t.Errorf("sent again: %d %v", code, out)
+	}
+	if got, err := p.srv.Store.ServerActivity(t.Context(), "", "survival", time.Time{}, []string{"files.write"}, 10); err != nil || len(got) != 1 {
+		t.Errorf("written %d times: %v", len(got), err)
+	}
+	// One that cannot be moved says so, not that it is all there, and what
+	// was sent stays.
+	if err := sc.MkdirAll("/taken.zip/inside"); err != nil {
+		t.Fatal(err)
+	}
+	f, err = sc.Create(fileUpload("/taken.zip", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write([]byte("hello"))
+	f.Close()
+	if code, out := askAt("/taken.zip", "upload="+name+"&size=5"); code == http.StatusOK {
+		t.Errorf("not moved, and said to be: %d %v", code, out)
+	}
+	if _, err := sc.Stat(fileUpload("/taken.zip", name)); err != nil {
+		t.Errorf("what was sent went: %v", err)
+	}
+	// Part of one is only how much is there.
+	f, err = sc.Create(fileUpload(full, "partial0123456789a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write([]byte("hel"))
+	f.Close()
+	if code, out := ask("upload=partial0123456789a&size=5"); code != http.StatusOK || out["received"] != float64(3) {
+		t.Errorf("part of one: %d %v", code, out)
+	}
+	if _, err := sc.Stat(fileUpload(full, "partial0123456789a")); err != nil {
+		t.Errorf("part of one was moved: %v", err)
+	}
+}
