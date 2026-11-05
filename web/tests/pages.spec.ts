@@ -293,3 +293,61 @@ test("a server's content is its Content tab, and a link to where it was before s
   await expect(page).toHaveURL(/\/o\/friends\/s\/survival\/content$/);
   await expect(content(page).getByText("LuckPerms").first()).toBeVisible();
 });
+
+test("the first load is the page opened, and the others follow when there is nothing else to do", async ({ page, as }) => {
+  const fetched: string[] = [];
+  page.on("request", (r) => {
+    const name = /\/assets\/([A-Za-z]+)-.*\.js$/.exec(r.url())?.[1];
+    if (name) fetched.push(name);
+  });
+  await page.goto("/login");
+  await expect(page.getByRole("button", { name: /sign in|log in/i })).toBeVisible();
+  // Signing in has not happened, so nothing of the panel itself is asked for.
+  expect(fetched).not.toContain("Servers");
+  expect(fetched).not.toContain("Backups");
+  await as("owner");
+  await page.goto("/o/friends");
+  await expect(page.getByRole("heading", { name: "Servers" })).toBeVisible();
+  await expect.poll(() => fetched, { timeout: 15_000 }).toEqual(expect.arrayContaining(["Servers", "Backups", "Worlds", "Templates"]));
+  // The editor and the terminal wait until they are opened.
+  expect(fetched).not.toContain("Terminal");
+});
+
+test("a page that could not be fetched, as after the panel was updated, is loaded again", async ({ page, as, browserName }) => {
+  await as("owner");
+  let refused = 0;
+  await page.route("**/assets/Backups-*.js", (route) => {
+    if (refused++ === 0) return route.abort();
+    return route.continue();
+  });
+  await page.goto("/o/friends/backups");
+  const backups = page.getByRole("heading", { name: "Backups" });
+  // WebKit holds on to the failure of that address through reloads for a
+  // while. An update does not meet that, as its parts have new addresses, so
+  // all that is asked of it here is to say so rather than show nothing.
+  if (browserName === "webkit") {
+    await expect(backups.or(page.getByRole("heading", { name: "This page needs reloading" }))).toBeVisible({ timeout: 15_000 });
+    return;
+  }
+  await expect(backups).toBeVisible({ timeout: 15_000 });
+  expect(refused).toBeGreaterThan(1);
+});
+
+test("a page fetched ahead that fails to arrive leaves the page open alone", async ({ page, as }) => {
+  await as("owner");
+  let refused = 0;
+  await page.route("**/assets/Worlds-*.js", (route) => {
+    refused++;
+    return route.abort();
+  });
+  let loads = 0;
+  page.on("load", () => loads++);
+  await page.goto("/o/friends");
+  await expect(page.getByRole("heading", { name: "Servers" })).toBeVisible();
+  // Something typed is still there once the fetch has failed.
+  await page.getByLabel("Search servers").fill("kept");
+  await expect.poll(() => refused, { timeout: 15_000 }).toBeGreaterThan(0);
+  await page.waitForTimeout(1000);
+  expect(loads).toBe(1);
+  await expect(page.getByLabel("Search servers")).toHaveValue("kept");
+});
