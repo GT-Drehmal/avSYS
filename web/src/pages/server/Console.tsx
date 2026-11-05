@@ -282,8 +282,10 @@ function LiveConsole() {
     const source = new EventSource(`/api/v1${path}/console`);
     // What follows a reset is the log so far, in as many batches as it takes:
     // held and shown whole, in place of what was there, rather than scrolled
-    // through. It is over once nothing has come for a moment, or, for a
-    // server that never goes quiet, soon after it began.
+    // through. It is over once nothing has come for a moment after it
+    // started coming, or soon after the reset whatever came: until it starts,
+    // what was on screen stays, so that a reconnect slow to send it does not
+    // empty the console meanwhile.
     let held: Line[] | null = null;
     // Lines from the stream go to `held` meanwhile, so any line newer than
     // the reset is a command run here, or its answer: those are kept, in
@@ -303,7 +305,6 @@ function LiveConsole() {
       show();
       held = [];
       since = nextLineId;
-      quiet = setTimeout(show, historyQuiet);
       limit = setTimeout(show, historyLimit);
     });
     source.addEventListener("lines", (e) => {

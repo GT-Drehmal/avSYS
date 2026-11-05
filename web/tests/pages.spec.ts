@@ -392,3 +392,44 @@ test("a command run while the log so far is coming in keeps its answer once the 
   expect(text.indexOf("the log so far")).toBeLessThan(text.indexOf("> say hi"));
   expect(text.indexOf("> say hi")).toBeLessThan(text.indexOf("A snapshot is being taken."));
 });
+
+test("on a reconnect, what is on screen stays until the log so far starts coming", async ({ page, as }) => {
+  await as("owner");
+  await page.addInitScript(() => {
+    const Real = window.EventSource;
+    class Fake {
+      listeners: Record<string, ((e: { data: string }) => void)[]> = {};
+      addEventListener(type: string, f: (e: { data: string }) => void) {
+        this.listeners[type] = [...(this.listeners[type] ?? []), f];
+      }
+      emit(type: string, data: unknown) {
+        for (const f of this.listeners[type] ?? []) f({ data: JSON.stringify(data) });
+      }
+      close() {}
+    }
+    window.EventSource = function (url: string) {
+      if (!url.includes("/console")) return new Real(url);
+      const fake = new Fake();
+      (window as unknown as { consoleStream: Fake }).consoleStream = fake;
+      return fake;
+    } as unknown as typeof EventSource;
+  });
+  await page.clock.install();
+  await page.goto("/o/friends/s/survival");
+  await page.waitForFunction(() => "consoleStream" in window);
+  const emit = (type: string, data: unknown) => page.evaluate(([t, d]) => (window as unknown as { consoleStream: { emit: (t: unknown, d: unknown) => void } }).consoleStream.emit(t, d), [type, data]);
+  await page.clock.pauseAt(Date.now() + 60_000);
+  await emit("reset", null);
+  await emit("lines", ["[12:00:00 INFO]: before the reconnect"]);
+  await page.clock.runFor(2000);
+  await expect(page.getByText("before the reconnect")).toBeVisible();
+  // Reconnected, and nothing yet: a slow answer leaves the console as it was.
+  await emit("reset", null);
+  await page.clock.runFor(500);
+  await expect(page.getByText("before the reconnect")).toBeVisible();
+  // Then the log so far comes, and takes its place.
+  await emit("lines", ["[12:00:01 INFO]: after the reconnect"]);
+  await page.clock.runFor(2000);
+  await expect(page.getByText("after the reconnect")).toBeVisible();
+  await expect(page.getByText("before the reconnect")).toHaveCount(0);
+});
