@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -279,6 +280,7 @@ func (s *Server) writeFilePart(w http.ResponseWriter, r *http.Request, u *store.
 
 	flags := os.O_WRONLY | os.O_APPEND
 	if offset == 0 {
+		dropStaleParts(sc, path.Dir(full))
 		// There must be room for it on the server's volume.
 		if vfs, err := sc.StatVFS(path.Dir(full)); err == nil {
 			if free := int64(vfs.Bavail) * int64(vfs.Frsize); size > free {
@@ -331,6 +333,39 @@ func (s *Server) writeFilePart(w http.ResponseWriter, r *http.Request, u *store.
 		s.audit(r.Context(), u, a.Org, "files.write", server, relPath(full))
 	}
 	writeJSON(w, http.StatusOK, uploaded{Received: offset + n})
+	return nil
+}
+
+// dropStaleParts removes from a folder what was sent of files whose senders
+// went away without saying so, as a closed page does: hidden from the list of
+// files, they would otherwise take up its room for good.
+func dropStaleParts(sc *sftp.Client, dir string) {
+	entries, err := sc.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, fi := range entries {
+		if strings.Contains(fi.Name(), ".avsys-upload-") && time.Since(fi.ModTime()) > stagedIdle {
+			_ = sc.Remove(path.Join(dir, fi.Name()))
+		}
+	}
+}
+
+// discardFileParts removes what was sent of a file given up on.
+func (s *Server) discardFileParts(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	_, _, sc, full, release, err := s.writableFiles(r, u)
+	if err != nil {
+		return err
+	}
+	defer release()
+	name := r.URL.Query().Get("upload")
+	if !uploadName.MatchString(name) {
+		return errBadRequest("Say which upload this is, as ?upload=.")
+	}
+	if err := sc.Remove(fileUpload(full, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fileError(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

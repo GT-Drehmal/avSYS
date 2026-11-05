@@ -362,6 +362,11 @@ expect "and is not yet in place" "$(call -o /dev/null -w '%{http_code}' "$SRV/fi
 expect "nor listed" "$(call "$SRV/files?path=/" | field "[e['name'] for e in d['entries'] if 'e2e-parts' in e['name']]")" "[]"
 expect "a part out of turn says how much is there" "$(printf 'x' | call -X PUT --data-binary @- "$FUP&offset=3" | field "(d.get('code'), d.get('received'))")" "('offset', 9)"
 expect "how much is there is said" "$(call "$SRV/files/upload?path=/e2e-parts.bin&upload=e2e-parts-one")" '"received":9'
+# Given up on, what was sent goes.
+GAVEUP="$SRV/files/content?path=/e2e-gaveup.bin&upload=e2e-parts-two&size=12"
+expect "a part of one given up on is taken" "$(printf 'part one,' | call -X PUT --data-binary @- "$GAVEUP&offset=0")" '"received":9'
+expect "and can be taken away" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$SRV/files/upload?path=/e2e-gaveup.bin&upload=e2e-parts-two")" 204
+expect "leaving nothing" "$(call "$SRV/files/upload?path=/e2e-gaveup.bin&upload=e2e-parts-two")" '"received":0'
 expect "the last part puts it in place" "$(printf ' 2!' | call -X PUT --data-binary @- "$FUP&offset=9")" '"received":12'
 expect "whole" "$(call "$SRV/files/content?path=/e2e-parts.bin")" "part one, 2!"
 call -X DELETE "$SRV/files?path=/e2e-parts.bin" >/dev/null
