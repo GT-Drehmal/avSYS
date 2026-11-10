@@ -32,7 +32,7 @@ function storedView(): View {
 /** Why a snapshot was taken, as the filter names it. */
 const reasons: Record<string, string> = {
   scheduled: "Scheduled",
-  manual: "By hand",
+  manual: "Manual",
   "pre-restore": "Before a restore",
   "pre-replace": "Before the world was replaced",
   final: "Before a delete",

@@ -43,7 +43,7 @@ test("a server is opened to see its snapshots, and one of them to see what it ho
 
   // A snapshot taken by hand is nobody's to remove but a person's.
   await snapshots.nth(1).click();
-  await expect(dialog).toContainText("Taken by hand, by owner");
+  await expect(dialog).toContainText("Taken manually, by owner");
   await expect(dialog).toContainText("Until you delete it.");
 });
 
