@@ -99,7 +99,7 @@ def route(url):
     return "/".join(parts), query
 
 budget = float(sys.argv[2])
-by_route, over, lists = {}, [], 0
+by_route, over, lists, slowest = {}, [], 0, (0.0, "")
 for line in open(sys.argv[1]):
     try:
         method, url, took = line.rstrip("\n").split("\t")
@@ -112,18 +112,19 @@ for line in open(sys.argv[1]):
     by_route.setdefault(f"{method} {path}" + (" (waiting)" if waits else ""), []).append(took)
     if method == "GET" and LISTS.match(path) and not waits:
         lists += 1
+        slowest = max(slowest, (took, f"{method} {path}"))
         if took > budget:
             over.append((took, f"{method} {url}"))
 
 print("slowest routes (requests, median, slowest):")
 for name, times in sorted(by_route.items(), key=lambda kv: -max(kv[1]))[:12]:
-    print(f"  {name:<56} {len(times):>4} {statistics.median(times):>9.1f} ms {max(times):>9.1f} ms")
+    print(f"  {name:<68} {len(times):>4} {statistics.median(times):>9.1f} ms {max(times):>9.1f} ms")
 sys.stdout.flush()
 for took, what in sorted(over, reverse=True):
     print(f"FAIL: {what} took {took:.0f} ms, over the {budget:.0f} ms a list may take", file=sys.stderr)
 if over:
     sys.exit(1)
-print(f"ok: every read of a list answered within {budget:.0f} ms ({lists} of them)")
+print(f"ok: every read of a list answered within {budget:.0f} ms ({lists} of them; slowest {slowest[1]}, {slowest[0]:.1f} ms)")
 PY
 }
 field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1], {'d': d}))" "$1"; }
