@@ -1291,6 +1291,30 @@ test("a server brought back keeps its own world, with no choice of another", asy
   await expect(page.getByRole("switch", { name: "Hardcore" })).toBeDisabled();
 });
 
+test("a long error in the bar along the bottom does not cover the end of the form", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.setViewportSize({ width: 375, height: 700 });
+  await page.route(`**/api/v1/orgs/${slug}/servers`, (route) => (route.request().method() === "POST" ? route.fulfill({ status: 400, json: { code: "invalid", message: "That will not do. ".repeat(10) } }) : route.fallback()));
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Survival");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  const eula = page.getByRole("checkbox", { name: /End User License Agreement/ });
+  await eula.check();
+  const bar = page.locator("[data-bottom-bar]");
+  await bar.getByRole("button", { name: "Create server" }).click();
+  await expect(bar).toContainText("That will not do.");
+  await page.mouse.move(180, 300);
+  // Scrolled as far as it goes, the end of the form is above the bar.
+  await expect
+    .poll(async () => {
+      await page.mouse.wheel(0, 20000);
+      const [box, covering] = await Promise.all([eula.boundingBox(), bar.boundingBox()]);
+      return box!.y + box!.height <= covering!.y;
+    })
+    .toBe(true);
+});
+
 test("a server set to an older version than its world was opened in is warned of, and asked about before it is saved", async ({ page, as, org, api }) => {
   const slug = await org([]);
   await api("owner").post(`/orgs/${slug}/servers`, { name: "newer", spec: { eula: true, loader: "paper", version: "1.21.5", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" } } });
