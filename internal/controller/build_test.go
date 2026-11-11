@@ -84,6 +84,8 @@ func TestKeepBuild(t *testing.T) {
 		})
 	}
 	installed := "TYPE=\"PAPER\"\nVERSION=\"1.21.4\"\nSERVER=\"%s\"\n"
+	foliaInstalled := "TYPE=\"FOLIA\"\nVERSION=\"1.21.4\"\nSERVER=\"%s\"\n"
+	folia := paper(func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderFolia })
 	for _, c := range []struct {
 		name string
 		mc   *avsysv1.MinecraftServer
@@ -100,12 +102,23 @@ func TestKeepBuild(t *testing.T) {
 		{"changed version", paper(func(mc *avsysv1.MinecraftServer) { mc.Spec.Version = "1.21.5" }), installed, "paper-1.21.4-232.jar", nil, false},
 		{"latest", paper(func(mc *avsysv1.MinecraftServer) { mc.Spec.Version = "LATEST" }), installed, "paper-1.21.4-232.jar", nil, false},
 		{"changed to folia", paper(func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderFolia }), installed, "paper-1.21.4-232.jar", nil, false},
-		{"folia restarted", paper(func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderFolia }), "TYPE=\"FOLIA\"\nVERSION=\"1.21.4\"\nSERVER=\"%s\"\n", "folia-1.21.4-6.jar", nil, true},
+		{"folia restarted", folia, foliaInstalled, "folia-1.21.4-6.jar", nil, true},
+		// Folia's own name for a build comes before Paper's older one, and
+		// Paper's newer one before both. Paper does not read Folia's.
+		{"folia's build name first", folia, foliaInstalled, "folia-1.21.4-6.jar", []string{"PAPERBUILD=6", "FOLIABUILD=7"}, false},
+		{"folia's build name", folia, foliaInstalled, "folia-1.21.4-6.jar", []string{"PAPERBUILD=7", "FOLIABUILD=6"}, true},
+		{"paper's newer build name over folia's", folia, foliaInstalled, "folia-1.21.4-6.jar", []string{"PAPER_BUILD=6", "FOLIABUILD=7"}, true},
+		{"folia's build name on paper", paper(nil), installed, "paper-1.21.4-232.jar", []string{"FOLIABUILD=7"}, true},
 		{"the build it has asked for", paper(nil), installed, "paper-1.21.4-232.jar", []string{"PAPER_BUILD=232"}, true},
 		{"another build asked for", paper(nil), installed, "paper-1.21.4-232.jar", []string{"PAPER_BUILD=231"}, false},
 		{"a build ending the same asked for", paper(nil), installed, "paper-1.21.4-232.jar", []string{"PAPER_BUILD=32"}, false},
 		{"a download of its own", paper(nil), installed, "paper-1.21.4-232.jar", []string{"PAPER_DOWNLOAD_URL=https://example.org/paper.jar"}, false},
 		{"another kind in its own environment", paper(nil), installed, "paper-1.21.4-232.jar", []string{"TYPE=VANILLA"}, false},
+		// Settings the image loads itself, after this, may ask for another.
+		{"settings from a file of its own", paper(nil), installed, "paper-1.21.4-232.jar", []string{"LOAD_ENV_FROM_FILE=/data/server.env"}, false},
+		{"settings from an archive of its own", paper(nil), installed, "paper-1.21.4-232.jar", []string{"LOAD_ENV_FROM_ARCHIVE=/data/pack.zip"}, false},
+		{"settings from a pack", paper(nil), installed, "paper-1.21.4-232.jar", []string{"LOAD_ENV_FROM_GENERIC_PACK=true"}, false},
+		{"no settings from a pack", paper(nil), installed, "paper-1.21.4-232.jar", []string{"LOAD_ENV_FROM_GENERIC_PACK=false"}, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()

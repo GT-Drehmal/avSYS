@@ -376,14 +376,23 @@ const (
 // The record is in the server's files, so it goes wherever they go:
 // snapshots, copies, templates, restores, imports. A version or kind other
 // than the one installed, a jar that is gone, a version of LATEST, or a
-// download or jar of the server's own in its environment leave the start to
-// the image, which installs as it always has, and records what it got.
+// download, jar or file of settings of the server's own in its environment
+// leave the start to the image, which installs as it always has, and
+// records what it got.
 const keepBuild = `f=` + paperEnv + `
-if [ -z "${PAPER_CUSTOM_JAR:-}${PAPER_DOWNLOAD_URL:-}${FOLIA_DOWNLOAD_URL:-}" ] && [ -f "$f" ]; then
+kind=$(echo "${TYPE:-}" | tr a-z A-Z)
+# The build asked for, as the image reads it: for Folia, its own name for
+# it comes before Paper's older one.
+build=${PAPERBUILD:-}
+[ "$kind" = FOLIA ] && [ -n "${FOLIABUILD:-}" ] && build=$FOLIABUILD
+build=${PAPER_BUILD:-$build}
+# Settings the image loads from a file of the server's own before it installs.
+loaded=${LOAD_ENV_FROM_FILE:-}${LOAD_ENV_FROM_ARCHIVE:-}
+[ "${LOAD_ENV_FROM_GENERIC_PACK:-false}" = false ] || loaded=pack
+if [ -z "${PAPER_CUSTOM_JAR:-}${PAPER_DOWNLOAD_URL:-}${FOLIA_DOWNLOAD_URL:-}$loaded" ] && [ -f "$f" ]; then
   get() { sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$f" | tail -n 1; }
   jar=$(get SERVER)
-  build=${PAPER_BUILD:-${PAPERBUILD:-${FOLIABUILD:-}}}
-  if [ -n "$jar" ] && [ -f "$jar" ] && [ "$(get TYPE)" = "$(echo "${TYPE:-}" | tr a-z A-Z)" ] && [ "$(get VERSION)" = "${VERSION:-}" ] &&
+  if [ -n "$jar" ] && [ -f "$jar" ] && [ "$(get TYPE)" = "$kind" ] && [ "$(get VERSION)" = "${VERSION:-}" ] &&
     { [ -z "$build" ] || [ "${jar%-"$build".jar}" != "$jar" ]; }; then
     echo "[avsys] Using the installed ${jar##*/}"
     export PAPER_CUSTOM_JAR="$jar" SKIP_DOWNLOAD_DEFAULTS="${SKIP_DOWNLOAD_DEFAULTS:-true}"
