@@ -72,7 +72,8 @@ func (m *Manager) Organizations() []string {
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() && m.exists(e.Name()) {
+		// Folders of the panel's own are not organizations, whatever is in them.
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && m.exists(e.Name()) {
 			out = append(out, e.Name())
 		}
 	}

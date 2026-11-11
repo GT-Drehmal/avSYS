@@ -145,8 +145,8 @@ type PartQuery = Record<string, string | number | undefined>;
  * way is sent again from where the panel says it got to, and a file larger
  * than a request can carry still goes, as large as there is room for. part
  * is where each part goes and received where how much arrived is asked;
- * both are given the upload's name, and part where it goes and how large
- * the whole is. Gives up once the panel has not been reached for a few
+ * both are given the upload's name and how large the whole is, and part
+ * where it goes. Gives up once the panel has not been reached for a few
  * minutes. Resolves to the upload's name.
  */
 export async function sendInParts(part: (q: PartQuery) => string, received: (q: PartQuery) => string, file: Blob, onProgress: (p: Progress) => void, signal?: AbortSignal, wait = false): Promise<string> {
@@ -181,7 +181,8 @@ export async function sendInParts(part: (q: PartQuery) => string, received: (q: 
       onProgress({ sent: from, total: file.size });
       await pause(Math.min(30_000, 500 * 2 ** failing), signal);
       try {
-        at = (await request<{ received: number }>("GET", received({ upload: name }))).received;
+        // With how large it is: one all there is then moved into place.
+        at = (await request<{ received: number }>("GET", received({ upload: name, size: file.size }))).received;
       } catch {
         // Asked again on the next try.
       }
