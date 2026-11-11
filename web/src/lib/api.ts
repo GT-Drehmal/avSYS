@@ -157,6 +157,7 @@ export async function sendInParts(part: (q: PartQuery) => string, received: (q: 
   };
   let at = 0;
   let failing = 0;
+  try {
   // Even an empty file is sent once, for it to be there.
   do {
     const from = at;
@@ -188,6 +189,11 @@ export async function sendInParts(part: (q: PartQuery) => string, received: (q: 
     }
   } while (at < file.size);
   stopped();
+  } catch (err) {
+    // Given up on: what was sent is not left to take up room.
+    void request("DELETE", received({ upload: name })).catch(() => undefined);
+    throw err;
+  }
   return name;
 }
 
