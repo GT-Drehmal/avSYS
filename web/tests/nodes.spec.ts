@@ -34,7 +34,7 @@ test("the administrator keeps a node from taking new servers, and measures every
 
   await page.getByRole("switch", { name: /New servers on pc/ }).click();
   await expect(page.getByRole("switch", { name: /New servers on pc/ })).toHaveAttribute("aria-checked", "false");
-  await expect(page.getByText("Only when picked by hand.")).toBeVisible();
+  await expect(page.getByText("Only when picked manually.")).toBeVisible();
   expect(switched).toEqual([{ automatic: false }]);
 
   await page.getByRole("button", { name: "Measure speed" }).click();

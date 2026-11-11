@@ -364,6 +364,12 @@ func run(opts options, log *slog.Logger) error {
 		return err
 	}
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		server.RunStagedSweep(ctx)
+		return nil
+	})); err != nil {
+		return err
+	}
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		server.RunOps(ctx)
 		return nil
 	})); err != nil {

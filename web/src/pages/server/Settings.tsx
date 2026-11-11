@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { Button, Confirm, Field, Input, Notice, Section, Select, Textarea, Toggle } from "../../components/ui";
+import { BottomBar, Button, Confirm, Field, Input, Notice, Section, Select, Textarea, Toggle } from "../../components/ui";
 import { useQuery } from "@tanstack/react-query";
 import { api, serverPath, type ExposeType, type Loader, type Member, type Role, type ServerSpec, type SpecPatch } from "../../lib/api";
 import { launchOf } from "../../lib/launch";
@@ -216,7 +216,7 @@ export function Settings() {
   const worldSet = worldKeys.filter((k) => k in otherKeys);
   return (
     <>
-    <form onSubmit={save} className="pb-20">
+    <form onSubmit={save}>
       <Section title="General">
         <PicturePicker
           name={server.spec.displayName || server.name}
@@ -422,7 +422,7 @@ export function Settings() {
       </Section>
 
       {dirty && (
-        <div data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+        <BottomBar>
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-3 md:px-10">
             <p className="text-[13px] text-muted">Unsaved changes{server.status.phase === "Running" ? ". Most apply at the next restart." : "."}</p>
             <div className="flex gap-2">
@@ -432,7 +432,7 @@ export function Settings() {
               </Button>
             </div>
           </div>
-        </div>
+        </BottomBar>
       )}
 
     </form>

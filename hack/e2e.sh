@@ -317,7 +317,12 @@ ME=$(call "$API/me" | field "d['user']['id']")
 PLAYER=$(call "$API/me" | field "(d.get('minecraft') or {}).get('name', '')")
 linked_here=""
 if [ -z "$PLAYER" ]; then
-  PLAYER=$(call -X PUT -d '{"name":"Notch"}' "$API/me/minecraft" | field "d['name']")
+  # Looked up with Mojang, which turns requests down now and then.
+  for _ in $(seq 1 6); do
+    PLAYER=$(call -X PUT -d '{"name":"Notch"}' "$API/me/minecraft" | field "d['name']" 2>/dev/null) && break
+    sleep 10
+  done
+  [ -n "$PLAYER" ] || fail "a player could not be linked"
   linked_here=1
 fi
 whitelisted() { call -d '{"command":"whitelist list"}' "$SRV/console" | field "d['output']"; }
@@ -330,7 +335,12 @@ case "$(whitelisted)" in *"$PLAYER"*) fail "a member left out stays off the whit
 # Every account a member plays as is on it, their alts too, and an alt
 # unlinked is taken off.
 set_spec '{"spec":{"autoWhitelist":"viewer","whitelistMembers":null}}'
-ALT=$(call -d '{"name":"jeb_"}' "$API/me/minecraft-accounts" | field "[a['uuid'] for a in d if a['name'].lower() == 'jeb_'][0]") || fail "an alt could not be linked"
+ALT=""
+for _ in $(seq 1 6); do
+  ALT=$(call -d '{"name":"jeb_"}' "$API/me/minecraft-accounts" | field "[a['uuid'] for a in d if a['name'].lower() == 'jeb_'][0]" 2>/dev/null) && break
+  sleep 10
+done
+[ -n "$ALT" ] || fail "an alt could not be linked"
 for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" && break; sleep 1; done
 expect "a member's alt is on the whitelist with them" "$(whitelisted)" "jeb_"
 expect "and so is their main one" "$(whitelisted)" "$PLAYER"
@@ -362,6 +372,11 @@ expect "and is not yet in place" "$(call -o /dev/null -w '%{http_code}' "$SRV/fi
 expect "nor listed" "$(call "$SRV/files?path=/" | field "[e['name'] for e in d['entries'] if 'e2e-parts' in e['name']]")" "[]"
 expect "a part out of turn says how much is there" "$(printf 'x' | call -X PUT --data-binary @- "$FUP&offset=3" | field "(d.get('code'), d.get('received'))")" "('offset', 9)"
 expect "how much is there is said" "$(call "$SRV/files/upload?path=/e2e-parts.bin&upload=e2e-parts-one")" '"received":9'
+# Given up on, what was sent goes.
+GAVEUP="$SRV/files/content?path=/e2e-gaveup.bin&upload=e2e-parts-two&size=12"
+expect "a part of one given up on is taken" "$(printf 'part one,' | call -X PUT --data-binary @- "$GAVEUP&offset=0")" '"received":9'
+expect "and can be taken away" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$SRV/files/upload?path=/e2e-gaveup.bin&upload=e2e-parts-two")" 204
+expect "leaving nothing" "$(call "$SRV/files/upload?path=/e2e-gaveup.bin&upload=e2e-parts-two")" '"received":0'
 expect "the last part puts it in place" "$(printf ' 2!' | call -X PUT --data-binary @- "$FUP&offset=9")" '"received":12'
 expect "whole" "$(call "$SRV/files/content?path=/e2e-parts.bin")" "part one, 2!"
 call -X DELETE "$SRV/files?path=/e2e-parts.bin" >/dev/null

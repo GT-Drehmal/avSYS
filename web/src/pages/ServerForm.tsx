@@ -10,7 +10,7 @@ import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
-import { Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
+import { BottomBar, Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
@@ -670,6 +670,9 @@ export function ServerForm({
     else pictureFromWorld(null);
   };
 
+  /** The picture in a world's archive, as a file. */
+  const iconOf = (w: { icon?: Uint8Array }) => (w.icon ? new File([w.icon.slice()], "icon.png", { type: "image/png" }) : null);
+
   /** Reads an archive of a world, to start the server with. */
   const pickWorld = async (file: File) => {
     setError(null);
@@ -687,7 +690,7 @@ export function ServerForm({
         version: !source && w.version && versions.data?.all.has(w.version) ? w.version : was.version,
         storage: String(Math.max(Number(was.storage) || 10, Math.ceil((w.size * 1.5 + file.size) / GiB))),
       }));
-      pictureFromWorld(w.icon ? new File([w.icon.slice()], "icon.png", { type: "image/png" }) : null);
+      pictureFromWorld(iconOf(w));
     } catch (err) {
       if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
     } finally {
@@ -698,19 +701,36 @@ export function ServerForm({
   // The picture a world brings, unless one was chosen here, none included:
   // a new server looks as its world does. A copy keeps its original's.
   const pictureChosen = useRef(false);
+  // Counted, so that one fetched too slowly does not land on the world picked since.
+  const pictures = useRef(0);
   const pictureFromWorld = (file: File | null) => {
+    pictures.current++;
     if (forTemplate || source || pictureChosen.current) return;
     setValues((was) => ({ ...was, picture: file ? { kind: "file", file } : { kind: "none" } }));
   };
   /** The picture of a world in the library, as a file, or none. */
   const libraryPicture = async (w: LibraryWorld) => {
+    const asked = ++pictures.current;
+    let file: File | null = null;
     try {
       const res = await fetch(worldIcon(org, w.id));
-      pictureFromWorld(res.ok ? new File([await res.blob()], "icon.png", { type: res.headers.get("content-type") ?? "image/png" }) : null);
+      if (res.ok) file = new File([await res.blob()], "icon.png", { type: res.headers.get("content-type") ?? "image/png" });
     } catch {
-      pictureFromWorld(null);
+      // None, then.
     }
+    if (asked === pictures.current) pictureFromWorld(file);
   };
+  // A world set aside by choosing what has none, as a modpack, takes its
+  // picture with it, and brings it back with it.
+  const worldInUse = useRef(worldGiven);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only as it comes and goes
+  useEffect(() => {
+    if (worldInUse.current === worldGiven) return;
+    worldInUse.current = worldGiven;
+    if (!worldGiven) pictureFromWorld(null);
+    else if (fromLibrary) void libraryPicture(fromLibrary);
+    else if (mine) pictureFromWorld(iconOf(mine.found));
+  }, [worldGiven]);
   // One picked where it is kept has its picture to begin with.
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, for the world it was opened with
   useEffect(() => {
@@ -1270,7 +1290,7 @@ export function ServerForm({
 
   return (
     <>
-    <form onSubmit={submit} className={picking ? undefined : "pb-20"}>
+    <form onSubmit={submit}>
       <Link to={forTemplate ? `/o/${org}/templates` : `/o/${org}`} className="mb-3 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
         <ChevronLeft className="size-3.5" />
         {forTemplate ? "Templates" : "Servers"}
@@ -1928,7 +1948,7 @@ export function ServerForm({
       </Section>
 
       <Section title="Backups">
-        <Field label="Scheduled snapshots" hint={v.schedule === "org" ? (policy.data ? describe(policy.data) : undefined) : v.schedule === "off" ? "Only taken by hand." : undefined}>
+        <Field label="Scheduled snapshots" hint={v.schedule === "org" ? (policy.data ? describe(policy.data) : undefined) : v.schedule === "off" ? "Only taken manually." : undefined}>
           {(id) => (
             <Select id={id} value={v.schedule} onChange={(e) => set("schedule", e.target.value as Schedule)}>
               <option value="org">Same as the organization</option>
@@ -1992,7 +2012,7 @@ export function ServerForm({
       </div>
       {/* Along the bottom wherever the form is scrolled to, as the server's settings have theirs: what is made, and the button that makes it. */}
       {!picking && (
-      <div data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+      <BottomBar>
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-3 md:px-10">
           {error ? (
             <p className="min-w-0 text-[13px] text-danger" role="alert">
@@ -2013,7 +2033,7 @@ export function ServerForm({
             </Button>
           </div>
         </div>
-      </div>
+      </BottomBar>
       )}
     </form>
       <Confirm

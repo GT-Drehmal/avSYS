@@ -44,6 +44,21 @@ func TestModrinthSearchParams(t *testing.T) {
 		t.Errorf("order and offset: %v", got)
 	}
 
+	// Where a mod runs, as Modrinth's own Client and Server boxes ask.
+	server, client := []string{"server_side:required", "server_side:optional"}, []string{"client_side:required", "client_side:optional"}
+	for side, sides := range map[string][][]string{"": {server}, "server": {server}, "client": {client}, "both": {server, client}, "any": nil} {
+		got, err := modrinthSearchParams(url.Values{"type": {"mod"}, "side": {side}})
+		if err != nil {
+			t.Fatalf("%q: %v", side, err)
+		}
+		if facets := facetsOf(t, got)[1:]; !reflect.DeepEqual(facets, sides) && len(facets)+len(sides) > 0 {
+			t.Errorf("side %q: got %v, want %v", side, facets, sides)
+		}
+	}
+	if _, err := modrinthSearchParams(url.Values{"type": {"mod"}, "side": {"moon"}}); err == nil {
+		t.Error("a side that is not one was taken")
+	}
+
 	// The last page that can be asked for.
 	if got, err := modrinthSearchParams(url.Values{"type": {"mod"}, "offset": {"9984"}}); err != nil || got.Get("offset") != "9984" {
 		t.Errorf("the last page: %v %v", got, err)

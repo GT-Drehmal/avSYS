@@ -309,7 +309,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
         <div className="flex flex-col gap-5">
           <dl className="divide-y divide-line">
             <Fact label="Taken">{new Date(s.time).toLocaleString(undefined, { dateStyle: "full", timeStyle: "medium" })}</Fact>
-            <Fact label="Why">{s.trigger === "manual" ? (s.by ? `Taken by hand, by ${s.by}` : "Taken by hand") : triggerLabel(s)}</Fact>
+            <Fact label="Why">{s.trigger === "manual" ? (s.by ? `Taken manually, by ${s.by}` : "Taken manually") : triggerLabel(s)}</Fact>
             <Fact label="Size">
               {bytes(s.size)} in {s.files.toLocaleString()} file{s.files === 1 ? "" : "s"}.{" "}
               <span className="text-muted">This snapshot added {bytes(s.added)} to storage.</span>

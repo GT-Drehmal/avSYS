@@ -322,3 +322,143 @@ test("a server's picture opens larger when clicked, for an admin to change or re
   await expect(seen.locator("img")).toBeVisible();
   await expect(seen.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
 });
+
+test("the console shows the log so far whole, at its end, and keeps it on screen when it reconnects", async ({ page, as }) => {
+  await as("owner");
+  // The stream, driven from here, one event at a time.
+  await page.addInitScript(() => {
+    const Real = window.EventSource;
+    class Fake {
+      listeners: Record<string, ((e: { data: string }) => void)[]> = {};
+      addEventListener(type: string, f: (e: { data: string }) => void) {
+        this.listeners[type] = [...(this.listeners[type] ?? []), f];
+      }
+      emit(type: string, data: unknown) {
+        for (const f of this.listeners[type] ?? []) f({ data: JSON.stringify(data) });
+      }
+      close() {}
+    }
+    window.EventSource = function (url: string) {
+      if (!url.includes("/console")) return new Real(url);
+      const fake = new Fake();
+      (window as unknown as { consoleStream: Fake }).consoleStream = fake;
+      return fake;
+    } as unknown as typeof EventSource;
+  });
+  await page.goto("/o/friends/s/survival");
+  const emit = (type: string, data: unknown) => page.evaluate(([t, d]) => (window as unknown as { consoleStream: { emit: (t: unknown, d: unknown) => void } }).consoleStream.emit(t, d), [type, data]);
+  await page.waitForFunction(() => "consoleStream" in window);
+  const batch = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `[12:00:00 INFO]: line ${from + i}`);
+  // Two batches of what is there already, a moment apart: neither shows until both can.
+  const heldBack = await page.evaluate(async ([one, two]) => {
+    const stream = (window as unknown as { consoleStream: { emit: (t: string, d: unknown) => void } }).consoleStream;
+    stream.emit("reset", null);
+    stream.emit("lines", one);
+    await new Promise((r) => setTimeout(r, 40));
+    const shown = document.body.innerText.includes("line 0");
+    stream.emit("lines", two);
+    return !shown;
+  }, [batch(0, 200), batch(200, 400)]);
+  expect(heldBack).toBe(true);
+  await expect(page.getByText("line 399")).toBeInViewport();
+  await expect(page.getByText("line 0", { exact: false }).first()).toBeAttached();
+  // New output after that shows as it comes.
+  await emit("lines", ["[12:00:01 INFO]: a new line"]);
+  await expect(page.getByText("a new line")).toBeVisible();
+  // Reconnected, what was there stays until the log so far has come again.
+  await emit("reset", null);
+  await expect(page.getByText("a new line")).toBeVisible();
+  await emit("lines", ["[12:00:02 INFO]: after the reconnect"]);
+  await expect(page.getByText("after the reconnect")).toBeVisible();
+  await expect(page.getByText("a new line")).toHaveCount(0);
+});
+
+test("a command run while the log so far is coming in keeps its answer once the log shows", async ({ page, as }) => {
+  await as("owner");
+  await page.addInitScript(() => {
+    const Real = window.EventSource;
+    class Fake {
+      listeners: Record<string, ((e: { data: string }) => void)[]> = {};
+      addEventListener(type: string, f: (e: { data: string }) => void) {
+        this.listeners[type] = [...(this.listeners[type] ?? []), f];
+      }
+      emit(type: string, data: unknown) {
+        for (const f of this.listeners[type] ?? []) f({ data: JSON.stringify(data) });
+      }
+      close() {}
+    }
+    window.EventSource = function (url: string) {
+      if (!url.includes("/console")) return new Real(url);
+      const fake = new Fake();
+      (window as unknown as { consoleStream: Fake }).consoleStream = fake;
+      return fake;
+    } as unknown as typeof EventSource;
+  });
+  await page.route("**/servers/*/console", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "busy", message: "A snapshot is being taken." }) })
+      : route.continue(),
+  );
+  await page.clock.install();
+  await page.goto("/o/friends/s/survival");
+  await page.waitForFunction(() => "consoleStream" in window);
+  const emit = (type: string, data: unknown) => page.evaluate(([t, d]) => (window as unknown as { consoleStream: { emit: (t: unknown, d: unknown) => void } }).consoleStream.emit(t, d), [type, data]);
+  // Time stands still, so the log so far is still held while the command runs.
+  await page.clock.pauseAt(Date.now() + 60_000);
+  await emit("reset", null);
+  await emit("lines", ["[12:00:00 INFO]: the log so far"]);
+  const input = page.getByLabel("Server command");
+  await input.fill("say hi");
+  await input.press("Enter");
+  await expect(page.getByText("A snapshot is being taken.")).toBeVisible();
+  await expect(page.getByText("the log so far")).toHaveCount(0);
+  // The hold ends: the log so far shows, and the command and its answer stay, after it.
+  await page.clock.runFor(2000);
+  await expect(page.getByText("the log so far")).toBeVisible();
+  await expect(page.getByText("> say hi")).toBeVisible();
+  await expect(page.getByText("A snapshot is being taken.")).toBeVisible();
+  const text = await page.getByText("the log so far").locator("xpath=..").innerText();
+  expect(text.indexOf("the log so far")).toBeLessThan(text.indexOf("> say hi"));
+  expect(text.indexOf("> say hi")).toBeLessThan(text.indexOf("A snapshot is being taken."));
+});
+
+test("on a reconnect, what is on screen stays until the log so far starts coming", async ({ page, as }) => {
+  await as("owner");
+  await page.addInitScript(() => {
+    const Real = window.EventSource;
+    class Fake {
+      listeners: Record<string, ((e: { data: string }) => void)[]> = {};
+      addEventListener(type: string, f: (e: { data: string }) => void) {
+        this.listeners[type] = [...(this.listeners[type] ?? []), f];
+      }
+      emit(type: string, data: unknown) {
+        for (const f of this.listeners[type] ?? []) f({ data: JSON.stringify(data) });
+      }
+      close() {}
+    }
+    window.EventSource = function (url: string) {
+      if (!url.includes("/console")) return new Real(url);
+      const fake = new Fake();
+      (window as unknown as { consoleStream: Fake }).consoleStream = fake;
+      return fake;
+    } as unknown as typeof EventSource;
+  });
+  await page.clock.install();
+  await page.goto("/o/friends/s/survival");
+  await page.waitForFunction(() => "consoleStream" in window);
+  const emit = (type: string, data: unknown) => page.evaluate(([t, d]) => (window as unknown as { consoleStream: { emit: (t: unknown, d: unknown) => void } }).consoleStream.emit(t, d), [type, data]);
+  await page.clock.pauseAt(Date.now() + 60_000);
+  await emit("reset", null);
+  await emit("lines", ["[12:00:00 INFO]: before the reconnect"]);
+  await page.clock.runFor(2000);
+  await expect(page.getByText("before the reconnect")).toBeVisible();
+  // Reconnected, and nothing yet: a slow answer leaves the console as it was.
+  await emit("reset", null);
+  await page.clock.runFor(500);
+  await expect(page.getByText("before the reconnect")).toBeVisible();
+  // Then the log so far comes, and takes its place.
+  await emit("lines", ["[12:00:01 INFO]: after the reconnect"]);
+  await page.clock.runFor(2000);
+  await expect(page.getByText("after the reconnect")).toBeVisible();
+  await expect(page.getByText("before the reconnect")).toHaveCount(0);
+});
