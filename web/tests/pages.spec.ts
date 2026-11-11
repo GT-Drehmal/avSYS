@@ -294,6 +294,35 @@ test("a server's content is its Content tab, and a link to where it was before s
   await expect(content(page).getByText("LuckPerms").first()).toBeVisible();
 });
 
+test("a server's picture opens larger when clicked, for an admin to change or remove and for anyone to see", async ({ page, as }) => {
+  await as("owner");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/icon*", (route) => {
+    const method = route.request().method();
+    if (method === "GET") return route.fulfill({ status: 200, contentType: "image/png", body: png });
+    asked.push(method);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival");
+  await page.getByRole("button", { name: "Picture of Survival" }).click();
+  const dialog = page.getByRole("dialog", { name: "Survival" });
+  await expect(dialog.getByText("Shown in the server list after a restart.")).toBeVisible();
+  await dialog.getByLabel("Picture for Survival").setInputFiles({ name: "new.png", mimeType: "image/png", buffer: png });
+  await expect.poll(() => asked).toEqual(["PUT"]);
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect.poll(() => asked).toEqual(["PUT", "DELETE"]);
+  await page.keyboard.press("Escape");
+
+  // Anyone else sees it, with nothing to change it with.
+  await as("viewer");
+  await page.reload();
+  await page.getByRole("button", { name: "Picture of Survival" }).click();
+  const seen = page.getByRole("dialog", { name: "Survival" });
+  await expect(seen.locator("img")).toBeVisible();
+  await expect(seen.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
+});
+
 test("the console shows the log so far whole, at its end, and keeps it on screen when it reconnects", async ({ page, as }) => {
   await as("owner");
   // The stream, driven from here, one event at a time.

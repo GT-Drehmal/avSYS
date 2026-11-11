@@ -4,7 +4,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useP
 import { newFrom } from "../../lib/origin";
 import { ActivityLine } from "../../components/ActivityLine";
 import { Faces } from "../../components/Faces";
-import { Picture } from "../../components/Picture";
+import { PictureZoom } from "../../components/Picture";
 import { ServerActions } from "../../components/ServerActions";
 import { holdsTheServer, OperationRow } from "../../components/Snapshots";
 import { useOrg } from "../../components/Shell";
@@ -140,7 +140,14 @@ export function ServerPage() {
       </Link>
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 items-center gap-4">
-          <Picture name={displayName(server)} url={serverIcon(server)} size={36} retryKey={`${status.phase}|${status.message ?? ""}`} />
+          <PictureZoom
+            name={displayName(server)}
+            url={serverIcon(server)}
+            size={36}
+            retryKey={`${status.phase}|${status.message ?? ""}`}
+            path={atLeast(role, "admin") ? `${serverPath(org, name)}/icon` : undefined}
+            hint="Shown in the server list after a restart."
+          />
           {/* What was last done to it, under its name. */}
           <div className="flex min-w-0 flex-col">
             <div className="flex min-w-0 items-center gap-4">
