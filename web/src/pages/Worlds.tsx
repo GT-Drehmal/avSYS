@@ -5,17 +5,35 @@ import { useNavigate, useParams } from "react-router";
 import { Picture, PictureChange } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { ServerPicker, SnapshotPicker } from "../components/StartPicker";
-import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SearchBox, SelectAllRow, SelectionBar, Spinner, Textarea } from "../components/ui";
+import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SelectAllRow, SelectionBar, Spinner, Textarea } from "../components/ui";
+import { ListBar } from "../components/ListBar";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
 import { api, ApiError, atLeast, qs, type LibraryWorld, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes } from "../lib/format";
 import { keys, useMeta, useWorlds } from "../lib/queries";
-import { matches, useSearch } from "../lib/search";
+import { byCount, byText, byTime, byVersion, type ListOptions, useList } from "../lib/list";
 import { type Selection, useSelection } from "../lib/selection";
 import { toast } from "../lib/toast";
 import { worldSummary } from "../lib/worlds";
 import { archiveName, type FoundWorld, inspectWorld } from "../lib/serverImport";
+
+const sources: Record<string, string> = { upload: "Uploaded", server: "From a server", snapshot: "From a snapshot" };
+
+const worldList: ListOptions<LibraryWorld> = {
+  said: (w) => [w.name, w.description, worldSummary(w)],
+  then: byText((w) => w.name),
+  sorts: [
+    { key: "name", label: "Name", compare: byText((w) => w.name) },
+    { key: "added", label: "Date added", compare: byTime((w) => w.createdAt) },
+    { key: "size", label: "Size", compare: byCount((w) => w.size) },
+    { key: "version", label: "Game version", compare: byVersion((w) => w.version) },
+  ],
+  filters: [
+    { key: "source", label: "Source", values: (w) => [w.source.split(":")[0]], name: (kind) => sources[kind] ?? kind, order: Object.keys(sources) },
+    { key: "version", label: "Game version", values: (w) => [w.version] },
+  ],
+};
 
 /** An organization's library of worlds: maps kept to start servers from. */
 export function Worlds() {
@@ -23,7 +41,8 @@ export function Worlds() {
   const membership = useOrg();
   const meta = useMeta().data;
   const worlds = useWorlds(org);
-  const [query, setQuery] = useSearch();
+  const listed = useList(worlds.data ?? [], worldList);
+  const { shown } = listed;
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<LibraryWorld | null>(null);
   const [deleting, setDeleting] = useState<LibraryWorld | null>(null);
@@ -32,7 +51,7 @@ export function Worlds() {
   // Making servers is admins' to do.
   const canMake = canDelete;
   const navigate = useNavigate();
-  const shownIds = (worlds.data ?? []).filter((w) => matches(query, w.name, w.description, worldSummary(w))).map((w) => w.id);
+  const shownIds = shown.map((w) => w.id);
   // Several at once, as servers are: admins delete them.
   const selection = useSelection(canDelete ? shownIds : [], org);
 
@@ -59,7 +78,6 @@ export function Worlds() {
     );
   }
   const list = worlds.data;
-  const shown = list.filter((w) => matches(query, w.name, w.description, worldSummary(w)));
   const latest = (w: LibraryWorld | null) => (w ? (list.find((x) => x.id === w.id) ?? null) : null);
 
   return (
@@ -72,7 +90,7 @@ export function Worlds() {
         <Empty title="No worlds yet">Upload a map, or save a server's world.</Empty>
       ) : (
         <>
-          <SearchBox value={query} onChange={setQuery} label="Search worlds" />
+          <ListBar list={listed} label="Search worlds" />
           {shown.length === 0 ? (
             <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No worlds match.</p>
           ) : (

@@ -1948,7 +1948,7 @@ export function ServerForm({
       </Section>
 
       <Section title="Backups">
-        <Field label="Scheduled snapshots" hint={v.schedule === "org" ? (policy.data ? describe(policy.data) : undefined) : v.schedule === "off" ? "Only taken by hand." : undefined}>
+        <Field label="Scheduled snapshots" hint={v.schedule === "org" ? (policy.data ? describe(policy.data) : undefined) : v.schedule === "off" ? "Only taken manually." : undefined}>
           {(id) => (
             <Select id={id} value={v.schedule} onChange={(e) => set("schedule", e.target.value as Schedule)}>
               <option value="org">Same as the organization</option>

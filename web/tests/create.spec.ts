@@ -720,7 +720,7 @@ test("the panel's administrator sees the nodes and what runs on each; nobody els
   await expect(page).toHaveURL(/\/nodes$/);
   await expect(page.getByRole("heading", { name: "Nodes" })).toBeVisible();
   await expect(page.getByRole("link", { name: /friends\/survival/ })).toBeVisible();
-  await expect(page.getByText("Only when picked by hand.")).toBeVisible();
+  await expect(page.getByText("Only when picked manually.")).toBeVisible();
 
   await as("admin");
   await page.goto("/o/friends");

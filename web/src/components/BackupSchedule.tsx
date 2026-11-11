@@ -137,7 +137,7 @@ export function ServerSchedule({ server, canAdmin }: { server: Server; canAdmin:
     if (next !== stored) save(next === "off" ? { enabled: false, minute: null, keep: null } : null);
   };
   const shown = draft ?? { minute: effective.minute, keep: effective.keep };
-  const hint = mode === "org" ? describe(policy.data) : mode === "off" ? "Only taken by hand." : undefined;
+  const hint = mode === "org" ? describe(policy.data) : mode === "off" ? "Only taken manually." : undefined;
 
   return (
     <form
@@ -224,7 +224,7 @@ export function BackupSchedule({ org, canAdmin }: { org: string; canAdmin: boole
           onChange={(enabled) => store({ ...stored, enabled })}
           disabled={save.isPending}
           label="Daily snapshots"
-          hint={shown.enabled ? (policy.data.next ? `Every server. Next ${when(policy.data.next)}.` : "Every server.") : "Snapshots are only taken by hand."}
+          hint={shown.enabled ? (policy.data.next ? `Every server. Next ${when(policy.data.next)}.` : "Every server.") : "Snapshots are only taken manually."}
         />
         <Button
           size="sm"
