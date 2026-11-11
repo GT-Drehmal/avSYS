@@ -234,6 +234,7 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 		return errNoBackups
 	}
 	q := r.URL.Query()
+	defer s.dropStaged(a, q.Get("upload"))
 	name, description, err := worldWords(q.Get("name"), q.Get("description"))
 	if err != nil {
 		return err

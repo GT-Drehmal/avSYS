@@ -43,7 +43,7 @@ test("a server is opened to see its snapshots, and one of them to see what it ho
 
   // A snapshot taken by hand is nobody's to remove but a person's.
   await snapshots.nth(1).click();
-  await expect(dialog).toContainText("Taken by hand, by owner");
+  await expect(dialog).toContainText("Taken manually, by owner");
   await expect(dialog).toContainText("Until you delete it.");
 });
 
@@ -80,14 +80,36 @@ test("by time: everything in order, each with its server, and narrowed by server
   await expect(rows.first()).toContainText(/survival|creative/);
   await expect(rows.last()).toContainText("oldworld");
 
-  await page.getByLabel("Server", { exact: true }).selectOption("creative");
+  const filter = async (choice: string) => {
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: choice, exact: true }).click();
+    await page.keyboard.press("Escape");
+  };
+  await filter("creative");
   await expect(snapshots).toHaveCount(1);
-  await page.getByLabel("Server", { exact: true }).selectOption("");
-  await page.getByLabel("Reason", { exact: true }).selectOption("final");
+  await expect(page).toHaveURL(/server=creative/);
+  await page.getByRole("button", { name: "Stop filtering by creative" }).click();
+  await filter("Before a delete");
   await expect(snapshots).toHaveCount(1);
   await expect(rows.first()).toContainText("oldworld");
-  await page.getByLabel("Reason", { exact: true }).selectOption("copy");
+  // Filters of different kinds narrow each other down.
+  await filter("survival");
   await expect(page.getByText("No matching snapshots.")).toBeVisible();
+  // What is asked for in an address is what is shown, without choosing By time first.
+  await page.goto("/o/friends/backups?reason=final&sort=oldest");
+  await expect(page.getByRole("button", { name: "By time" })).toHaveAttribute("aria-pressed", "true");
+  await expect(snapshots).toHaveCount(1);
+});
+
+test("snapshots are put in order, and those shown are what is ticked", async ({ page }) => {
+  await page.getByRole("button", { name: "By time" }).click();
+  const snapshots = page.getByRole("button", { name: /^About the snapshot of / });
+  await expect(snapshots).toHaveCount(6);
+  const rows = page.getByRole("listitem").filter({ has: snapshots });
+  await page.getByRole("button", { name: "Sort: Newest" }).click();
+  await page.getByRole("menuitemradio", { name: "Oldest" }).click();
+  await expect(rows.first()).toContainText("oldworld");
+  await expect(page).toHaveURL(/sort=oldest/);
 });
 
 test("the arrangement chosen is remembered", async ({ page }) => {

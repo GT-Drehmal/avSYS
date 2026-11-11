@@ -829,3 +829,55 @@ test("a large file is uploaded in parts, each after the one before, and sent aga
   expect(parts.every((p) => p.size === big.length)).toBe(true);
   expect(parts.at(-1)!.offset + parts.at(-1)!.length).toBe(big.length);
 });
+
+test("a large file whose last part was written but not put in place is put in place when asked after", async ({ page }) => {
+  await files(page);
+  const big = Buffer.alloc(40 << 20, 7);
+  let received = 0;
+  let placed = false;
+  const asked: (string | null)[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*upload=*", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    const offset = Number(q.get("offset"));
+    if (offset !== received) return route.fulfill({ status: 409, json: { code: "offset", message: "This part is not the next one.", received } });
+    received = offset + Number(q.get("length"));
+    // The last part is written, and the files go out of reach before it is
+    // put in place.
+    if (received === big.length) return route.fulfill({ status: 502, json: { code: "workspace", message: "The server's files are out of reach." } });
+    return route.fulfill({ json: { received } });
+  });
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/upload?*", (route) => {
+    const size = new URL(route.request().url()).searchParams.get("size");
+    asked.push(size);
+    // Asked with how large it is, the panel puts it in place.
+    if (size === String(big.length) && received === big.length) placed = true;
+    return route.fulfill({ json: { received } });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  const file = path.join(test.info().outputDir, "world.zip");
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, big);
+  await page.getByLabel("Files to upload").setInputFiles(file);
+  await expect.poll(() => asked.length, { timeout: 30_000 }).toBe(1);
+  await expect(page.getByRole("status").filter({ hasText: "world.zip" })).toHaveCount(0);
+  expect(asked).toEqual([String(big.length)]);
+  expect(placed).toBe(true);
+});
+
+test("what was sent of a large file given up on is taken away", async ({ page }) => {
+  await files(page);
+  const discarded: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*upload=*", (route) => route.fulfill({ status: 400, json: { code: "invalid", message: "Turned down." } }));
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/upload?*", (route) => {
+    discarded.push(route.request().method());
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  const file = path.join(test.info().outputDir, "world.zip");
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, Buffer.alloc(40 << 20, 7));
+  await page.getByLabel("Files to upload").setInputFiles(file);
+  // A part this large takes the browser a while to hand over.
+  await expect(page.getByText("Turned down.")).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => discarded).toEqual(["DELETE"]);
+});

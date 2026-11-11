@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
@@ -42,8 +43,8 @@ export function Button({ variant = "default", size = "md", loading, icon, childr
       disabled={disabled || loading}
       className={cx(
         "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors select-none disabled:opacity-50",
-        size === "sm" ? "h-7 px-2 text-xs" : "h-8 px-3 text-[13px]",
-        !children && (size === "sm" ? "w-7 px-0" : "w-8 px-0"),
+        size === "sm" ? "h-7 text-xs" : "h-8 text-[13px]",
+        children ? (size === "sm" ? "px-2" : "px-3") : size === "sm" ? "w-7" : "w-8",
         buttonVariants[variant],
         className,
       )}
@@ -231,7 +232,7 @@ export function CopyText({ value, display, className, wrap }: { value: string; d
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
           },
-          () => toast.error("Could not copy. Copy it by hand."),
+          () => toast.error("Could not copy. Copy it manually."),
         );
       }}
       className={cx("group inline-flex max-w-full items-center gap-1.5 rounded-sm text-left font-mono text-[13px] text-fg hover:text-accent", className)}
@@ -346,7 +347,7 @@ export function MenuContent({ children, align = "end" }: { children: ReactNode; 
       <Dropdown.Content
         align={align}
         sideOffset={6}
-        className="z-50 min-w-44 animate-rise rounded-md border border-line-strong bg-surface p-1 shadow-xl shadow-black/50"
+        className="z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-44 animate-rise overflow-y-auto rounded-md border border-line-strong bg-surface p-1 shadow-xl shadow-black/50"
       >
         {children}
       </Dropdown.Content>
@@ -375,6 +376,37 @@ export function MenuItem({ children, icon, onSelect, danger, disabled }: MenuIte
       <span className="flex size-4 items-center justify-center text-muted [&>svg]:size-4">{icon}</span>
       {children}
     </Dropdown.Item>
+  );
+}
+
+const choiceClass = "flex h-8 cursor-pointer items-center gap-2 rounded-sm px-2 text-[13px] text-fg outline-none select-none data-[highlighted]:bg-hover";
+const ticked = (
+  <span className="flex size-4 items-center justify-center text-accent">
+    <Dropdown.ItemIndicator>
+      <Check className="size-4" />
+    </Dropdown.ItemIndicator>
+  </span>
+);
+
+export const MenuRadioGroup = Dropdown.RadioGroup;
+
+/** One of several, of which one is chosen. */
+export function MenuRadio({ value, children }: { value: string; children: ReactNode }) {
+  return (
+    <Dropdown.RadioItem value={value} className={choiceClass}>
+      {ticked}
+      {children}
+    </Dropdown.RadioItem>
+  );
+}
+
+/** One that is on or off. The menu stays open, for others to be ticked too. */
+export function MenuCheck({ checked, onChange, children }: { checked: boolean; onChange: () => void; children: ReactNode }) {
+  return (
+    <Dropdown.CheckboxItem checked={checked} onCheckedChange={onChange} onSelect={(e) => e.preventDefault()} className={choiceClass}>
+      {ticked}
+      {children}
+    </Dropdown.CheckboxItem>
   );
 }
 
@@ -467,13 +499,11 @@ export function SelectAllRow({ selection, ids, noun, className }: { selection: S
 }
 
 /**
- * The bar that appears along the bottom while rows are selected, with what
- * can be done to them.
+ * A bar fixed to the bottom of the window, as tall as what is in it needs. As
+ * much room as it takes is left where it is placed, after the page's content,
+ * so that it never covers the end of it.
  */
-export function SelectionBar({ count, noun, onClear, children }: { count: number; noun: string; onClear: () => void; children: ReactNode }) {
-  // The bar is fixed to the bottom of the window and wraps to as many rows
-  // as its buttons need. As much room as it takes is left where it is
-  // placed, after the page's content, so that it never covers the end of it.
+export function BottomBar({ children, ...rest }: HTMLAttributes<HTMLDivElement>) {
   const bar = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   useLayoutEffect(() => {
@@ -483,12 +513,25 @@ export function SelectionBar({ count, noun, onClear, children }: { count: number
     const watch = new ResizeObserver(() => setHeight(el.offsetHeight));
     watch.observe(el);
     return () => watch.disconnect();
-  }, [count]);
-  if (count === 0) return null;
+  }, []);
   return (
     <>
       <div aria-hidden style={{ height }} />
-      <div ref={bar} role="region" aria-label="Selection" data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+      <div ref={bar} {...rest} data-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-surface/95 backdrop-blur md:left-56">
+        {children}
+      </div>
+    </>
+  );
+}
+
+/**
+ * The bar that appears along the bottom while rows are selected, with what
+ * can be done to them.
+ */
+export function SelectionBar({ count, noun, onClear, children }: { count: number; noun: string; onClear: () => void; children: ReactNode }) {
+  if (count === 0) return null;
+  return (
+      <BottomBar role="region" aria-label="Selection">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3 md:px-10">
           <p className="flex items-center gap-3 text-[13px]">
             <span className="font-medium" aria-live="polite">
@@ -501,8 +544,7 @@ export function SelectionBar({ count, noun, onClear, children }: { count: number
           </p>
           <div className="flex flex-wrap gap-2">{children}</div>
         </div>
-      </div>
-    </>
+      </BottomBar>
   );
 }
 

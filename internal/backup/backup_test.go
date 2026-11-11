@@ -1061,3 +1061,75 @@ func TestArchive(t *testing.T) {
 		t.Errorf("kept of no such folder: %v", err)
 	}
 }
+
+// What restic said of a repository is kept for as long as the snapshots in it
+// are the same, and no longer, whatever changed them.
+func TestListKeptUntilTheRepositoryChanges(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := m.ensure(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	files := t.TempDir()
+	if err := os.WriteFile(filepath.Join(files, "level.dat"), []byte("a world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	take := func(host string) {
+		t.Helper()
+		if out, err := exec.Command("restic", "--repo", m.repoDir("alpha"), "--password-file", m.keyFile("alpha"),
+			"backup", files, "--host", host, "--tag", "avsys", "--tag", "trigger=manual").CombinedOutput(); err != nil {
+			t.Fatalf("taking a snapshot: %v: %s", err, out)
+		}
+	}
+	take("survival")
+	first, err := m.List(ctx, "alpha")
+	if err != nil || len(first) != 1 {
+		t.Fatalf("snapshots: %v, %v", first, err)
+	}
+	used, err := m.Usage(ctx, "alpha")
+	if err != nil || used.Snapshots != 1 {
+		t.Fatalf("usage: %+v, %v", used, err)
+	}
+	// With no restic to ask, the same answers.
+	m.Restic = "restic-is-not-here"
+	again, err := m.List(ctx, "alpha")
+	if err != nil || len(again) != 1 || again[0].ID != first[0].ID {
+		t.Fatalf("not kept: %v, %v", again, err)
+	}
+	if got, err := m.Usage(ctx, "alpha"); err != nil || got != used {
+		t.Fatalf("usage not kept: %+v, %v", got, err)
+	}
+	// What a caller does to its list is its own.
+	again[0].Server = "changed"
+	if third, err := m.List(ctx, "alpha"); err != nil || third[0].Server != "survival" {
+		t.Errorf("the list kept was changed: %v, %v", third, err)
+	}
+	// Changed by anything at all, here restic run by hand, it is read again.
+	take("creative")
+	if _, err := m.List(ctx, "alpha"); err == nil {
+		t.Error("a repository that changed was not read again")
+	}
+	m.Restic = "restic"
+	if list, err := m.List(ctx, "alpha"); err != nil || len(list) != 2 {
+		t.Errorf("after a snapshot: %v, %v", list, err)
+	}
+	if got, err := m.Usage(ctx, "alpha"); err != nil || got.Snapshots != 2 {
+		t.Errorf("usage after a snapshot: %+v, %v", got, err)
+	}
+	// A tag changed is a change too, as is a deletion.
+	list, _ := m.List(ctx, "alpha")
+	made, err := m.CopyAs(ctx, "alpha", list[0].ID, "template-t1", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(ctx, "alpha", made.ID); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := m.List(ctx, "alpha"); err != nil || len(list) != 2 {
+		t.Errorf("after a copy and its deletion: %v, %v", list, err)
+	}
+}
