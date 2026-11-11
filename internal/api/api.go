@@ -470,7 +470,7 @@ func (s *Server) Handler() http.Handler {
 	if s.Static != nil {
 		mux.Handle("/", s.staticHandler())
 	}
-	return mux
+	return timed(mux)
 }
 
 // staticHandler serves the web UI, falling back to index.html so that
