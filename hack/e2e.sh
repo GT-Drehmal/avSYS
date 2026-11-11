@@ -559,6 +559,18 @@ act restart
 wait_phase Running
 stays Running 10
 expect "restarted again while it starts, it ends running, and answers" "$(call -d '{"command":"list"}' "$SRV/console" | field "d['output']")" "players online"
+# Started again, it runs the build of Paper it has, without asking Paper's
+# site for one: a restart does not wait on that site, nor fail with it.
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  started=$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" probe 2>/dev/null)
+  expect "a restart runs the build it has" "$started" "[avsys] Using the installed paper-1.21.4-"
+  case "$started" in
+    *"Downloaded /data/paper-"* | *"Failed to download paper"*) fail "and the image fetched Paper again" ;;
+  esac
+  echo "ok: without fetching it again"
+else
+  echo "skipped: the game's own container log is not available to this run"
+fi
 game_clean "with nothing in its log"
 earlier_clean "nor in the log of the run the second restart cut short"
 

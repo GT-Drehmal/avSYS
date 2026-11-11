@@ -359,6 +359,48 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 	return out
 }
 
+// The image's own start, which it runs when given no command, and the file
+// it writes, beside the jar, once it has installed Paper or Folia: the jar,
+// the game version and which of the two, as KEY="value" lines.
+const (
+	imageStart = "/image/scripts/start"
+	paperEnv   = "/data/.paper.env"
+)
+
+// keepBuild starts a Paper or Folia server on the build it already has, when
+// it has one for the game version and kind asked for. Otherwise the image
+// asks Paper's site for the newest build of that version on every start,
+// even with a build given, and a restart fails while the site does not
+// answer. Nor are the default config files fetched again, which the image
+// does on every start though the server has them, only to find that out.
+// The record is in the server's files, so it goes wherever they go:
+// snapshots, copies, templates, restores, imports. A version or kind other
+// than the one installed, a jar that is gone, a version of LATEST, or a
+// download or jar of the server's own in its environment leave the start to
+// the image, which installs as it always has, and records what it got.
+const keepBuild = `f=` + paperEnv + `
+if [ -z "${PAPER_CUSTOM_JAR:-}${PAPER_DOWNLOAD_URL:-}${FOLIA_DOWNLOAD_URL:-}" ] && [ -f "$f" ]; then
+  get() { sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$f" | tail -n 1; }
+  jar=$(get SERVER)
+  build=${PAPER_BUILD:-${PAPERBUILD:-${FOLIABUILD:-}}}
+  if [ -n "$jar" ] && [ -f "$jar" ] && [ "$(get TYPE)" = "$(echo "${TYPE:-}" | tr a-z A-Z)" ] && [ "$(get VERSION)" = "${VERSION:-}" ] &&
+    { [ -z "$build" ] || [ "${jar%-"$build".jar}" != "$jar" ]; }; then
+    echo "[avsys] Using the installed ${jar##*/}"
+    export PAPER_CUSTOM_JAR="$jar" SKIP_DOWNLOAD_DEFAULTS="${SKIP_DOWNLOAD_DEFAULTS:-true}"
+  fi
+fi
+exec ` + imageStart + `
+`
+
+// keepsBuild says whether a server's game is started through keepBuild: one
+// on Paper or Folia, run by the image it is written for.
+func keepsBuild(mc *avsysv1.MinecraftServer) bool {
+	if mc.Spec.Modpack != nil || mc.Spec.Image != "" {
+		return false
+	}
+	return mc.Spec.Loader == avsysv1.LoaderPaper || mc.Spec.Loader == avsysv1.LoaderFolia
+}
+
 func rconPasswordEnv(mc *avsysv1.MinecraftServer) corev1.EnvVar {
 	return corev1.EnvVar{
 		Name: "RCON_PASSWORD",
@@ -469,9 +511,15 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 	// Also after the hash, so that servers already running are not asked to
 	// restart for it: the end of the game's log is kept when it fails, and
 	// that is how the status can say why it stopped (see startFailure).
+	// So is starting on the build a server has: it changes nothing a running
+	// game would be restarted for, and is what each start after this one
+	// does. Whatever changes it, its software, changes the hash itself.
 	for i := range spec.Containers {
 		if spec.Containers[i].Name == MinecraftContainer {
 			spec.Containers[i].TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
+			if keepsBuild(mc) {
+				spec.Containers[i].Command = []string{"/bin/sh", "-c", keepBuild}
+			}
 		}
 	}
 	spec.NodeSelector = mc.Spec.NodeSelector
