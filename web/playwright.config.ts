@@ -27,13 +27,18 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"], channel: process.env.CI ? undefined : "chrome" } },
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
   ],
-  webServer: {
+  // Two panels: one on a cluster with no metrics API, which most tests use,
+  // and one with a metrics API and two nodes (tests/panel.ts, withMetrics).
+  webServer: [
+    { port, ready: ".panel.json", flags: "" },
+    { port: port - 1, ready: ".panel-metrics.json", flags: " --metrics" },
+  ].map((p) => ({
     // CI builds the panel first and names it here; otherwise it is compiled on the way.
-    command: `${process.env.AVSYS_UITEST ?? "go run ../cmd/avsys-uitest"} --listen 127.0.0.1:${port} --web-dir dist --upstream tests/upstream --ready tests/.panel.json`,
-    url: `http://127.0.0.1:${port}/api/v1/meta`,
+    command: `${process.env.AVSYS_UITEST ?? "go run ../cmd/avsys-uitest"} --listen 127.0.0.1:${p.port} --web-dir dist --upstream tests/upstream --ready tests/${p.ready}${p.flags}`,
+    url: `http://127.0.0.1:${p.port}/api/v1/meta`,
     reuseExistingServer: false,
     timeout: 180_000,
-    stdout: "ignore",
-    stderr: "pipe",
-  },
+    stdout: "ignore" as const,
+    stderr: "pipe" as const,
+  })),
 });

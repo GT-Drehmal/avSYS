@@ -84,8 +84,11 @@ type Server struct {
 	Client    client.Client
 	// Reader reads the cluster as it is now, where Client may lag a change
 	// by a moment. It is optional: Client is used where there is none.
-	Reader  client.Reader
-	Kube    kubernetes.Interface
+	Reader client.Reader
+	Kube   kubernetes.Interface
+	// Metrics answers what servers and nodes are using. Nil asks the
+	// cluster's metrics API, through Kube. The browser tests stand one in.
+	Metrics Metrics
 	Dialer  kube.PodDialer
 	Gateway *sshgw.Gateway
 	// Backups keeps each organization's snapshot repository.
@@ -330,6 +333,7 @@ func (s *Server) Handler() http.Handler {
 
 	api("GET /me", s.authed(s.getMe))
 	api("GET /nodes", s.authed(s.listNodes))
+	api("GET /nodes/usage", s.authed(s.getNodesUsage))
 	api("PATCH /nodes/{node}", s.authed(s.setNode))
 	api("POST /nodes/measure", s.authed(s.measureNodes))
 	api("PATCH /me", s.authed(s.updateMe))

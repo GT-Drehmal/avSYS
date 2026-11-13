@@ -21,7 +21,7 @@ test("memory, CPU and players are drawn over the last hours, memory against what
   await expect(page.getByText("The last 2 hours.")).toBeVisible();
   const memory = page.getByRole("region", { name: "Memory" });
   await expect(memory).toContainText("4.0 GB allowed");
-  await expect(memory.getByRole("img")).toHaveAttribute("aria-label", /^Memory: 3\.0 GB now, 3\.0 GB at most$/);
+  await expect(memory.getByRole("img")).toHaveAttribute("aria-label", "Memory: 3.0 GB now, 3.0 GB at most, 4.0 GB allowed");
   await expect(page.getByRole("region", { name: "CPU" }).getByRole("img")).toHaveAttribute("aria-label", "CPU: 0.40 cores now, 1.30 cores at most");
   await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toHaveAttribute("aria-label", "Players: 3 now, 3 at most");
 });
@@ -109,4 +109,24 @@ test("pointing at a time the server was not running shows nothing", async ({ pag
   await expect(page.getByRole("tooltip")).toHaveCount(0);
   await page.mouse.move(box.x + 4, box.y + box.height / 2);
   await expect(page.getByRole("tooltip")).toHaveCount(3);
+});
+
+test("CPU is drawn against what the server may use, where that is limited", async ({ page }) => {
+  const start = Date.now() - 3600_000;
+  const samples = Array.from({ length: 120 }, (_, i) => ({ t: new Date(start + i * 30_000).toISOString(), cpu: 800, memory: 2 * gib, players: 1 }));
+  await usage(page, { available: true, limit: 4 * gib, cpuLimit: 1500, every: 30, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  const cpu = page.getByRole("region", { name: "CPU" });
+  await expect(cpu).toContainText("1.50 cores allowed");
+  await expect(cpu.getByRole("img")).toHaveAttribute("aria-label", "CPU: 0.80 cores now, 0.80 cores at most, 1.50 cores allowed");
+  await expect(cpu.locator("line")).toHaveCount(1);
+});
+
+// Against the panel itself, which samples its running servers on a cluster
+// with no metrics API: players alone, from the hours before it started.
+test("on a cluster with no metrics API, the panel's own samples show players and say memory and CPU are not reported", async ({ page }) => {
+  await page.goto("/o/friends/s/survival/usage");
+  await expect(page.getByText("The last 2 hours. This cluster does not report memory and CPU.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toHaveAttribute("aria-label", "Players: 2 now, 2 at most");
+  await expect(page.getByRole("region", { name: /^(Memory|CPU)$/ })).toHaveCount(0);
 });
