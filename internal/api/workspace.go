@@ -360,20 +360,6 @@ func (s *Server) openFiles(r *http.Request, a *access, mc *avsysv1.MinecraftServ
 	return a, mc.Name, sc, full, nil
 }
 
-func fileError(err error) error {
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return errNotFound
-	case errors.Is(err, fs.ErrPermission):
-		return &Error{Status: http.StatusForbidden, Code: "permission", Message: "Permission denied."}
-	}
-	var status *sftp.StatusError
-	if errors.As(err, &status) {
-		return errBadRequest("%s", status.Error())
-	}
-	return err
-}
-
 type fileEntry struct {
 	Name    string    `json:"name"`
 	Size    int64     `json:"size"`
@@ -397,7 +383,7 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	infos, err := sc.ReadDir(full)
 	if err != nil {
-		return fileError(err)
+		return fileFailed(sc, err, "open", full)
 	}
 	entries := make([]fileEntry, 0, len(infos))
 	for _, fi := range infos {
@@ -431,12 +417,12 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 	}
 	f, err := sc.Open(full)
 	if err != nil {
-		return fileError(err)
+		return fileFailed(sc, err, "open", full)
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return fileError(err)
+		return fileFailed(sc, err, "open", full)
 	}
 	if fi.IsDir() {
 		return errBadRequest("That is a directory.")
@@ -456,7 +442,7 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 	if !download && fi.Size() <= maxEditable {
 		var b bytes.Buffer
 		if _, err := f.WriteTo(&b); err != nil {
-			return fileError(err)
+			return fileFailed(sc, err, "open", full)
 		}
 		w.Header().Set("ETag", fileTag(b.Bytes()))
 		http.ServeContent(w, r, "", fi.ModTime(), bytes.NewReader(b.Bytes()))
@@ -530,7 +516,7 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 		defer lock.(*sync.Mutex).Unlock()
 		now, err := tagNow(sc, full)
 		if err != nil {
-			return fileError(err)
+			return fileFailed(sc, err, "save", full)
 		}
 		if now == "" {
 			return &Error{Status: http.StatusPreconditionFailed, Code: "removed", Message: "This file was removed since you opened it."}
@@ -539,12 +525,27 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 			return &Error{Status: http.StatusPreconditionFailed, Code: "changed", Message: "This file was changed since you opened it."}
 		}
 	}
+	// Made new, as by New file, it is not written over one already there.
+	if r.Header.Get("If-None-Match") == "*" {
+		if fi, err := sc.Lstat(full); err == nil {
+			return errExists(full, fi.IsDir())
+		}
+	}
+	if err := placeable(sc, full); err != nil {
+		return fileFailed(sc, err, "save", full)
+	}
+	// There must be room for it on the server's volume.
+	if vfs, err := sc.StatVFS(path.Dir(full)); err == nil && r.ContentLength > 0 {
+		if free := int64(vfs.Bavail) * int64(vfs.Frsize); r.ContentLength > free {
+			return errNoRoom(r.ContentLength, free, "the server")
+		}
+	}
 	// Written to a sibling temp file and renamed into place, so an upload
 	// that is cut off never leaves a half-written config behind.
 	tmp := full + ".avsys-upload"
 	f, err := sc.Create(tmp)
 	if err != nil {
-		return fileError(err)
+		return fileFailed(sc, err, "save", full)
 	}
 	// Many writes in flight at once, as the temp file is removed on failure.
 	h := sha256.New()
@@ -556,15 +557,20 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 		err = sc.PosixRename(tmp, full)
 	}
 	if err != nil {
-		_ = sc.Remove(tmp)
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) && limit == maxEditable {
+			_ = sc.Remove(tmp)
 			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Files over 2 MB can't be saved here. Upload the file instead."}
 		}
 		if errors.As(err, &tooLarge) {
+			_ = sc.Remove(tmp)
 			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "Over 2 GB in one request: send it in parts."}
 		}
-		return fileError(err)
+		// Said before what was written is taken away, which would make
+		// room again.
+		said := notPlaced(sc, err, full)
+		_ = sc.Remove(tmp)
+		return said
 	}
 	s.audit(r.Context(), u, a.Org, "files.write", server, relPath(full))
 	// The tag of what was written, for the editor's next save.
@@ -582,8 +588,17 @@ func (s *Server) makeDir(w http.ResponseWriter, r *http.Request, u *store.User) 
 		return err
 	}
 	defer release()
+	if full == dataRoot {
+		return errBadRequest("Name a folder to make.")
+	}
+	if err := folderFree(sc, full); err != nil {
+		return fileFailed(sc, err, "create", full)
+	}
 	if err := sc.MkdirAll(full); err != nil {
-		return fileError(err)
+		if said := folderFree(sc, full); said != nil {
+			return fileFailed(sc, said, "create", full)
+		}
+		return fileFailed(sc, err, "create", full)
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
@@ -605,15 +620,26 @@ func (s *Server) renameFile(w http.ResponseWriter, r *http.Request, u *store.Use
 	if strings.HasPrefix(to, from+"/") {
 		return errBadRequest("A folder cannot be moved into itself.")
 	}
-	if _, err := sc.Lstat(to); err == nil {
-		return &Error{Status: http.StatusConflict, Code: "exists", Message: "Something with that name already exists."}
+	verb := "rename"
+	if path.Dir(from) != path.Dir(to) {
+		verb = "move"
+	}
+	if _, err := sc.Lstat(from); err != nil {
+		return fileFailed(sc, err, verb, from)
+	}
+	if err := taken(sc, to); err != nil {
+		return err
 	}
 	// Moved into a folder, the folder is there.
 	if fi, err := sc.Stat(path.Dir(to)); err != nil || !fi.IsDir() {
-		return errBadRequest("There is no folder %s.", relPath(path.Dir(to)))
+		return errNoFolder(path.Dir(to))
 	}
 	if err := sc.Rename(from, to); err != nil {
-		return fileError(err)
+		// Something put there meanwhile.
+		if said := taken(sc, to); said != nil {
+			return said
+		}
+		return fileFailed(sc, err, verb, from)
 	}
 	s.audit(r.Context(), u, a.Org, "files.rename", server, relPath(from)+" -> "+relPath(to))
 	w.WriteHeader(http.StatusNoContent)
@@ -629,8 +655,8 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, u *store.Use
 	if full == dataRoot {
 		return errBadRequest("The server directory itself cannot be deleted.")
 	}
-	if err := sc.RemoveAll(full); err != nil {
-		return fileError(err)
+	if err := removeAll(sc, full); err != nil {
+		return err
 	}
 	s.audit(r.Context(), u, a.Org, "files.delete", server, relPath(full))
 	w.WriteHeader(http.StatusNoContent)

@@ -106,7 +106,7 @@ func (s *Server) extractArchive(w http.ResponseWriter, r *http.Request, u *store
 		return errBadRequest("That is not an archive that can be opened here.")
 	}
 	if fi, err := sc.Stat(full); err != nil {
-		return fileError(err)
+		return fileFailed(sc, err, "extract", full)
 	} else if fi.IsDir() {
 		return errBadRequest("That is a folder.")
 	}
@@ -119,7 +119,8 @@ func (s *Server) extractArchive(w http.ResponseWriter, r *http.Request, u *store
 	defer conn.Close()
 	var listing bytes.Buffer
 	if err := s.runIn(ctx, conn, "bsdtar -tf "+shellQuote(full), &listing); err != nil {
-		return errBadRequest("The archive could not be read: %s", err)
+		s.Log.Warn("archive could not be listed", "server", server, "path", relPath(full), "error", err)
+		return errBadRequest("%s could not be read as an archive.", name)
 	}
 	parent := path.Dir(full)
 	into, made := parent, ""
@@ -130,13 +131,16 @@ func (s *Server) extractArchive(w http.ResponseWriter, r *http.Request, u *store
 		made = into
 	}
 	if _, err := sc.Lstat(made); err == nil {
-		return &Error{Status: http.StatusConflict, Code: "exists", Message: fmt.Sprintf("%s is already here. Rename or delete it first.", path.Base(made))}
+		return taken(sc, made)
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fileError(err)
+		return fileFailed(sc, err, "extract", full)
 	}
 	if into != parent {
 		if err := sc.Mkdir(into); err != nil {
-			return fileError(err)
+			if said := taken(sc, into); said != nil {
+				return said
+			}
+			return fileFailed(sc, err, "extract", full)
 		}
 	}
 	// Never outside where it is opened: no absolute names, no "..", and no
@@ -144,8 +148,15 @@ func (s *Server) extractArchive(w http.ResponseWriter, r *http.Request, u *store
 	// And no file that is there already is written over (-k).
 	cmd := "bsdtar -xkf " + shellQuote(full) + " -C " + shellQuote(into) + " --no-same-owner --no-same-permissions --exclude __MACOSX"
 	if err := s.runIn(ctx, conn, cmd, io.Discard); err != nil {
-		_ = sc.RemoveAll(made)
-		return errBadRequest("The archive could not be opened: %s", err)
+		s.Log.Warn("archive could not be extracted", "server", server, "path", relPath(full), "error", err)
+		// Said before what was opened is taken away, which would make room
+		// again.
+		said := errBadRequest("Could not extract %s.", name)
+		if strings.Contains(err.Error(), "No space left") || diskFull(sc, parent) {
+			said = errDiskFull
+		}
+		_ = removeAll(sc, made)
+		return said
 	}
 	s.audit(r.Context(), u, a.Org, "files.extract", server, relPath(full))
 	writeJSON(w, http.StatusOK, map[string]string{"path": relPath(made)})
@@ -174,7 +185,7 @@ func (s *Server) downloadFolder(w http.ResponseWriter, r *http.Request, u *store
 	}
 	for _, f := range fulls {
 		if fi, err := sc.Stat(f); err != nil {
-			return fileError(err)
+			return fileFailed(sc, err, "download", f)
 		} else if len(fulls) == 1 && !fi.IsDir() {
 			return errBadRequest("That is not a folder.")
 		}
@@ -196,7 +207,7 @@ func (s *Server) downloadFolder(w http.ResponseWriter, r *http.Request, u *store
 		if sent.n == 0 {
 			w.Header().Del("Content-Disposition")
 			w.Header().Del("Content-Type")
-			return errBadRequest("The folder could not be zipped: %s", err)
+			return errBadRequest("Could not zip %s.", name)
 		}
 		panic(http.ErrAbortHandler)
 	}
