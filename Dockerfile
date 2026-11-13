@@ -2,15 +2,18 @@
 #
 # Both build stages run on the machine doing the build and cross-compile for
 # the target, so a multi-architecture build does not emulate the compilers.
+#
+# Images are named by digest as well as tag, so that a commit builds from
+# the same images each time. Dependabot moves the digests.
 
-FROM --platform=$BUILDPLATFORM oven/bun:1 AS web
+FROM --platform=$BUILDPLATFORM oven/bun:1@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS web
 WORKDIR /src/web
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY web/ ./
 RUN bun run build
 
-FROM --platform=$BUILDPLATFORM golang:1.27 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27@sha256:ec47ea3725fea0cc88f6de94919aef19f40f12fc1ec0e2d1b3426dbf15ecca04 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -21,9 +24,9 @@ ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags embedweb -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /avsys ./cmd/avsys
 
 # The panel keeps each organization's snapshot repository and prunes it.
-FROM restic/restic:0.19.1 AS restic
+FROM restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510 AS restic
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="avSYS: a Kubernetes-native Minecraft server panel"
