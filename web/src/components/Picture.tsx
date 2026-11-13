@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { toast } from "../lib/toast";
-import { Button, cx } from "./ui";
+import { Button, cx, Modal } from "./ui";
 
 const versionKey = ["picture-version"];
 
@@ -25,6 +26,8 @@ interface PictureProps {
   shape?: "round" | "square";
   /** Told whether there turned out to be a picture at url. */
   onFound?: (found: boolean) => void;
+  /** Drawn square-edged at any size, as a small picture shown large is. */
+  pixelated?: boolean;
   /**
    * Something that changes when a picture that was not there may have come
    * to be: a server's icon cannot be read while it restarts, or before the
@@ -42,7 +45,7 @@ interface PictureProps {
 const seen = new Map<string, boolean>();
 
 /** The picture of a server, an organization or a person, or a tile with its initial. */
-export function Picture({ name, url, size = 24, shape = "square", onFound, retryKey = "" }: PictureProps) {
+export function Picture({ name, url, size = 24, shape = "square", onFound, retryKey = "", pixelated }: PictureProps) {
   const version = usePictureVersion();
   // Only the panel's own pictures change under the same address.
   const src = url && (url.startsWith("/") ? `${url}${url.includes("?") ? "&" : "?"}v=${version}` : url);
@@ -79,7 +82,7 @@ export function Picture({ name, url, size = 24, shape = "square", onFound, retry
           width={size}
           height={size}
           className={cx("size-full bg-raised object-cover transition-opacity duration-150", radius, !shown && "absolute inset-0 opacity-0")}
-          style={{ imageRendering: size <= 64 && shape === "square" ? "pixelated" : undefined }}
+          style={{ imageRendering: pixelated || (size <= 64 && shape === "square") ? "pixelated" : undefined }}
           onLoad={() => {
             seen.set(src, true);
             setLoaded(src);
@@ -106,10 +109,12 @@ interface PickerProps extends Pick<PictureProps, "name" | "shape"> {
   /** Called once it has been set or removed. */
   onChange?: () => void;
   hint?: string;
+  /** Shown large, over its buttons, rather than small beside them. */
+  large?: boolean;
 }
 
 /** Shows a picture with the means to replace or remove it. */
-export function PicturePicker({ name, shape, path, has, url, onChange, hint }: PickerProps) {
+export function PicturePicker({ name, shape, path, has, url, onChange, hint, large }: PickerProps) {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const [found, setFound] = useState(false);
@@ -131,9 +136,9 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint }: P
   };
 
   return (
-    <div className="flex items-center gap-4">
-      <Picture name={name} url={url ?? (has === false ? undefined : `/api/v1${path}`)} size={56} shape={shape} onFound={setFound} />
-      <div className="flex flex-col gap-1.5">
+    <div className={cx("flex items-center gap-4", large && "flex-col")}>
+      <Picture name={name} url={url ?? (has === false ? undefined : `/api/v1${path}`)} size={large ? 192 : 56} shape={shape} onFound={setFound} pixelated={large} />
+      <div className={cx("flex flex-col gap-1.5", large && "items-center text-center")}>
         <div className="flex gap-2">
           {/* One at a time: a replace and a remove under way together end in whichever lands last. */}
           <Button size="sm" loading={busy === "upload"} disabled={busy !== null} onClick={() => input.current?.click()}>
@@ -161,6 +166,35 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint }: P
         }}
       />
     </div>
+  );
+}
+
+/**
+ * A picture that opens larger when clicked. With path, it can be replaced or
+ * removed there; hovering it says so.
+ */
+export function PictureZoom({ name, url, size, retryKey, path, hint }: { name: string; url?: string; size: number; retryKey?: string; path?: string; hint?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" aria-label={`Picture of ${name}`} onClick={() => setOpen(true)} className="group relative shrink-0 cursor-pointer rounded-lg">
+        <Picture name={name} url={url} size={size} retryKey={retryKey} />
+        {path && (
+          <span aria-hidden className="absolute inset-0 hidden items-center justify-center rounded-lg bg-black/55 text-white group-hover:flex group-focus-visible:flex">
+            <Pencil className="size-4" />
+          </span>
+        )}
+      </button>
+      <Modal open={open} onOpenChange={setOpen} title={name}>
+        {path ? (
+          <PicturePicker name={name} path={path} url={url} hint={hint} large />
+        ) : (
+          <div className="flex justify-center">
+            <Picture name={name} url={url} size={192} pixelated />
+          </div>
+        )}
+      </Modal>
+    </>
   );
 }
 
