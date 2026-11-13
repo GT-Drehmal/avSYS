@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,8 +22,35 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
+
+// podNotUp is a pod dialer for a pod that is not up yet: refused at once,
+// each time it is tried.
+type podNotUp struct{ tries *atomic.Int32 }
+
+func (d podNotUp) DialPod(context.Context, string, string, int) (net.Conn, error) {
+	d.tries.Add(1)
+	return nil, errors.New("pod has no IP yet")
+}
+
+// A server's picture is not waited for while its workspace's pod is not up,
+// as while a copy of a server is being made: there is none to show until it
+// is, and pages and the game's server list ask for it.
+func TestServerIconDoesNotWaitForAPod(t *testing.T) {
+	p := newPanel(t)
+	tries := &atomic.Int32{}
+	p.srv.workspaces = newWorkspacePool(&sshgw.Gateway{Dialer: podNotUp{tries}, Log: p.srv.Log})
+	start := time.Now()
+	code, _ := p.do("viewer", "GET", "/orgs/alpha/servers/world/icon", "")
+	if took := time.Since(start); code != http.StatusNotFound || took > 2*time.Second {
+		t.Errorf("answered %d after %v", code, took)
+	}
+	if got := tries.Load(); got != 1 {
+		t.Errorf("the pod was tried %d times", got)
+	}
+}
 
 // picture is a w by h image, red on its left half and blue on its right.
 func picture(w, h int) image.Image {
