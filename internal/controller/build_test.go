@@ -68,9 +68,11 @@ func TestHashLeavesOutKeepingTheBuild(t *testing.T) {
 }
 
 // keepBuild run as the game's container runs it, on files laid out as the
-// image leaves them, says what jar the image is told to use: "" for none,
-// when the image installs as it always has, and whether the default config
-// files are fetched again.
+// image leaves them, with Paper's site answering or not, says what jar the
+// image is told to use: "" for none, when the image installs as it always
+// has, and whether the default config files are fetched again. A server
+// with a build to keep keeps it only while the site does not answer: when
+// it does, the image looks for a newer build of the same game version.
 func TestKeepBuild(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
@@ -94,7 +96,8 @@ func TestKeepBuild(t *testing.T) {
 		// jar is the jar's name in the files; "" is none.
 		jar   string
 		extra []string
-		uses  bool
+		// keeps is whether the server has a build it can start on.
+		keeps bool
 	}{
 		{"first start", paper(nil), "", "", nil, false},
 		{"restarted", paper(nil), installed, "paper-1.21.4-232.jar", nil, true},
@@ -120,43 +123,108 @@ func TestKeepBuild(t *testing.T) {
 		{"settings from a pack", paper(nil), installed, "paper-1.21.4-232.jar", []string{"LOAD_ENV_FROM_GENERIC_PACK=true"}, false},
 		{"no settings from a pack", paper(nil), installed, "paper-1.21.4-232.jar", []string{"LOAD_ENV_FROM_GENERIC_PACK=false"}, true},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
-			jar := filepath.Join(dir, c.jar)
-			if c.jar != "" {
-				if err := os.WriteFile(jar, []byte("jar"), 0o644); err != nil {
+		for _, answers := range []bool{true, false} {
+			name := c.name + "/paper down"
+			if answers {
+				name = c.name + "/paper up"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := t.TempDir()
+				jar := filepath.Join(dir, c.jar)
+				if c.jar != "" {
+					if err := os.WriteFile(jar, []byte("jar"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					jar = filepath.Join(dir, "paper-1.21.4-232.jar")
+				}
+				record := filepath.Join(dir, ".paper.env")
+				if c.record != "" {
+					if err := os.WriteFile(record, []byte(strings.ReplaceAll(c.record, "%s", jar)), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				// A curl that answers as Paper's site does, or fails as one
+				// that cannot be reached does, and notes what it was asked.
+				bin := filepath.Join(dir, "bin")
+				asked := filepath.Join(dir, "asked")
+				exit := "7"
+				if answers {
+					exit = "0"
+				}
+				if err := os.MkdirAll(bin, 0o755); err != nil {
 					t.Fatal(err)
 				}
-			} else {
-				jar = filepath.Join(dir, "paper-1.21.4-232.jar")
-			}
-			record := filepath.Join(dir, ".paper.env")
-			if c.record != "" {
-				if err := os.WriteFile(record, []byte(strings.ReplaceAll(c.record, "%s", jar)), 0o644); err != nil {
+				curl := "#!/bin/sh\nfor a; do last=$a; done\necho \"$last\" >> " + asked + "\nexit " + exit + "\n"
+				if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(curl), 0o755); err != nil {
 					t.Fatal(err)
 				}
-			}
-			script := strings.ReplaceAll(keepBuild, paperEnv, record)
-			script = strings.ReplaceAll(script, "exec "+imageStart, `echo "jar=${PAPER_CUSTOM_JAR:-} defaults=${SKIP_DOWNLOAD_DEFAULTS:-fetched}"`)
-			cmd := exec.Command("sh", "-c", script)
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-			env := envOf(c.mc)
-			cmd.Env = append(cmd.Env, "TYPE="+env["TYPE"], "VERSION="+env["VERSION"])
-			cmd.Env = append(cmd.Env, c.extra...)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("%v: %s", err, out)
-			}
-			want := "jar= defaults=fetched"
-			if c.uses {
-				want = "jar=" + jar + " defaults=true"
-			}
-			if lines := strings.Split(strings.TrimSpace(string(out)), "\n"); lines[len(lines)-1] != want {
-				t.Errorf("got %q, want %s", out, want)
-			}
-			if said := strings.Contains(string(out), "[avsys] Using the installed "+filepath.Base(jar)); said != c.uses {
-				t.Errorf("says it uses the installed jar: %v, in %q", said, out)
-			}
-		})
+				script := strings.ReplaceAll(keepBuild, paperEnv, record)
+				script = strings.ReplaceAll(script, "exec "+imageStart, `echo "jar=${PAPER_CUSTOM_JAR:-} defaults=${SKIP_DOWNLOAD_DEFAULTS:-fetched}"`)
+				cmd := exec.Command("sh", "-c", script)
+				cmd.Env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH")}
+				env := envOf(c.mc)
+				cmd.Env = append(cmd.Env, "TYPE="+env["TYPE"], "VERSION="+env["VERSION"])
+				cmd.Env = append(cmd.Env, c.extra...)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("%v: %s", err, out)
+				}
+				uses := c.keeps && !answers
+				want := "jar= defaults=fetched"
+				if uses {
+					want = "jar=" + jar + " defaults=true"
+				}
+				if lines := strings.Split(strings.TrimSpace(string(out)), "\n"); lines[len(lines)-1] != want {
+					t.Errorf("got %q, want %s", out, want)
+				}
+				if said := strings.Contains(string(out), "[avsys] Paper's site does not answer: starting on the installed "+filepath.Base(jar)); said != uses {
+					t.Errorf("says it starts on the installed jar: %v, in %q", said, out)
+				}
+				// The site is asked only by a server with a build to fall
+				// back on, and for builds of that server's game version.
+				calls, _ := os.ReadFile(asked)
+				switch want := "https://fill.papermc.io/v3/projects/" + strings.ToLower(env["TYPE"]) + "/versions/" + env["VERSION"] + "/builds/latest\n"; {
+				case !c.keeps && len(calls) > 0:
+					t.Errorf("asked Paper's site %q, with nothing to fall back on", calls)
+				case c.keeps && string(calls) != want:
+					t.Errorf("asked Paper's site %q, want %q", calls, want)
+				}
+			})
+		}
+	}
+}
+
+// The site asked can be another, named in the server's own environment.
+func TestKeepBuildAsksTheSiteNamed(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	jar := filepath.Join(dir, "paper-1.21.4-232.jar")
+	record := filepath.Join(dir, ".paper.env")
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for file, body := range map[string]string{
+		jar:                        "jar",
+		record:                     "TYPE=\"PAPER\"\nVERSION=\"1.21.4\"\nSERVER=\"" + jar + "\"\n",
+		filepath.Join(bin, "curl"): "#!/bin/sh\nfor a; do last=$a; done\necho \"$last\"\nexit 7\n",
+	} {
+		if err := os.WriteFile(file, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := strings.ReplaceAll(keepBuild, paperEnv, record)
+	script = strings.ReplaceAll(script, "exec "+imageStart, "true")
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "TYPE=PAPER", "VERSION=1.21.4", "AVSYS_PAPER_API=http://127.0.0.1:9"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if !strings.Contains(string(out), "http://127.0.0.1:9/v3/projects/paper/versions/1.21.4/builds/latest") {
+		t.Errorf("asked %q, want the site named", out)
 	}
 }

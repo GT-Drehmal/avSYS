@@ -139,6 +139,17 @@ func javaTag(java int) string {
 	return "latest"
 }
 
+// RanVersion is the game version in what a server's game says it runs when
+// pinged, its status's version: after the software's name, as in "Paper
+// 1.21.4", or alone. "" when it has said nothing.
+func RanVersion(status string) string {
+	fields := strings.Fields(status)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[len(fields)-1]
+}
+
 // GameVersionOf is the game version a server runs, as far as it is known: for
 // a modpack that is whatever the pack was built for.
 func GameVersionOf(spec *avsysv1.MinecraftServerSpec) string {
@@ -367,18 +378,24 @@ const (
 	paperEnv   = "/data/.paper.env"
 )
 
-// keepBuild starts a Paper or Folia server on the build it already has, when
-// it has one for the game version and kind asked for. Otherwise the image
-// asks Paper's site for the newest build of that version on every start,
-// even with a build given, and a restart fails while the site does not
-// answer. Nor are the default config files fetched again, which the image
-// does on every start though the server has them, only to find that out.
-// The record is in the server's files, so it goes wherever they go:
-// snapshots, copies, templates, restores, imports. A version or kind other
-// than the one installed, a jar that is gone, a version of LATEST, or a
+// paperAPI is where Paper and Folia's builds are listed, as the image asks.
+const paperAPI = "https://fill.papermc.io"
+
+// keepBuild lets a Paper or Folia server start on the build it already has
+// when Paper's site does not answer. The image asks that site for the newest
+// build of the server's game version on every start, even with a build
+// given, and the start fails while it does not answer. So the site is asked
+// first, for a few seconds: when it answers, the image goes on as it always
+// does, and updates the build within the same game version; when it does
+// not, the image is told to use the jar the server has, and not to fetch
+// the default config files either, which it does on every start though the
+// server has them. The record of that jar is in the server's files, so it
+// goes wherever they go: snapshots, copies, templates, restores, imports. A
+// version or kind other than the one installed, a jar that is gone, or a
 // download, jar or file of settings of the server's own in its environment
 // leave the start to the image, which installs as it always has, and
-// records what it got.
+// records what it got. AVSYS_PAPER_API, in a server's own environment, asks
+// another site in place of Paper's.
 const keepBuild = `f=` + paperEnv + `
 kind=$(echo "${TYPE:-}" | tr a-z A-Z)
 # The build asked for, as the image reads it: for Folia, its own name for
@@ -394,8 +411,13 @@ if [ -z "${PAPER_CUSTOM_JAR:-}${PAPER_DOWNLOAD_URL:-}${FOLIA_DOWNLOAD_URL:-}$loa
   jar=$(get SERVER)
   if [ -n "$jar" ] && [ -f "$jar" ] && [ "$(get TYPE)" = "$kind" ] && [ "$(get VERSION)" = "${VERSION:-}" ] &&
     { [ -z "$build" ] || [ "${jar%-"$build".jar}" != "$jar" ]; }; then
-    echo "[avsys] Using the installed ${jar##*/}"
-    export PAPER_CUSTOM_JAR="$jar" SKIP_DOWNLOAD_DEFAULTS="${SKIP_DOWNLOAD_DEFAULTS:-true}"
+    project=$(echo "$kind" | tr A-Z a-z)
+    if curl -fsS -o /dev/null --connect-timeout 3 -m 5 "${AVSYS_PAPER_API:-` + paperAPI + `}/v3/projects/$project/versions/$VERSION/builds/latest" 2>/dev/null; then
+      echo "[avsys] Paper's site answers: looking for a newer build of $VERSION than ${jar##*/}"
+    else
+      echo "[avsys] Paper's site does not answer: starting on the installed ${jar##*/}"
+      export PAPER_CUSTOM_JAR="$jar" SKIP_DOWNLOAD_DEFAULTS="${SKIP_DOWNLOAD_DEFAULTS:-true}"
+    fi
   fi
 fi
 exec ` + imageStart + `
