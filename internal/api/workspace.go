@@ -526,7 +526,8 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 		}
 	}
 	// Made new, as by New file, it is not written over one already there.
-	if r.Header.Get("If-None-Match") == "*" {
+	createOnly := r.Header.Get("If-None-Match") == "*"
+	if createOnly {
 		if fi, err := sc.Lstat(full); err == nil {
 			return errExists(full, fi.IsDir())
 		}
@@ -553,7 +554,16 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request, u *store.User
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
-	if err == nil {
+	if err == nil && createOnly {
+		// Not over one made meanwhile either: the file server's own
+		// rename never replaces a file.
+		if err = sc.Rename(tmp, full); err != nil {
+			if said := taken(sc, full); said != nil {
+				_ = sc.Remove(tmp)
+				return said
+			}
+		}
+	} else if err == nil {
 		err = sc.PosixRename(tmp, full)
 	}
 	if err != nil {

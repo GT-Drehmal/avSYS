@@ -310,3 +310,59 @@ func TestDiskFullSaidSo(t *testing.T) {
 		t.Errorf("sent in parts: %d %q", code, message)
 	}
 }
+
+// madeMeanwhile puts a file at full just before something is moved there,
+// as the game might.
+type madeMeanwhile struct {
+	sftp.FileCmder
+	put  sftp.FileWriter
+	full string
+}
+
+func (m madeMeanwhile) make(r *sftp.Request) error {
+	if r.Target != m.full {
+		return nil
+	}
+	req := sftp.NewRequest("Put", m.full)
+	req.Flags = 0x02 | 0x08 // write, create
+	f, err := m.put.Filewrite(req)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteAt([]byte("theirs"), 0)
+	return err
+}
+
+func (m madeMeanwhile) Filecmd(r *sftp.Request) error {
+	if r.Method == "Rename" {
+		if err := m.make(r); err != nil {
+			return err
+		}
+	}
+	return m.FileCmder.Filecmd(r)
+}
+
+func (m madeMeanwhile) PosixRename(r *sftp.Request) error {
+	if err := m.make(r); err != nil {
+		return err
+	}
+	return m.FileCmder.(sftp.PosixRenameFileCmder).PosixRename(r)
+}
+
+// A new file is not written over one made while it was being made.
+func TestNewFileNotOverOneMadeMeanwhile(t *testing.T) {
+	p := newPanel(t)
+	h := sftp.InMemHandler()
+	h.FileCmd = madeMeanwhile{FileCmder: h.FileCmd, put: h.FilePut, full: dataRoot + "/ops.json"}
+	sc := filesFrom(t, p, h)
+	code, message := filesCall(t, p, "PUT", "/content?path=/ops.json", "", "If-None-Match", "*")
+	if code != http.StatusConflict || message != "A file named ops.json already exists." {
+		t.Errorf("made: %d %q", code, message)
+	}
+	if got := read(t, sc, dataRoot+"/ops.json"); got != "theirs" {
+		t.Errorf("written over: %q", got)
+	}
+	if _, err := sc.Lstat(dataRoot + "/ops.json.avsys-upload"); err == nil {
+		t.Error("left behind")
+	}
+}
