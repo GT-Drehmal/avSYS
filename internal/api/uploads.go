@@ -418,7 +418,7 @@ func (s *Server) writeFilePart(w http.ResponseWriter, r *http.Request, u *store.
 		return s.filePartError(err, server)
 	}
 	body := &readCounted{r: http.MaxBytesReader(w, r.Body, maxPart)}
-	n, err := io.Copy(f, body)
+	n, err := copyInto(f, body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -536,4 +536,12 @@ func (s *Server) filePartsReceived(w http.ResponseWriter, r *http.Request, u *st
 	}
 	writeJSON(w, http.StatusOK, uploaded{Received: got})
 	return nil
+}
+
+// copyInto writes what r has to f, in large writes, failing as any does.
+// Not io.Copy: through File.ReadFrom, a write that fails at the end of what
+// was sent is not said (pkg/sftp drops it when the last read comes up
+// short), and the file is taken for written whole.
+func copyInto(f *sftp.File, r io.Reader) (int64, error) {
+	return io.CopyBuffer(struct{ io.Writer }{f}, r, make([]byte, 1<<20))
 }
