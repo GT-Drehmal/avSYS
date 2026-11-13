@@ -103,7 +103,12 @@ function toDraft(spec: ServerSpec): Draft {
   };
 }
 
-function toPatch(d: Draft, current: ServerSpec): SpecPatch {
+/**
+ * The settings to save. The version is sent only when it was changed: one
+ * picked as "Latest release" is the newest there is now, given as latest,
+ * which the server then keeps.
+ */
+function toPatch(d: Draft, current: ServerSpec, latest: string | undefined): SpecPatch {
   const properties: Record<string, string | null> = {};
   // A removed key has to be sent as null, or the merge would keep it.
   for (const key of Object.keys(current.properties ?? {})) properties[key] = null;
@@ -120,7 +125,7 @@ function toPatch(d: Draft, current: ServerSpec): SpecPatch {
   Object.assign(properties, parseProperties(d.otherProperties));
   return {
     displayName: d.displayName,
-    version: d.version,
+    ...(d.version !== current.version || d.loader !== current.loader ? { version: d.version === "LATEST" && latest ? latest : d.version } : {}),
     loader: d.loader,
     resources: { ...current.resources, memory: fromGigabytes(d.memory) },
     storage: { ...current.storage, size: fromGigabytes(d.storage) },
@@ -202,7 +207,7 @@ export function Settings() {
     if (!sure && isOpen(draft) && !isOpen(saved)) return setOpening(true);
     setOpening(false);
     const sent = draft;
-    update.mutate(toPatch(draft, server.spec), {
+    update.mutate(toPatch(draft, server.spec, latestOf(versions)), {
       onSuccess: (next) => {
         // Changed again while it was saved: that change is kept, to save next.
         setDraft((d) => (d === sent ? toDraft(next.spec) : d));

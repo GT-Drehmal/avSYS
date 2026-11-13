@@ -15,7 +15,7 @@ import { cancelled } from "../components/Uploading";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
-import { ago, bytes, loaderNames } from "../lib/format";
+import { ago, bytes, softwareWords } from "../lib/format";
 import { launchOf } from "../lib/launch";
 import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
@@ -536,6 +536,12 @@ export function ServerForm({
   const softwareRef = useRef<HTMLDivElement>(null);
   const versions = useGameVersions(v.kind !== "modpack" ? v.loader : null);
   const [previews, setPreviews] = useState(false);
+  // What is saved: for a server, "Latest release" is the newest there is
+  // now, which it then keeps. A template keeps "Latest" itself, and each
+  // server made from it gets the newest there is then. Not known yet, it is
+  // left to the panel to find.
+  const latestNow = versions.isPlaceholderData ? undefined : versions.data?.latest;
+  const saved = (version: string) => (version === "LATEST" && !forTemplate && latestNow ? latestNow : version);
   // A version picked for one kind of server may have no build for the next.
   useEffect(() => {
     // An imported server keeps the version it ran, listed or not.
@@ -585,7 +591,7 @@ export function ServerForm({
     v.kind === "modpack"
       ? v.modpack?.title || (v.modpack?.project ? v.modpack.project : "a modpack")
       : v.loader
-        ? `${loaderNames[v.loader] ?? v.loader}${v.version === "LATEST" ? ", latest" : ` ${v.version}`}`
+        ? softwareWords(v.loader, saved(v.version))
         : null,
     `${v.memory} GB`,
   ]
@@ -824,7 +830,7 @@ export function ServerForm({
       // The game looks for its picture and its files when it starts, so a
       // server given any is made stopped and started once they are there.
       ...(v.picture.kind === "file" || toUpload ? { state: "Stopped" as const } : {}),
-      ...(v.kind === "modpack" ? { modpack: v.modpack ?? undefined } : { loader: v.loader ?? undefined, version: v.version, ...(v.loaderVersion ? { loaderVersion: v.loaderVersion } : {}) }),
+      ...(v.kind === "modpack" ? { modpack: v.modpack ?? undefined } : { loader: v.loader ?? undefined, version: saved(v.version), ...(v.loaderVersion ? { loaderVersion: v.loaderVersion } : {}) }),
     };
   };
 
@@ -835,7 +841,7 @@ export function ServerForm({
    */
   const copyRequest = (): Partial<ServerSpec> => {
     const changes: Partial<ServerSpec> = {};
-    if (versionChanged) changes.version = v.version;
+    if (versionChanged) changes.version = saved(v.version);
     // A setting put back on "Server default", or taken out of the other
     // properties, is sent as null: the panel stops setting it, and the copied
     // server.properties keeps what it has.
@@ -1239,7 +1245,7 @@ export function ServerForm({
     ["snapshot", "Snapshot"],
     ["import", "Import"],
   ] as const;
-  const softwareName = start.modpack ? `${start.modpack.title || start.modpack.project} modpack` : `${loaderNames[start.loader ?? "vanilla"] ?? start.loader} ${start.version}`;
+  const softwareName = start.modpack ? `${start.modpack.title || start.modpack.project} modpack` : softwareWords(start.loader ?? "vanilla", start.version);
   const versionField = (
     <Field
       label="Game version"
