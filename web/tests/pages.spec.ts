@@ -417,6 +417,39 @@ test("an organization's picture opens larger from its settings, for an owner to 
   await expect(seen.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
 });
 
+test("a picture being changed on the page cannot be changed again in its dialog until that is done", async ({ page, as }) => {
+  await as("owner");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route("**/api/v1/me", async (route) => {
+    const me = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...me, orgs: me.orgs.map((o: { slug: string }) => (o.slug === "friends" ? { ...o, hasIcon: true } : o)) } });
+  });
+  // The upload is held until the test says.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/icon*", async (route) => {
+    const method = route.request().method();
+    if (method === "GET") return route.fulfill({ status: 200, contentType: "image/png", body: png });
+    asked.push(method);
+    if (method === "PUT") await held;
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/settings");
+  await page.getByLabel("Picture for Friends").setInputFiles({ name: "new.png", mimeType: "image/png", buffer: png });
+  await expect.poll(() => asked).toEqual(["PUT"]);
+  await page.getByRole("button", { name: "Picture of Friends" }).click();
+  const dialog = page.getByRole("dialog", { name: "Friends" });
+  await expect(dialog.getByRole("button", { name: "Remove" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Replace" })).toBeDisabled();
+  release();
+  await expect(dialog.getByRole("button", { name: "Remove" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect.poll(() => asked).toEqual(["PUT", "DELETE"]);
+});
+
 test("your own picture opens larger from your account, to change or remove, and a photo is not drawn blocky", async ({ page, as }) => {
   await as("owner");
   // 128 pixels square, as an uploaded one is kept: shown at 192, it is smoothed, not drawn in blocks.

@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
@@ -119,25 +119,29 @@ interface PickerProps extends Pick<PictureProps, "name" | "shape"> {
   large?: boolean;
 }
 
+type Change = { kind: "upload"; file: File } | { kind: "remove" };
+
 /** Shows a picture with the means to replace or remove it. */
 export function PicturePicker({ name, shape, path, has, url, onChange, hint, large }: PickerProps) {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const [found, setFound] = useState(false);
-  const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
   const exists = has ?? found;
+  // One change at a time for each picture, whichever of its pickers it was
+  // started from: the one on the page and the one in its dialog share it.
+  const mutationKey = ["picture", path];
+  const change = useMutation({ mutationKey, mutationFn: (c: Change) => (c.kind === "upload" ? api.putRaw(path, c.file) : api.del(path)) });
+  const busy = useMutationState({ filters: { mutationKey, status: "pending" }, select: (m) => (m.state.variables as Change).kind })[0] ?? null;
 
-  const run = async (kind: "upload" | "remove", work: () => Promise<unknown>) => {
-    setBusy(kind);
+  const run = async (c: Change) => {
+    if (busy) return;
     try {
-      await work();
+      await change.mutateAsync(c);
       qc.setQueryData(versionKey, Date.now());
-      if (kind === "remove") setFound(false);
+      if (c.kind === "remove") setFound(false);
       onChange?.();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not change the picture.");
-    } finally {
-      setBusy(null);
     }
   };
 
@@ -156,7 +160,7 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
             {exists ? "Replace" : "Upload"}
           </Button>
           {exists && (
-            <Button size="sm" variant="ghost" loading={busy === "remove"} disabled={busy !== null} onClick={() => run("remove", () => api.del(path))}>
+            <Button size="sm" variant="ghost" loading={busy === "remove"} disabled={busy !== null} onClick={() => run({ kind: "remove" })}>
               Remove
             </Button>
           )}
@@ -173,7 +177,7 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
           const file = e.target.files?.[0];
           // The same file can be picked again after a failure.
           e.target.value = "";
-          if (file) run("upload", () => api.putRaw(path, file));
+          if (file) run({ kind: "upload", file });
         }}
       />
     </div>
