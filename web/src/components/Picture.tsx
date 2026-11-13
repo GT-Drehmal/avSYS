@@ -26,7 +26,10 @@ interface PictureProps {
   shape?: "round" | "square";
   /** Told whether there turned out to be a picture at url. */
   onFound?: (found: boolean) => void;
-  /** Drawn square-edged at any size, as a small picture shown large is. */
+  /**
+   * Drawn square-edged when shown at twice its own size or more, as a game's
+   * 64-pixel icon shown large is, rather than blurred.
+   */
   pixelated?: boolean;
   /**
    * Something that changes when a picture that was not there may have come
@@ -52,6 +55,8 @@ export function Picture({ name, url, size = 24, shape = "square", onFound, retry
   // Which address turned out to have a picture, and which to have none.
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  // How wide the picture itself is, once it is in.
+  const [natural, setNatural] = useState(0);
   // A failure only counts for as long as nothing has changed since.
   const attempt = `${src}|${retryKey}`;
   const radius = shape === "round" ? "rounded-full" : size > 32 ? "rounded-lg" : "rounded-md";
@@ -82,8 +87,9 @@ export function Picture({ name, url, size = 24, shape = "square", onFound, retry
           width={size}
           height={size}
           className={cx("size-full bg-raised object-cover transition-opacity duration-150", radius, !shown && "absolute inset-0 opacity-0")}
-          style={{ imageRendering: pixelated || (size <= 64 && shape === "square") ? "pixelated" : undefined }}
-          onLoad={() => {
+          style={{ imageRendering: (pixelated && natural > 0 && natural * 2 <= size) || (size <= 64 && shape === "square") ? "pixelated" : undefined }}
+          onLoad={(e) => {
+            setNatural(e.currentTarget.naturalWidth);
             seen.set(src, true);
             setLoaded(src);
             onFound?.(true);
@@ -137,7 +143,12 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
 
   return (
     <div className={cx("flex items-center gap-4", large && "flex-col")}>
-      <Picture name={name} url={url ?? (has === false ? undefined : `/api/v1${path}`)} size={large ? 192 : 56} shape={shape} onFound={setFound} pixelated={large} />
+      {large ? (
+        <Picture name={name} url={url ?? (has === false ? undefined : `/api/v1${path}`)} size={192} shape={shape} onFound={setFound} pixelated />
+      ) : (
+        // Opens larger, with these same buttons under it.
+        <PictureZoom name={name} url={url} size={56} shape={shape} onFound={setFound} path={path} has={has} hint={hint} onChange={onChange} />
+      )}
       <div className={cx("flex flex-col gap-1.5", large && "items-center text-center")}>
         <div className="flex gap-2">
           {/* One at a time: a replace and a remove under way together end in whichever lands last. */}
@@ -169,28 +180,35 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
   );
 }
 
+interface ZoomProps extends Pick<PictureProps, "name" | "url" | "shape" | "retryKey" | "onFound">, Partial<Pick<PickerProps, "path" | "has" | "hint" | "onChange">> {
+  size: number;
+}
+
 /**
- * A picture that opens larger when clicked. With path, it can be replaced or
- * removed there; hovering it says so.
+ * A picture that opens larger when clicked. With path, given to those who
+ * may change it, it can be replaced or removed there as PicturePicker does,
+ * and hovering it says so. Without, it is only shown larger.
  */
-export function PictureZoom({ name, url, size, retryKey, path, hint }: { name: string; url?: string; size: number; retryKey?: string; path?: string; hint?: string }) {
+export function PictureZoom({ name, url, size, shape, retryKey, onFound, path, has, hint, onChange }: ZoomProps) {
   const [open, setOpen] = useState(false);
+  const radius = shape === "round" ? "rounded-full" : "rounded-lg";
   return (
     <>
-      <button type="button" aria-label={`Picture of ${name}`} onClick={() => setOpen(true)} className="group relative shrink-0 cursor-pointer rounded-lg">
-        <Picture name={name} url={url} size={size} retryKey={retryKey} />
+      {/* A named group: the rows that hold it are groups of their own. */}
+      <button type="button" aria-label={`Picture of ${name}`} onClick={() => setOpen(true)} className={cx("group/picture relative shrink-0 cursor-pointer", radius)}>
+        <Picture name={name} url={url ?? (path && has !== false ? `/api/v1${path}` : undefined)} size={size} shape={shape} retryKey={retryKey} onFound={onFound} />
         {path && (
-          <span aria-hidden className="absolute inset-0 hidden items-center justify-center rounded-lg bg-black/55 text-white group-hover:flex group-focus-visible:flex">
+          <span aria-hidden className={cx("absolute inset-0 hidden items-center justify-center bg-black/55 text-white group-hover/picture:flex group-focus-visible/picture:flex", radius)}>
             <Pencil className="size-4" />
           </span>
         )}
       </button>
       <Modal open={open} onOpenChange={setOpen} title={name}>
         {path ? (
-          <PicturePicker name={name} path={path} url={url} hint={hint} large />
+          <PicturePicker name={name} shape={shape} path={path} has={has} url={url} hint={hint} onChange={onChange} large />
         ) : (
           <div className="flex justify-center">
-            <Picture name={name} url={url} size={192} pixelated />
+            <Picture name={name} url={url} size={192} shape={shape} pixelated />
           </div>
         )}
       </Modal>

@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { PicturePicker } from "../components/Picture";
+import { PicturePicker, PictureZoom } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { Button, Confirm, Field, Input, Notice, PageHeader, Section, Textarea } from "../components/ui";
-import { api } from "../lib/api";
+import { api, atLeast, orgIcon } from "../lib/api";
 import { keys, useAction, useOrgSnapshots } from "../lib/queries";
 import { toast } from "../lib/toast";
 
@@ -36,7 +36,12 @@ export function OrgSettings() {
             rename.mutate(undefined, { onSuccess: () => toast.info("Organization renamed") });
           }}
         >
-          <PicturePicker name={membership.name} path={`/orgs/${org}/icon`} has={membership.hasIcon} onChange={() => qc.invalidateQueries({ queryKey: keys.me })} />
+          {/* Like the name, the picture is owners' to change. */}
+          {atLeast(membership.role, "owner") ? (
+            <PicturePicker name={membership.name} path={`/orgs/${org}/icon`} has={membership.hasIcon} onChange={() => qc.invalidateQueries({ queryKey: keys.me })} />
+          ) : (
+            <PictureZoom name={membership.name} url={orgIcon(membership)} size={56} />
+          )}
           <Field label="Name">{(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
           <Field label="Short name" hint="Used in links and SSH logins. Cannot be changed.">
             {(id) => <Input id={id} disabled value={membership.slug} className="font-mono" />}
