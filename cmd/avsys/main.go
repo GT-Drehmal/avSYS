@@ -352,6 +352,12 @@ func run(opts options, log *slog.Logger) error {
 		return err
 	}
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		server.PinLatest(ctx)
+		return nil
+	})); err != nil {
+		return err
+	}
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		server.RunSchedule(ctx)
 		return nil
 	})); err != nil {

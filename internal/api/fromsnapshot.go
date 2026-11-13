@@ -305,11 +305,11 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 		return spec, err
 	}
 	s.applyDefaults(a.Org.Slug, name, &spec)
-	// "Latest" is settled here, as for any new server.
-	if spec.Version == "LATEST" && spec.Modpack == nil {
-		if latest := s.latestRelease(ctx, spec.Loader); latest != "" {
-			spec.Version = latest
-		}
+	// "Latest" is settled here, as for any new server: asked for, or kept
+	// by a template, or by a snapshot from before servers were kept on one
+	// version.
+	if err := s.settleLatest(ctx, &spec); err != nil {
+		return spec, err
 	}
 	if err := s.validateSpec(ctx, a.Namespace, name, &spec); err != nil {
 		return spec, err

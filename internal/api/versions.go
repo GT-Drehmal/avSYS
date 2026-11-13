@@ -340,6 +340,29 @@ func (s *Server) latestRelease(ctx context.Context, loader avsysv1.Loader) strin
 	return sup.releases[0].ID
 }
 
+// errNoLatest is for "Latest" asked for while the newest version cannot be
+// found out.
+var errNoLatest = errBadRequest("The newest game version could not be found. Pick a version.")
+
+// settleLatest turns "Latest" into the newest release the server's software
+// has a build for now, which the server then keeps. One that went on
+// following it would move to a new game version on some restart, by
+// itself: a world opened in it cannot go back, its mods and plugins may not
+// load, and players on the old version are kept out. When the newest cannot
+// be found out the server is not made "Latest" either: it is refused, and
+// another version can be picked. A modpack names its own version.
+func (s *Server) settleLatest(ctx context.Context, spec *avsysv1.MinecraftServerSpec) error {
+	if spec.Modpack != nil || spec.Version != "LATEST" {
+		return nil
+	}
+	latest := s.latestRelease(ctx, spec.Loader)
+	if latest == "" {
+		return errNoLatest
+	}
+	spec.Version = latest
+	return nil
+}
+
 // checkVersion refuses a game version the server's software has no build
 // for: such a server would fail to install each time it started. Whatever
 // cannot be checked is let through.

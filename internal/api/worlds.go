@@ -16,6 +16,7 @@ import (
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -346,8 +347,8 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		level, version, source = levelOf(&mc.Spec), mc.Spec.Version, "server:"+mc.Name
 		// "Latest" is whichever it ran last: the game says, after its
 		// software's name.
-		if fields := strings.Fields(mc.Status.Version); version == "LATEST" && len(fields) > 0 {
-			version = fields[len(fields)-1]
+		if ran := controller.RanVersion(mc.Status.Version); version == "LATEST" && ran != "" {
+			version = ran
 		}
 		take = func(ctx context.Context) (*backup.Snapshot, error) {
 			op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindSnapshot, "")

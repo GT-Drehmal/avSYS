@@ -192,14 +192,18 @@ func TestCreateChecksTheVersion(t *testing.T) {
 }
 
 // With a site down nothing can be checked, and nobody is stopped from
-// making a server over it.
+// making a server over it. But "Latest" cannot be told, and is not saved
+// as it is: such a server would move to a new version by itself.
 func TestCreateWithoutTheLists(t *testing.T) {
 	p := newPanel(t)
 	if got, _ := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"folia","spec":{"eula":true,"loader":"folia","version":"26.3"}}`); got != 201 {
 		t.Errorf("with every list unreachable: %d, want 201", got)
 	}
-	if got, _ := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"latest","spec":{"eula":true,"loader":"folia"}}`); got != 201 || p.versionOf("latest") != "LATEST" {
-		t.Errorf("latest with every list unreachable: %d %s, want 201 and left as LATEST", got, p.versionOf("latest"))
+	for _, spec := range []string{`"loader":"folia"`, `"loader":"paper","version":"LATEST"`} {
+		_, out := p.get("owner", "POST", "/orgs/alpha/servers", `{"name":"latest","spec":{"eula":true,`+spec+`}}`)
+		if out["code"] != "invalid" || out["message"] != "The newest game version could not be found. Pick a version." {
+			t.Errorf("latest (%s) with every list unreachable: %v, want it refused", spec, out)
+		}
 	}
 }
 

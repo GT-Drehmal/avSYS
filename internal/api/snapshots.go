@@ -1057,6 +1057,14 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	if err != nil {
 		return nil, err
 	}
+	// A snapshot from before servers were kept on one version may say
+	// "Latest": the server is put on the newest there is now, and kept there.
+	if record.Spec.Version == "LATEST" && record.Spec.Modpack == nil {
+		if err := s.settleLatest(ctx, &record.Spec); err != nil {
+			return nil, failed(err, "the newest game version, which the snapshot asks for, could not be found, so nothing was changed")
+		}
+		s.resolveJava(ctx, &record.Spec)
+	}
 	// The settings a restore applies get the same checks as settings typed
 	// into the panel, before anything is touched.
 	restored := mc.Spec.DeepCopy()
