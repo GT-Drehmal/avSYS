@@ -214,11 +214,30 @@ func (r *Reconciler) moveVolume(ctx context.Context, mc *avsysv1.MinecraftServer
 	}
 	pod := &corev1.Pod{}
 	switch err := r.Get(ctx, client.ObjectKeyFromObject(mc), pod); {
-	case err == nil && pod.DeletionTimestamp.IsZero():
-		if err := r.Delete(ctx, pod); client.IgnoreNotFound(err) != nil {
-			return true, err
+	case err == nil:
+		// A pod on a node that is down never finishes stopping: the node is
+		// not there to say it has, and its volume is not let go of until
+		// it has. Its files are not wanted, the move carrying them in a
+		// snapshot, so it is removed at once. Should the node come back, it
+		// finds the pod gone and stops what it still runs of it.
+		down := false
+		if pod.Spec.NodeName != "" {
+			if down, err = nodeDownByName(ctx, r.Reader, pod.Spec.NodeName); err != nil {
+				return true, err
+			}
 		}
-	case err != nil && !apierrors.IsNotFound(err):
+		switch {
+		case down:
+			log.FromContext(ctx).Info("removing the pod on a node that is down", "node", pod.Spec.NodeName, "to", target)
+			if err := r.Delete(ctx, pod, client.GracePeriodSeconds(0)); client.IgnoreNotFound(err) != nil {
+				return true, err
+			}
+		case pod.DeletionTimestamp.IsZero():
+			if err := r.Delete(ctx, pod); client.IgnoreNotFound(err) != nil {
+				return true, err
+			}
+		}
+	case !apierrors.IsNotFound(err):
 		return true, err
 	}
 	if pvc.DeletionTimestamp.IsZero() {

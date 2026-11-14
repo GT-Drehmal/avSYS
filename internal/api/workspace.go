@@ -192,7 +192,7 @@ func newWorkspacePool(g *sshgw.Gateway) *workspacePool {
 			p.mu.Lock()
 			for key, c := range p.conns {
 				if c.idle() > sftpIdle {
-					c.close()
+					go c.close()
 					delete(p.conns, key)
 				}
 			}
@@ -202,9 +202,50 @@ func newWorkspacePool(g *sshgw.Gateway) *workspacePool {
 	return p
 }
 
+// close ends the connection. The transport goes first: a pod on a node that
+// stopped answering never answers the SFTP session's goodbye, and anything
+// still waiting on it is let go by the transport closing under it.
 func (c *pooledSFTP) close() {
+	if c.ssh != nil {
+		c.ssh.Close()
+	}
 	c.sftp.Close()
-	c.ssh.Close()
+}
+
+// drop forgets the kept connection to a server's workspace, as for one
+// whose pod was made again on another node.
+func (p *workspacePool) drop(namespace, server string) {
+	if p == nil {
+		return
+	}
+	key := namespace + "/" + server
+	p.mu.Lock()
+	c := p.conns[key]
+	delete(p.conns, key)
+	p.mu.Unlock()
+	if c != nil {
+		go c.close()
+	}
+}
+
+// probeWait is how long a kept connection has to answer before it is taken
+// to be to a pod that is gone. A pod on a node that stopped answering does
+// not say so: without a limit, the look would wait for it for ever.
+var probeWait = 5 * time.Second
+
+// answers says whether a kept connection still reaches its workspace.
+func (c *pooledSFTP) answers() bool {
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.sftp.Getwd()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err == nil
+	case <-time.After(probeWait):
+		return false
+	}
 }
 
 var errNoWorkspaces = errors.New("this panel has no SSH gateway to reach server files through")
@@ -221,17 +262,23 @@ func (p *workspacePool) getNow(ctx context.Context, namespace, server string) (*
 func (p *workspacePool) connect(ctx context.Context, namespace, server string, dial func(context.Context, string, string) (*ssh.Client, error)) (*sftp.Client, error) {
 	key := namespace + "/" + server
 	p.mu.Lock()
-	if c := p.conns[key]; c != nil {
-		// A cheap round trip tells a live connection from one whose pod is gone.
-		if _, err := c.sftp.Getwd(); err == nil {
+	c := p.conns[key]
+	p.mu.Unlock()
+	if c != nil {
+		// A cheap round trip tells a live connection from one whose pod is
+		// gone. It is made without holding the pool, so that one server's
+		// pod that does not answer holds up no other server's files.
+		if c.answers() {
 			c.lastUsed.Store(time.Now().UnixNano())
-			p.mu.Unlock()
 			return c.sftp, nil
 		}
-		c.close()
-		delete(p.conns, key)
+		p.mu.Lock()
+		if p.conns[key] == c {
+			delete(p.conns, key)
+		}
+		p.mu.Unlock()
+		go c.close()
 	}
-	p.mu.Unlock()
 
 	// A panel run without its SSH gateway, as in tests, reaches no workspace.
 	if p.gateway == nil {

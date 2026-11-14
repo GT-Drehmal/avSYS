@@ -1057,20 +1057,8 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 	if err != nil {
 		return nil, err
 	}
-	// A snapshot from before servers were kept on one version may say
-	// "Latest": the server is put on the newest there is now, and kept there.
-	if record.Spec.Version == "LATEST" && record.Spec.Modpack == nil {
-		if err := s.settleLatest(ctx, &record.Spec); err != nil {
-			return nil, failed(err, "the newest game version, which the snapshot asks for, could not be found, so nothing was changed")
-		}
-		s.resolveJava(ctx, &record.Spec)
-	}
-	// The settings a restore applies get the same checks as settings typed
-	// into the panel, before anything is touched.
-	restored := mc.Spec.DeepCopy()
-	restoreSoftware(restored, &record.Spec)
-	if err := s.validateSpec(ctx, mc.Namespace, mc.Name, restored); err != nil {
-		return nil, failed(err, "the snapshot's settings are not valid here")
+	if err := s.settleRecord(ctx, mc, record); err != nil {
+		return nil, err
 	}
 
 	s.setOperation(mc.Namespace, op, "Saving the current state first", 0)
@@ -1152,6 +1140,26 @@ func (s *Server) restore(ctx context.Context, org string, mc *avsysv1.MinecraftS
 		return undo, failed(err, "the files and settings were restored, but the server could not be released to start; restore again")
 	}
 	return undo, nil
+}
+
+// settleRecord readies the settings a snapshot recorded to be put back on
+// its server with its files, before anything is touched. A snapshot from
+// before servers were kept on one version may say "Latest": the server is
+// put on the newest there is now, and kept there. The settings then get the
+// same checks as settings typed into the panel.
+func (s *Server) settleRecord(ctx context.Context, mc *avsysv1.MinecraftServer, record *snapshotRecord) error {
+	if record.Spec.Version == "LATEST" && record.Spec.Modpack == nil {
+		if err := s.settleLatest(ctx, &record.Spec); err != nil {
+			return failed(err, "the newest game version, which the snapshot asks for, could not be found, so nothing was changed")
+		}
+		s.resolveJava(ctx, &record.Spec)
+	}
+	restored := mc.Spec.DeepCopy()
+	restoreSoftware(restored, &record.Spec)
+	if err := s.validateSpec(ctx, mc.Namespace, mc.Name, restored); err != nil {
+		return failed(err, "the snapshot's settings are not valid here")
+	}
+	return nil
 }
 
 // recordOf reads what a snapshot holds of its server's settings.

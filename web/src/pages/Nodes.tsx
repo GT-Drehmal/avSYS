@@ -155,11 +155,13 @@ export function Nodes() {
                   hint={n.hosts ? "Picked when this node is the fastest with room." : "Only when picked manually."}
                 />
               </div>
+              {(n.servers?.length ?? 0) > 0 && !n.ready && <p className="mt-3 text-xs text-muted">Open a server to move it to another node.</p>}
               {(n.servers?.length ?? 0) > 0 ? (
                 <ul className="mt-3 flex flex-wrap gap-2">
                   {n.servers?.map((s) => (
                     <li key={`${s.org}/${s.name}`}>
-                      <Link to={`/o/${s.org}/s/${s.name}`} className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 font-mono text-xs hover:bg-raised">
+                      {/* On a node that is down, to where the server is moved off it. */}
+                      <Link to={`/o/${s.org}/s/${s.name}${n.ready ? "" : "/settings"}`} className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 font-mono text-xs hover:bg-raised">
                         {s.org}/{s.name}
                         <span className="text-faint">
                           {s.memory}

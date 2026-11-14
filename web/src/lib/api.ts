@@ -777,6 +777,12 @@ export interface Placement {
   local: boolean;
   /** Node labels it is kept to, set outside the panel. */
   labels?: Record<string, string>;
+  /** The node its files are on is down: it can only be made again on another node from its newest snapshot. */
+  down?: boolean;
+  /** That snapshot, when there is one that can be read. */
+  newest?: Snapshot;
+  /** Why it cannot be made again from a snapshot, when it cannot. */
+  unable?: string;
 }
 
 export interface NodeInfo {
