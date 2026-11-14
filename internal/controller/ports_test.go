@@ -137,6 +137,22 @@ func TestOnePublicPortForBothProtocols(t *testing.T) {
 	if ports, _, err := r.ensurePorts(context.Background(), other, nil); err != nil || len(ports) != 1 || ports[0].PublicPort != 25602 {
 		t.Errorf("the other server: %+v %v", ports, err)
 	}
+
+	// One of the two changed to the other's protocol, on another number of
+	// its own, no longer shares: it is given another public port.
+	now := &avsysv1.MinecraftServer{}
+	_ = c.Get(context.Background(), client.ObjectKeyFromObject(mc), now)
+	now.Spec.Ports = []avsysv1.ExtraPort{{Name: "geyser", Port: 19133, Protocol: corev1.ProtocolTCP}, webmap, tcp}
+	if err := c.Update(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	ports, _, err = r.ensurePorts(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 3 || ports[0].PublicPort != 25600 || ports[1].PublicPort != 25601 || ports[2].PublicPort != 25603 {
+		t.Errorf("after one changed protocol: %+v", ports)
+	}
 }
 
 // With no range, each extra port of a server sharing the address is a node

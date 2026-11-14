@@ -105,19 +105,39 @@ func TestModPortsEnv(t *testing.T) {
 	if before.Annotations[annotationSpecHash] == after.Annotations[annotationSpecHash] {
 		t.Error("the hash leaves out where the ports are reached")
 	}
-	// A modpack's server sets them up too, and only then starts other than
-	// as the image starts itself.
+	// A modpack's server sets them up too, where its loader keeps them, and
+	// only then starts other than as the image starts itself.
 	pack := mc.DeepCopy()
-	pack.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack"}
-	if got := gameContainer(buildPod(pack, Config{})).Command; len(got) != 3 || got[2] != modpackScript {
+	pack.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack", Loader: "neoforge"}
+	if got := gameContainer(buildPod(pack, Config{})).Command; len(got) != 3 || !strings.HasPrefix(got[2], "kind=NEOFORGE\n"+modConfig) {
 		t.Errorf("modpack: %q", got)
 	}
 	pack.Spec.Ports = []avsysv1.ExtraPort{votifier}
 	if got := gameContainer(buildPod(pack, Config{})).Command; len(got) != 0 {
 		t.Errorf("modpack without: %q", got)
 	}
-	if !strings.Contains(startScript, modConfig) || !strings.Contains(modpackScript, modConfig) {
-		t.Error("the start scripts do not set the mods up")
+	if !strings.Contains(startScript, modConfig) {
+		t.Error("the start script does not set the mods up")
+	}
+	if got := modpackScript(&avsysv1.ModpackSpec{Loader: "fabric$(reboot)"}); !strings.HasPrefix(got, "kind=FABRICREBOOT\n") {
+		t.Errorf("a loader's name is put in the script as letters alone: %q", got[:30])
+	}
+}
+
+// Geyser's config is where its loader keeps it.
+func TestModConfigByLoader(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	for kind, want := range map[string]string{
+		"PAPER": "plugins/Geyser-Spigot/config.yml", "PURPUR": "plugins/Geyser-Spigot/config.yml", "FOLIA": "plugins/Geyser-Spigot/config.yml",
+		"FABRIC": "config/Geyser-Fabric/config.yml", "QUILT": "config/Geyser-Fabric/config.yml", "NEOFORGE": "config/Geyser-NeoForge/config.yml",
+	} {
+		data := t.TempDir()
+		runModConfig(t, data, kind, "geyser 19133 UDP 0 -")
+		if got := read(t, filepath.Join(data, want)); got != "bedrock:\n  port: 19133\n" {
+			t.Errorf("%s: %q", kind, got)
+		}
 	}
 }
 

@@ -623,10 +623,21 @@ answers() { curl -fsS -o /dev/null --connect-timeout 3 -m 5 "$@" 2>/dev/null; }
 
 // modpackScript is the game container's command for a server from a
 // modpack with ports opened for mods: those are set up, and the image
-// installs and starts the pack as it does by itself.
-const modpackScript = `kind=$(echo "${TYPE:-}" | tr a-z A-Z)
-` + modConfig + `exec ` + imageStart + `
-`
+// installs and starts the pack as it does by itself. The pack's loader, as
+// the panel recorded it, says where its mods keep their config: the image
+// only finds out once the script has run.
+func modpackScript(pack *avsysv1.ModpackSpec) string {
+	kind := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' {
+			return r - 'a' + 'A'
+		}
+		if r >= 'A' && r <= 'Z' {
+			return r
+		}
+		return -1
+	}, pack.Loader)
+	return "kind=" + kind + "\n" + modConfig + "exec " + imageStart + "\n"
+}
 
 // startsThroughScript says whether a server's game is started through
 // startScript: one run by the image it is written for, and not from a
@@ -755,7 +766,7 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 			if startsThroughScript(mc) {
 				spec.Containers[i].Command = []string{"/bin/sh", "-c", startScript}
 			} else if mc.Spec.Image == "" && modPortsEnv(mc, mc.Status.Ports) != "" {
-				spec.Containers[i].Command = []string{"/bin/sh", "-c", modpackScript}
+				spec.Containers[i].Command = []string{"/bin/sh", "-c", modpackScript(mc.Spec.Modpack)}
 			}
 		}
 	}
