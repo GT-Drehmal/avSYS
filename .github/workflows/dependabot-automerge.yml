@@ -1,0 +1,60 @@
+name: Dependabot auto-merge
+
+# Dependabot's pull requests for patch and minor updates merge by themselves
+# once the required checks (test, e2e, browser) pass. A pull request with a
+# major update in it, or one whose size Dependabot cannot say (a new digest
+# of the same image tag), is left for a person.
+#
+# pull_request_target, because a run for Dependabot's own pull_request event
+# gets a token that can only read. Nothing from the pull request is checked
+# out or run here: only its metadata is read.
+on:
+  pull_request_target:
+    # Again on each push to it: Dependabot updates a grouped pull request in
+    # place, and what was a minor update may now hold a major one.
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  automerge:
+    # Only Dependabot's pull requests, pushed to by Dependabot alone.
+    if: >-
+      github.repository == 'GT-Drehmal/avSYS' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # One run at a time for each pull request, the latest: an earlier one
+    # finishing after it would undo what it decided.
+    concurrency:
+      group: dependabot-automerge-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      # Turning on auto-merge takes both.
+      contents: write
+      pull-requests: write
+    steps:
+      - name: What it updates
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - name: Merge once the checks pass, or leave it for a person
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.html_url }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          UPDATES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          # Every update in it, not only the largest: a group can hold a
+          # minor one beside one of unknown size, which is left for a person.
+          echo "$UPDATES" | jq -r '.[] | "\(.dependencyName): \(.updateType // "unknown size")"'
+          if echo "$UPDATES" | jq -e 'length > 0 and all(.[]; .updateType == "version-update:semver-patch" or .updateType == "version-update:semver-minor")' >/dev/null; then
+            # Only for the commit looked at: a newer push is decided by its own run.
+            gh pr merge --auto --merge --match-head-commit "$HEAD" "$PR"
+          else
+            echo "Left for a person."
+            # Turned off if an earlier push had turned it on.
+            if [ "$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+              gh pr merge --disable-auto "$PR"
+            fi
+          fi
