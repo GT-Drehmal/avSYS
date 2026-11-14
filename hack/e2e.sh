@@ -534,8 +534,15 @@ step "how fast the game ticks"
 # game logs each connection made to it, and asking over a new one each time
 # would fill its log.
 ticked() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s])"; }
-for _ in $(seq 1 40); do [ "$(ticked)" -gt 0 ] && break; sleep 2; done
-expect "Paper says how fast it ticks, against 20 a second, and how long a tick takes" "$(call "$SRV/usage" | field "[(s['tps'] > 0, s['tickTarget'] == 20, s['mspt'] >= 0) for s in d['samples'] if 'tps' in s][-1]")" "(True, True, True)"
+# A sample can come without the time a tick takes, as when the game was
+# asked in its first moments: one with both is waited for.
+timed() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s and 'mspt' in s])"; }
+for _ in $(seq 1 60); do [ "$(timed)" -gt 0 ] && break; sleep 2; done
+if [ "$(timed)" -eq 0 ]; then
+  echo "the game's answer to mspt: $(call -d '{"command":"mspt"}' "$SRV/console" | field "d.get('output')")" >&2
+  fail "Paper never said how long a tick takes"
+fi
+expect "Paper says how fast it ticks, against 20 a second, and how long a tick takes" "$(call "$SRV/usage" | field "[(s['tps'] > 0, s['tickTarget'] == 20, s['mspt'] >= 0) for s in d['samples'] if 'tps' in s and 'mspt' in s][-1]")" "(True, True, True)"
 connections() { call -f "$SRV/files/content?path=/logs/latest.log" | grep -c 'Thread RCON Client .* started' || true; }
 before=$(ticked) made=$(connections)
 for _ in $(seq 1 40); do [ "$(ticked)" -gt "$before" ] && break; sleep 2; done
