@@ -8,8 +8,14 @@
 # Images are named by digest as well as tag, so that a commit builds from
 # the same images each time. Dependabot moves the digests.
 
-# Snapshots are taken from in here, where the server's files are.
-FROM restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510 AS restic
+# Snapshots are taken from in here, where the server's files are. restic is
+# built from source, see images/restic/build.sh, on the machine doing the
+# build and cross-compiled for the target, as the panel's programs are.
+FROM --platform=$BUILDPLATFORM golang:1.27@sha256:ec47ea3725fea0cc88f6de94919aef19f40f12fc1ec0e2d1b3426dbf15ecca04 AS restic
+COPY images/restic/build.sh /build-restic.sh
+ARG TARGETOS TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    sh /build-restic.sh /restic
 
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
@@ -41,7 +47,7 @@ RUN apt-get update \
  && groupadd -g 1000 mc \
  && useradd -u 1000 -g 1000 -d /data/.workspace -s /usr/local/bin/avsys-shell mc
 
-COPY --from=restic /usr/bin/restic /usr/local/bin/restic
+COPY --from=restic /restic /usr/local/bin/restic
 COPY images/workspace/sshd_config /etc/avsys/sshd_config
 COPY images/workspace/profile.sh /etc/profile.d/avsys.sh
 COPY images/workspace/bashrc /etc/bash.bashrc

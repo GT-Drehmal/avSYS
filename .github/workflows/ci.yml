@@ -76,6 +76,7 @@ jobs:
       - name: Snapshots
         run: |
           docker cp "$(docker create avsys-workspace:ci)":/usr/local/bin/restic /usr/local/bin/restic
+          restic version
           AVSYS_TEST_WORKSPACE_IMAGE=avsys-workspace:ci go test -count=1 ./internal/backup/
       - name: Generated code is current
         run: |
@@ -102,9 +103,10 @@ jobs:
       # The panel adds only its own program and restic to its base, so the
       # base is what is scanned, as the Dockerfile names it, and the panel is
       # not built here. The Go programs in the workspace are listed but do
-      # not fail the build: restic and rcon-cli are other projects'
-      # releases, fixed by taking a newer one, which Dependabot proposes for
-      # restic. The panel's own program is govulncheck's, above.
+      # not fail the build. rcon-cli is another project's release, fixed by
+      # taking a newer one. restic is built here with our Go and with the
+      # modules images/restic/build.sh raises, so a finding against it is
+      # fixed there. The panel's own program is govulncheck's, above.
       #
       # Trivy is fetched by version and checked against the release's hash.
       - name: Image vulnerabilities
