@@ -29,12 +29,12 @@ def bedrock(addr):
 
 def join(addr):
     # Open connection request 1: the id, the magic, RakNet's protocol, and
-    # padding to the size of packet tried.
-    request = b'\x05' + MAGIC + b'\x0b'
-    request += bytes(1464 - len(request))
+    # padding to the size of packet tried. A client unanswered tries smaller
+    # ones, as a large one may not fit the network on the way.
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    for _ in range(3):
-        s.sendto(request, addr)
+    for size in (1464, 1464, 1200, 1200, 576, 576):
+        request = b'\x05' + MAGIC + b'\x0b'
+        s.sendto(request + bytes(size - len(request)), addr)
     return 'sent'
 
 def http(addr):
