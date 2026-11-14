@@ -244,6 +244,17 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		if mc.Spec.Modpack.Version != "" {
 			env["MODRINTH_VERSION"] = mc.Spec.Modpack.Version
 		}
+	case mc.Spec.Modpack != nil && mc.Spec.Modpack.Source == avsysv1.SourceUpload:
+		// The image takes a path to a .mrpack in the container. It installs
+		// the pack from it on every start: the files the index lists are
+		// fetched from their own addresses where they are not there yet,
+		// and the pack's own files (overrides) are put in place again. One
+		// not uploaded yet has no path, and the image says so.
+		env["MODPACK_PLATFORM"] = "MODRINTH"
+		env["MODRINTH_MODPACK"] = ""
+		if file := mc.Spec.Modpack.UploadedFile(); file != "" {
+			env["MODRINTH_MODPACK"] = ContentDir + "/" + file
+		}
 	case mc.Spec.Modpack != nil && mc.Spec.Modpack.Source == avsysv1.SourceCurseForge:
 		env["MODPACK_PLATFORM"] = "AUTO_CURSEFORGE"
 		env["CF_SLUG"] = mc.Spec.Modpack.Project
@@ -617,7 +628,10 @@ answers() { curl -fsS -o /dev/null --connect-timeout 3 -m 5 "$@" 2>/dev/null; }
 
 // startsThroughScript says whether a server's game is started through
 // startScript: one run by the image it is written for, and not from a
-// modpack, which the image installs its own way.
+// modpack, which the image installs its own way. That includes an uploaded
+// one: the image installs it again on every start, and asks the loader's
+// own site for the loader each time, so a start without that site is left
+// to the image, as for a modpack from Modrinth.
 func startsThroughScript(mc *avsysv1.MinecraftServer) bool {
 	return mc.Spec.Modpack == nil && mc.Spec.Image == ""
 }

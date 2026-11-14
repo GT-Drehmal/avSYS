@@ -171,6 +171,45 @@ func TestMinecraftEnvModpack(t *testing.T) {
 	}
 }
 
+// An uploaded .mrpack is handed to the image by its path on the server's
+// volume, where the panel keeps it by its SHA-1. No Modrinth version is
+// asked for: there is none.
+func TestMinecraftEnvUploadedModpack(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	env := envOf(server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceUpload, Project: "My Pack 1.2.mrpack", Version: sha, GameVersion: "1.21.4", Loader: "fabric"}
+	}))
+	if env["MODPACK_PLATFORM"] != "MODRINTH" || env["MODRINTH_MODPACK"] != ContentDir+"/"+sha+".mrpack" {
+		t.Errorf("modpack env = %v", env)
+	}
+	for _, name := range []string{"MODRINTH_VERSION", "TYPE", "VERSION"} {
+		if _, ok := env[name]; ok {
+			t.Errorf("%s is set for an uploaded modpack: %q", name, env[name])
+		}
+	}
+	// Not uploaded yet, or a version that is not a SHA-1: no path at all,
+	// never one outside the content folder.
+	for _, version := range []string{"", "../../etc/passwd", strings.Repeat("A", 40)} {
+		env := envOf(server(func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceUpload, Project: "pack.mrpack", Version: version}
+		}))
+		if v, ok := env["MODRINTH_MODPACK"]; !ok || v != "" {
+			t.Errorf("version %q: MODRINTH_MODPACK = %q (set: %v), want it set and empty", version, v, ok)
+		}
+	}
+}
+
+// Its Java is that of the game version the pack is built for.
+func TestImageOfUploadedModpack(t *testing.T) {
+	mc := server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.Version = "1.16.5"
+		mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceUpload, Project: "pack.mrpack", GameVersion: "1.21.4", Loader: "fabric"}
+	})
+	if got := imageFor(mc); got != defaultImageRepo+":java21" {
+		t.Errorf("image = %s, want java21", got)
+	}
+}
+
 func TestPodKeepsWorkspaceWhenGameIsOff(t *testing.T) {
 	stopped := server(func(mc *avsysv1.MinecraftServer) { mc.Spec.State = avsysv1.StateStopped })
 	asleep := server(func(mc *avsysv1.MinecraftServer) {

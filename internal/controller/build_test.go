@@ -42,6 +42,9 @@ func TestStartScript(t *testing.T) {
 			mc.Spec.Loader = avsysv1.LoaderPaper
 			mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack"}
 		}, false},
+		"uploaded modpack": {func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceUpload, Project: "pack.mrpack", Version: strings.Repeat("a", 40)}
+		}, false},
 	} {
 		game := gameContainer(buildPod(server(c.mutate), Config{}))
 		if c.script {

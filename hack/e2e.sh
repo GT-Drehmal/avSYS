@@ -1359,6 +1359,52 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
+step "a new server from a .mrpack"
+# A Modrinth pack file made here: Fabric on 1.21.4, one mod for the server
+# and one for players only, and files of its own for both and for the
+# server alone. As the form does it: made stopped, the file sent in parts
+# to the organization, then taken as its modpack, then started.
+python3 - "$WORK/probe.mrpack" <<'PY'
+import json, sys, zipfile
+cdn = "https://cdn.modrinth.com/data"
+index = {
+    "formatVersion": 1, "game": "minecraft", "versionId": "1.0.0", "name": "E2E Pack",
+    "files": [
+        {"path": "mods/lithium-fabric-0.15.3+mc1.21.4.jar", "env": {"client": "required", "server": "required"},
+         "hashes": {"sha1": "b7100505d1178b0f9a1dac4a24472ad1293b890c"}, "fileSize": 797555,
+         "downloads": [cdn + "/gvQqBUqZ/versions/u8pHPXJl/lithium-fabric-0.15.3%2Bmc1.21.4.jar"]},
+        {"path": "mods/sodium-fabric-0.6.13+mc1.21.4.jar", "env": {"client": "required", "server": "unsupported"},
+         "hashes": {"sha1": "c881d2db971207c396b5629632437f1520c0c478"}, "fileSize": 1306799,
+         "downloads": [cdn + "/AANobbMI/versions/c3YkZvne/sodium-fabric-0.6.13%2Bmc1.21.4.jar"]},
+    ],
+    "dependencies": {"minecraft": "1.21.4", "fabric-loader": "0.16.10"},
+}
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("modrinth.index.json", json.dumps(index))
+    z.writestr("overrides/config/e2e.txt", "from the pack\n")
+    z.writestr("server-overrides/e2e-server.txt", "for the server\n")
+PY
+MRPACK_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/probe.mrpack")
+MRPACK_SIZE=$(wc -c <"$WORK/probe.mrpack" | tr -d ' ')
+PACKED=$API/orgs/$ORG/servers/packed
+made=$(call -d '{"name":"packed","spec":{"eula":true,"state":"Stopped","modpack":{"source":"upload","project":"probe.mrpack","title":"E2E Pack","gameVersion":"1.21.4","loader":"fabric"},"resources":{"memory":"2Gi"},"storage":{"size":"2Gi"}}}' "$API/orgs/$ORG/servers")
+case "$made" in *'"spec"'*) ;; *) fail "the server was not made: $made" ;; esac
+expect "it is not started before its file is there" "$(call -X POST "$PACKED/start" | field "d['code']")" no_modpack
+call -X PUT --data-binary @"$WORK/probe.mrpack" "$API/orgs/$ORG/uploads?upload=e2e-mrpack-upload&offset=0&length=$MRPACK_SIZE&size=$MRPACK_SIZE" >/dev/null
+sent=$(call -X PUT "$PACKED/modpack?name=probe.mrpack&upload=e2e-mrpack-upload&size=$MRPACK_SIZE&wait=true")
+expect "the file is read, and kept by its SHA-1" "$(echo "$sent" | field "(d['spec']['modpack']['version'], d['spec']['modpack']['title'], d['spec']['modpack']['versionName'], d['spec']['modpack']['loader'], d['spec']['modpack']['gameVersion'])")" "('$MRPACK_SHA', 'E2E Pack', '1.0.0', 'fabric', '1.21.4')"
+expect "in the server's files" "$(call -o /dev/null -w '%{http_code}' "$PACKED/files/content?path=/.avsys/content/$MRPACK_SHA.mrpack")" 200
+call -X POST "$PACKED/start" >/dev/null
+wait_phase Running "$PACKED"
+expect "started, it has the pack's mod for the server and not the one for players" "$(call "$PACKED/files?path=/mods" | field "sorted(e['name'] for e in d['entries'])")" "['lithium-fabric-0.15.3+mc1.21.4.jar']"
+expect "and the game loaded it" "$(call "$PACKED/files/content?path=/logs/latest.log" | grep -q -- '- lithium ' && echo loaded)" loaded
+expect "and the pack's own files" "$(call "$PACKED/files/content?path=/config/e2e.txt") / $(call "$PACKED/files/content?path=/e2e-server.txt")" "from the pack / for the server"
+call -o /dev/null -X DELETE "$PACKED?snapshot=false"
+for _ in $(seq 1 30); do
+  [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
+  sleep 2
+done
+
 fi
 
 if part history; then

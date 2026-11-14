@@ -6,7 +6,8 @@ import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit
 import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../components/ExtraPorts";
 import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
-import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
+import { PackDrop, PackFiles, PackIcon } from "../components/Modpack";
+import { ModrinthSearch } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
@@ -17,6 +18,7 @@ import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type Co
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, softwareWords } from "../lib/format";
 import { launchOf } from "../lib/launch";
+import { type FoundPack, inspectPack, packName } from "../lib/mrpack";
 import type { Origin } from "../lib/origin";
 import { difficulties, gameModes, levelTypes, parseProperties } from "../lib/properties";
 import { keys, useBackupPolicy, useMe, useMeta } from "../lib/queries";
@@ -218,6 +220,8 @@ interface Values {
   /** A world of one's own for a new server, instead of a new one. */
   myWorld: { file: File; found: FoundWorld } | null;
   modpack: Modpack | null;
+  /** A modpack file from this computer, which the modpack is then, uploaded once the server is made. */
+  mrpack: { file: File; found: FoundPack } | null;
   displayName: string;
   /** null while it follows the display name. */
   customName: string | null;
@@ -276,6 +280,7 @@ const fresh: Values = {
   archive: null,
   myWorld: null,
   modpack: null,
+  mrpack: null,
   displayName: "",
   customName: null,
   motd: "",
@@ -328,6 +333,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     archive: null,
     myWorld: null,
     modpack: spec.modpack ?? null,
+    mrpack: null,
     displayName: (spec.displayName || source.name) + (copying ? " copy" : ""),
     customName: name,
     motd: p["motd"] ?? "",
@@ -529,7 +535,9 @@ export function ServerForm({
   // A template keeps the packs its files have as they are, or none, or is
   // given one from an address: there is nothing to put more in.
   const packsKept = forTemplate && kept.length > 0;
-  const toUpload = v.uploads.length > 0 || packWork || !!toImport || (!forTemplate && (!!fromTheirs || !!fromLibrary));
+  // A modpack file goes in once the server is made, before it first starts.
+  const mrpack = !source && !forTemplate && v.kind === "modpack" && v.modpack?.source === "upload" ? v.mrpack : null;
+  const toUpload = v.uploads.length > 0 || packWork || !!toImport || !!mrpack || (!forTemplate && (!!fromTheirs || !!fromLibrary));
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
   const [needsLoader, setNeedsLoader] = useState(false);
@@ -656,7 +664,10 @@ export function ServerForm({
     // Files to upload were picked for it too: a mod is not a plugin.
     const cleared = v.mods.length + v.uploads.length;
     if (cleared > 0) toast.info(`Removed ${cleared} item${cleared === 1 ? "" : "s"} that no longer fit`);
-    setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "" }));
+    // A modpack file is let go of with the modpack, and the picture it brought.
+    const dropping = !!v.mrpack && !!change.kind && change.kind !== "modpack";
+    if (dropping) pictureFromWorld(null);
+    setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "", ...(dropping ? { modpack: null, mrpack: null } : {}) }));
   };
 
   const chooseWorld = (next: WorldChoice) => {
@@ -791,6 +802,42 @@ export function ServerForm({
       if (read === reads.current) setReading(false);
     }
   };
+
+  /** Reads a modpack file and makes it the modpack, filled in as one picked from Modrinth. */
+  const pickPack = async (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    setReading(true);
+    const read = ++reads.current;
+    try {
+      const found = await inspectPack(file);
+      if (read !== reads.current) return;
+      const title = packName(found, file);
+      setValues((was) => ({
+        ...was,
+        modpack: { source: "upload", project: file.name, title, versionName: found.versionId || undefined, gameVersion: found.gameVersion, loader: found.loader },
+        mrpack: { file, found },
+        displayName: was.displayName || title,
+      }));
+      pictureFromWorld(found.icon ? new File([found.icon.slice()], "icon.png", { type: "image/png" }) : null);
+    } catch (err) {
+      if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this file.");
+    } finally {
+      if (read === reads.current) setReading(false);
+    }
+  };
+
+  /** Takes the modpack off, and the picture it brought. */
+  const dropPack = () => {
+    if (v.mrpack) pictureFromWorld(null);
+    setValues((was) => ({ ...was, modpack: null, mrpack: null }));
+  };
+
+  /** Sends the modpack file to a server just made. */
+  const sendPack = (w: SetupWork, path: string, file: File, label: string) =>
+    meta?.snapshots
+      ? w.sendStaged<Server>(label, org, file, (upload) => api.put<Server>(`${path}/modpack?${qs({ name: file.name, upload, size: file.size, wait: "true" })}`, undefined))
+      : w.send<Server>(label, `${path}/modpack?${qs({ name: file.name, wait: "true" })}`, file);
 
   /** A schedule of its own, every part of it named, as the server's settings save one. */
   const ownBackups = (): BackupOverride => {
@@ -986,10 +1033,11 @@ export function ServerForm({
   const uploadAll = async (w: SetupWork, server: string) => {
     const path = serverPath(org, server);
     const files = toAdd.filter((p) => p.from === "file");
-    const all = v.uploads.length + files.length;
+    const all = v.uploads.length + files.length + (mrpack ? 1 : 0);
     let n = 0;
     const label = (name: string) => (all > 1 ? `${name} (${++n} of ${all})` : name);
     try {
+      if (mrpack) await sendPack(w, path, mrpack.file, label(mrpack.file.name));
       for (const { file, kind } of v.uploads) {
         await w.send<Server>(label(file.name), `${path}/content?${qs({ kind, name: file.name, wait: "true" })}`, file);
       }
@@ -1467,28 +1515,41 @@ export function ServerForm({
               {versionField}
             </>
           ) : importing ? null : v.modpack ? (
-            <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-              <ProjectIcon url={v.modpack.iconUrl} kind="modpack" name={v.modpack.title} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium">{v.modpack.title}</p>
-                <p className="truncate font-mono text-xs text-muted">modrinth:{v.modpack.project}</p>
+            <>
+              <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                <PackIcon modpack={v.modpack} icon={v.mrpack?.found.icon ?? null} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{v.modpack.title}</p>
+                  {v.modpack.source === "upload" ? (
+                    <p className="truncate text-xs text-muted">
+                      {[v.modpack.versionName, softwareWords(v.modpack.loader, v.modpack.gameVersion), v.mrpack ? `${v.mrpack.file.name}, ${bytes(v.mrpack.file.size)}` : v.modpack.project].filter(Boolean).join(" · ")}
+                    </p>
+                  ) : (
+                    <p className="truncate font-mono text-xs text-muted">modrinth:{v.modpack.project}</p>
+                  )}
+                </div>
+                <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Choose a different modpack" onClick={dropPack} />
               </div>
-              <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Choose a different modpack" onClick={() => set("modpack", null)} />
-            </div>
+              {v.mrpack && <PackFiles files={v.mrpack.found.files} />}
+            </>
           ) : (
-            <div className="h-[30rem] overflow-hidden rounded-md border border-line bg-surface p-3">
-              <ModrinthSearch
-                type="modpack"
-                placeholder="Search modpacks on Modrinth"
-                onPick={(hit) =>
-                  setValues((was) => ({
-                    ...was,
-                    modpack: { source: "modrinth", project: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined },
-                    displayName: was.displayName || hit.title,
-                  }))
-                }
-              />
-            </div>
+            <>
+              {!forTemplate && <PackDrop reading={reading} onFile={(file) => void pickPack(file)} />}
+              <div className="h-[30rem] overflow-hidden rounded-md border border-line bg-surface p-3">
+                <ModrinthSearch
+                  type="modpack"
+                  placeholder="Search modpacks on Modrinth"
+                  onPick={(hit) =>
+                    setValues((was) => ({
+                      ...was,
+                      modpack: { source: "modrinth", project: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined },
+                      mrpack: null,
+                      displayName: was.displayName || hit.title,
+                    }))
+                  }
+                />
+              </div>
+            </>
           )}
         </Section>
       )}

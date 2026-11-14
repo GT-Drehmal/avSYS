@@ -199,6 +199,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 	if err := checkJVM(&spec.JVM); err != nil {
 		return err
 	}
+	if err := checkUploadedModpack(spec.Modpack); err != nil {
+		return err
+	}
 	if err := packFits(spec); err != nil {
 		return err
 	}
@@ -459,6 +462,13 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given a picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once the server is made.")
 	}
+	// Its modpack file comes once it is made, before it first starts.
+	if p := in.Spec.Modpack; p != nil && p.Source == avsysv1.SourceUpload {
+		if in.Spec.State != avsysv1.StateStopped {
+			return errBadRequest("A new server with an uploaded modpack is made stopped, given the file with PUT /orgs/{org}/servers/{server}/modpack?wait=true, then started.")
+		}
+		p.Version = ""
+	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// A new server has Aikar's flags unless asked not to. Only here: one
 	// made before they were offered keeps starting as it always has.
@@ -717,6 +727,14 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	if err := keepUploadedPack(&spec, previous); err != nil {
 		return nil, err
 	}
+	if err := keepUploadedModpack(&spec, previous); err != nil {
+		return nil, err
+	}
+	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
+		if err := modpackMissing(&spec); err != nil {
+			return nil, err
+		}
+	}
 	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return nil, err
 	}
@@ -859,6 +877,9 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 	defer release()
 	if starts {
 		if err := unfinished(mc); err != nil {
+			return err
+		}
+		if err := modpackMissing(&mc.Spec); err != nil {
 			return err
 		}
 	}
