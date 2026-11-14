@@ -59,8 +59,8 @@ func TestPasswordsOffRefusesPasswords(t *testing.T) {
 
 const setupCode = "the-setup-code"
 
-// newEmptyPanel is a panel with no account yet and passwords off.
-func newEmptyPanel(t *testing.T) *panel {
+// newPasswordlessPanel is a panel with no account yet and passwords off.
+func newPasswordlessPanel(t *testing.T) *panel {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -87,7 +87,7 @@ func newEmptyPanel(t *testing.T) *panel {
 // someone with the setup code, and is the administrator. Without the code,
 // from the start or slipped into the cookie later, no account is made.
 func TestPasswordsOffFirstRun(t *testing.T) {
-	p := newEmptyPanel(t)
+	p := newPasswordlessPanel(t)
 	idp := withIDP(t, p)
 
 	rec := httptest.NewRecorder()
@@ -151,7 +151,7 @@ func TestPasswordsOffFirstRun(t *testing.T) {
 // even from a browser that skipped the start and made up its own cookie.
 // Later ones do not.
 func TestPasswordsOffFirstRunOpenSignups(t *testing.T) {
-	p := newEmptyPanel(t)
+	p := newPasswordlessPanel(t)
 	p.srv.Config.AllowSignups = true
 	idp := withIDP(t, p)
 
@@ -193,7 +193,7 @@ func TestPasswordsOffFirstRunOpenSignups(t *testing.T) {
 // Two people with the setup code sign in at the same moment: one account is
 // made, and it is the administrator.
 func TestPasswordsOffFirstRunRace(t *testing.T) {
-	p := newEmptyPanel(t)
+	p := newPasswordlessPanel(t)
 	idp := withIDP(t, p)
 	const n = 8
 	browsers, backs := make([]*browser, n), make([]string, n)
@@ -231,7 +231,7 @@ func TestPasswordsOffFirstRunRace(t *testing.T) {
 
 // Guessing the setup code is slowed as guessing a password is.
 func TestPasswordsOffSetupCodeGuessing(t *testing.T) {
-	p := newEmptyPanel(t)
+	p := newPasswordlessPanel(t)
 	withIDP(t, p)
 	b := p.browser()
 	b.addr = "192.0.2.20:1234"
