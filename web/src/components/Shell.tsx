@@ -1,13 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, ChevronsUpDown, Cpu, Globe, LayoutTemplate, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
 import { keys, useAction, useCluster, useLiveServers, useMe, useMeta } from "../lib/queries";
 import { clearSetups } from "../lib/setups";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Picture } from "./Picture";
-import { Button, cx, Field, Input, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
+import { Button, cx, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
 
 export function Wordmark({ className }: { className?: string }) {
   return (
@@ -281,7 +281,10 @@ export function Shell() {
         <div className="mx-auto max-w-5xl px-5 py-8 md:px-10">
           {/* An error in a page leaves the navigation standing, and going elsewhere clears it. */}
           <ErrorBoundary key={pathname}>
-            <Outlet />
+            {/* The frame stays while a page is fetched. */}
+            <Suspense fallback={<Loading />}>
+              <Outlet />
+            </Suspense>
           </ErrorBoundary>
         </div>
       </main>
