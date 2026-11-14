@@ -435,6 +435,31 @@ test("a world's picture that comes late does not land on what was picked since",
   await expect(picture).toHaveCount(0);
 });
 
+test("a world's picture opens larger when clicked, for an operator to change or remove and for a viewer to see", async ({ page, as }) => {
+  await as("operator");
+  const calls = await library(page, [world("w1", "Island")]);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route("**/api/v1/orgs/friends/worlds/w1/icon*", (route) => (route.request().method() === "GET" ? route.fulfill({ status: 200, contentType: "image/png", body: png }) : route.fallback()));
+  await page.goto("/o/friends/worlds");
+  const row = page.getByRole("listitem", { name: "Island" });
+  await row.getByRole("button", { name: "Picture of Island" }).click();
+  const dialog = page.getByRole("dialog", { name: "Island" });
+  await expect(dialog.locator("img")).toHaveCSS("image-rendering", "pixelated");
+  await dialog.getByLabel("Picture for Island").setInputFiles({ name: "new.png", mimeType: "image/png", buffer: png });
+  await expect.poll(() => calls.map((c) => `${c.method} ${c.path}`)).toEqual(["PUT /worlds/w1/icon"]);
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect.poll(() => calls.map((c) => `${c.method} ${c.path}`)).toEqual(["PUT /worlds/w1/icon", "DELETE /worlds/w1/icon"]);
+  await page.keyboard.press("Escape");
+
+  // A viewer sees it, with nothing to change it with.
+  await as("viewer");
+  await page.reload();
+  await row.getByRole("button", { name: "Picture of Island" }).click();
+  const seen = page.getByRole("dialog", { name: "Island" });
+  await expect(seen.locator("img")).toBeVisible();
+  await expect(seen.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
+});
+
 test("a world's picture goes when the world does, and comes back with it", async ({ page, as }) => {
   await as("owner");
   await library(page, [world("w1", "Island")]);

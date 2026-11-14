@@ -381,6 +381,104 @@ test("a server's picture opens larger when clicked, for an admin to change or re
   await expect(seen.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
 });
 
+test("an organization's picture opens larger from its settings, for an owner to change or remove and for an admin to see", async ({ page, as }) => {
+  await as("owner");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  const asked: string[] = [];
+  // Friends has a picture, and changing it changes nothing anyone else sees.
+  await page.route("**/api/v1/me", async (route) => {
+    const me = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...me, orgs: me.orgs.map((o: { slug: string }) => (o.slug === "friends" ? { ...o, hasIcon: true } : o)) } });
+  });
+  await page.route("**/api/v1/orgs/friends/icon*", (route) => {
+    const method = route.request().method();
+    if (method === "GET") return route.fulfill({ status: 200, contentType: "image/png", body: png });
+    asked.push(method);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/settings");
+  await page.getByRole("button", { name: "Picture of Friends" }).click();
+  const dialog = page.getByRole("dialog", { name: "Friends" });
+  await expect(dialog.locator("img")).toBeVisible();
+  await dialog.getByLabel("Picture for Friends").setInputFiles({ name: "new.png", mimeType: "image/png", buffer: png });
+  await expect.poll(() => asked).toEqual(["PUT"]);
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect.poll(() => asked).toEqual(["PUT", "DELETE"]);
+  await page.keyboard.press("Escape");
+
+  // An admin sees it, with nothing to change it with: it is owners' to change.
+  await as("admin");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Domains" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^(Replace|Upload|Remove)$/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Picture of Friends" }).click();
+  const seen = page.getByRole("dialog", { name: "Friends" });
+  await expect(seen.locator("img")).toBeVisible();
+  await expect(seen.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
+});
+
+test("a picture being changed on the page cannot be changed again in its dialog until that is done", async ({ page, as }) => {
+  await as("owner");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route("**/api/v1/me", async (route) => {
+    const me = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...me, orgs: me.orgs.map((o: { slug: string }) => (o.slug === "friends" ? { ...o, hasIcon: true } : o)) } });
+  });
+  // The upload is held until the test says.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/icon*", async (route) => {
+    const method = route.request().method();
+    if (method === "GET") return route.fulfill({ status: 200, contentType: "image/png", body: png });
+    asked.push(method);
+    if (method === "PUT") await held;
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/settings");
+  await page.getByLabel("Picture for Friends").setInputFiles({ name: "new.png", mimeType: "image/png", buffer: png });
+  await expect.poll(() => asked).toEqual(["PUT"]);
+  await page.getByRole("button", { name: "Picture of Friends" }).click();
+  const dialog = page.getByRole("dialog", { name: "Friends" });
+  await expect(dialog.getByRole("button", { name: "Remove" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Replace" })).toBeDisabled();
+  release();
+  await expect(dialog.getByRole("button", { name: "Remove" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect.poll(() => asked).toEqual(["PUT", "DELETE"]);
+});
+
+test("your own picture opens larger from your account, to change or remove, and a photo is not drawn blocky", async ({ page, as }) => {
+  await as("owner");
+  // 128 pixels square, as an uploaded one is kept: shown at 192, it is smoothed, not drawn in blocks.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAAyElEQVR42u3RQQ0AAAjEsJOGNKQhDRnwaDIFa6pHh8UCAAAEAIAAABAAAAIAQAAACAAAAQAgAAAEAIAAABAAAAIAQAAACAAAAQAgAAAEAIAAABAAAAIAQAAACAAAAQAgAAAEAIAAABAAAAIAQAAACAAAAQAAwAUAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIwIcWRmIFoZah+J4AAAAASUVORK5CYII=",
+    "base64",
+  );
+  const asked: string[] = [];
+  // The owner has uploaded a picture, and changing it changes nothing anyone else sees.
+  await page.route("**/api/v1/me", async (route) => {
+    const me = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...me, user: { ...me.user, avatarUrl: `/api/v1/users/${me.user.id}/avatar` } } });
+  });
+  await page.route("**/api/v1/users/*/avatar*", (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }));
+  await page.route("**/api/v1/me/avatar", (route) => {
+    asked.push(route.request().method());
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/account");
+  await page.getByRole("button", { name: "Picture of owner" }).click();
+  const dialog = page.getByRole("dialog", { name: "owner" });
+  await expect.poll(() => dialog.locator("img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(128);
+  await expect(dialog.locator("img")).not.toHaveCSS("image-rendering", "pixelated");
+  await dialog.getByLabel("Picture for owner").setInputFiles({ name: "new.png", mimeType: "image/png", buffer: png });
+  await expect.poll(() => asked).toEqual(["PUT"]);
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect.poll(() => asked).toEqual(["PUT", "DELETE"]);
+});
+
 test("the console shows the log so far whole, at its end, and keeps it on screen when it reconnects", async ({ page, as }) => {
   await as("owner");
   // The stream, driven from here, one event at a time.

@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Download, MoreHorizontal, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { Picture, PictureChange } from "../components/Picture";
+import { PictureChange, PictureZoom } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { ServerPicker, SnapshotPicker } from "../components/StartPicker";
 import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SelectAllRow, SelectionBar, Spinner, Textarea } from "../components/ui";
@@ -100,7 +100,7 @@ export function Worlds() {
               {shown.map((w) => (
                 <li key={w.id} className={cx("group flex items-center gap-3 px-4 py-3", selection.has(w.id) && "bg-accent-wash")} aria-label={w.name}>
                   {canDelete && <RowCheckbox checked={selection.has(w.id)} quiet={selection.count === 0} label={`Select ${w.name}`} onChange={(range) => selection.toggle(w.id, range)} className="mr-1" />}
-                  <Picture name={w.name} url={worldIcon(org, w.id)} retryKey={w.updatedAt} size={36} />
+                  <PictureZoom name={w.name} url={worldIcon(org, w.id)} retryKey={w.updatedAt} size={36} path={canAdd ? `/orgs/${org}/worlds/${w.id}/icon` : undefined} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-medium">{w.name}</p>
                     {w.description && <p className="line-clamp-2 text-xs text-muted">{w.description}</p>}

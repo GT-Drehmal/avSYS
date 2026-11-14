@@ -3,7 +3,7 @@ import { Copy, History, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ListBar } from "../components/ListBar";
-import { Picture } from "../components/Picture";
+import { PictureZoom } from "../components/Picture";
 import { SaveTemplate } from "../components/SaveTemplate";
 import { useOrg } from "../components/Shell";
 import { software } from "../components/Snapshots";
@@ -104,7 +104,7 @@ export function Templates() {
           {shown.map((t) => (
             <li key={t.id} className={cx("group flex items-center gap-3 px-4 py-3", selection.has(t.id) && "bg-accent-wash")} aria-label={t.name}>
               {canAdmin && <RowCheckbox checked={selection.has(t.id)} quiet={selection.count === 0} label={`Select ${t.name}`} onChange={(range) => selection.toggle(t.id, range)} className="mr-1" />}
-              <Picture name={t.name} url={t.current ? snapshotIcon(org, t.current.id) : undefined} size={36} />
+              <PictureZoom name={t.name} url={t.current ? snapshotIcon(org, t.current.id) : undefined} size={36} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium">{t.name}</p>
                 {t.description && <p className="line-clamp-2 text-xs text-muted">{t.description}</p>}

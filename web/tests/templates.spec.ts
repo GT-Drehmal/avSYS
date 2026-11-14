@@ -74,6 +74,19 @@ test("templates are listed, and a new server is made from one with the form fill
   expect(made!.fromSnapshot).toBeUndefined();
 });
 
+test("a template's picture opens larger when clicked, only to be seen: it is the one its version has", async ({ page, as }) => {
+  await as("owner");
+  await lobby(page);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route(`**/api/v1/orgs/friends/snapshots/${"b".repeat(64)}/icon*`, (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }));
+  await page.goto("/o/friends/templates");
+  await page.getByRole("listitem", { name: "Lobby" }).getByRole("button", { name: "Picture of Lobby" }).click();
+  const dialog = page.getByRole("dialog", { name: "Lobby" });
+  // A game's small picture, shown large, is drawn in blocks rather than blurred.
+  await expect(dialog.locator("img")).toHaveCSS("image-rendering", "pixelated");
+  await expect(dialog.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
+});
+
 test("a template is edited, updated from a server, gone back to an earlier version of, and deleted", async ({ page, as }) => {
   await as("owner");
   const { template, calls } = await lobby(page);
@@ -126,7 +139,9 @@ test("a viewer sees the templates, and nothing to change them with", async ({ pa
   await page.goto("/o/friends/templates");
   const row = page.getByRole("listitem", { name: "Lobby" });
   await expect(row).toBeVisible();
-  await expect(row.getByRole("button")).toHaveCount(0);
+  // Only its picture, to see larger.
+  await expect(row.getByRole("button")).toHaveCount(1);
+  await expect(row.getByRole("button")).toHaveAccessibleName("Picture of Lobby");
   await expect(page.getByRole("link", { name: "New template" })).toHaveCount(0);
 });
 
