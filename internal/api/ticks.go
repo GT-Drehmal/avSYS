@@ -20,8 +20,15 @@ import (
 
 // tickWait is how long the sampler waits on running servers to say how fast
 // their games tick, all asked at once. One slower than that has no figure
-// this time.
-var tickWait = 3 * time.Second
+// this time, and is not asked again until it has answered.
+//
+// tickGiveUp is how long a game is given to answer before its connection
+// is closed, to be made again at the next sample. A game slow for a moment,
+// as under load, keeps its connection: each one made shows in its log.
+var (
+	tickWait   = 3 * time.Second
+	tickGiveUp = 20 * time.Second
+)
 
 // tickSample is how fast a server's game was ticking.
 type tickSample struct {
@@ -157,16 +164,19 @@ func paperBased(mc *avsysv1.MinecraftServer) bool {
 // once and briefly, by namespace/name. A server that does not answer in
 // time, or does not say, is left out.
 func (s *Server) sampleTicks(ctx context.Context, servers []avsysv1.MinecraftServer) map[string]tickSample {
-	ctx, cancel := context.WithTimeout(ctx, tickWait)
-	defer cancel()
+	wait, stopWaiting := context.WithTimeout(ctx, tickWait)
+	defer stopWaiting()
+	// The asking goes on past the wait, on its own time.
+	ask, stopAsking := context.WithTimeout(ctx, tickGiveUp)
 	var (
-		mu  sync.Mutex
-		wg  sync.WaitGroup
+		mu sync.Mutex
+		wg sync.WaitGroup
+		// out is nil once the wait is over: what comes after is too late.
 		out = map[string]tickSample{}
 	)
 	all, running := map[string]types.UID{}, map[string]bool{}
 	for i := range servers {
-		mc := &servers[i]
+		mc := servers[i]
 		key := mc.Namespace + "/" + mc.Name
 		all[key] = mc.UID
 		if mc.Status.Phase != avsysv1.PhaseRunning {
@@ -174,16 +184,31 @@ func (s *Server) sampleTicks(ctx context.Context, servers []avsysv1.MinecraftSer
 		}
 		running[key] = true
 		wg.Go(func() {
-			if t, ok := s.askTicks(ctx, key, mc); ok {
+			if t, ok := s.askTicks(ask, key, &mc); ok {
 				mu.Lock()
-				out[key] = t
+				if out != nil {
+					out[key] = t
+				}
 				mu.Unlock()
 			}
 		})
 	}
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		stopAsking()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-wait.Done():
+	}
+	mu.Lock()
+	got := out
+	out = nil
+	mu.Unlock()
 	s.ticks.keep(all, running)
-	return out
+	return got
 }
 
 // askTicks asks one running server how fast its game is ticking. The first

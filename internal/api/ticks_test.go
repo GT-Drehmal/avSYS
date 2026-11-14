@@ -120,14 +120,24 @@ type games struct {
 	// fail is the servers that cannot be reached, and hang those that
 	// never answer.
 	fail, hang map[string]bool
-	t          *testing.T
+	// held is the servers that answer only once let go, and late what
+	// each one's asking had come to when it did: nil, as it still went on.
+	held map[string]chan struct{}
+	late map[string]error
+	t    *testing.T
 }
 
 func (g *games) command(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error) {
 	g.mu.Lock()
 	g.asked[mc.Name] = append(g.asked[mc.Name], command)
-	kind, fail, hang := g.kind[mc.Name], g.fail[mc.Name], g.hang[mc.Name]
+	kind, fail, hang, held := g.kind[mc.Name], g.fail[mc.Name], g.hang[mc.Name], g.held[mc.Name]
 	g.mu.Unlock()
+	if held != nil {
+		<-held
+		g.mu.Lock()
+		g.late[mc.Name] = ctx.Err()
+		g.mu.Unlock()
+	}
 	if hang {
 		<-ctx.Done()
 		return "", ctx.Err()
@@ -150,17 +160,20 @@ func (g *games) take() map[string][]string {
 // built on it with their own commands, others with the game's. The way that
 // worked is remembered, and so is a game that answered to none: it is not
 // asked again until it runs other software. A server that cannot be reached
-// or is slow to answer has no figure this time, and holds up no other.
+// or is slow to answer has no figure this time, and holds up no other. One
+// slow for a while is let answer, and not asked again meanwhile; one that
+// never answers is given up on.
 func TestTickSampling(t *testing.T) {
 	p := newPanel(t)
 	g := &games{t: t, asked: map[string][]string{}, kind: map[string]string{
 		"paper": "paper-1.21.4", "purpur": "purpur-1.21.4", "folia": "folia-1.21.8", "old-paper": "paper-1.20.1",
 		"vanilla": "vanilla-1.21.4", "fabric": "fabric-1.21.4", "old": "vanilla-1.20.1", "forge": "forge-1.20.1",
-		"away": "vanilla-1.21.4", "slow": "paper-1.21.4", "stopped": "vanilla-1.21.4",
-	}, fail: map[string]bool{"away": true}, hang: map[string]bool{"slow": true}}
+		"away": "vanilla-1.21.4", "slow": "paper-1.21.4", "never": "vanilla-1.21.4", "stopped": "vanilla-1.21.4",
+	}, fail: map[string]bool{"away": true}, hang: map[string]bool{"never": true},
+		held: map[string]chan struct{}{"slow": make(chan struct{})}, late: map[string]error{}}
 	p.srv.GameCommand = g.command
-	defer func(wait time.Duration) { tickWait = wait }(tickWait)
-	tickWait = 500 * time.Millisecond
+	defer func(wait, giveUp time.Duration) { tickWait, tickGiveUp = wait, giveUp }(tickWait, tickGiveUp)
+	tickWait, tickGiveUp = 300*time.Millisecond, time.Second
 	loaders := map[string]avsysv1.Loader{"paper": avsysv1.LoaderPaper, "purpur": avsysv1.LoaderPurpur, "folia": avsysv1.LoaderFolia, "old-paper": avsysv1.LoaderPaper, "slow": avsysv1.LoaderPaper, "fabric": avsysv1.LoaderFabric, "forge": avsysv1.LoaderForge}
 	var servers []avsysv1.MinecraftServer
 	for name := range g.kind {
@@ -207,7 +220,7 @@ func TestTickSampling(t *testing.T) {
 	for name, commands := range map[string][]string{
 		"paper": {"tps", "mspt"}, "purpur": {"tps", "mspt"}, "folia": {"tps", "mspt"}, "old-paper": {"tps", "mspt"},
 		"vanilla": {"tick query"}, "fabric": {"tick query"}, "old": {"tick query"}, "forge": {"tick query"},
-		"away": {"tick query"}, "slow": {"tps"}, "stopped": nil,
+		"away": {"tick query"}, "slow": {"tps"}, "never": {"tick query"}, "stopped": nil,
 	} {
 		if !slices.Equal(asked[name], commands) {
 			t.Errorf("first: %s was asked %q, want %q", name, asked[name], commands)
@@ -215,22 +228,43 @@ func TestTickSampling(t *testing.T) {
 	}
 
 	// Asked again, each in the way found; none asked of the games that
-	// answered to nothing. The one that could not be reached is tried again.
+	// answered to nothing, nor of those still being asked. The one that
+	// could not be reached is tried again.
 	check("again", p.srv.sampleTicks(ctx, servers))
 	asked = g.take()
 	for name, commands := range map[string][]string{
-		"paper": {"tps", "mspt"}, "vanilla": {"tick query"}, "old": nil, "forge": nil, "away": {"tick query"}, "slow": {"tps"},
+		"paper": {"tps", "mspt"}, "vanilla": {"tick query"}, "old": nil, "forge": nil, "away": {"tick query"}, "slow": nil, "never": nil,
 	} {
 		if !slices.Equal(asked[name], commands) {
 			t.Errorf("again: %s was asked %q, want %q", name, asked[name], commands)
 		}
 	}
 	// The page says so of a game that answered to nothing, and of no other.
-	for name, silent := range map[string]bool{"old": true, "forge": true, "vanilla": false, "away": false, "slow": false, "stopped": false} {
+	for name, silent := range map[string]bool{"old": true, "forge": true, "vanilla": false, "away": false, "slow": false, "never": false, "stopped": false} {
 		if got := p.srv.ticks.isSilent("mc-alpha/"+name, types.UID(name)); got != silent {
 			t.Errorf("%s: said to report nothing: %v, want %v", name, got, silent)
 		}
 	}
+
+	// The slow game answers well after the sample stopped waiting, and was
+	// let: its asking had not been ended, which would have closed its
+	// connection. The one that never answers is given up on in time.
+	close(g.held["slow"])
+	settle := func(name string) {
+		st := p.srv.ticks.state("mc-alpha/" + name)
+		st.mu.Lock()
+		defer st.mu.Unlock()
+	}
+	settle("slow")
+	if err, ok := g.late["slow"]; !ok || err != nil {
+		t.Errorf("a slow game's asking had come to %v, %v when it answered; want it going on", err, ok)
+	}
+	given := time.Now()
+	settle("never")
+	if waited := time.Since(given); waited > tickGiveUp+time.Second {
+		t.Errorf("a game that never answers was waited on for %v more", waited)
+	}
+	g.take()
 
 	// Updated to a version that has it, the game is asked again.
 	for i := range servers {
@@ -242,9 +276,15 @@ func TestTickSampling(t *testing.T) {
 		}
 	}
 	got = p.srv.sampleTicks(ctx, servers)
-	if _, ok := got["mc-alpha/old"]; !ok || !slices.Equal(g.take()["old"], []string{"tick query"}) {
+	asked = g.take()
+	if _, ok := got["mc-alpha/old"]; !ok || !slices.Equal(asked["old"], []string{"tick query"}) {
 		t.Errorf("an updated server was not asked again, or did not answer: %+v", got)
 	}
+	// The slow game, done, is asked again in the way it answered to.
+	if _, ok := got["mc-alpha/slow"]; !ok || !slices.Equal(asked["slow"], []string{"tps", "mspt"}) {
+		t.Errorf("the slow game was asked %q after answering, and read as %+v", asked["slow"], got["mc-alpha/slow"])
+	}
+	settle("never")
 	if p.srv.ticks.isSilent("mc-alpha/old", "old") {
 		t.Error("an updated server that answers is still said to report nothing")
 	}
