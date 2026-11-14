@@ -305,8 +305,11 @@ export interface ContentRef {
 }
 
 export interface Modpack {
-  source: "modrinth" | "curseforge";
+  /** "upload" is a .mrpack uploaded to the panel. */
+  source: "modrinth" | "curseforge" | "upload";
+  /** The Modrinth project, or the name an uploaded file had. */
   project: string;
+  /** The pinned version; for an upload, its file's SHA-1, empty until it is uploaded. */
   version?: string;
   /** What the pinned pack version is built for, filled in by the panel. */
   gameVersion?: string;

@@ -367,6 +367,9 @@ func (s *Server) templateSettings(ctx context.Context, a *access, raw json.RawMe
 	if rp := spec.ResourcePack; rp != nil && rp.Uploaded != nil {
 		return "", errBadRequest("A template of settings alone cannot have an uploaded resource pack. Save a server that has the pack instead.")
 	}
+	if p := spec.Modpack; p != nil && p.Source == avsysv1.SourceUpload {
+		return "", errBadRequest("A template of settings alone cannot have an uploaded modpack. Save a server that has the modpack instead.")
+	}
 	if rp := spec.ResourcePack; rp != nil {
 		rp.Stack = nil
 	}

@@ -1,10 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { ProjectIcon } from "../../components/ModrinthSearch";
 import { Button, Field, Input, Notice, Toggle } from "../../components/ui";
+import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
 import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ResourcePack, type Server } from "../../lib/api";
-import { applyServer, keys, useAction, useUpdateServer } from "../../lib/queries";
+import { ArchiveError } from "../../lib/archive";
+import { softwareWords } from "../../lib/format";
+import { inspectPack } from "../../lib/mrpack";
+import { applyServer, keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
 import { PackStack, SectionHead, VersionDialog } from "../../components/ContentParts";
@@ -36,6 +40,42 @@ export function Mods() {
     }
   };
 
+  // A newer .mrpack for an uploaded modpack: read here first, so that one
+  // that is not a pack is said at once, then sent, in parts where the panel
+  // can take them.
+  const meta = useMeta().data;
+  const { sending, send, sendStaged, cancel } = useUpload();
+  const [reading, setReading] = useState(false);
+  const packInput = useRef<HTMLInputElement>(null);
+  const uploadPack = async (file: File | undefined) => {
+    if (!file) return;
+    setReading(true);
+    try {
+      await inspectPack(file);
+    } catch (err) {
+      toast.error(err instanceof ArchiveError ? err.message : "Could not read this file.");
+      return;
+    } finally {
+      setReading(false);
+    }
+    const path = `${serverPath(server.org, server.name)}/modpack`;
+    try {
+      const next = meta?.snapshots
+        ? await sendStaged<Server>(
+            file.name,
+            file,
+            (q) => `/orgs/${server.org}/uploads?${qs(q)}`,
+            (q) => `/orgs/${server.org}/uploads?${qs(q)}`,
+            (upload) => api.put<Server>(`${path}?${qs({ name: file.name, upload, size: file.size })}`, undefined),
+          )
+        : await send<Server>(file.name, `${path}?${qs({ name: file.name })}`, file);
+      applyServer(qc, next);
+      toast.info(`${next.spec.modpack?.title || file.name} is the modpack now`);
+    } catch (err) {
+      if (!cancelled(err)) toast.error(err instanceof Error ? err.message : "Upload failed.");
+    }
+  };
+
   const setMod = (index: number, patch: Partial<ContentRef>) => update.mutate({ mods: mods.map((m, i) => (i === index ? { ...m, ...patch } : m)) });
   // A section for each kind the server takes, and for any it has from
   // before its software was changed, so nothing on it goes unseen.
@@ -46,17 +86,45 @@ export function Mods() {
   return (
     <div className="flex flex-col gap-5">
       {modpack && (
-        <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-4 py-3">
-          <ProjectIcon url={modpack.iconUrl} size={40} kind="modpack" name={modpack.title || modpack.project} />
-          <div className="min-w-0 flex-1">
-            <p className="label-mono">Modpack</p>
-            <p className="truncate text-[13px] font-medium">{modpack.title || modpack.project}</p>
+        <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface px-4 py-3">
+          <div className="flex items-center gap-3">
+            <ProjectIcon url={modpack.iconUrl} size={40} kind="modpack" name={modpack.title || modpack.project} />
+            <div className="min-w-0 flex-1">
+              <p className="label-mono">Modpack</p>
+              <p className="truncate text-[13px] font-medium">{modpack.title || modpack.project}</p>
+              {modpack.source === "upload" && (
+                <p className="truncate text-xs text-muted">
+                  {modpack.version ? [modpack.versionName, softwareWords(modpack.loader, modpack.gameVersion), modpack.project].filter(Boolean).join(" · ") : "The .mrpack file was not uploaded."}
+                </p>
+              )}
+            </div>
+            {modpack.source === "modrinth" && (
+              <Button size="sm" disabled={!canEdit} onClick={() => setVersioning("modpack")}>
+                {modpack.versionName || "Newest release"}
+              </Button>
+            )}
+            {modpack.source === "upload" && (
+              <>
+                <input
+                  ref={packInput}
+                  type="file"
+                  hidden
+                  accept=".mrpack"
+                  aria-label="Modpack file"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    void uploadPack(file);
+                  }}
+                />
+                <Button size="sm" disabled={!canEdit || !!sending} loading={reading} onClick={() => packInput.current?.click()}>
+                  {modpack.version ? "Upload newer" : "Upload .mrpack"}
+                </Button>
+              </>
+            )}
           </div>
-          {modpack.source === "modrinth" && (
-            <Button size="sm" disabled={!canEdit} onClick={() => setVersioning("modpack")}>
-              {modpack.versionName || "Newest release"}
-            </Button>
-          )}
+          {sending && <UploadProgress sending={sending} onCancel={cancel} />}
+          {modpack.source === "upload" && modpack.version && <p className="text-xs text-muted">Each start puts the pack's own files back, configs too.</p>}
         </div>
       )}
 

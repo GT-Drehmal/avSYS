@@ -406,6 +406,7 @@ func (s *Server) Handler() http.Handler {
 	api("DELETE /orgs/{org}/servers/{server}", s.authed(s.deleteServer))
 	api("POST /orgs/{org}/servers/{server}/{action}", s.authed(s.serverAction))
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
+	api("PUT /orgs/{org}/servers/{server}/modpack", s.authed(s.putModpack))
 	api("GET /orgs/{org}/templates", s.authed(s.listTemplates))
 	api("POST /orgs/{org}/templates", s.authed(s.createTemplate))
 	api("GET /orgs/{org}/templates/{template}", s.authed(s.getTemplate))

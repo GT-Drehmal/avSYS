@@ -320,6 +320,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"PUT " + server + "/resource-packs", "", `{"order":[]}`, store.RoleAdmin, 400},
 		{"GET " + server + "/terminal", "", "", store.RoleOperator, 0},
 		{"PUT " + server + "/content", "", "x", store.RoleAdmin, 0},
+		// 400: allowed, and then refused: the server runs no modpack.
+		{"PUT " + server + "/modpack", "", "x", store.RoleAdmin, 400},
 		// 409: allowed, and then refused because the server is running.
 		{"PUT " + server + "/import", "", "x", store.RoleAdmin, 409},
 		{"GET " + server + "/import/upload", "", "", store.RoleAdmin, 0},

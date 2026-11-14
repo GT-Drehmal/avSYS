@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { ApiError, upload, uploadParts, type Progress } from "./api";
+import { ApiError, qs, sendInParts, upload, uploadParts, type Progress } from "./api";
 
 /**
  * What a new server is given from this computer once it is made: an archive
@@ -31,6 +31,8 @@ export interface SetupWork {
   send: <T>(label: string, path: string, file: Blob, method?: "PUT" | "POST") => Promise<T>;
   /** Sends an archive to a server in parts, then asks for what finish does. */
   sendParts: <T>(label: string, server: string, file: Blob, finish: (upload: string) => Promise<T>) => Promise<T>;
+  /** Sends a file in parts to the organization, then asks for what finish does with its name. */
+  sendStaged: <T>(label: string, org: string, file: Blob, finish: (upload: string) => Promise<T>) => Promise<T>;
   signal: AbortSignal;
 }
 
@@ -94,6 +96,17 @@ export function startSetup(org: string, server: string, title: string, work: (w:
         update(id, { progress: null, stoppable: false });
       }
       update(id, { stage: "Unpacking" });
+      return finish(upload);
+    },
+    sendStaged: async <T>(label: string, org: string, file: Blob, finish: (upload: string) => Promise<T>) => {
+      update(id, { stage: label, progress: { sent: 0, total: file.size }, stoppable: true });
+      const uploads = (q: Record<string, string | number | undefined>) => `/orgs/${org}/uploads?${qs(q)}`;
+      let upload: string;
+      try {
+        upload = await sendInParts(uploads, uploads, file, (progress) => update(id, { progress }), ctl.signal);
+      } finally {
+        update(id, { progress: null, stoppable: false });
+      }
       return finish(upload);
     },
     signal: ctl.signal,
