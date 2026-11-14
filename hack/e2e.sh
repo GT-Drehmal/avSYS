@@ -295,8 +295,14 @@ game_clean() {
 }
 
 # logged_clean WHAT LOG: fails if a log has something gone wrong in it.
+# Mojang's own services not answering in time is theirs and the runner's
+# network, not ours: the game fetching its sign-in keys is let pass when it
+# only timed out or could not find the host, and fails like anything else
+# otherwise.
 logged_clean() {
-  bad=$(printf '%s\n' "$2" | grep -E '[ /](ERROR|FATAL)\]|Exception|Failed to parse|An unexpected error occurred' | head -10)
+  bad=$(printf '%s\n' "$2" \
+    | grep -vE 'Yggdrasil Key Fetcher/ERROR\]: Failed to request yggdrasil public key|authlib\.exceptions\.MinecraftClientException: Failed to read from https://[a-z.]*(minecraftservices|mojang)\.com/.* due to (Connect timed out|Read timed out|.*UnknownHost)|^Caused by: java\.net\.(SocketTimeoutException|UnknownHostException|ConnectException)' \
+    | grep -E '[ /](ERROR|FATAL)\]|Exception|Failed to parse|An unexpected error occurred' | head -10)
   [ -z "$bad" ] || fail "$1: the game logged:
 $bad"
 }
