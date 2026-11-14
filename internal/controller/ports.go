@@ -200,6 +200,7 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		}
 	}
 	if !sharesAddress(mc) || len(open) == 0 || theirs {
+		r.closeStandIn(client.ObjectKeyFromObject(mc))
 		if !theirs {
 			if err := r.Delete(ctx, own); client.IgnoreNotFound(err) != nil {
 				return nil, false, err
@@ -221,10 +222,18 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		}
 		return st, full || theirs, nil
 	}
+	// While the game is not running, the panel answers on them instead.
+	standIn, err := r.standingIn(ctx, mc)
+	if err != nil {
+		return nil, false, err
+	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, own, func() error {
 		own.Labels = labelsFor(mc)
 		own.Annotations = r.Config.PortsServiceAnnotations
 		own.Spec.Selector = map[string]string{avsysv1.LabelServer: mc.Name}
+		if standIn {
+			own.Spec.Selector = nil
+		}
 		own.Spec.Type = corev1.ServiceTypeNodePort
 		if r.Config.PortRange.First != 0 {
 			own.Spec.Type = corev1.ServiceTypeLoadBalancer
@@ -245,6 +254,9 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		return controllerutil.SetControllerReference(mc, own, r.Scheme)
 	})
 	if err != nil {
+		return nil, false, err
+	}
+	if err := r.pointPorts(ctx, mc, own, open, standIn); err != nil {
 		return nil, false, err
 	}
 	st = portStatus(mc, own, public, r.Config)

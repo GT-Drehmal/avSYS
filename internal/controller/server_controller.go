@@ -44,6 +44,10 @@ type Config struct {
 	// RouterService is the panel's own Service, whose address extra ports
 	// are compared with: where theirs is another, it is the one shown.
 	RouterService types.NamespacedName
+	// StandIn answers on the extra ports of servers that share the
+	// router's address while their games are not running, and wakes a
+	// sleeping one when they are reached. Without it, nothing answers then.
+	StandIn StandIn
 	// PackURL is where the panel serves uploaded resource packs, at
 	// /packs/<sha1>.zip under it.
 	PackURL string
@@ -69,10 +73,14 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	mc := &avsysv1.MinecraftServer{}
 	if err := r.Get(ctx, req.NamespacedName, mc); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.closeStandIn(req.NamespacedName)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !mc.DeletionTimestamp.IsZero() {
 		// Everything is owned by the server and garbage collected with it.
+		r.closeStandIn(req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 	// A server made under the name of one that was just deleted finds that
