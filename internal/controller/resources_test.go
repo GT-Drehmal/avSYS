@@ -389,8 +389,10 @@ func TestGameKeepsItsLogWithoutARestart(t *testing.T) {
 			t.Errorf("the game's termination message policy is %q", c.TerminationMessagePolicy)
 		}
 	}
+	// Nor the start script, which TestHashLeavesOutKeepingTheBuild covers.
 	for i := range pod.Spec.Containers {
 		pod.Spec.Containers[i].TerminationMessagePolicy = ""
+		pod.Spec.Containers[i].Command = nil
 	}
 	pod.Spec.NodeSelector = nil
 	if hashOf(pod.Spec) != pod.Annotations[annotationSpecHash] {
