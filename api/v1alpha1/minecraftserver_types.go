@@ -360,6 +360,13 @@ type ExtraPort struct {
 	// +kubebuilder:validation:Enum=TCP;UDP
 	// +kubebuilder:default=TCP
 	Protocol corev1.Protocol `json:"protocol,omitempty"`
+	// For is the mod the panel opened it for, by its Modrinth slug, as
+	// geyser. The mod is set up to listen on it, and to tell players where
+	// it is reached, and it is closed again when the mod is taken off. Empty
+	// is a port of the server's own, which the panel leaves alone.
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z0-9_-]*$`
+	For string `json:"for,omitempty"`
 }
 
 // PortStatus is where players reach an extra port.

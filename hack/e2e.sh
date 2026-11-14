@@ -1000,6 +1000,38 @@ else
 fi
 expect "and the port is closed again" "$(call -X PATCH -d '{"spec":{"ports":[]}}' "$SRV" | field "d['spec'].get('ports') or []")" "[]"
 
+step "a mod's port"
+# A mod that listens on a port of its own has it opened as it is added, and
+# set in its config as the game starts, with where players reach it.
+mods=$(call "$SRV" | field "__import__('json').dumps(d['spec']['mods'])")
+with=$(python3 -c 'import json, sys; m = json.loads(sys.argv[1]); m.append({"source": "modrinth", "kind": "plugin", "project": "simple-voice-chat"}); print(json.dumps({"spec": {"mods": m}}))' "$mods")
+added=$(call -X PATCH -d "$with" "$SRV")
+expect "Simple Voice Chat added opens its port" "$(echo "$added" | field "[(p['name'], p['port'], p['protocol'], p.get('for')) for p in d['spec'].get('ports', [])]")" "[('voice-chat', 24454, 'UDP', 'simple-voice-chat')]"
+VOICE=0
+for _ in $(seq 1 60); do
+  VOICE=$(call "$SRV" | field "next((p['address'] for p in d['status'].get('ports', []) if p['name'] == 'voice-chat' and p.get('address')), 0)")
+  [ "$VOICE" != 0 ] && break
+  sleep 2
+done
+[ "$VOICE" != 0 ] || fail "its port was not opened: $(call "$SRV" | field "d['status'].get('ports')")"
+echo "ok: it is reached at $VOICE"
+call -X POST "$SRV/restart" >/dev/null
+for _ in $(seq 1 90); do
+  [ "$(phase_now)" != Running ] && break
+  sleep 1
+done
+wait_phase Running
+voice=$(call -f "$SRV/files/content?path=/plugins/voicechat/voicechat-server.properties") || fail "its config could not be read"
+expect "it listens on that port" "$voice" "
+port=24454
+"
+expect "and tells players where it is reached" "$voice" "
+voice_host=$VOICE
+"
+expect "its voice server started" "$(call -f "$SRV/files/content?path=/logs/latest.log")" "Voice chat server started at port 24454"
+game_clean "and the game's log is clean"
+expect "taken off, its port is closed" "$(call -X PATCH -d "{\"spec\":{\"mods\":$mods}}" "$SRV" | field "d['spec'].get('ports') or []")" "[]"
+
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"

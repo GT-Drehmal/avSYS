@@ -18,6 +18,7 @@ import (
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -193,8 +194,12 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	}
 	// What its mods listen on goes with them. The public ports given out
 	// to the original are its own, and the copy gets ports of its own.
+	// Mods chosen again open and close theirs, unless the ports are said.
 	if !said("ports") {
 		spec.Ports = recorded.Ports
+		if said("mods") {
+			spec.Ports = controller.FitModPorts(recorded.Mods, spec.Mods, recorded.Ports)
+		}
 	}
 	spec.Properties = mergeProperties(recorded.Properties, given["properties"])
 	if !said("ops") {

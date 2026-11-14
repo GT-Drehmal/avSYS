@@ -114,7 +114,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ports: %w", err)
 	}
-	pod, pending, wait, err := r.ensurePod(ctx, mc)
+	// The pod is made knowing where its extra ports are reached, which the
+	// mods they were opened for tell players (see modConfig).
+	reached := mc.DeepCopy()
+	reached.Status.Ports = ports
+	pod, pending, wait, err := r.ensurePod(ctx, reached)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("pod: %w", err)
 	}

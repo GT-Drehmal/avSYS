@@ -512,6 +512,15 @@ spec:
                   description: ExtraPort is a port a mod or plugin listens on in the
                     server.
                   properties:
+                    for:
+                      description: |-
+                        For is the mod the panel opened it for, by its Modrinth slug, as
+                        geyser. The mod is set up to listen on it, and to tell players where
+                        it is reached, and it is closed again when the mod is taken off. Empty
+                        is a port of the server's own, which the panel leaves alone.
+                      maxLength: 64
+                      pattern: ^[a-z0-9_-]*$
+                      type: string
                     name:
                       description: |-
                         Name says what it is for, as voice-chat. It is the port's name in a

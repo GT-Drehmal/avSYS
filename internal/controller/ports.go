@@ -83,6 +83,17 @@ func writePublicPorts(ports map[string]int32) string {
 	return strings.Join(parts, ",")
 }
 
+// sharedPublic is the public port given to the same port of a server by
+// the other protocol, if it has one.
+func sharedPublic(ports []avsysv1.ExtraPort, p avsysv1.ExtraPort, given map[string]int32) (int32, bool) {
+	for _, q := range ports {
+		if n, ok := given[q.Name]; ok && q.Port == p.Port && protocolOf(q) != protocolOf(p) {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
 // allocating holds giving out public ports to one server at a time.
 var allocating sync.Mutex
 
@@ -136,6 +147,12 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 			next := r.Config.PortRange.First
 			for _, p := range mc.Spec.Ports {
 				if _, ok := want[p.Name]; ok {
+					continue
+				}
+				// One port by both protocols, as Geyser's, is given one
+				// public port: players are told one address for it.
+				if n, ok := sharedPublic(mc.Spec.Ports, p, want); ok {
+					want[p.Name] = n
 					continue
 				}
 				for next <= r.Config.PortRange.Last && taken[next] {

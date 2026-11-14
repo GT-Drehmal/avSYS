@@ -111,6 +111,34 @@ func TestSharedAddressPorts(t *testing.T) {
 	}
 }
 
+// One port by both protocols, as Geyser's, is given one public port, which
+// players are told; another server's ports are not given it.
+func TestOnePublicPortForBothProtocols(t *testing.T) {
+	scheme := portsScheme(t)
+	tcp := avsysv1.ExtraPort{Name: "geyser-tcp", Port: 19132, Protocol: corev1.ProtocolTCP}
+	mc := withPorts("probe", avsysv1.ExposeRouter, bedrok, webmap, tcp)
+	other := withPorts("other", avsysv1.ExposeRouter, voice)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, other).Build()
+	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{PortRange: PortRange{25600, 25699}}}
+	ports, _, err := r.ensurePorts(context.Background(), mc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 3 || ports[0].PublicPort != 25600 || ports[1].PublicPort != 25601 || ports[2].PublicPort != 25600 {
+		t.Fatalf("ports: %+v", ports)
+	}
+	svc := &corev1.Service{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "mc-x", Name: PortsServiceName("probe")}, svc); err != nil {
+		t.Fatal(err)
+	}
+	if p := svc.Spec.Ports; len(p) != 3 || p[0].Port != 25600 || p[0].Protocol != corev1.ProtocolUDP || p[2].Port != 25600 || p[2].Protocol != corev1.ProtocolTCP {
+		t.Errorf("service: %+v", p)
+	}
+	if ports, _, err := r.ensurePorts(context.Background(), other, nil); err != nil || len(ports) != 1 || ports[0].PublicPort != 25602 {
+		t.Errorf("the other server: %+v %v", ports, err)
+	}
+}
+
 // With no range, each extra port of a server sharing the address is a node
 // port the cluster gives.
 func TestSharedAddressPortsWithoutRange(t *testing.T) {

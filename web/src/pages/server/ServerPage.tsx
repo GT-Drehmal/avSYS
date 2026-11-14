@@ -1,4 +1,5 @@
-import { Camera, ChevronLeft, Code2, Copy, Plug } from "lucide-react";
+import { Camera, ChevronLeft, Code2, Copy, Map as MapIcon, Plug } from "lucide-react";
+import { modReached } from "../../components/ExtraPorts";
 import { Suspense, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router";
 import { newFrom } from "../../lib/origin";
@@ -31,6 +32,8 @@ function ConnectDialog({ server, open, onOpenChange }: { server: Server; open: b
   if (!meta) return null;
   const row = "flex flex-col gap-1.5";
   const box = "flex min-h-9 items-center rounded-md border border-line bg-bg px-3 py-1.5";
+  // Where Bedrock players join through Geyser.
+  const bedrock = modReached(server.spec.ports, server.status.ports, (k, p) => k.slug === "geyser" && p.protocol === "UDP");
   return (
     <Modal open={open} onOpenChange={onOpenChange} title="Connect">
       <div className="flex flex-col gap-5">
@@ -40,6 +43,15 @@ function ConnectDialog({ server, open, onOpenChange }: { server: Server; open: b
           <div className={box}>{server.status.address ? <CopyText value={server.status.address} /> : <span className="text-[13px] text-muted">No address yet. Set one under Settings.</span>}</div>
           {server.status.address && <p className="text-xs text-muted">In Minecraft: Multiplayer, then Add Server.</p>}
         </div>
+        {bedrock && (
+          <div className={row}>
+            <span className="label-mono">Bedrock address</span>
+            <div className={box}>
+              <CopyText value={bedrock.address} />
+            </div>
+            <p className="text-xs text-muted">For players on Bedrock Edition: Servers, then Add Server.</p>
+          </div>
+        )}
         <div className={row}>
           <span className="label-mono">SSH</span>
           <div className={box}>
@@ -131,6 +143,8 @@ export function ServerPage() {
   const canOperate = atLeast(role, "operator");
   const { status, spec } = server;
   const players = status.players;
+  // A web map's page, served on the port opened for it.
+  const map = modReached(spec.ports, status.ports, (k) => !!k.map);
 
   return (
     <div className="flex flex-col">
@@ -187,7 +201,15 @@ export function ServerPage() {
       </header>
 
       <dl className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 rounded-lg border border-line bg-surface px-4 py-3.5 sm:grid-cols-4">
-        <Fact label="Address">{status.address ? <CopyText value={status.address} /> : <span className="text-muted">Not set</span>}</Fact>
+        <Fact label="Address">
+          {status.address ? <CopyText value={status.address} /> : <span className="text-muted">Not set</span>}
+          {map && (
+            <a href={`http://${map.address}/`} target="_blank" rel="noreferrer" className="mt-1 flex w-fit items-center gap-1 text-xs text-accent hover:underline">
+              <MapIcon className="size-3.5" />
+              Open {map.mod.label}
+            </a>
+          )}
+        </Fact>
         <Fact label="Software">
           {describeSoftware(server)}
           {server.java.effective > 0 && <span className="ml-2 text-muted">Java {server.java.effective}</span>}

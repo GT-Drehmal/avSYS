@@ -460,6 +460,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return errBadRequest("A new server is given a picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once the server is made.")
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
+	var named map[string]json.RawMessage
+	_ = json.Unmarshal(raw.Spec, &named)
+	fitModPorts(&in.Spec, nil, named)
 	// A new server has Aikar's flags unless asked not to. Only here: one
 	// made before they were offered keeps starting as it always has.
 	if in.Spec.JVM.AikarFlags == nil {
@@ -683,6 +686,7 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	var named map[string]json.RawMessage
 	_ = json.Unmarshal(patch, &named)
 	_, picked := named["version"]
+	fitModPorts(&spec, mc.Spec.Mods, named)
 	stillLatest := !picked && mc.Spec.Version == "LATEST" && mc.Spec.Modpack == nil && spec.Loader == mc.Spec.Loader
 	if !stillLatest {
 		if err := s.settleLatest(ctx, &spec); err != nil {
@@ -989,6 +993,18 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 	return nil
 }
 
+// fitModPorts opens the ports of known mods added to a server, and closes
+// those opened for mods taken off, in the same change (see
+// controller.FitModPorts). A request that says the ports itself, as the
+// panel's forms do, has them as it says.
+func fitModPorts(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef, given map[string]json.RawMessage) {
+	_, mods := given["mods"]
+	_, ports := given["ports"]
+	if mods && !ports {
+		spec.Ports = controller.FitModPorts(before, spec.Mods, spec.Ports)
+	}
+}
+
 // checkPorts checks a server's extra ports beyond what the CRD says: each
 // name and each number and protocol once, and not the game's own.
 func checkPorts(ports []avsysv1.ExtraPort) error {
@@ -1021,6 +1037,9 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 			return errBadRequest("%s (%s) is listed twice.", p.Name, key)
 		}
 		names[p.Name], numbers[key] = true, true
+		if p.For != "" && !controller.IsKnownMod(p.For) {
+			return errBadRequest("%q is not a mod the panel opens ports for.", p.For)
+		}
 	}
 	if len(ports) > 8 {
 		return errBadRequest("A server has up to 8 extra ports.")
