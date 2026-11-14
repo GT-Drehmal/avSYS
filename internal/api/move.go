@@ -483,7 +483,13 @@ func (s *Server) rebuildOn(ctx context.Context, org string, mc *avsysv1.Minecraf
 	defer ws.Close()
 	s.setOperation(mc.Namespace, op, "Putting the server's files back", 0)
 	last := time.Time{}
-	err = s.Backups.Restore(ctx, org, ws, snap.ID, func(p backup.Progress) {
+	// The volume is new and empty: all the snapshot has goes in, the
+	// workspace home too where it has it, as one taken for a move does.
+	put := s.Backups.Restore
+	if snap.Trigger == backup.TriggerMove {
+		put = s.Backups.RestoreWhole
+	}
+	err = put(ctx, org, ws, snap.ID, func(p backup.Progress) {
 		if time.Since(last) < 500*time.Millisecond {
 			return
 		}
