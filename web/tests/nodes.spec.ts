@@ -94,3 +94,18 @@ test("with the last hours of a node's use, it is drawn in place of the figures n
   await expect(page.getByRole("region", { name: "CPU on pc" }).getByRole("img")).toHaveAttribute("aria-label", "CPU on pc: 2.5 cores now, 2.5 cores at most, 16 cores in all");
   await expect(page.getByTestId("node-use")).toHaveText("0 players");
 });
+
+test("the servers on a node that is down lead to where they are moved off it", async ({ page, as }) => {
+  await as("owner");
+  const state = listed();
+  // creative is on pc, which is up, and survival on pi5, which is down.
+  const servers = state.nodes.map((n) => ({ ...n, servers: [{ org: "friends", name: n.name === "pc" ? "creative" : "survival", memory: "4Gi" }] }));
+  await page.route("**/api/v1/nodes", (route) => route.fulfill({ json: { ...state, nodes: servers } }));
+  await page.goto("/nodes");
+  await expect(page.getByText("Open a server to move it to another node.")).toHaveCount(1);
+  await expect(page.getByRole("link", { name: /friends\/survival/ })).toHaveAttribute("href", "/o/friends/s/survival/settings");
+  await expect(page.getByRole("link", { name: /friends\/creative/ })).toHaveAttribute("href", "/o/friends/s/creative");
+  await page.getByRole("link", { name: /friends\/survival/ }).click();
+  await expect(page).toHaveURL(/\/o\/friends\/s\/survival\/settings$/);
+  await expect(page.getByRole("heading", { name: "Node", exact: true })).toBeVisible();
+});

@@ -325,6 +325,22 @@ func (m *Manager) Holds(ctx context.Context, org string) (count int, known bool)
 	return 0, len(entries) == 0
 }
 
+// Reachable says whether the panel can read where an organization's
+// repository is kept: nil if it can, or if nothing is kept there yet. The
+// repositories are on the panel's own volume, which may be storage that is
+// not there any more, as on a node that is down.
+func (m *Manager) Reachable(org string) error {
+	if _, err := os.Stat(filepath.Join(m.repoDir(org), "config")); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// No repository yet, which is only so if the folder it would be in can
+	// be read.
+	if _, err := os.ReadDir(m.Dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // UploadsDir is where an organization's files sent in parts are put
 // together: beside its repository, on the same disk.
 func (m *Manager) UploadsDir(org string) string { return filepath.Join(m.Dir, ".uploads", org) }

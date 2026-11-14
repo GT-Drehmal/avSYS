@@ -29,6 +29,8 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 finish() {
   status=$?
+  # The second node may have been left down by a run that failed there.
+  docker unpause "$AGENT" >/dev/null 2>&1 || true
   if [ $status -ne 0 ]; then
     step "what the cluster looked like"
     k get pods -A -o wide 2>&1 | tail -20 || true
@@ -89,6 +91,8 @@ for _ in $(seq 1 60); do
 done
 [ "$(k get nodes --no-headers 2>/dev/null | grep -c ' Ready ')" = 2 ] || fail "the second node did not join"
 docker save "$PANEL" "$WORKSPACE" | docker exec -i "$AGENT" ctr images import - >/dev/null
+AGENT_NODE=$(k get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{.items[0].metadata.name}')
+[ -n "$AGENT_NODE" ] || fail "the second node is not named"
 echo "ok: two nodes, both with the images"
 
 # offsite gives the panel an offsite copy that is a directory on its own
@@ -105,10 +109,14 @@ print(manifest.replace(at, at + env % ("AVSYS_OFFSITE_REPOSITORY", "/data/offsit
 }
 
 step "install"
+# The panel and its volumes go on the first node, so that the second can be
+# taken down under the servers on it while the panel goes on.
+k cordon "$AGENT_NODE" >/dev/null
 sed -e "s|image: ghcr.io/gt-drehmal/avsys:edge|image: $PANEL|" \
     -e "s|imagePullPolicy: Always|imagePullPolicy: IfNotPresent|" \
     -e "s|value: https://panel.example.com|value: $URL|" deploy/install.yaml | offsite | k apply -f - >/dev/null
 k -n avsys rollout status deploy/avsys --timeout=180s >/dev/null || fail "the panel did not become ready"
+k uncordon "$AGENT_NODE" >/dev/null
 restarts=$(k -n avsys get pods -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}')
 [ "$restarts" = 0 ] || fail "the panel restarted $restarts time(s) during its first start"
 echo "ok: installed from deploy/install.yaml, first start was clean"
@@ -144,4 +152,7 @@ GAME_LOG="docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft"
 # container's on Docker's network, from the node itself: the machine running
 # Docker may not reach that network.
 node_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$NAME")
+# The second node is taken down by freezing its container, as a node that
+# stops answering, and brought back by letting it go on.
+AVSYS_E2E_DOWN_NODE=$AGENT_NODE AVSYS_E2E_NODE_DOWN="docker pause $AGENT" AVSYS_E2E_NODE_UP="docker unpause $AGENT" AVSYS_E2E_ON_DOWN_NODE="docker exec -i $AGENT" \
 AVSYS_E2E_NODE_IP=$node_ip AVSYS_E2E_ON_NODE="docker exec -i $NAME" AVSYS_E2E_PORT_RANGE=25600-25609 AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG AVSYS_E2E_CONTAINER_LOG=$GAME_LOG ./hack/e2e.sh

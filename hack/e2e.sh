@@ -19,6 +19,10 @@
 # makes its own server, so that the parts can run side by side, each on a
 # cluster of its own, as CI runs them. Unset, all of them run, one after
 # another, on one server.
+# AVSYS_E2E_DOWN_NODE names a node that AVSYS_E2E_NODE_DOWN takes down and
+# AVSYS_E2E_NODE_UP brings back, commands run with sh -c, for moving a server
+# off a node that is down; AVSYS_E2E_ON_DOWN_NODE runs a command on that node.
+# The panel must not be on it. Unset, that is skipped.
 # AVSYS_E2E_LIST_BUDGET_MS (2000) is how long the panel may take over a read
 # of a list, such as the servers or the snapshots, before the run fails.
 set -eu
@@ -1394,6 +1398,63 @@ case "$again" in *'"spec"'*) ;; *) fail "the server was not brought back straigh
 wait_phase Running
 expect "brought back straight after a delete, it keeps its files once it runs" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "and its plugins" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit
+
+step "a node that is down"
+# A server whose files are on a node that stops answering is made again on
+# another node from its newest snapshot, as the same server.
+if [ -n "${AVSYS_E2E_DOWN_NODE:-}" ]; then
+  DOWN=$AVSYS_E2E_DOWN_NODE
+  UP=$(call "$API/nodes?memory=1Gi" | field "next((n['name'] for n in d['nodes'] if n['ready'] and n['name'] != '$DOWN'), '')")
+  [ -n "$UP" ] || fail "there is no other node to move a server to"
+  STRANDED="$API/orgs/$ORG/servers/stranded"
+  made=$(call -d "{\"name\":\"stranded\",\"node\":\"$DOWN\",\"spec\":{\"eula\":true,\"loader\":\"vanilla\",\"version\":\"1.21.4\",\"state\":\"Stopped\",\"resources\":{\"memory\":\"1Gi\"},\"storage\":{\"size\":\"1Gi\"}}}" "$API/orgs/$ORG/servers")
+  case "$made" in *'"spec"'*) ;; *) fail "a server was not made on $DOWN: $made" ;; esac
+  for _ in $(seq 1 90); do
+    echo "in the snapshot" | call -f -X PUT --data-binary @- "$STRANDED/files/content?path=/kept.txt" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  taken=$(call -X POST "$STRANDED/snapshots?wait=true")
+  TAKEN=$(echo "$taken" | field "d['id']") || fail "no snapshot of it was taken: $taken"
+  echo "after the snapshot" | call -X PUT --data-binary @- "$STRANDED/files/content?path=/after.txt" >/dev/null
+  expect "its files are on $DOWN" "$(call "$STRANDED/placement" | field "(d.get('node'), d.get('local'), d.get('down', False))")" "('$DOWN', True, False)"
+  ADDRESS=$(call "$STRANDED" | field "d['spec'].get('expose')")
+
+  sh -c "$AVSYS_E2E_NODE_DOWN"
+  for _ in $(seq 1 90); do
+    [ "$(call "$API/nodes" | field "[n['ready'] for n in d['nodes'] if n['name'] == '$DOWN']")" = "[False]" ] && break
+    sleep 2
+  done
+  expect "a node that stops answering is down" "$(call "$API/nodes" | field "[n['ready'] for n in d['nodes'] if n['name'] == '$DOWN']")" "[False]"
+  placement=$(call "$STRANDED/placement")
+  expect "a server on it is offered its newest snapshot" "$(echo "$placement" | field "(d.get('down'), d.get('newest', {}).get('id'))" 2>/dev/null) $placement" "(True, '$TAKEN')"
+  expect "and is not moved as usual" "$(call -X POST -d "{\"node\":\"$UP\"}" "$STRANDED/move" | field "d['code']")" node_down
+  moved=$(call -X POST -d "{\"node\":\"$UP\",\"fromSnapshot\":\"$TAKEN\"}" "$STRANDED/move?wait=true")
+  case "$moved" in *'"code"'*) fail "moving the server from its snapshot: $moved" ;; esac
+  expect "it is moved off it from that snapshot" "$(call "$STRANDED" | field "(d['status'].get('node'), d['spec']['state'])")" "('$UP', 'Stopped')"
+  expect "with the files the snapshot has" "$(call "$STRANDED/files/content?path=/kept.txt")" "in the snapshot"
+  expect "and not those written after it" "$(call -o /dev/null -w '%{http_code}' "$STRANDED/files/content?path=/after.txt")" 404
+  expect "on a volume of its own there" "$(call "$STRANDED/placement" | field "(d.get('node'), d.get('local'), d.get('down', False))")" "('$UP', True, False)"
+  expect "under its own address" "$(call "$STRANDED" | field "d['spec'].get('expose')")" "$ADDRESS"
+
+  # Back, the node stops what it ran of the server: nothing of it runs there.
+  sh -c "$AVSYS_E2E_NODE_UP"
+  for _ in $(seq 1 90); do
+    [ "$(call "$API/nodes" | field "[n['ready'] for n in d['nodes'] if n['name'] == '$DOWN']")" = "[True]" ] && break
+    sleep 2
+  done
+  expect "the node comes back" "$(call "$API/nodes" | field "[n['ready'] for n in d['nodes'] if n['name'] == '$DOWN']")" "[True]"
+  left=unknown
+  for _ in $(seq 1 60); do
+    left=$(sh -c "$AVSYS_E2E_ON_DOWN_NODE crictl ps -q --label io.kubernetes.pod.namespace=mc-$ORG --label io.kubernetes.pod.name=stranded" 2>&1) && [ -z "$left" ] && break
+    sleep 2
+  done
+  [ -z "$left" ] || fail "the server's old pod still runs on $DOWN once it is back: $left"
+  echo "ok: once back, nothing of the server runs on $DOWN"
+  expect "and the server stays where it was moved, with its files" "$(call "$STRANDED/placement" | field "d.get('node')") $(call "$STRANDED/files/content?path=/kept.txt")" "$UP in the snapshot"
+  call -X DELETE "$STRANDED?snapshot=false" >/dev/null
+else
+  echo "skip: taking a node down needs the cluster to say how"
+fi
 
 fi
 
