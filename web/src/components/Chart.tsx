@@ -33,6 +33,8 @@ interface ChartProps<T extends Timed> {
   staleText?: string;
   /** Counted in whole numbers, so the scale is too. */
   whole?: boolean;
+  /** Lower is worse: the lowest figure is said rather than the highest. */
+  lowest?: boolean;
   /** A shorter chart, for several side by side. */
   small?: boolean;
   /** The moment the pointer is over, in milliseconds. */
@@ -44,7 +46,7 @@ interface ChartProps<T extends Timed> {
  * A figure over time, as a line over a shaded area, with the moment pointed
  * at marked. Charts given the same hover mark the same moment.
  */
-export function Chart<T extends Timed>({ title, label, samples: all, every, value, format, limit, limitText = "allowed", staleText = "when the server last ran", whole, small, hover, onHover }: ChartProps<T>) {
+export function Chart<T extends Timed>({ title, label, samples: all, every, value, format, limit, limitText = "allowed", staleText = "when the server last ran", whole, lowest, small, hover, onHover }: ChartProps<T>) {
   // Only the samples that have this figure: memory and CPU are missing from
   // those taken while the cluster did not say.
   const samples = all.filter((s) => value(s) !== undefined);
@@ -54,6 +56,9 @@ export function Chart<T extends Timed>({ title, label, samples: all, every, valu
   // No longer measured, as a server that is not running now.
   const when = Date.now() - new Date(samples[samples.length - 1].t).getTime() > every * 3000 ? staleText : "now";
   const peak = Math.max(...values);
+  // The figure to watch: the highest, or where lower is worse, the lowest.
+  const worst = lowest ? Math.min(...values) : peak;
+  const worstText = lowest ? "lowest" : "at most";
   const top = Math.max(limit ?? 0, peak, whole ? 1 : 0) * 1.1 || 1;
   // Over the same hours as the other charts, so they line up.
   const start = new Date(all[0].t).getTime();
@@ -85,7 +90,7 @@ export function Chart<T extends Timed>({ title, label, samples: all, every, valu
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
         <h2 className={cx("font-medium", small ? "text-xs" : "text-[13px]")}>{title}</h2>
         <p className="text-xs text-muted">
-          <span className="text-fg">{format(now)}</span> {when} · {format(peak)} at most
+          <span className="text-fg">{format(now)}</span> {when} · {format(worst)} {worstText}
           {limit ? (
             <>
               {" · "}
@@ -111,7 +116,7 @@ export function Chart<T extends Timed>({ title, label, samples: all, every, valu
           preserveAspectRatio="none"
           className={cx("w-full rounded-md border border-line bg-surface", small ? "h-16" : "h-28")}
           role="img"
-          aria-label={`${name}: ${format(now)} ${when}, ${format(peak)} at most${limit ? `, ${format(limit)} ${limitText}` : ""}`}
+          aria-label={`${name}: ${format(now)} ${when}, ${format(worst)} ${worstText}${limit ? `, ${format(limit)} ${limitText}` : ""}`}
         >
           <path d={area} className="fill-accent/10" />
           <path d={line} className="fill-none stroke-accent" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />

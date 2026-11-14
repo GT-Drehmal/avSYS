@@ -37,6 +37,12 @@ type usageSample struct {
 	// system could take back from it.
 	Memory  *int64 `json:"memory,omitempty"`
 	Players int32  `json:"players"`
+	// TPS is the ticks the game ran a second, and TickTarget those it aims
+	// for: nil where the game did not say. MSPT is the milliseconds it
+	// took over each tick, where it says.
+	TPS        *float64 `json:"tps,omitempty"`
+	TickTarget *float64 `json:"tickTarget,omitempty"`
+	MSPT       *float64 `json:"mspt,omitempty"`
 }
 
 // usage keeps the samples of each server, by namespace/name.
@@ -263,8 +269,13 @@ func (s *Server) SampleUsage(ctx context.Context, now time.Time) {
 	if err := s.Client.List(ctx, &servers); err != nil {
 		return
 	}
+	// The games are asked how fast they tick while the cluster is asked
+	// what they use.
+	asked := make(chan map[string]tickSample, 1)
+	go func() { asked <- s.sampleTicks(ctx, servers.Items) }()
 	raw := s.podMetrics(ctx, now)
-	if err := s.noteUsage(raw, servers.Items, now); err != nil {
+	ticks := <-asked
+	if err := s.noteUsage(raw, ticks, servers.Items, now); err != nil {
 		s.Log.Warn("could not read what servers are using", "error", err)
 		s.usage.setNodes(nil)
 		return
@@ -346,9 +357,10 @@ func nodesInUse(raw []byte) (map[string]nodeInUse, error) {
 }
 
 // noteUsage notes what each of these servers' games is using, from the
-// metrics API's list of pods where there is one, and how many players are
-// on each that runs. It lets go of what was noted of servers that are gone.
-func (s *Server) noteUsage(raw []byte, servers []avsysv1.MinecraftServer, now time.Time) error {
+// metrics API's list of pods where there is one, how many players are on
+// each that runs, and how fast its game ticks where ticks says, by
+// namespace/name. It lets go of what was noted of servers that are gone.
+func (s *Server) noteUsage(raw []byte, ticks map[string]tickSample, servers []avsysv1.MinecraftServer, now time.Time) error {
 	type use struct {
 		at          time.Time
 		cpu, memory int64
@@ -392,6 +404,9 @@ func (s *Server) noteUsage(raw []byte, servers []avsysv1.MinecraftServer, now ti
 		if p := mc.Status.Players; p != nil {
 			sample.Players = p.Online
 		}
+		if t, ok := ticks[key]; ok {
+			sample.TPS, sample.TickTarget, sample.MSPT = &t.TPS, &t.Target, t.MSPT
+		}
 		s.usage.add(key, mc.UID, sample)
 	}
 	s.usage.keep(keep, now)
@@ -415,9 +430,12 @@ type usageView struct {
 	Limit int64 `json:"limit"`
 	// CPULimit is the CPU the game may use, in thousandths of a core,
 	// where that is limited.
-	CPULimit int64         `json:"cpuLimit,omitempty"`
-	Every    int           `json:"every"`
-	Samples  []usageSample `json:"samples"`
+	CPULimit int64 `json:"cpuLimit,omitempty"`
+	// NoTicks is true where the server's game, asked, did not say how fast
+	// it ticks.
+	NoTicks bool          `json:"noTicks,omitempty"`
+	Every   int           `json:"every"`
+	Samples []usageSample `json:"samples"`
 }
 
 func (s *Server) getUsage(w http.ResponseWriter, r *http.Request, u *store.User) error {
@@ -431,6 +449,7 @@ func (s *Server) getUsage(w http.ResponseWriter, r *http.Request, u *store.User)
 		Limit:     mc.Spec.Resources.Memory.Value(),
 		Every:     int(usageEvery / time.Second),
 		Samples:   s.usage.of(a.Namespace+"/"+mc.Name, mc.UID),
+		NoTicks:   s.ticks.isSilent(a.Namespace+"/"+mc.Name, mc.UID),
 	}
 	if cpu := mc.Spec.Resources.CPU; cpu != nil {
 		view.CPULimit = cpu.MilliValue()

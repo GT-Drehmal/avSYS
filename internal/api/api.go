@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/auth"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/kube"
@@ -89,8 +90,12 @@ type Server struct {
 	// Metrics answers what servers and nodes are using. Nil asks the
 	// cluster's metrics API, through Kube. The browser tests stand one in.
 	Metrics Metrics
-	Dialer  kube.PodDialer
-	Gateway *sshgw.Gateway
+	// GameCommand, where set, answers the commands the usage sampler runs
+	// on a server's game, in place of the game's console. The browser tests
+	// stand one in.
+	GameCommand func(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error)
+	Dialer      kube.PodDialer
+	Gateway     *sshgw.Gateway
 	// Backups keeps each organization's snapshot repository.
 	Backups *backup.Manager
 	Events  *Hub
@@ -119,6 +124,8 @@ type Server struct {
 	bench nodeBench
 	// usage is what each running server's game has been using lately.
 	usage usage
+	// ticks is how each server's game is asked how fast it ticks.
+	ticks ticker
 	// reach is whether the cluster can be reached.
 	reach reach
 	// presence is which servers members have open.

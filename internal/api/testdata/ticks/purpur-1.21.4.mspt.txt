@@ -1,0 +1,2 @@
+§6Server tick times §e(§7avg§e/§7min§e/§7max§e)§6 from last 5s§7,§6 10s§7,§6 1m§e:
+§6◴ §a0.2§7/§a0.1§7/§a0.5§e, §a0.2§7/§a0.1§7/§a1.0§e, §a0.4§7/§a0.1§7/§c324.6

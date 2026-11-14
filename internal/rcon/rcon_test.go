@@ -27,7 +27,7 @@ func game(t *testing.T, password string, output func(command string) string) str
 			go func() {
 				defer conn.Close()
 				_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-				id, body, err := read(conn)
+				id, _, body, err := read(conn)
 				if err != nil {
 					return
 				}
@@ -37,11 +37,11 @@ func game(t *testing.T, password string, output func(command string) string) str
 				}
 				_ = write(conn, id, 2, "")
 				for {
-					id, body, err := read(conn)
+					id, typ, body, err := read(conn)
 					if err != nil {
 						return
 					}
-					if id == 3 {
+					if typ == typeSentinel {
 						_ = write(conn, id, 0, "Unknown request 64")
 						continue
 					}
@@ -99,6 +99,35 @@ func TestRun(t *testing.T) {
 	}
 }
 
+// One login is enough for many commands, each answered with its own output
+// alone, long or short.
+func TestClient(t *testing.T) {
+	long := strings.Repeat("§aa line of a long list\n", 1000)
+	addr := game(t, "secret", func(command string) string {
+		if command == "long" {
+			return long
+		}
+		return "ran " + command
+	})
+	c, err := Login(dial(t, addr), "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	for _, command := range []string{"tps", "long", "mspt", "long", "tick query"} {
+		want := "ran " + command
+		if command == "long" {
+			want = long
+		}
+		if got, err := c.Command(command); err != nil || got != want {
+			t.Errorf("%s: %d bytes, %v; want %d", command, len(got), err, len(want))
+		}
+	}
+	if _, err := Login(dial(t, addr), "wrong"); !errors.Is(err, ErrAuth) {
+		t.Errorf("a wrong password: %v", err)
+	}
+}
+
 // A game that goes away part way, or answers with nonsense, is an error, not
 // a hang or a short answer taken for the whole.
 func TestRunBrokenGame(t *testing.T) {
@@ -113,14 +142,14 @@ func TestRunBrokenGame(t *testing.T) {
 			if err != nil {
 				return
 			}
-			id, _, _ := read(conn)
+			id, _, _, _ := read(conn)
 			_ = write(conn, id, 2, "")
 			switch i {
 			case 0:
 				// Gone before the command's output.
 			case 1:
 				// A first piece, then gone before the end is marked.
-				id, _, _ := read(conn)
+				id, _, _, _ := read(conn)
 				_ = write(conn, id, 0, "part of it")
 			case 2:
 				// A size no packet has.
