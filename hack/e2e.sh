@@ -535,7 +535,7 @@ step "how fast the game ticks"
 # would fill its log.
 ticked() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s])"; }
 for _ in $(seq 1 40); do [ "$(ticked)" -gt 0 ] && break; sleep 2; done
-expect "Paper says how fast it ticks, against 20 a second, and how long a tick takes" "$(call "$SRV/usage" | field "[(s['tps'] > 0, s['tickTarget'], s['mspt'] >= 0) for s in d['samples'] if 'tps' in s][-1]")" "(True, 20.0, True)"
+expect "Paper says how fast it ticks, against 20 a second, and how long a tick takes" "$(call "$SRV/usage" | field "[(s['tps'] > 0, s['tickTarget'] == 20, s['mspt'] >= 0) for s in d['samples'] if 'tps' in s][-1]")" "(True, True, True)"
 connections() { call -f "$SRV/files/content?path=/logs/latest.log" | grep -c 'Thread RCON Client .* started' || true; }
 before=$(ticked) made=$(connections)
 for _ in $(seq 1 40); do [ "$(ticked)" -gt "$before" ] && break; sleep 2; done
