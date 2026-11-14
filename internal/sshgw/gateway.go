@@ -144,7 +144,7 @@ func (g *Gateway) handle(ctx context.Context, nc net.Conn, cfg *ssh.ServerConfig
 	ext := down.Permissions.Extensions
 	log := g.Log.With("user", ext[extUsername], "namespace", ext[extNamespace], "server", ext[extServer])
 
-	up, upChans, upReqs, err := g.dialWorkspace(ctx, ext[extNamespace], ext[extServer])
+	up, upChans, upReqs, err := g.dialWorkspace(ctx, ext[extNamespace], ext[extServer], g.WorkspaceTries)
 	if err != nil {
 		log.Warn("workspace unreachable", "error", err)
 		go ssh.DiscardRequests(downReqs)
@@ -180,7 +180,7 @@ var workspaceDials = 15
 
 // dialWorkspace opens an SSH connection to a server's workspace, waiting
 // briefly for a pod that is being replaced.
-func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string, tries int) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
 	cfg := &ssh.ClientConfig{
 		User: "mc",
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(g.WorkspaceKey)},
@@ -190,7 +190,6 @@ func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string) (
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}
-	tries := g.WorkspaceTries
 	if tries <= 0 {
 		tries = workspaceDials
 	}
@@ -223,7 +222,18 @@ func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string) (
 // the panel's own terminal and file browser. The caller must have authorized
 // the user already.
 func (g *Gateway) DialWorkspace(ctx context.Context, namespace, server string) (*ssh.Client, error) {
-	conn, chans, reqs, err := g.dialWorkspace(ctx, namespace, server)
+	return g.dialClient(ctx, namespace, server, g.WorkspaceTries)
+}
+
+// DialWorkspaceNow is DialWorkspace without waiting for a pod that is not
+// up yet: tried once, for what is not worth waiting for, as a server's
+// picture is not.
+func (g *Gateway) DialWorkspaceNow(ctx context.Context, namespace, server string) (*ssh.Client, error) {
+	return g.dialClient(ctx, namespace, server, 1)
+}
+
+func (g *Gateway) dialClient(ctx context.Context, namespace, server string, tries int) (*ssh.Client, error) {
+	conn, chans, reqs, err := g.dialWorkspace(ctx, namespace, server, tries)
 	if err != nil {
 		return nil, err
 	}
