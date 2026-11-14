@@ -1,0 +1,53 @@
+name: Dependabot auto-merge
+
+# Dependabot's pull requests for patch and minor updates merge by themselves
+# once the required checks (test, e2e, browser) pass. A major update, or one
+# whose size Dependabot cannot say (a new digest of the same image tag), is
+# left for a person.
+#
+# pull_request_target, because a run for Dependabot's own pull_request event
+# gets a token that can only read. Nothing from the pull request is checked
+# out or run here: only its metadata is read.
+on:
+  pull_request_target:
+    # Again on each push to it: Dependabot updates a grouped pull request in
+    # place, and what was a minor update may now hold a major one.
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  automerge:
+    # Only Dependabot's pull requests, pushed to by Dependabot alone.
+    if: >-
+      github.repository == 'GT-Drehmal/avSYS' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # Turning on auto-merge takes both.
+      contents: write
+      pull-requests: write
+    steps:
+      - name: What it updates
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - name: Merge once the checks pass, or leave it for a person
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.html_url }}
+          UPDATE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          case "$UPDATE" in
+            version-update:semver-patch | version-update:semver-minor)
+              gh pr merge --auto --merge "$PR"
+              ;;
+            *)
+              echo "Left for a person: ${UPDATE:-an update of unknown size}."
+              # Turned off if an earlier push had turned it on.
+              if [ "$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+                gh pr merge --disable-auto "$PR"
+              fi
+              ;;
+          esac
