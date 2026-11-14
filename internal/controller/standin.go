@@ -36,7 +36,7 @@ func StandInSliceName(server string) string { return PortsServiceName(server) + 
 
 // standInManager marks the endpoints of the panel's, which the cluster's
 // own controller of endpoints leaves alone.
-const standInManager = "avsys.dev/stand-in"
+const standInManager = "stand-in.avsys.dev"
 
 // clusterSlices marks the endpoints the cluster makes for a Service with a
 // selector.

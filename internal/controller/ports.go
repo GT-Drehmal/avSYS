@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -256,8 +257,12 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 	if err != nil {
 		return nil, false, err
 	}
+	// Not answered for, the ports reach nothing while the game does not
+	// run, which is no reason to hold up the server itself: it is tried
+	// again in a while.
 	if err := r.pointPorts(ctx, mc, own, open, standIn); err != nil {
-		return nil, false, err
+		log.FromContext(ctx).Error(err, "pointing extra ports at the panel")
+		full = true
 	}
 	st = portStatus(mc, own, public, r.Config)
 	// Where the load balancer put these ports on an address of their own,

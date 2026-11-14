@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -22,9 +24,13 @@ type panel struct {
 	ip   string
 	next int32
 	open map[types.NamespacedName]map[string]int32
+	fail bool
 }
 
 func (p *panel) Open(server types.NamespacedName, ports []avsysv1.ExtraPort) (string, map[string]int32, error) {
+	if p.fail {
+		return "", nil, errors.New("no free port")
+	}
 	if p.open == nil {
 		p.open = map[types.NamespacedName]map[string]int32{}
 	}
@@ -128,6 +134,15 @@ func TestExtraPortsReachThePanelWhileAsleep(t *testing.T) {
 	}
 	if s.Labels[discoveryv1.LabelServiceName] != svc.Name || s.Labels[discoveryv1.LabelManagedBy] == "endpointslice-controller.k8s.io" {
 		t.Errorf("labels: %v", s.Labels)
+	}
+	// The fake cluster takes any label; a real one does not.
+	for k, v := range s.Labels {
+		if errs := validation.IsQualifiedName(k); len(errs) > 0 {
+			t.Errorf("label %s: %v", k, errs)
+		}
+		if errs := validation.IsValidLabelValue(v); len(errs) > 0 {
+			t.Errorf("label %s=%s: %v", k, v, errs)
+		}
 	}
 	if owner := metav1.GetControllerOf(s); owner == nil || owner.Kind != "Service" || owner.Name != svc.Name {
 		t.Errorf("owned by %+v, not its Service", owner)
@@ -253,6 +268,19 @@ func TestExtraPortsOfAStoppedServer(t *testing.T) {
 	}
 	if s := slice(t, c, "probe"); s == nil || s.AddressType != discoveryv1.AddressTypeIPv6 || s.Endpoints[0].Addresses[0] != "fd00::7" {
 		t.Errorf("endpoints: %+v", s)
+	}
+}
+
+// A panel that cannot listen for a server's ports holds up nothing else of
+// the server: its ports are said, and looked at again in a while.
+func TestExtraPortsWhenThePanelCannotListen(t *testing.T) {
+	scheme := portsScheme(t)
+	mc := asleep(withPorts("probe", avsysv1.ExposeRouter, bedrok))
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, podOf(mc)).Build()
+	r := &Reconciler{Client: c, Reader: c, Scheme: scheme, Config: Config{StandIn: &panel{fail: true}}}
+	ports, retry, err := r.ensurePorts(context.Background(), mc, nil)
+	if err != nil || len(ports) != 1 || !retry {
+		t.Errorf("ports %+v, retry %v, error %v", ports, retry, err)
 	}
 }
 
