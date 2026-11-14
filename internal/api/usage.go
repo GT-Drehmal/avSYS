@@ -11,6 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
@@ -48,6 +49,52 @@ type usage struct {
 	checked   time.Time
 	// nodes is what each node was last using in all, by name.
 	nodes map[string]nodeInUse
+	// nodeSamples is what each node has used in all lately, by name,
+	// oldest first, kept as long as servers' samples are.
+	nodeSamples map[string][]nodeSample
+}
+
+// nodeSample is what a node was using in all at one moment.
+type nodeSample struct {
+	At time.Time `json:"t"`
+	// CPU is in thousandths of a core.
+	CPU    int64 `json:"cpu"`
+	Memory int64 `json:"memory"`
+}
+
+// noteNodes adds what each node is using now to what they have used, and
+// lets go of what is older than usageKept, so of a node gone too.
+func (u *usage) noteNodes(nodes map[string]nodeInUse, now time.Time) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.nodeSamples == nil {
+		u.nodeSamples = map[string][]nodeSample{}
+	}
+	for name, n := range nodes {
+		u.nodeSamples[name] = append(u.nodeSamples[name], nodeSample{At: now, CPU: n.CPU, Memory: n.Memory})
+	}
+	for name, samples := range u.nodeSamples {
+		cut := 0
+		for cut < len(samples) && now.Sub(samples[cut].At) > usageKept {
+			cut++
+		}
+		if cut == len(samples) {
+			delete(u.nodeSamples, name)
+		} else {
+			u.nodeSamples[name] = samples[cut:]
+		}
+	}
+}
+
+// nodeHistory returns a copy of what each node has used lately.
+func (u *usage) nodeHistory() map[string][]nodeSample {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := map[string][]nodeSample{}
+	for name, samples := range u.nodeSamples {
+		out[name] = append([]nodeSample(nil), samples...)
+	}
+	return out
 }
 
 // nodeInUse is what a node is using in all, of everything that runs on it.
@@ -153,10 +200,45 @@ type podMetrics struct {
 	} `json:"items"`
 }
 
+// Metrics is where the panel reads what its pods and the cluster's nodes are
+// using: the metrics API's list of each, as the API answers it. Where the
+// cluster has no metrics API, the error is the API's own: not found, or
+// forbidden.
+type Metrics interface {
+	Pods(ctx context.Context) ([]byte, error)
+	Nodes(ctx context.Context) ([]byte, error)
+}
+
+// kubeMetrics asks the cluster's metrics API.
+type kubeMetrics struct{ rest rest.Interface }
+
+func (m kubeMetrics) Pods(ctx context.Context) ([]byte, error) {
+	// The panel's own pods only, not every pod in the cluster.
+	return m.rest.Get().AbsPath("/apis/metrics.k8s.io/v1beta1/pods").Param("labelSelector", "app.kubernetes.io/managed-by=avsys").Do(ctx).Raw()
+}
+
+func (m kubeMetrics) Nodes(ctx context.Context) ([]byte, error) {
+	return m.rest.Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").Do(ctx).Raw()
+}
+
+// metrics is where use is read from: nil where nothing can say.
+func (s *Server) metrics() Metrics {
+	if s.Metrics != nil {
+		return s.Metrics
+	}
+	if s.Kube == nil {
+		return nil
+	}
+	if r := s.Kube.Discovery().RESTClient(); r != nil {
+		return kubeMetrics{rest: r}
+	}
+	return nil
+}
+
 // RunUsage notes what each running server's game is using, until ctx ends.
 func (s *Server) RunUsage(ctx context.Context) {
 	for {
-		s.usageTick(ctx, time.Now())
+		s.SampleUsage(ctx, time.Now())
 		select {
 		case <-ctx.Done():
 			return
@@ -165,11 +247,16 @@ func (s *Server) RunUsage(ctx context.Context) {
 	}
 }
 
-func (s *Server) usageTick(ctx context.Context, now time.Time) {
+// SampleUsage notes, as at now, what each running server is using and how
+// many are playing on it, and what each node is using in all. RunUsage does
+// this every usageEvery; avsys-uitest also does it for the hours before it
+// started, so that its pages have something to draw.
+func (s *Server) SampleUsage(ctx context.Context, now time.Time) {
 	// What the panel last heard is not what servers are doing now: nothing
 	// is noted, and the time shows as a gap.
 	if _, lost := s.reach.lostSince(); lost {
 		s.usage.setNodes(nil)
+		s.usage.noteNodes(nil, now)
 		return
 	}
 	var servers avsysv1.MinecraftServerList
@@ -186,6 +273,7 @@ func (s *Server) usageTick(ctx context.Context, now time.Time) {
 	// shown, rather than an old figure.
 	if raw == nil {
 		s.usage.setNodes(nil)
+		s.usage.noteNodes(nil, now)
 		return
 	}
 	s.usage.setAvailable(true, now)
@@ -194,12 +282,14 @@ func (s *Server) usageTick(ctx context.Context, now time.Time) {
 		s.Log.Warn("could not read what nodes are using", "error", err)
 	}
 	s.usage.setNodes(nodes)
+	s.usage.noteNodes(nodes, now)
 }
 
 // podMetrics asks the metrics API what the panel's own pods are using: nil
 // where the cluster does not say.
 func (s *Server) podMetrics(ctx context.Context, now time.Time) []byte {
-	if s.Kube == nil {
+	m := s.metrics()
+	if m == nil {
 		return nil
 	}
 	// A cluster that had no metrics API is asked again every few minutes,
@@ -207,12 +297,7 @@ func (s *Server) podMetrics(ctx context.Context, now time.Time) []byte {
 	if available, checked := s.usage.state(); !available && !checked.IsZero() && now.Sub(checked) < 5*time.Minute {
 		return nil
 	}
-	rest := s.Kube.Discovery().RESTClient()
-	if rest == nil {
-		return nil
-	}
-	// The panel's own pods only, not every pod in the cluster.
-	raw, err := rest.Get().AbsPath("/apis/metrics.k8s.io/v1beta1/pods").Param("labelSelector", "app.kubernetes.io/managed-by=avsys").Do(ctx).Raw()
+	raw, err := m.Pods(ctx)
 	if err != nil {
 		// No metrics API, or none the panel may read: asked again in a few
 		// minutes. Anything else is asked again at the next sample, and
@@ -232,7 +317,7 @@ func (s *Server) podMetrics(ctx context.Context, now time.Time) []byte {
 
 // nodeMetrics asks the metrics API what each node is using in all.
 func (s *Server) nodeMetrics(ctx context.Context) (map[string]nodeInUse, error) {
-	raw, err := s.Kube.Discovery().RESTClient().Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").Do(ctx).Raw()
+	raw, err := s.metrics().Nodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -327,9 +412,12 @@ type usageView struct {
 	// samples have players alone.
 	Available bool `json:"available"`
 	// Limit is the memory the game may use, in bytes.
-	Limit   int64         `json:"limit"`
-	Every   int           `json:"every"`
-	Samples []usageSample `json:"samples"`
+	Limit int64 `json:"limit"`
+	// CPULimit is the CPU the game may use, in thousandths of a core,
+	// where that is limited.
+	CPULimit int64         `json:"cpuLimit,omitempty"`
+	Every    int           `json:"every"`
+	Samples  []usageSample `json:"samples"`
 }
 
 func (s *Server) getUsage(w http.ResponseWriter, r *http.Request, u *store.User) error {
@@ -338,11 +426,35 @@ func (s *Server) getUsage(w http.ResponseWriter, r *http.Request, u *store.User)
 		return err
 	}
 	available, _ := s.usage.state()
-	writeJSON(w, http.StatusOK, usageView{
+	view := usageView{
 		Available: available,
 		Limit:     mc.Spec.Resources.Memory.Value(),
 		Every:     int(usageEvery / time.Second),
 		Samples:   s.usage.of(a.Namespace+"/"+mc.Name, mc.UID),
-	})
+	}
+	if cpu := mc.Spec.Resources.CPU; cpu != nil {
+		view.CPULimit = cpu.MilliValue()
+	}
+	writeJSON(w, http.StatusOK, view)
+	return nil
+}
+
+// nodesUsageView is what the Nodes page draws each node's use from. How
+// much each node has is in the list of nodes.
+type nodesUsageView struct {
+	// Available is false where the cluster has no metrics API.
+	Available bool                    `json:"available"`
+	Every     int                     `json:"every"`
+	Nodes     map[string][]nodeSample `json:"nodes"`
+}
+
+// getNodesUsage answers what each node has used lately, for the panel's
+// administrator, who alone is shown the Nodes page.
+func (s *Server) getNodesUsage(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if !u.IsAdmin {
+		return errForbidden
+	}
+	available, _ := s.usage.state()
+	writeJSON(w, http.StatusOK, nodesUsageView{Available: available, Every: int(usageEvery / time.Second), Nodes: s.usage.nodeHistory()})
 	return nil
 }

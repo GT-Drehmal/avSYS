@@ -11,8 +11,23 @@ interface Panel {
 
 export type Role = "owner" | "admin" | "operator" | "viewer";
 
-let panel: Panel | undefined;
-const info = () => (panel ??= JSON.parse(readFileSync("tests/.panel.json", "utf8")) as Panel);
+/**
+ * Where the panel with a metrics API listens (see playwright.config.ts). A
+ * test file that needs one says `test.use({ baseURL: withMetrics })`.
+ */
+export const withMetrics = "http://127.0.0.1:8098";
+
+const panels = new Map<string, Panel>();
+/** The panel at baseURL: the one without a metrics API unless it is withMetrics. */
+const info = (baseURL?: string) => {
+  const file = baseURL === withMetrics ? "tests/.panel-metrics.json" : "tests/.panel.json";
+  let panel = panels.get(file);
+  if (!panel) {
+    panel = JSON.parse(readFileSync(file, "utf8")) as Panel;
+    panels.set(file, panel);
+  }
+  return panel;
+};
 
 interface Fixtures {
   /** Makes this page act as one of the seeded people. */
@@ -48,7 +63,7 @@ function apiFor(request: APIRequestContext, token: string): Api {
 }
 
 export const test = base.extend<Fixtures>({
-  password: async ({}, use) => use(info().password),
+  password: async ({ baseURL }, use) => use(info(baseURL).password),
 
   // Every test gets this whether it asks or not: an error thrown in the page
   // is a failure even when everything the test looked at was fine. A blank
@@ -90,29 +105,29 @@ export const test = base.extend<Fixtures>({
     await use(page);
   },
 
-  as: async ({ context }, use) => {
+  as: async ({ context, baseURL }, use) => {
     await use(async (who) => {
-      await context.setExtraHTTPHeaders({ Authorization: `Bearer ${info().tokens[who]}` });
+      await context.setExtraHTTPHeaders({ Authorization: `Bearer ${info(baseURL).tokens[who]}` });
     });
   },
 
-  pageAs: async ({ browser }, use, testInfo) => {
+  pageAs: async ({ browser, baseURL }, use) => {
     const contexts: BrowserContext[] = [];
     await use(async (who) => {
-      const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, extraHTTPHeaders: { Authorization: `Bearer ${info().tokens[who]}` } });
+      const context = await browser.newContext({ baseURL, extraHTTPHeaders: { Authorization: `Bearer ${info(baseURL).tokens[who]}` } });
       contexts.push(context);
       return context.newPage();
     });
     for (const c of contexts) await c.close();
   },
 
-  api: async ({ request }, use) => {
-    await use((who) => apiFor(request, info().tokens[who]));
+  api: async ({ request, baseURL }, use) => {
+    await use((who) => apiFor(request, info(baseURL).tokens[who]));
   },
 
-  org: async ({ request }, use, testInfo) => {
+  org: async ({ request, baseURL }, use, testInfo) => {
     await use(async (servers) => {
-      const owner = apiFor(request, info().tokens.owner);
+      const owner = apiFor(request, info(baseURL).tokens.owner);
       // Tests run side by side in several processes, so a counter would not keep these apart.
       const slug = `t-${testInfo.project.name.slice(0, 2)}-${randomUUID().slice(0, 12)}`;
       await owner.post("/orgs", { name: `Test ${slug}`, slug });

@@ -8,6 +8,8 @@
 // would look up at Modrinth, Mojang and the build sites is answered from
 // the files in --upstream. Pages that need a running server (console,
 // files, terminal, snapshots) are there to be opened and to fail politely.
+// The cluster has no metrics API unless --metrics is given, which also
+// gives it two nodes (see metrics.go).
 //
 // It prints one line of JSON when it is listening: the address, and an API
 // token for each of the people it was seeded with.
@@ -49,8 +51,9 @@ func main() {
 	webDir := flag.String("web-dir", "web/dist", "the built web UI")
 	upstreamDir := flag.String("upstream", "web/tests/upstream", "answers for the services the panel looks things up in")
 	readyFile := flag.String("ready", "", "also write the line printed when listening to this file")
+	metrics := flag.Bool("metrics", false, "stand in a metrics API, and two nodes for it to answer for")
 	flag.Parse()
-	if err := run(*listen, *webDir, *upstreamDir, *readyFile); err != nil {
+	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics); err != nil {
 		fmt.Fprintln(os.Stderr, "avsys-uitest:", err)
 		os.Exit(1)
 	}
@@ -59,7 +62,7 @@ func main() {
 // password is the one every seeded person signs in with.
 const password = "correct horse battery staple"
 
-func run(listen, webDir, upstreamDir, readyFile string) error {
+func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	dir, err := os.MkdirTemp("", "avsys-uitest-")
@@ -193,6 +196,16 @@ func run(listen, webDir, upstreamDir, readyFile string) error {
 	if err := seedSnapshots(dir); err != nil {
 		return err
 	}
+
+	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
+	srv.Metrics = metrics
+	if withMetrics {
+		if err := seedNodes(ctx, cluster); err != nil {
+			return err
+		}
+	}
+	backfill(ctx, srv, metrics)
+	go srv.RunUsage(ctx)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {

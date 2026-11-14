@@ -41,7 +41,7 @@ func TestReach(t *testing.T) {
 
 	// Nothing is noted of servers meanwhile.
 	p.srv.usage.setNodes(map[string]nodeInUse{"orbstack": {CPU: 1}})
-	p.srv.usageTick(context.Background(), at.Add(30*time.Second))
+	p.srv.SampleUsage(context.Background(), at.Add(30*time.Second))
 	if _, ok := p.srv.usage.node("orbstack"); ok {
 		t.Error("what nodes use was still shown while the cluster was lost")
 	}
