@@ -19,6 +19,8 @@
 # makes its own server, so that the parts can run side by side, each on a
 # cluster of its own, as CI runs them. Unset, all of them run, one after
 # another, on one server.
+# AVSYS_E2E_LIST_BUDGET_MS (2000) is how long the panel may take over a read
+# of a list, such as the servers or the snapshots, before the run fails.
 set -eu
 
 : "${AVSYS_URL:?set AVSYS_URL to the panel address}"
@@ -34,7 +36,97 @@ SRV=$API/orgs/$ORG/servers/probe
 HOST=probe.$ORG.test
 WORK=$(mktemp -d)
 
-call() { curl -sS -H "Authorization: Bearer $AVSYS_TOKEN" "$@"; }
+# Each answer of the API says how long the panel took over it, in its
+# Server-Timing header. call notes that, with what was asked, in $TIMES;
+# the run ends by saying which were slowest, and fails if a list was slow.
+TIMES=$WORK/times
+call() {
+  _heads=$(mktemp "$WORK/heads.XXXXXX" 2>/dev/null) || _heads=/dev/null
+  _called=0
+  curl -sS -D "$_heads" -H "Authorization: Bearer $AVSYS_TOKEN" "$@" || _called=$?
+  timed "$_heads" "$@" || true
+  [ "$_heads" = /dev/null ] || rm -f "$_heads"
+  return $_called
+}
+# timed HEADERS CURL_ARGS...: notes the method, the address and the time the
+# panel gave, if it gave one.
+timed() {
+  _took=$(tr -d '\r' < "$1" | sed -n 's/^[Ss][Ee][Rr][Vv][Ee][Rr]-[Tt][Ii][Mm][Ii][Nn][Gg]:.*app;dur=\([0-9.]*\).*/\1/p' | tail -n 1)
+  shift
+  [ -n "$_took" ] || return 0
+  _method=GET
+  _url=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -X) _method=$2; shift ;;
+      -d|--data|--data-binary|-F) [ "$_method" = GET ] && _method=POST; shift ;;
+      -T) [ "$_method" = GET ] && _method=PUT; shift ;;
+      http://*|https://*) _url=$1 ;;
+    esac
+    shift
+  done
+  printf '%s\t%s\t%s\n' "$_method" "${_url#"$API"}" "$_took" >> "$TIMES"
+}
+# A read of a list is answered within this. Anything over it is far off the
+# few milliseconds most take; it is set loose, so that a slow runner does
+# not fail the run for nothing.
+LIST_BUDGET_MS=${AVSYS_E2E_LIST_BUDGET_MS:-2000}
+# timings: the slowest routes of the run, and every read of a list that took
+# longer than the budget, failing if there was one.
+timings() {
+  [ -s "$TIMES" ] || { echo "no request said how long it took"; return 1; }
+  python3 - "$TIMES" "$LIST_BUDGET_MS" <<'PY'
+import re, statistics, sys
+
+# A name or ID after one of these is the one asked about, not the route.
+PLACEHOLDER = {"orgs": "{org}", "servers": "{server}", "templates": "{template}",
+               "worlds": "{world}", "snapshots": "{id}", "members": "{user}",
+               "invites": "{token}", "ssh-keys": "{id}", "tokens": "{id}",
+               "minecraft-accounts": "{uuid}", "nodes": "{node}", "users": "{user}"}
+# Reads of lists, and of one thing in them, that a page waits on. Not
+# streams, downloads, uploads, the files and logs of a server (read from its
+# volume), nor what is fetched from elsewhere (Modrinth, an offsite copy).
+LISTS = re.compile(r"^(/orgs(/\{org\}(/(servers(/\{server\}(/snapshots)?)?|members|invites|"
+                   r"templates(/\{template\})?|worlds(/\{world\})?|snapshots(/\{id\})?|"
+                   r"backup-policy|domains))?)?|/me(/(ssh-keys|tokens|minecraft-accounts))?|/nodes)$")
+
+def route(url):
+    path, _, query = url.partition("?")
+    parts = path.split("/")
+    for i in range(1, len(parts)):
+        if parts[i - 1] in PLACEHOLDER and parts[i]:
+            parts[i] = PLACEHOLDER[parts[i - 1]]
+    return "/".join(parts), query
+
+budget = float(sys.argv[2])
+by_route, over, lists, slowest = {}, [], 0, (0.0, "")
+for line in open(sys.argv[1]):
+    try:
+        method, url, took = line.rstrip("\n").split("\t")
+        took = float(took)
+    except ValueError:
+        continue
+    path, query = route(url)
+    # A request told to wait for something is as slow as that is.
+    waits = "wait=true" in query
+    by_route.setdefault(f"{method} {path}" + (" (waiting)" if waits else ""), []).append(took)
+    if method == "GET" and LISTS.match(path) and not waits:
+        lists += 1
+        slowest = max(slowest, (took, f"{method} {path}"))
+        if took > budget:
+            over.append((took, f"{method} {url}"))
+
+print("slowest routes (requests, median, slowest):")
+for name, times in sorted(by_route.items(), key=lambda kv: -max(kv[1]))[:12]:
+    print(f"  {name:<68} {len(times):>4} {statistics.median(times):>9.1f} ms {max(times):>9.1f} ms")
+sys.stdout.flush()
+for took, what in sorted(over, reverse=True):
+    print(f"FAIL: {what} took {took:.0f} ms, over the {budget:.0f} ms a list may take", file=sys.stderr)
+if over:
+    sys.exit(1)
+print(f"ok: every read of a list answered within {budget:.0f} ms ({lists} of them; slowest {slowest[1]}, {slowest[0]:.1f} ms)")
+PY
+}
 field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1], {'d': d}))" "$1"; }
 step() { printf '\n== %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
@@ -1248,3 +1340,6 @@ expect "brought back straight after a delete, it keeps its files once it runs" "
 expect "and its plugins" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit
 
 fi
+
+step "how long the panel took"
+timings || fail "a read of a list took longer than $LIST_BUDGET_MS ms"
