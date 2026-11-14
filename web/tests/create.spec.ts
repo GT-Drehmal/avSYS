@@ -1357,7 +1357,7 @@ test("what is made and the button that makes it stay along the bottom, wherever 
   const bar = page.locator("[data-bottom-bar]");
   await page.getByLabel("Display name").fill("Survival");
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
-  await expect(bar).toContainText("Survival · Paper, latest · 4 GB");
+  await expect(bar).toContainText("Survival · Paper 26.3 · 4 GB");
   // At the top of the form, the button is there already.
   await expect(bar.getByRole("button", { name: "Create server" })).toBeInViewport();
   await page.getByLabel("Memory (GB)").fill("6");

@@ -11,11 +11,26 @@ export const loaderNames: Record<Loader, string> = {
   neoforge: "NeoForge",
 };
 
+/**
+ * A kind of server and a game version in a few words: "Paper 1.21.4", or
+ * "Paper, latest" for settings that give each server made with them the
+ * newest version there is then.
+ */
+export function softwareWords(loader: string | undefined, version: string | undefined): string {
+  const name = loader ? (loaderNames[loader as Loader] ?? loader) : "";
+  if (!version) return name;
+  if (version === "LATEST") return name ? `${name}, latest` : "Latest";
+  return name ? `${name} ${version}` : version;
+}
+
+/** The game version in what a server's game said it runs: "1.21.4" of "Paper 1.21.4". */
+export const ranVersion = (s: Server) => s.status.version?.trim().split(/\s+/).at(-1) || undefined;
+
 /** What a server runs, in a few words: "Paper 1.21.4" or the modpack's name. */
 export function describeSoftware(s: Server): string {
   if (s.spec.modpack) return s.spec.modpack.title || s.spec.modpack.project;
-  const version = s.spec.version === "LATEST" ? "latest" : s.spec.version;
-  return `${loaderNames[s.spec.loader] ?? s.spec.loader} ${version}`;
+  // One saved on "Latest" before servers were kept on a version: the one it runs.
+  return softwareWords(s.spec.loader, s.spec.version === "LATEST" ? (ranVersion(s) ?? "LATEST") : s.spec.version);
 }
 
 export const displayName = (s: Server) => s.spec.displayName || s.name;

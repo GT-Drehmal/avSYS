@@ -340,13 +340,16 @@ func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer)
 	restartAsked := existing.Annotations[avsysv1.AnnotationRestart] != desired.Annotations[avsysv1.AnnotationRestart]
 	specChanged := existing.Annotations[annotationSpecHash] != desired.Annotations[annotationSpecHash]
 	serving := hasContainer(existing, MinecraftContainer) && containerReady(existing, MinecraftContainer)
+	// A change that only says what the game already runs is not one to
+	// restart it for, though the next start is made with it.
+	toApply := specChanged && !settledOn(existing, mc, r.Config)
 
 	if finished || stateChanged || restartAsked || (specChanged && !serving) {
 		if !finished {
 			if wait := letLoad(existing, time.Now()); wait > 0 {
 				// Only new settings for a game that goes on running are
 				// pending: a stop or a restart asked for is not.
-				return existing, specChanged && !stateChanged && !restartAsked, wait, nil
+				return existing, toApply && !stateChanged && !restartAsked, wait, nil
 			}
 		}
 		if err := r.Delete(ctx, existing); client.IgnoreNotFound(err) != nil {
@@ -356,7 +359,22 @@ func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer)
 		existing.DeletionTimestamp = &now
 		return existing, false, 0, nil
 	}
-	return existing, specChanged, 0, nil
+	return existing, toApply, 0, nil
+}
+
+// settledOn says whether all that changed of a server since its pod was
+// made is that its version, "Latest" then, was set to the one its game
+// runs, which the game said when pinged: as it is when a server is kept on
+// the version it has (see the panel's PinLatest), or someone picks that
+// version. The pod goes on running as it is, without being said to wait
+// for a restart; the next pod is made with the version.
+func settledOn(pod *corev1.Pod, mc *avsysv1.MinecraftServer, cfg Config) bool {
+	if mc.Spec.Modpack != nil || mc.Spec.Version == "LATEST" || RanVersion(mc.Status.Version) != mc.Spec.Version {
+		return false
+	}
+	was := mc.DeepCopy()
+	was.Spec.Version, was.Spec.GameJava = "LATEST", 0
+	return buildPod(was, cfg).Annotations[annotationSpecHash] == pod.Annotations[annotationSpecHash]
 }
 
 func containerStatus(pod *corev1.Pod, name string) *corev1.ContainerStatus {

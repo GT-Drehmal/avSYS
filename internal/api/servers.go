@@ -466,14 +466,10 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		on := true
 		in.Spec.JVM.AikarFlags = &on
 	}
-	// "Latest" is settled once, here. A server that kept following it would
-	// upgrade its world, and outgrow its mods, on some later restart.
-	// It is the newest the chosen software has a build for, which can be
-	// behind the newest there is.
-	if in.Spec.Version == "LATEST" && in.Spec.Modpack == nil {
-		if latest := s.latestRelease(r.Context(), in.Spec.Loader); latest != "" {
-			in.Spec.Version = latest
-		}
+	// "Latest" is settled once, here. It is the newest the chosen software
+	// has a build for, which can be behind the newest there is.
+	if err := s.settleLatest(r.Context(), &in.Spec); err != nil {
+		return err
 	}
 	if err := s.validateSpec(r.Context(), a.Namespace, in.Name, &in.Spec); err != nil {
 		return err
@@ -680,6 +676,19 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 		return nil, errBadRequest("Invalid spec: %v", err)
 	}
 	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
+	// "Latest" picked is the newest there is now, kept from then on. A
+	// server still on "Latest" from before, whose version and software are
+	// not touched, is left to be settled on the version it runs (see
+	// PinLatest).
+	var named map[string]json.RawMessage
+	_ = json.Unmarshal(patch, &named)
+	_, picked := named["version"]
+	stillLatest := !picked && mc.Spec.Version == "LATEST" && mc.Spec.Modpack == nil && spec.Loader == mc.Spec.Loader
+	if !stillLatest {
+		if err := s.settleLatest(ctx, &spec); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.validateSpec(ctx, a.Namespace, mc.Name, &spec); err != nil {
 		return nil, err
 	}

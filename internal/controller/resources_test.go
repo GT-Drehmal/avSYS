@@ -684,3 +684,66 @@ func TestPackPrompt(t *testing.T) {
 		}
 	}
 }
+
+// A server on "Latest" set to the version its game runs is not said to wait
+// for a restart: nothing it runs changes. Any other change still is, and
+// a game that is not up is replaced, so that it starts on that version.
+func TestSettledVersionIsNotPending(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	ready := corev1.ContainerStatus{Name: MinecraftContainer, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now().Add(-time.Hour))}}}
+	crashed := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	paper := func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderPaper }
+	for _, c := range []struct {
+		name     string
+		version  string
+		ran      string
+		change   func(*avsysv1.MinecraftServer)
+		game     corev1.ContainerStatus
+		pending  bool
+		replaced bool
+	}{
+		{"set to the version it runs", "1.21.4", "Paper 1.21.4", nil, ready, false, false},
+		{"set to another version", "1.21.5", "Paper 1.21.4", nil, ready, true, false},
+		{"set while it has never said", "1.21.4", "", nil, ready, true, false},
+		{"set, and something else changed", "1.21.4", "Paper 1.21.4", func(mc *avsysv1.MinecraftServer) { mc.Spec.Properties = map[string]string{"motd": "changed"} }, ready, true, false},
+		{"set while its game is down", "1.21.4", "Paper 1.21.4", nil, crashed, false, true},
+		{"still on latest", "LATEST", "Paper 1.21.4", nil, ready, false, false},
+	} {
+		pod := buildPod(server(func(mc *avsysv1.MinecraftServer) { paper(mc); mc.Spec.Version = "LATEST" }), Config{})
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{c.game}
+		mc := server(func(mc *avsysv1.MinecraftServer) {
+			paper(mc)
+			mc.Spec.Version = c.version
+			mc.Status.Version = c.ran
+			if c.change != nil {
+				c.change(mc)
+			}
+		})
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, pod).Build()
+		r := &Reconciler{Client: cl, Reader: cl, Scheme: scheme}
+		got, pending, _, err := r.ensurePod(context.Background(), mc)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if replaced := !got.DeletionTimestamp.IsZero(); replaced != c.replaced {
+			t.Errorf("%s: replaced = %v, want %v", c.name, replaced, c.replaced)
+		}
+		if pending != c.pending {
+			t.Errorf("%s: pending restart %v, want %v", c.name, pending, c.pending)
+		}
+	}
+}
+
+func TestRanVersion(t *testing.T) {
+	for status, want := range map[string]string{"Paper 1.21.4": "1.21.4", "1.21.4": "1.21.4", "Folia 26.2": "26.2", "26.4-snapshot-1": "26.4-snapshot-1", "": "", "  ": ""} {
+		if got := RanVersion(status); got != want {
+			t.Errorf("RanVersion(%q) = %q, want %q", status, got, want)
+		}
+	}
+}

@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
 import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, type Snapshot, type SnapshotDetail } from "../lib/api";
-import { ago, bytes, loaderNames } from "../lib/format";
+import { ago, bytes, softwareWords } from "../lib/format";
 import { keys, useAction, useOffsite, useServers } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
 import { ContentList, packTitle } from "./Content";
@@ -27,7 +27,7 @@ export const triggerLabel = (s: Snapshot) => {
 };
 
 /** "Paper 1.21.4", from what a snapshot recorded about its server. */
-export const software = (s: Snapshot) => [loaderNames[s.loader as keyof typeof loaderNames] ?? s.loader, s.version].filter(Boolean).join(" ");
+export const software = (s: Snapshot) => softwareWords(s.loader, s.version);
 
 const doing: Record<Operation["kind"], [title: string, noun: string]> = {
   snapshot: ["Taking a snapshot of", "Snapshot"],
@@ -335,7 +335,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
               <>
                 <dl className="divide-y divide-line">
                   <Fact label="Software">
-                    {spec.modpack ? `${spec.modpack.title || spec.modpack.project} modpack` : `${loaderNames[spec.loader] ?? spec.loader} ${spec.version}`}
+                    {spec.modpack ? `${spec.modpack.title || spec.modpack.project} modpack` : softwareWords(spec.loader, spec.version)}
                     {spec.loaderVersion && <span className="text-muted"> · build {spec.loaderVersion}</span>}
                   </Fact>
                   <Fact label="Memory">{toGigabytes(spec.resources.memory)} GB</Fact>

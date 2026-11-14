@@ -651,8 +651,39 @@ act restart
 wait_phase Running
 stays Running 10
 expect "restarted again while it starts, it ends running, and answers" "$(call -d '{"command":"list"}' "$SRV/console" | field "d['output']")" "players online"
+# Started again, it asks Paper's site for a newer build of the same game
+# version, and when the site does not answer, starts on the build it has:
+# a restart does not fail with that site.
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  started=$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" probe 2>/dev/null)
+  case "$started" in
+    *"[avsys] Paper's site answers: looking for a newer build of 1.21.4 than paper-1.21.4-"*) echo "ok: a restart looks for a newer build of its version" ;;
+    *"[avsys] Paper's site does not answer: starting on the installed paper-1.21.4-"*) echo "ok: a restart starts on the build it has, Paper's site not answering" ;;
+    *) fail "a restart neither looked for a newer build nor started on the one it has" ;;
+  esac
+  case "$started" in *"Failed to download paper"*) fail "and the image failed to fetch Paper" ;; esac
+else
+  echo "skipped: the game's own container log is not available to this run"
+fi
 game_clean "with nothing in its log"
 earlier_clean "nor in the log of the run the second restart cut short"
+
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  step "a restart while Paper's site does not answer"
+  # Asked to ask a site that answers nothing, it starts on the build it has
+  # and fetches nothing.
+  set_spec '{"spec":{"env":[{"name":"AVSYS_PAPER_API","value":"http://127.0.0.1:9"}]}}'
+  act restart
+  for _ in $(seq 1 90); do [ "$(phase_now)" != Running ] && break; sleep 1; done
+  wait_phase Running
+  started=$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" probe 2>/dev/null)
+  expect "it starts on the build it has" "$started" "[avsys] Paper's site does not answer: starting on the installed paper-1.21.4-"
+  case "$started" in *"Downloaded /data/paper-"* | *"Failed to download paper"*) fail "and the image fetched Paper anyway" ;; esac
+  echo "ok: without fetching it"
+  game_clean "and its log is clean"
+  # Its next start is as before.
+  set_spec '{"spec":{"env":null}}'
+fi
 
 act stop
 act start
