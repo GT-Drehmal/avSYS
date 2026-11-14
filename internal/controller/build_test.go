@@ -21,19 +21,20 @@ func gameContainer(pod *corev1.Pod) *corev1.Container {
 	return nil
 }
 
-// Only Paper and Folia, run by the image, start through keepBuild. Every
-// other server is started as the image starts itself.
-func TestOnlyPaperKeepsItsBuild(t *testing.T) {
+// Every server run by the image it is written for starts through
+// startScript. One with an image of its own, or a modpack, is started as
+// the image starts itself.
+func TestStartScript(t *testing.T) {
 	for name, c := range map[string]struct {
 		mutate func(*avsysv1.MinecraftServer)
-		keeps  bool
+		script bool
 	}{
 		"paper":   {func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderPaper }, true},
 		"folia":   {func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderFolia }, true},
 		"latest":  {func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader, mc.Spec.Version = avsysv1.LoaderPaper, "LATEST" }, true},
-		"purpur":  {func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderPurpur }, false},
-		"fabric":  {nil, false},
-		"vanilla": {func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderVanilla }, false},
+		"purpur":  {func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderPurpur }, true},
+		"fabric":  {nil, true},
+		"vanilla": {func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderVanilla }, true},
 		"own image": {func(mc *avsysv1.MinecraftServer) {
 			mc.Spec.Loader, mc.Spec.Image = avsysv1.LoaderPaper, "example/paper:1"
 		}, false},
@@ -43,8 +44,8 @@ func TestOnlyPaperKeepsItsBuild(t *testing.T) {
 		}, false},
 	} {
 		game := gameContainer(buildPod(server(c.mutate), Config{}))
-		if c.keeps {
-			if want := []string{"/bin/sh", "-c", keepBuild}; strings.Join(game.Command, "\x00") != strings.Join(want, "\x00") {
+		if c.script {
+			if want := []string{"/bin/sh", "-c", startScript}; strings.Join(game.Command, "\x00") != strings.Join(want, "\x00") {
 				t.Errorf("%s: the game is started with %q", name, game.Command)
 			}
 		} else if len(game.Command) != 0 {
@@ -53,11 +54,14 @@ func TestOnlyPaperKeepsItsBuild(t *testing.T) {
 	}
 }
 
-// Starting on the build it has is not a change a running game is restarted
-// for, nor said to be waiting for one: a game running from before it was
-// done keeps running, and its next start is through it.
+// Starting on the build and content it has is not a change a running game
+// is restarted for, nor said to be waiting for one: a game running from
+// before it was done keeps running, and its next start is through it.
 func TestHashLeavesOutKeepingTheBuild(t *testing.T) {
-	paper := buildPod(server(func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderPaper }), Config{})
+	paper := buildPod(server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.Loader = avsysv1.LoaderPaper
+		mc.Spec.Mods = []avsysv1.ContentRef{{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindPlugin, Project: "luckperms", Version: "lp1"}}
+	}), Config{})
 	for i := range paper.Spec.Containers {
 		paper.Spec.Containers[i].TerminationMessagePolicy = ""
 		paper.Spec.Containers[i].Command = nil
@@ -67,7 +71,7 @@ func TestHashLeavesOutKeepingTheBuild(t *testing.T) {
 	}
 }
 
-// keepBuild run as the game's container runs it, on files laid out as the
+// startScript run as the game's container runs it, on files laid out as the
 // image leaves them, with Paper's site answering or not, says what jar the
 // image is told to use: "" for none, when the image installs as it always
 // has, and whether the default config files are fetched again. A server
@@ -159,7 +163,7 @@ func TestKeepBuild(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(curl), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				script := strings.ReplaceAll(keepBuild, paperEnv, record)
+				script := strings.ReplaceAll(startScript, paperEnv, record)
 				script = strings.ReplaceAll(script, "exec "+imageStart, `echo "jar=${PAPER_CUSTOM_JAR:-} defaults=${SKIP_DOWNLOAD_DEFAULTS:-fetched}"`)
 				cmd := exec.Command("sh", "-c", script)
 				cmd.Env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH")}
@@ -216,7 +220,7 @@ func TestKeepBuildAsksTheSiteNamed(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	script := strings.ReplaceAll(keepBuild, paperEnv, record)
+	script := strings.ReplaceAll(startScript, paperEnv, record)
 	script = strings.ReplaceAll(script, "exec "+imageStart, "true")
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "TYPE=PAPER", "VERSION=1.21.4", "AVSYS_PAPER_API=http://127.0.0.1:9"}

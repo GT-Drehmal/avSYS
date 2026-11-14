@@ -662,6 +662,12 @@ if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
     *) fail "a restart neither looked for a newer build nor started on the one it has" ;;
   esac
   case "$started" in *"Failed to download paper"*) fail "and the image failed to fetch Paper" ;; esac
+  # And asks Modrinth about the plugins it has, or starts with them.
+  case "$started" in
+    *"[avsys] Modrinth answers: checking the installed "*) echo "ok: a restart checks its plugins with Modrinth" ;;
+    *"[avsys] Modrinth does not answer: starting with the installed "*) echo "ok: a restart starts with the plugins it has, Modrinth not answering" ;;
+    *) fail "a restart neither checked its plugins with Modrinth nor started with the ones it has" ;;
+  esac
 else
   echo "skipped: the game's own container log is not available to this run"
 fi
@@ -669,17 +675,22 @@ game_clean "with nothing in its log"
 earlier_clean "nor in the log of the run the second restart cut short"
 
 if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
-  step "a restart while Paper's site does not answer"
-  # Asked to ask a site that answers nothing, it starts on the build it has
-  # and fetches nothing.
-  set_spec '{"spec":{"env":[{"name":"AVSYS_PAPER_API","value":"http://127.0.0.1:9"}]}}'
+  step "a restart while Paper's site and Modrinth do not answer"
+  # Asked to ask sites that answer nothing, it starts on the build and the
+  # plugins it has, and fetches nothing.
+  set_spec '{"spec":{"env":[{"name":"AVSYS_PAPER_API","value":"http://127.0.0.1:9"},{"name":"MODRINTH_API_BASE_URL","value":"http://127.0.0.1:9"}]}}'
   act restart
   for _ in $(seq 1 90); do [ "$(phase_now)" != Running ] && break; sleep 1; done
   wait_phase Running
   started=$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" probe 2>/dev/null)
   expect "it starts on the build it has" "$started" "[avsys] Paper's site does not answer: starting on the installed paper-1.21.4-"
   case "$started" in *"Downloaded /data/paper-"* | *"Failed to download paper"*) fail "and the image fetched Paper anyway" ;; esac
-  echo "ok: without fetching it"
+  expect "and with the plugins it has" "$started" "[avsys] Modrinth does not answer: starting with the installed "
+  case "$started" in *"Downloaded /data/plugins/"* | *"'modrinth' command failed"*) fail "and the image fetched its plugins anyway" ;; esac
+  echo "ok: without fetching them"
+  plugins=$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")
+  expect "LuckPerms is loaded" "$plugins" LuckPerms
+  expect "WorldEdit is loaded" "$plugins" WorldEdit
   game_clean "and its log is clean"
   # Its next start is as before.
   set_spec '{"spec":{"env":null}}'
