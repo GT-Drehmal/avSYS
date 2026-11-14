@@ -476,6 +476,9 @@ func (s *Server) rebuildOn(ctx context.Context, org string, mc *avsysv1.Minecraf
 		}
 		return failed(err, "the server's volume on %s was not ready; restore snapshot %s to finish the move", target, shortID(snap.ID))
 	}
+	// A connection kept to its files on the node that is down would only
+	// wait for that node.
+	s.workspaces.drop(key.Namespace, key.Name)
 	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, 5*time.Minute)
 	if err != nil {
 		return failed(err, "the server's files on %s could not be reached; restore snapshot %s to finish the move", target, shortID(snap.ID))
