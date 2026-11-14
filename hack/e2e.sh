@@ -295,8 +295,14 @@ game_clean() {
 }
 
 # logged_clean WHAT LOG: fails if a log has something gone wrong in it.
+# Mojang's own services not answering in time is theirs and the runner's
+# network, not ours: the game fetching its sign-in keys is let pass when it
+# only timed out or could not find the host, and fails like anything else
+# otherwise.
 logged_clean() {
-  bad=$(printf '%s\n' "$2" | grep -E '[ /](ERROR|FATAL)\]|Exception|Failed to parse|An unexpected error occurred' | head -10)
+  bad=$(printf '%s\n' "$2" \
+    | grep -vE 'Yggdrasil Key Fetcher/ERROR\]: Failed to request yggdrasil public key|authlib\.exceptions\.MinecraftClientException: Failed to read from https://[a-z.]*(minecraftservices|mojang)\.com/.* due to (Connect timed out|Read timed out|.*UnknownHost)|^Caused by: java\.net\.(SocketTimeoutException|UnknownHostException|ConnectException)' \
+    | grep -E '[ /](ERROR|FATAL)\]|Exception|Failed to parse|An unexpected error occurred' | head -10)
   [ -z "$bad" ] || fail "$1: the game logged:
 $bad"
 }
@@ -534,13 +540,23 @@ step "how fast the game ticks"
 # game logs each connection made to it, and asking over a new one each time
 # would fill its log.
 ticked() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s])"; }
-for _ in $(seq 1 40); do [ "$(ticked)" -gt 0 ] && break; sleep 2; done
-expect "Paper says how fast it ticks, against 20 a second, and how long a tick takes" "$(call "$SRV/usage" | field "[(s['tps'] > 0, s['tickTarget'] == 20, s['mspt'] >= 0) for s in d['samples'] if 'tps' in s][-1]")" "(True, True, True)"
+# A sample can come without the time a tick takes, as when the game was
+# asked in its first moments: one with both is waited for.
+with_tick_time() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s and 'mspt' in s])"; }
+for _ in $(seq 1 60); do [ "$(with_tick_time)" -gt 0 ] && break; sleep 2; done
+if [ "$(with_tick_time)" -eq 0 ]; then
+  echo "the game's answer to mspt: $(call -d '{"command":"mspt"}' "$SRV/console" | field "d.get('output')")" >&2
+  fail "Paper never said how long a tick takes"
+fi
+expect "Paper says how fast it ticks, against 20 a second, and how long a tick takes" "$(call "$SRV/usage" | field "[(s['tps'] > 0, s['tickTarget'] == 20, s['mspt'] >= 0) for s in d['samples'] if 'tps' in s and 'mspt' in s][-1]")" "(True, True, True)"
 connections() { call -f "$SRV/files/content?path=/logs/latest.log" | grep -c 'Thread RCON Client .* started' || true; }
+# Over three samples, a sampler opening a connection for each would add
+# three; one more is let pass, as the panel's other uses of the console
+# (the lists it keeps, a command typed) may open one meanwhile.
 before=$(ticked) made=$(connections)
-for _ in $(seq 1 40); do [ "$(ticked)" -gt "$before" ] && break; sleep 2; done
-[ "$(ticked)" -gt "$before" ] || fail "the game was not asked again"
-[ "$(connections)" = "$made" ] || fail "the game was asked again over a new connection: $made connections logged before, $(connections) after"
+for _ in $(seq 1 90); do [ "$(ticked)" -ge $((before + 3)) ] && break; sleep 2; done
+[ "$(ticked)" -ge $((before + 3)) ] || fail "the game was not asked again three times"
+[ $(( $(connections) - made )) -le 1 ] || fail "the game was asked over new connections: $made connections logged before three samples, $(connections) after"
 echo "ok: asked again, over the same connection"
 
 step "datapacks"
