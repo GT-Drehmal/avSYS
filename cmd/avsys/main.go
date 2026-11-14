@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -91,6 +92,8 @@ type options struct {
 	oidcScopes        string
 	oidcAllowedGroups string
 	oidcGroupsClaim   string
+	// passwords, when false, has everyone sign in through a provider.
+	passwords bool
 }
 
 // env returns the value of AVSYS_<NAME> for a flag called name, or fallback.
@@ -146,6 +149,7 @@ func parseFlags() options {
 	str(&o.oidcScopes, "oidc-scopes", "openid profile email", "scopes asked of the OpenID Connect provider, separated by spaces")
 	str(&o.oidcAllowedGroups, "oidc-allowed-groups", "", "groups, separated by commas, one of which a person must be in to sign in through the OpenID Connect provider (empty: anyone it signs in)")
 	str(&o.oidcGroupsClaim, "oidc-groups-claim", "groups", "claim of the ID token (or user info) that lists a person's groups")
+	flag.BoolVar(&o.passwords, "passwords", env("passwords", "true") != "false", "let people sign in with a password; false has everyone sign in through a provider, and the panel does not start if no administrator could")
 	flag.Parse()
 	o.publicURL = strings.TrimRight(o.publicURL, "/")
 	o.packURL = strings.TrimRight(o.packURL, "/")
@@ -249,6 +253,24 @@ func run(opts options, log *slog.Logger) error {
 			log.Warn("the OpenID Connect provider could not be reached; it is tried again at the next sign-in", "error", err)
 		} else {
 			log.Info("signing in through OpenID Connect is on")
+		}
+	}
+	var setupCode string
+	if !opts.passwords {
+		lockedOut, err := api.CheckSignIn(ctx, st, oauth)
+		for _, name := range lockedOut {
+			log.Warn("passwords are off and this administrator has no linked account at a configured provider, so cannot sign in", "user", name)
+		}
+		if err != nil {
+			return err
+		}
+		if count, err := st.CountUsers(ctx); err != nil {
+			return err
+		} else if count == 0 {
+			// The first account is made through a provider by whoever opens
+			// this link, which only someone who reads this log has.
+			setupCode = rand.Text()
+			log.Warn("no account yet: open the panel at /login?setup=" + setupCode + " and sign in to become its administrator")
 		}
 	}
 
@@ -377,6 +399,8 @@ func run(opts options, log *slog.Logger) error {
 			RouterDomain:    opts.routerDomain,
 			NamespacePrefix: opts.namespacePrefix,
 			AllowSignups:    opts.allowSignups,
+			NoPasswords:     !opts.passwords,
+			SetupCode:       setupCode,
 			Providers:       oauth,
 			Version:         version,
 			PackDir:         filepath.Join(opts.dataDir, "packs"),

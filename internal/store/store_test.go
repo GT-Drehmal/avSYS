@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -47,10 +48,10 @@ func TestIdentityBelongsToOneUser(t *testing.T) {
 	s, ctx := open(t), context.Background()
 	id := Identity{Provider: "oidc", Subject: "https://idp.test steve", Login: "steve"}
 	first := &User{Username: "steve"}
-	if err := s.CreateUserWithIdentity(ctx, first, id); err != nil {
+	if err := s.CreateUserWithIdentity(ctx, first, id, AnyUser); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateUserWithIdentity(ctx, &User{Username: "steve2"}, id); !errors.Is(err, ErrIdentityTaken) {
+	if err := s.CreateUserWithIdentity(ctx, &User{Username: "steve2"}, id, AnyUser); !errors.Is(err, ErrIdentityTaken) {
 		t.Errorf("second user with the identity: err = %v, want ErrIdentityTaken", err)
 	}
 	if _, err := s.UserByUsername(ctx, "steve2"); !errors.Is(err, ErrNotFound) {
@@ -60,7 +61,7 @@ func TestIdentityBelongsToOneUser(t *testing.T) {
 		t.Errorf("%d users, want 1", n)
 	}
 	// A username taken is a conflict, and links nothing.
-	if err := s.CreateUserWithIdentity(ctx, &User{Username: "steve"}, Identity{Provider: "oidc", Subject: "other"}); !errors.Is(err, ErrConflict) {
+	if err := s.CreateUserWithIdentity(ctx, &User{Username: "steve"}, Identity{Provider: "oidc", Subject: "other"}, AnyUser); !errors.Is(err, ErrConflict) {
 		t.Errorf("taken username: err = %v, want ErrConflict", err)
 	}
 	if _, err := s.UserByIdentity(ctx, "oidc", "other"); !errors.Is(err, ErrNotFound) {
@@ -84,6 +85,41 @@ func TestIdentityBelongsToOneUser(t *testing.T) {
 	}
 	if ids, _ := s.Identities(ctx, first.ID); len(ids) != 1 || ids[0].Login != "steve-renamed" {
 		t.Errorf("identities = %+v", ids)
+	}
+}
+
+// Of many first sign-ups at once, one is made, and is the administrator.
+func TestOnlyOneFirstUser(t *testing.T) {
+	s, ctx := open(t), context.Background()
+	if err := s.CreateUserWithIdentity(ctx, &User{Username: "later"}, Identity{}, LaterUser); !errors.Is(err, ErrFirst) {
+		t.Errorf("a later user as the first: err = %v, want ErrFirst", err)
+	}
+	const n = 20
+	errs := make(chan error, n)
+	for i := range n {
+		go func() {
+			u := &User{Username: fmt.Sprintf("first%d", i)}
+			errs <- s.CreateUserWithIdentity(ctx, u, Identity{Provider: "oidc", Subject: fmt.Sprint(i)}, FirstUser)
+		}()
+	}
+	made := 0
+	for range n {
+		switch err := <-errs; {
+		case err == nil:
+			made++
+		case !errors.Is(err, ErrNotFirst):
+			t.Error(err)
+		}
+	}
+	admins, err := s.Admins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, _ := s.CountUsers(ctx); made != 1 || count != 1 || len(admins) != 1 {
+		t.Errorf("made %d, %d users, %d admins; want one of each", made, count, len(admins))
+	}
+	if ids, _ := s.Identities(ctx, admins[0].ID); len(ids) != 1 {
+		t.Errorf("the first user has identities %+v", ids)
 	}
 }
 

@@ -42,6 +42,7 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) error {
 		"setupRequired": count == 0,
 		"allowSignups":  s.Config.AllowSignups,
 		"providers":     providers,
+		"passwords":     !s.Config.NoPasswords,
 		"ssh":           map[string]any{"host": s.Config.SSHHost, "port": s.Config.SSHPort},
 		// Whether this panel can take snapshots at all.
 		"snapshots": s.Backups.Available(),
@@ -82,6 +83,8 @@ func (s *Server) signUp(r *http.Request, u *store.User, how store.Signup) error 
 	switch {
 	case errors.Is(err, store.ErrNotFirst):
 		return errSignupClosed
+	case errors.Is(err, store.ErrFirst):
+		return errSetupNeeded
 	case how.Invite != "" && (errors.Is(err, store.ErrInviteUnusable) || errors.Is(err, store.ErrNotFound)):
 		return errInviteUnusable
 	case err != nil:
@@ -96,9 +99,14 @@ func (s *Server) signUp(r *http.Request, u *store.User, how store.Signup) error 
 var (
 	errSignupClosed   = &Error{Status: http.StatusForbidden, Code: "signup_closed", Message: "You need an invite link to create an account here."}
 	errInviteUnusable = &Error{Status: http.StatusGone, Code: "invite_unusable", Message: "This invite is no longer valid. Ask for a new one."}
+	errPasswordsOff   = &Error{Status: http.StatusForbidden, Code: "passwords_off", Message: "Passwords are turned off here."}
+	errSetupNeeded    = &Error{Status: http.StatusForbidden, Code: "setup_code", Message: errSetupCode}
 )
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Username, Password, DisplayName, Invite string }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -170,6 +178,9 @@ func (l *loginLimiter) fail(key string) {
 var logins loginLimiter
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Username, Password string }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -207,6 +218,14 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
 
 const oauthCookie = "avsys_oauth"
 
+const errSetupCode = "Open the setup link from the panel's log."
+
+// setupCodeOK reports whether code is the one that lets the first account
+// be made with passwords off.
+func (s *Server) setupCodeOK(code string) bool {
+	return s.Config.SetupCode != "" && subtle.ConstantTimeCompare([]byte(code), []byte(s.Config.SetupCode)) == 1
+}
+
 // safeNext keeps post-login redirects on this site.
 func safeNext(next string) string {
 	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, "\\") {
@@ -227,9 +246,29 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	q := r.URL.Query()
+	// With passwords off, the first account is made through a provider by
+	// whoever has the setup code from the panel's log; checked here to say
+	// so before the provider is visited, and again when the account is made.
+	if s.Config.NoPasswords {
+		if count, err := s.Store.CountUsers(r.Context()); err != nil {
+			return err
+		} else if count == 0 {
+			host, _, _ := net.SplitHostPort(r.RemoteAddr)
+			key := host + "|setup"
+			if logins.blocked(key) {
+				http.Redirect(w, r, "/login?error="+url.QueryEscape("Too many attempts. Wait a few minutes and try again."), http.StatusFound)
+				return nil
+			}
+			if !s.setupCodeOK(q.Get("setup")) {
+				logins.fail(key)
+				http.Redirect(w, r, "/login?error="+url.QueryEscape(errSetupCode), http.StatusFound)
+				return nil
+			}
+		}
+	}
 	value := url.Values{
 		"provider": {p.ID}, "state": {flow.State}, "verifier": {flow.Verifier}, "nonce": {flow.Nonce},
-		"invite": {q.Get("invite")}, "next": {safeNext(q.Get("next"))},
+		"invite": {q.Get("invite")}, "next": {safeNext(q.Get("next"))}, "setup": {q.Get("setup")},
 	}.Encode()
 	http.SetCookie(w, &http.Cookie{
 		Name: oauthCookie, Value: url.QueryEscape(value), Path: "/api/v1/auth",
@@ -317,6 +356,17 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) error {
 			return bounce(refused.Message)
 		} else if err != nil {
 			return err
+		}
+		// With passwords off, the first account, the administrator, is
+		// made only with the setup code, whatever else would let an
+		// account be made (open signups): without it, only a later one.
+		// The code is checked here, not only at the start, as the cookie
+		// is the browser's to make up.
+		if s.Config.NoPasswords && !s.setupCodeOK(saved.Get("setup")) {
+			if how.FirstOnly {
+				return bounce(errSetupCode)
+			}
+			how.LaterOnly = true
 		}
 		user, err = s.createOAuthUser(r, profile, identity, how)
 		if errors.As(err, &refused) {
@@ -425,6 +475,9 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request, u *store.User)
 }
 
 func (s *Server) setPassword(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Current, New string }
 	if err := decode(r, &in); err != nil {
 		return err

@@ -222,6 +222,8 @@ export interface Meta {
   setupRequired: boolean;
   allowSignups: boolean;
   providers: { id: string; name: string }[];
+  /** Whether people may sign in with a password; off, only through providers. */
+  passwords: boolean;
   ssh: { host: string; port: number };
   /** Whether this panel can take snapshots at all. */
   snapshots: boolean;

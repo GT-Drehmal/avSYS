@@ -44,6 +44,9 @@ var (
 	// ErrNotFirst is what SignUp says when the account was to be the
 	// panel's first and another was made before it.
 	ErrNotFirst = errors.New("there is an account already")
+	// ErrFirst is its answer when the account was to be any but the
+	// first, and there is none yet.
+	ErrFirst = errors.New("would be the first user")
 	// ErrIdentityTaken is its answer when the provider account is linked
 	// to a user already.
 	ErrIdentityTaken = errors.New("identity already linked")
@@ -51,8 +54,11 @@ var (
 
 // Signup is what a new account is made on the strength of.
 type Signup struct {
-	// FirstOnly makes it only as the panel's very first account.
+	// FirstOnly makes it only as the panel's very first account, who is
+	// the administrator.
 	FirstOnly bool
+	// LaterOnly makes it only as any but the first.
+	LaterOnly bool
 	// Invite is accepted with it. If it cannot be, no account is made.
 	Invite string
 	// Identity is a provider account linked to it: both or neither, so
@@ -61,18 +67,30 @@ type Signup struct {
 	Identity Identity
 }
 
+// Which says which user CreateUserWithIdentity may make: any, only the
+// first (who is the administrator), or any but the first.
+type Which int
+
+const (
+	AnyUser Which = iota
+	FirstUser
+	LaterUser
+)
+
 // CreateUserWithIdentity inserts u, as CreateUser does, with a provider
-// account linked to it: see Signup.Identity.
-func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity) error {
-	_, err := s.SignUp(ctx, u, Signup{Identity: id})
+// account linked to it (see Signup.Identity), which limits it to the first
+// user or to any but the first.
+func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity, which Which) error {
+	_, err := s.SignUp(ctx, u, Signup{Identity: id, FirstOnly: which == FirstUser, LaterOnly: which == LaterUser})
 	return err
 }
 
 // SignUp inserts u, as CreateUser does, together with what lets it be made:
-// being the first account, or an invite, which it accepts and whose
-// organization it returns; and the provider account it signed up with,
-// linked to it. Two people setting up an empty panel at once, or taking
-// the last use of an invite, cannot both get in.
+// being the first account (or not), or an invite, which it accepts and
+// whose organization it returns; and the provider account it signed up
+// with, linked to it. The checks and the inserts are one transaction: two
+// people setting up an empty panel at once, or taking the last use of an
+// invite, cannot both get in.
 func (s *Store) SignUp(ctx context.Context, u *User, how Signup) (*Org, error) {
 	u.ID = NewID(10)
 	u.CreatedAt = unix(now())
@@ -85,8 +103,11 @@ func (s *Store) SignUp(ctx context.Context, u *User, how Signup) (*Org, error) {
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
 		return nil, err
 	}
-	if count > 0 && how.FirstOnly {
+	switch {
+	case count > 0 && how.FirstOnly:
 		return nil, ErrNotFirst
+	case count == 0 && how.LaterOnly:
+		return nil, ErrFirst
 	}
 	if count == 0 {
 		u.IsAdmin = true
@@ -112,6 +133,24 @@ func (s *Store) SignUp(ctx context.Context, u *User, how Signup) (*Org, error) {
 		}
 	}
 	return org, tx.Commit()
+}
+
+// Admins lists the instance administrators.
+func (s *Store) Admins(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+userColumns+` FROM users WHERE is_admin ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {

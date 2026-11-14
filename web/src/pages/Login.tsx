@@ -29,9 +29,11 @@ interface AuthFormProps {
   mode: "signin" | "register";
   invite?: string;
   next: string;
+  /** With passwords off, the code that lets the first account be made. */
+  setup?: string;
 }
 
-export function AuthForm({ meta, mode, invite, next }: AuthFormProps) {
+export function AuthForm({ meta, mode, invite, next, setup }: AuthFormProps) {
   const qc = useQueryClient();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -55,21 +57,26 @@ export function AuthForm({ meta, mode, invite, next }: AuthFormProps) {
     }
   };
 
+  const providers = (
+    <div className="flex flex-col gap-2">
+      {meta.providers.map((p) => (
+        <a
+          key={p.id}
+          href={`/api/v1/auth/${p.id}/start?${qs({ invite, next, setup })}`}
+          className="flex h-9 items-center justify-center rounded-md border border-line-strong bg-raised text-[13px] font-medium hover:bg-hover"
+        >
+          Continue with {p.name}
+        </a>
+      ))}
+    </div>
+  );
+  if (!meta.passwords) return providers;
+
   return (
     <div className="flex flex-col gap-5">
       {meta.providers.length > 0 && (
         <>
-          <div className="flex flex-col gap-2">
-            {meta.providers.map((p) => (
-              <a
-                key={p.id}
-                href={`/api/v1/auth/${p.id}/start?${qs({ invite, next })}`}
-                className="flex h-9 items-center justify-center rounded-md border border-line-strong bg-raised text-[13px] font-medium hover:bg-hover"
-              >
-                Continue with {p.name}
-              </a>
-            ))}
-          </div>
+          {providers}
           <div className="flex items-center gap-3 text-faint">
             <span className="h-px flex-1 bg-line" />
             <span className="label-mono">or</span>
@@ -106,6 +113,20 @@ export function Login() {
   if (me.data) return <Navigate to={next} replace />;
   if (!meta.data) return <AuthFrame title="Panel unreachable" subtitle="The avSYS server did not answer. Reload to try again."><span /></AuthFrame>;
 
+  const error = params.get("error") && <Notice tone="danger">{params.get("error")}</Notice>;
+  if (meta.data.setupRequired && !meta.data.passwords) {
+    // The first account is made through a provider, from the link in the
+    // panel's log.
+    const setup = params.get("setup") ?? undefined;
+    return (
+      <AuthFrame title="Set up avSYS" subtitle="Sign in to create the first account. This account will be the administrator.">
+        <div className="flex flex-col gap-5">
+          {error}
+          {setup ? <AuthForm meta={meta.data} mode="register" next="/" setup={setup} /> : !error && <Notice tone="info">Open the setup link from the panel's log.</Notice>}
+        </div>
+      </AuthFrame>
+    );
+  }
   if (meta.data.setupRequired) {
     return (
       <AuthFrame title="Set up avSYS" subtitle="Create the first account. This account will be the administrator.">
@@ -113,16 +134,19 @@ export function Login() {
       </AuthFrame>
     );
   }
-  const mode = registering && meta.data.allowSignups ? "register" : "signin";
+  const mode = registering && meta.data.allowSignups && meta.data.passwords ? "register" : "signin";
   return (
     <AuthFrame title={mode === "register" ? "Create an account" : "Sign in"}>
       <div className="flex flex-col gap-5">
-        {params.get("error") && <Notice tone="danger">{params.get("error")}</Notice>}
+        {error}
         <AuthForm meta={meta.data} mode={mode} next={next} />
         {meta.data.allowSignups ? (
-          <button className="text-left text-[13px] text-muted hover:text-fg" onClick={() => setRegistering(!registering)}>
-            {registering ? "Have an account? Sign in" : "New here? Create an account"}
-          </button>
+          // With passwords off, signing in through a provider makes the account.
+          meta.data.passwords && (
+            <button className="text-left text-[13px] text-muted hover:text-fg" onClick={() => setRegistering(!registering)}>
+              {registering ? "Have an account? Sign in" : "New here? Create an account"}
+            </button>
+          )
         ) : (
           <p className="text-xs leading-relaxed text-faint">Accounts here are created from an invite link. Ask an organization admin for one.</p>
         )}
