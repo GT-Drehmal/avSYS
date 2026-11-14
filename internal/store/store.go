@@ -167,6 +167,28 @@ CREATE TABLE IF NOT EXISTS player_list_entries (
 	PRIMARY KEY (list_id, uuid)
 );
 CREATE INDEX IF NOT EXISTS player_list_entries_uuid ON player_list_entries(uuid);
+-- The snapshots templates and the library are made of; see
+-- templatesnapshots.go. time is as the repository says it, RFC 3339.
+CREATE TABLE IF NOT EXISTS template_snapshots (
+	org_id  TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+	id      TEXT NOT NULL,
+	host    TEXT NOT NULL,
+	time    TEXT NOT NULL,
+	by_user TEXT NOT NULL DEFAULT '',
+	version TEXT NOT NULL DEFAULT '',
+	loader  TEXT NOT NULL DEFAULT '',
+	size    INTEGER NOT NULL DEFAULT 0,
+	added   INTEGER NOT NULL DEFAULT 0,
+	files   INTEGER NOT NULL DEFAULT 0,
+	lineage TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (org_id, id)
+);
+-- The organizations whose template snapshots have been read from their
+-- repository at least once.
+CREATE TABLE IF NOT EXISTS template_snapshots_read (
+	org_id TEXT PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+	at     INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);
 CREATE INDEX IF NOT EXISTS audit_target ON audit(org_id, target, id);
 `

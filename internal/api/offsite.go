@@ -386,6 +386,11 @@ func (s *Server) fetchOffsite(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return offsiteFailed(err)
 	}
+	// What came back is under IDs of its own: templates and worlds have
+	// their snapshots again.
+	if _, _, err := s.readTemplateSnapshots(ctx, a.Org); err != nil {
+		s.Log.Warn("could not read the template snapshots brought back", "org", a.Org.Slug, "error", err)
+	}
 	s.audit(r.Context(), u, a.Org, "backups.fetch", a.Org.Slug, "")
 	s.Events.Publish(Event{Type: "offsite.done", Namespace: a.Namespace, Data: offsiteDone{Org: a.Org.Slug}})
 	writeJSON(w, http.StatusOK, map[string]any{"fetched": fetched})

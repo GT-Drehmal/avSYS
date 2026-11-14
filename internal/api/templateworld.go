@@ -55,7 +55,7 @@ func (s *Server) ownWorldOf(ctx context.Context, a *access, id string) (*backup.
 	} else if err != nil {
 		return nil, info, err
 	}
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+	list, err := s.templateSnapshots(ctx, a.Org)
 	if err != nil {
 		return nil, info, err
 	}
@@ -143,10 +143,16 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 	if err != nil {
 		return err
 	}
-	if err := s.Store.SetTemplateWorld(ctx, a.Org.ID, t.ID, string(raw)); err != nil {
+	err = s.noteTemplateSnapshot(ctx, a.Org, kept)
+	if err == nil {
+		err = s.Store.SetTemplateWorld(ctx, a.Org.ID, t.ID, string(raw))
+	}
+	if err != nil {
 		// Kept for a template that is not there: not left behind.
 		if derr := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); derr != nil {
 			s.Log.Error("could not remove a template's world kept for nothing", "template", t.ID, "snapshot", kept.ID, "error", derr)
+		} else {
+			s.forgetTemplateSnapshots(ctx, a.Org, kept.ID)
 		}
 		if errors.Is(err, store.ErrNotFound) {
 			return &Error{Status: http.StatusNotFound, Code: "not_found", Message: "There is no such template."}
@@ -163,9 +169,10 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 	return nil
 }
 
-// dropOtherWorlds removes a template's own worlds but the one it has now.
+// dropOtherWorlds removes a template's own worlds but the one it has now,
+// as the repository has them: any it has that were not noted go too.
 func (s *Server) dropOtherWorlds(ctx context.Context, a *access, id, keep string) {
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+	list, err := s.repoSnapshots(ctx, a.Org.Slug)
 	if err != nil {
 		s.Log.Warn("could not list a template's worlds to remove the one before", "template", id, "error", err)
 		return
@@ -178,7 +185,9 @@ func (s *Server) dropOtherWorlds(ctx context.Context, a *access, id, keep string
 	}
 	if err := s.Backups.DeleteMany(ctx, a.Org.Slug, old); err != nil {
 		s.Log.Warn("could not remove a template's world before", "template", id, "error", err)
+		return
 	}
+	s.forgetTemplateSnapshots(ctx, a.Org, old...)
 }
 
 // deleteTemplateWorld takes a template's own world away: servers made from it

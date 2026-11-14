@@ -19,8 +19,10 @@
 # makes its own server, so that the parts can run side by side, each on a
 # cluster of its own, as CI runs them. Unset, all of them run, one after
 # another, on one server.
-# AVSYS_E2E_LIST_BUDGET_MS (2000) is how long the panel may take over a read
-# of a list, such as the servers or the snapshots, before the run fails.
+# AVSYS_E2E_LIST_BUDGET_MS (200) is how long the panel may take over a read
+# of a list, such as the servers or the templates, before the run fails. The
+# few that read the repository's snapshots have budgets of their own; see
+# timings.
 set -eu
 
 : "${AVSYS_URL:?set AVSYS_URL to the panel address}"
@@ -68,9 +70,9 @@ timed() {
   printf '%s\t%s\t%s\n' "$_method" "${_url#"$API"}" "$_took" >> "$TIMES"
 }
 # A read of a list is answered within this. Anything over it is far off the
-# few milliseconds most take; it is set loose, so that a slow runner does
+# few milliseconds most take; it is set loose enough that a slow runner does
 # not fail the run for nothing.
-LIST_BUDGET_MS=${AVSYS_E2E_LIST_BUDGET_MS:-2000}
+LIST_BUDGET_MS=${AVSYS_E2E_LIST_BUDGET_MS:-200}
 # timings: the slowest routes of the run, and every read of a list that took
 # longer than the budget, failing if there was one.
 timings() {
@@ -100,7 +102,14 @@ def route(url):
     return "/".join(parts), query
 
 budget = float(sys.argv[2])
-by_route, over, lists, slowest = {}, [], 0, (0.0, "")
+# Reads that list the repository's snapshots run restic the first time after
+# the repository changed; those of one snapshot, or of a template, read its
+# record out of it the first time it is asked for. On a runner that takes up
+# to half a second, and the organization's list, which also measures the
+# repository, a second: they have budgets of their own, twice that.
+OWN = {"/orgs/{org}/snapshots": 2000, "/orgs/{org}/servers/{server}/snapshots": 1000,
+       "/orgs/{org}/snapshots/{id}": 1000, "/orgs/{org}/templates/{template}": 1000}
+by_route, over, lists, slowest, list_routes = {}, [], 0, (0.0, ""), {}
 for line in open(sys.argv[1]):
     try:
         method, url, took = line.rstrip("\n").split("\t")
@@ -114,18 +123,22 @@ for line in open(sys.argv[1]):
     if method == "GET" and LISTS.match(path) and not waits:
         lists += 1
         slowest = max(slowest, (took, f"{method} {path}"))
-        if took > budget:
-            over.append((took, f"{method} {url}"))
+        list_routes.setdefault(path, []).append(took)
+        if took > OWN.get(path, budget):
+            over.append((took, f"{method} {url}", OWN.get(path, budget)))
 
 print("slowest routes (requests, median, slowest):")
 for name, times in sorted(by_route.items(), key=lambda kv: -max(kv[1]))[:12]:
     print(f"  {name:<68} {len(times):>4} {statistics.median(times):>9.1f} ms {max(times):>9.1f} ms")
+print("reads of lists (requests, slowest, budget):")
+for path, times in sorted(list_routes.items(), key=lambda kv: -max(kv[1])):
+    print(f"  GET {path:<64} {len(times):>4} {max(times):>9.1f} ms {OWN.get(path, budget):>6.0f} ms")
 sys.stdout.flush()
-for took, what in sorted(over, reverse=True):
-    print(f"FAIL: {what} took {took:.0f} ms, over the {budget:.0f} ms a list may take", file=sys.stderr)
+for took, what, allowed in sorted(over, reverse=True):
+    print(f"FAIL: {what} took {took:.0f} ms, over the {allowed:.0f} ms it may take", file=sys.stderr)
 if over:
     sys.exit(1)
-print(f"ok: every read of a list answered within {budget:.0f} ms ({lists} of them; slowest {slowest[1]}, {slowest[0]:.1f} ms)")
+print(f"ok: every read of a list answered within its budget, {budget:.0f} ms but for {len(OWN)} routes ({lists} of them; slowest {slowest[1]}, {slowest[0]:.1f} ms)")
 PY
 }
 field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1], {'d': d}))" "$1"; }
@@ -1495,4 +1508,4 @@ expect "and its plugins" "$(call -d '{"command":"plugins"}' "$SRV/console" | fie
 fi
 
 step "how long the panel took"
-timings || fail "a read of a list took longer than $LIST_BUDGET_MS ms"
+timings || fail "a read of a list took longer than its budget"

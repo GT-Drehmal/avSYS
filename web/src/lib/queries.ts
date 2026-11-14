@@ -101,33 +101,40 @@ export const useCluster = () => useQuery<Cluster>({ queryKey: keys.cluster, quer
 export function useLiveServers() {
   const qc = useQueryClient();
   useEffect(() => {
-    // Everything the stream keeps current: servers, and snapshots with the
-    // operations running on them.
-    const refetchAll = () => {
+    // What the cluster says, and nothing else: servers, and where they run.
+    const refetchCluster = () => {
+      qc.invalidateQueries({ queryKey: ["servers"] });
+      // A move may have finished unheard, and with it what each node has left.
+      qc.invalidateQueries({ queryKey: ["placement"] });
+      qc.invalidateQueries({ queryKey: ["nodes"] });
+    };
+    // Everything events keep current, for when any of them may have been
+    // missed. Each is only asked for again if a page shows it now; the rest
+    // are asked for when one does. Which organization a missed event was of
+    // is not known, so all of them are.
+    const refetchHeard = () => {
+      refetchCluster();
       // What was running may have finished unheard: it is asked for again.
       qc.invalidateQueries({ queryKey: ["running"] });
       // Lists kept from a page left earlier are not asked for again until
       // it is opened; what they say is running may have finished too.
       qc.setQueriesData<SnapshotList>({ queryKey: ["snapshots"] }, (list) => list && { ...list, operations: [] });
-      qc.invalidateQueries({ queryKey: ["servers"] });
+      // A snapshot taken or deleted, and so one to copy offsite, or not.
       qc.invalidateQueries({ queryKey: ["snapshots"] });
       qc.invalidateQueries({ queryKey: ["offsite"] });
       // A sync may have finished unheard, copying the snapshot whose details are open.
       qc.invalidateQueries({ queryKey: ["snapshot"] });
-      // A move may have finished unheard.
-      qc.invalidateQueries({ queryKey: ["placement"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
       // A template's version may have been saved unheard.
       qc.invalidateQueries({ queryKey: ["templates"] });
-      // Who came and went.
-      qc.invalidateQueries({ queryKey: ["presence"] });
-      qc.invalidateQueries({ queryKey: ["nodes"] });
     };
     const source = new EventSource(`/api/v1/events?tab=${tab}`);
     let opened = false;
     source.onopen = () => {
-      // Anything that changed while disconnected was missed, so refetch.
-      if (opened) refetchAll();
+      // Anything that changed while disconnected was missed, so refetch. Who
+      // is where, and whether the cluster can be reached, come first thing
+      // on a new stream, and need not be asked for.
+      if (opened) refetchHeard();
       opened = true;
       // A panel that restarted, or forgot this tab, is told where it is.
       tellAgain();
@@ -146,7 +153,14 @@ export function useLiveServers() {
       const gone: Server = JSON.parse(e.data);
       qc.setQueryData<Server[]>(keys.servers(gone.org), (list) => list?.filter((s) => s.name !== gone.name));
     });
-    source.addEventListener("resync", refetchAll);
+    source.addEventListener("resync", (e) => {
+      // The cluster can be reached again: only what it says was missed.
+      const v: { cluster?: boolean } | null = JSON.parse(e.data);
+      if (v?.cluster) return refetchCluster();
+      // Events were dropped, this tab having fallen behind: any of them.
+      refetchHeard();
+      qc.invalidateQueries({ queryKey: ["presence"] });
+    });
     source.addEventListener("operation.progress", (e) => applyOperation(qc, JSON.parse(e.data)));
     source.addEventListener("operation.done", (e) => {
       const done: OperationDone = JSON.parse(e.data);

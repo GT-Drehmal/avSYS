@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -90,15 +89,22 @@ type templateView struct {
 	ExtraFlags string `json:"extraFlags,omitempty"`
 }
 
+// versionsOf are a template's versions among an organization's snapshots,
+// newest first.
+func versionsOf(list []backup.Snapshot, id string) []backup.Snapshot {
+	out := []backup.Snapshot{}
+	for _, snap := range list {
+		if snap.Trigger == backup.TriggerTemplate && snap.Server == templateHost(id) {
+			out = append(out, snap)
+		}
+	}
+	return out
+}
+
 // templateOf is a template as it is shown, with its versions found among
 // the organization's snapshots.
 func templateOf(t *store.Template, list []backup.Snapshot) templateView {
-	v := templateView{ID: t.ID, Name: t.Name, Description: t.Description, CreatedBy: t.CreatedBy, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Versions: []backup.Snapshot{}}
-	for _, snap := range list {
-		if snap.Trigger == backup.TriggerTemplate && snap.Server == templateHost(t.ID) {
-			v.Versions = append(v.Versions, snap)
-		}
-	}
+	v := templateView{ID: t.ID, Name: t.Name, Description: t.Description, CreatedBy: t.CreatedBy, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Versions: versionsOf(list, t.ID)}
 	for i := range v.Versions {
 		if v.Versions[i].Lineage == t.Current {
 			v.Current = &v.Versions[i]
@@ -136,16 +142,6 @@ func templateFor(role store.Role, v templateView) templateView {
 	return v
 }
 
-// templateSnapshots are the organization's snapshots, or none where there
-// are none to have.
-func (s *Server) templateSnapshots(ctx context.Context, org string) ([]backup.Snapshot, error) {
-	if !s.Backups.Available() {
-		return nil, nil
-	}
-	list, err := s.Backups.List(ctx, org)
-	return list, snapshotErrorOrNil(err)
-}
-
 func snapshotErrorOrNil(err error) error {
 	if err == nil {
 		return nil
@@ -162,7 +158,7 @@ func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request, u *store.
 	if err != nil {
 		return err
 	}
-	list, err := s.templateSnapshots(r.Context(), a.Org.Slug)
+	list, err := s.templateSnapshots(r.Context(), a.Org)
 	if err != nil {
 		return err
 	}
@@ -182,7 +178,7 @@ func (s *Server) template(ctx context.Context, a *access, id string) (*store.Tem
 	} else if err != nil {
 		return nil, templateView{}, err
 	}
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+	list, err := s.templateSnapshots(ctx, a.Org)
 	if err != nil {
 		return nil, templateView{}, err
 	}
@@ -611,10 +607,15 @@ func (s *Server) saveTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 			// The newest is the one servers are made from. Only that is
 			// changed: a name given meanwhile stays.
 			t.Current, t.Changes = "", changes
-			if err = s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, "", changes); err != nil {
+			if err = s.noteTemplateSnapshot(ctx, a.Org, snap); err == nil {
+				err = s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, "", changes)
+			}
+			if err != nil {
 				// Saved for a template that is not there: not left behind.
 				if derr := s.Backups.Delete(context.WithoutCancel(ctx), a.Org.Slug, snap.ID); derr != nil {
 					s.Log.Error("could not remove a template's version saved for nothing", "template", t.ID, "snapshot", snap.ID, "error", derr)
+				} else {
+					s.forgetTemplateSnapshots(context.WithoutCancel(ctx), a.Org, snap.ID)
 				}
 			}
 		}
@@ -665,10 +666,16 @@ func (s *Server) copyTemplateVersion(w http.ResponseWriter, r *http.Request, u *
 			return snapshotError(err)
 		}
 		t.Current, t.Changes = "", changes
-		if err := s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, "", changes); err != nil {
+		err = s.noteTemplateSnapshot(ctx, a.Org, snap)
+		if err == nil {
+			err = s.Store.SetTemplateCurrent(ctx, a.Org.ID, t.ID, "", changes)
+		}
+		if err != nil {
 			// Made for a template that is not there: not left behind.
 			if derr := s.Backups.Delete(ctx, a.Org.Slug, snap.ID); derr != nil {
 				s.Log.Error("could not remove a template's version copied for nothing", "template", t.ID, "snapshot", snap.ID, "error", derr)
+			} else {
+				s.forgetTemplateSnapshots(ctx, a.Org, snap.ID)
 			}
 			return err
 		}
@@ -818,7 +825,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return err
 	}
-	t, v, err := s.template(r.Context(), a, r.PathValue("template"))
+	t, _, err := s.template(r.Context(), a, r.PathValue("template"))
 	if err != nil {
 		return err
 	}
@@ -833,11 +840,12 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 		return err
 	}
 	defer unclaimWorld()
-	list, err := s.templateSnapshots(r.Context(), a.Org.Slug)
+	// As the repository has them: any it has that were not noted go too.
+	list, err := s.repoSnapshots(r.Context(), a.Org.Slug)
 	if err != nil {
 		return err
 	}
-	all := append(slices.Clone(v.Versions), worldsOf(list, t.ID)...)
+	all := append(versionsOf(list, t.ID), worldsOf(list, t.ID)...)
 	if len(all) > 0 {
 		release, err := s.claimToDelete(r.Context(), a, all)
 		if err != nil {
@@ -852,6 +860,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 			return snapshotError(err)
 		}
 	}
+	s.forgetTemplateSnapshotsOf(context.WithoutCancel(r.Context()), a.Org, templateHost(t.ID), worldHost(t.ID))
 	if err := s.Store.DeleteTemplate(r.Context(), a.Org.ID, t.ID); err != nil {
 		return err
 	}
@@ -891,6 +900,7 @@ func (s *Server) deleteTemplateVersion(w http.ResponseWriter, r *http.Request, u
 	if err := s.Backups.Delete(context.WithoutCancel(r.Context()), a.Org.Slug, snap.ID); err != nil {
 		return snapshotError(err)
 	}
+	s.forgetTemplateSnapshots(context.WithoutCancel(r.Context()), a.Org, snap.ID)
 	// The one used is gone: the newest is used.
 	if t.Current == snap.Lineage {
 		if err := s.Store.SetTemplateCurrent(r.Context(), a.Org.ID, t.ID, "", t.Changes); err != nil {
