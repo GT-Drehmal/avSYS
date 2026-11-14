@@ -542,9 +542,9 @@ step "how fast the game ticks"
 ticked() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s])"; }
 # A sample can come without the time a tick takes, as when the game was
 # asked in its first moments: one with both is waited for.
-timed() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s and 'mspt' in s])"; }
-for _ in $(seq 1 60); do [ "$(timed)" -gt 0 ] && break; sleep 2; done
-if [ "$(timed)" -eq 0 ]; then
+with_tick_time() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s and 'mspt' in s])"; }
+for _ in $(seq 1 60); do [ "$(with_tick_time)" -gt 0 ] && break; sleep 2; done
+if [ "$(with_tick_time)" -eq 0 ]; then
   echo "the game's answer to mspt: $(call -d '{"command":"mspt"}' "$SRV/console" | field "d.get('output')")" >&2
   fail "Paper never said how long a tick takes"
 fi
