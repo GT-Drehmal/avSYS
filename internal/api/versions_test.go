@@ -119,8 +119,8 @@ func TestVersionListFollowsTheLoader(t *testing.T) {
 	p.srv.catalog.http.Transport = upstream
 	var list manifest
 	p.fetch("/catalog/minecraft/versions?loader=folia", &list)
-	if list.Latest["release"] != "26.2" || len(list.Versions) != 2 {
-		t.Errorf("Folia's list is %+v, want 26.2 and 1.21.4 with 26.2 the latest", list)
+	if list.Latest["release"] != "26.2" || len(list.Versions) != 2 || list.Loader != avsysv1.LoaderFolia {
+		t.Errorf("Folia's list is %+v, want 26.2 and 1.21.4 with 26.2 the latest, said to be Folia's", list)
 	}
 	// A pre-release with a build is listed, as what it is.
 	list = manifest{}
@@ -130,8 +130,14 @@ func TestVersionListFollowsTheLoader(t *testing.T) {
 	}
 	list = manifest{}
 	p.fetch("/catalog/minecraft/versions", &list)
-	if list.Latest["release"] != "26.3" || len(list.Versions) != 7 {
-		t.Errorf("the list for no loader is %+v, want Mojang's own", list)
+	if list.Latest["release"] != "26.3" || len(list.Versions) != 7 || list.Loader != "" {
+		t.Errorf("the list for no loader is %+v, want Mojang's own, said to be no loader's", list)
+	}
+	// The game itself has every version, and the list says it is its own.
+	list = manifest{}
+	p.fetch("/catalog/minecraft/versions?loader=vanilla", &list)
+	if list.Latest["release"] != "26.3" || len(list.Versions) != 7 || list.Loader != avsysv1.LoaderVanilla {
+		t.Errorf("Vanilla's list is %+v, want every version, said to be Vanilla's", list)
 	}
 	if got, code := p.do("owner", "GET", "/catalog/minecraft/versions?loader=spigot", ""); got != 400 || code != "invalid" {
 		t.Errorf("an unknown loader: %d %s, want 400 invalid", got, code)
@@ -143,8 +149,9 @@ func TestVersionListFollowsTheLoader(t *testing.T) {
 	p.srv.catalog.http.Transport = down
 	list = manifest{}
 	p.fetch("/catalog/minecraft/versions?loader=folia", &list)
-	if list.Latest["release"] != "26.3" || len(list.Versions) != 7 {
-		t.Errorf("with Folia's list unreachable the list is %+v, want Mojang's own", list)
+	// Not said to be Folia's: Folia may have no build for some of them.
+	if list.Latest["release"] != "26.3" || len(list.Versions) != 7 || list.Loader != "" {
+		t.Errorf("with Folia's list unreachable the list is %+v, want Mojang's own, not said to be Folia's", list)
 	}
 }
 
