@@ -1,0 +1,207 @@
+{{- include "avsys.validate" . }}
+{{- $e := .Values.expose }}
+{{- $hostPort := eq $e.mode "hostPort" }}
+{{- $packs := .Values.packs }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "avsys.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "avsys.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # The database is a single file on a ReadWriteOnce volume, so the old pod
+  # must be gone before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "avsys.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "avsys.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- $own := include "avsys.ownSecret" . }}
+      {{- if or .Values.podAnnotations $own }}
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $own }}
+        # Restarts the panel when a secret given in values changes.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "avsys.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      {{- $nodeSelector := deepCopy .Values.nodeSelector }}
+      {{- if and $hostPort $e.node }}
+      {{- $_ := set $nodeSelector "kubernetes.io/hostname" $e.node }}
+      {{- end }}
+      {{- with $nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: avsys
+          image: "{{ .Values.image.repository }}:{{ include "avsys.tag" . }}"
+          imagePullPolicy: {{ include "avsys.pullPolicy" . }}
+          env:
+            - name: AVSYS_PUBLIC_URL
+              value: {{ .Values.publicURL | quote }}
+            - name: AVSYS_BACKUP_DIR
+              value: /backups
+            # The Service that carries the router, whose address servers'
+            # extra ports share.
+            - name: AVSYS_ROUTER_SERVICE
+              value: {{ include "avsys.fullname" . }}
+            - name: AVSYS_ROUTER_PUBLIC_PORT
+              value: {{ include "avsys.publicPort" (dict "root" . "port" "minecraft") | quote }}
+            - name: AVSYS_SSH_PUBLIC_PORT
+              value: {{ include "avsys.publicPort" (dict "root" . "port" "ssh") | quote }}
+            {{- with .Values.sshPublicHost }}
+            - name: AVSYS_SSH_PUBLIC_HOST
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.router.domain }}
+            - name: AVSYS_ROUTER_DOMAIN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraPorts.range }}
+            - name: AVSYS_EXTRA_PORTS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraPorts.annotations }}
+            - name: AVSYS_EXTRA_PORTS_ANNOTATIONS
+              value: {{ include "avsys.pairs" . | quote }}
+            {{- end }}
+            {{- if $packs.listener.enabled }}
+            - name: AVSYS_PACK_ADDR
+              value: ":8081"
+            {{- end }}
+            {{- with $packs.url }}
+            - name: AVSYS_PACK_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: AVSYS_PACK_CACHE
+              value: {{ $packs.cacheMiB | quote }}
+            - name: AVSYS_ALLOW_SIGNUPS
+              value: {{ .Values.signups | toString | quote }}
+            - name: AVSYS_NAMESPACE_PREFIX
+              value: {{ .Values.namespacePrefix | quote }}
+            - name: AVSYS_INSTALL_CRDS
+              value: {{ .Values.installCRDs | toString | quote }}
+            {{- with .Values.workspaceImage }}
+            - name: AVSYS_WORKSPACE_IMAGE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- range $id := list "github" "discord" "google" }}
+            {{- $p := index $.Values.signIn $id }}
+            {{- if $p.clientId }}
+            - name: AVSYS_{{ upper $id }}_CLIENT_ID
+              value: {{ $p.clientId | quote }}
+            - name: AVSYS_{{ upper $id }}_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "avsys.secretName" $) $.Values.signIn.existingSecret }}
+                  key: {{ $id }}-client-secret
+            {{- end }}
+            {{- end }}
+            {{- if .Values.curseforge.existingSecret }}
+            - name: AVSYS_CURSEFORGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.curseforge.existingSecret }}
+                  key: api-key
+            {{- else if .Values.curseforge.apiKey }}
+            - name: AVSYS_CURSEFORGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "avsys.secretName" . }}
+                  key: curseforge-api-key
+            {{- end }}
+            {{- with .Values.offsite }}
+            {{- if .repository }}
+            - name: AVSYS_OFFSITE_REPOSITORY
+              value: {{ .repository | quote }}
+            - name: AVSYS_OFFSITE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "avsys.secretName" $) .existingSecret }}
+                  key: {{ ternary "password" "offsite-password" (not (empty .existingSecret)) }}
+            {{- range $name, $key := .secretEnv }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.offsite.existingSecret }}
+                  key: {{ $key }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              {{- if $hostPort }}
+              hostPort: {{ $e.hostPorts.http }}
+              {{- end }}
+            - name: ssh
+              containerPort: 2222
+              {{- if $hostPort }}
+              hostPort: {{ $e.hostPorts.ssh }}
+              {{- end }}
+            - name: minecraft
+              containerPort: 25565
+              {{- if $hostPort }}
+              hostPort: {{ $e.hostPorts.minecraft }}
+              {{- end }}
+            {{- if $packs.listener.enabled }}
+            - name: packs
+              containerPort: 8081
+              {{- if $hostPort }}
+              hostPort: {{ $packs.listener.hostPort }}
+              {{- end }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /api/v1/meta
+              port: http
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: backups
+              mountPath: /backups
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-data" (include "avsys.fullname" .)) .Values.persistence.data.existingClaim }}
+        - name: backups
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-backups" (include "avsys.fullname" .)) .Values.persistence.backups.existingClaim }}

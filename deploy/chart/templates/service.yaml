@@ -1,0 +1,55 @@
+{{- $e := .Values.expose }}
+{{- $packs := .Values.packs.listener }}
+# The panel, SSH and the Minecraft router. Players and SSH need plain TCP;
+# put the panel's http port behind an ingress for TLS if you prefer.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "avsys.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "avsys.labels" . | nindent 4 }}
+  {{- if eq $e.mode "LoadBalancer" }}
+  {{- with $e.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+spec:
+  {{- if eq $e.mode "LoadBalancer" }}
+  type: LoadBalancer
+  {{- with $e.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  {{- with $e.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+  {{- end }}
+  {{- else if eq $e.mode "NodePort" }}
+  type: NodePort
+  {{- else }}
+  # The ports are opened on the node itself (hostPort); this is for the
+  # cluster's own use.
+  type: ClusterIP
+  {{- end }}
+  {{- if and (ne $e.mode "hostPort") $e.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ $e.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    {{- include "avsys.selectorLabels" . | nindent 4 }}
+  ports:
+    {{- range $name := list "http" "ssh" "minecraft" }}
+    - name: {{ $name }}
+      port: {{ index $e.ports $name }}
+      targetPort: {{ $name }}
+      {{- if and (eq $e.mode "NodePort") (index $e.nodePorts $name) }}
+      nodePort: {{ index $e.nodePorts $name }}
+      {{- end }}
+    {{- end }}
+    {{- if $packs.enabled }}
+    - name: packs
+      port: {{ $packs.port }}
+      targetPort: packs
+      {{- if and (eq $e.mode "NodePort") $packs.nodePort }}
+      nodePort: {{ $packs.nodePort }}
+      {{- end }}
+    {{- end }}

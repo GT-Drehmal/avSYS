@@ -1,14 +1,15 @@
 #!/bin/sh
 # The end-to-end check from nothing. Starts an empty two-node k3s in
-# containers, builds both images, installs the panel from deploy/install.yaml
-# as a user would, creates the first account and runs hack/e2e.sh against it.
-# Needs only Docker, curl and python3; this is what CI runs.
+# containers, builds both images, installs the panel with the Helm chart in
+# deploy/chart as a user would, creates the first account and runs
+# hack/e2e.sh against it. Needs only Docker, curl and python3 (Helm is run
+# from its image); this is what CI runs.
 #
 #   ./hack/e2e-cluster.sh           # build, test, tear down
 #   KEEP=1 ./hack/e2e-cluster.sh    # leave the cluster up to look around
 #
 # Because the cluster starts empty, this also covers what the unit tests
-# cannot: the manifest, its permissions, and the panel's very first start.
+# cannot: the chart, its permissions, and the panel's very first start.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -91,27 +92,35 @@ done
 docker save "$PANEL" "$WORKSPACE" | docker exec -i "$AGENT" ctr images import - >/dev/null
 echo "ok: two nodes, both with the images"
 
-# offsite gives the panel an offsite copy that is a directory on its own
-# volume: nowhere a real one should be, and enough to run it through here.
-# It also gives it a range of public ports for servers' extra ports.
-offsite() {
-  python3 -c '
-import secrets, sys
-at = "              value: /backups\n"
-manifest = sys.stdin.read()
-assert manifest.count(at) == 1, "the manifest no longer sets the backup directory the way this expects"
-env = "            - name: %s\n              value: \"%s\"\n"
-print(manifest.replace(at, at + env % ("AVSYS_OFFSITE_REPOSITORY", "/data/offsite-e2e") + env % ("AVSYS_OFFSITE_PASSWORD", secrets.token_urlsafe(18)) + env % ("AVSYS_EXTRA_PORTS", "25600-25609")), end="")'
-}
-
 step "install"
-sed -e "s|image: ghcr.io/gt-drehmal/avsys:edge|image: $PANEL|" \
-    -e "s|imagePullPolicy: Always|imagePullPolicy: IfNotPresent|" \
-    -e "s|value: https://panel.example.com|value: $URL|" deploy/install.yaml | offsite | k apply -f - >/dev/null
+# What the chart makes, with its default values (deploy/install.yaml) and
+# with each set in deploy/chart/ci, is first checked against the cluster's
+# API without being made: these are the only check of the values the
+# install below does not use.
+k create namespace avsys >/dev/null
+for manifest in deploy/install.yaml deploy/chart/ci/*.yaml; do
+  case "$manifest" in *-values.yaml) continue ;; esac
+  k apply --dry-run=server -f - < "$manifest" >/dev/null || fail "$manifest is refused by the cluster"
+done
+echo "ok: the cluster takes what the chart makes, with each set of values"
+# Helm reaches the cluster from the k3s container's own network.
+kubeconfig=$(mktemp)
+docker exec "$NAME" cat /etc/rancher/k3s/k3s.yaml > "$kubeconfig"
+# The offsite copy is a directory on the panel's own volume: nowhere a real
+# one should be, and enough to run it through here. Servers' extra ports
+# get a range of public ports.
+HELM= HELM_DOCKER_ARGS="--network container:$NAME -v $kubeconfig:/kubeconfig:ro -e KUBECONFIG=/kubeconfig" \
+  ./hack/chart.sh helm install avsys deploy/chart --namespace avsys \
+  --set image.tag=e2e --set image.pullPolicy=IfNotPresent \
+  --set publicURL="$URL" \
+  --set offsite.repository=/data/offsite-e2e \
+  --set-string offsite.password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')" \
+  --set extraPorts.range=25600-25609 >/dev/null || fail "helm install failed"
+rm -f "$kubeconfig"
 k -n avsys rollout status deploy/avsys --timeout=180s >/dev/null || fail "the panel did not become ready"
 restarts=$(k -n avsys get pods -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}')
 [ "$restarts" = 0 ] || fail "the panel restarted $restarts time(s) during its first start"
-echo "ok: installed from deploy/install.yaml, first start was clean"
+echo "ok: installed with the chart, first start was clean"
 for _ in $(seq 1 60); do
   curl -fsS -o /dev/null "$URL/api/v1/meta" 2>/dev/null && break
   sleep 2

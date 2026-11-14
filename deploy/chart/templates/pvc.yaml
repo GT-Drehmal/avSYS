@@ -1,0 +1,28 @@
+{{- range $use := list "data" "backups" }}
+{{- $p := index $.Values.persistence $use }}
+{{- if not $p.existingClaim }}
+---
+{{- if eq $use "backups" }}
+# Snapshots of every organization's servers. Size it for the worlds you host,
+# on storage you would be sorry to lose.
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "avsys.fullname" $ }}-{{ $use }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "avsys.labels" $ | nindent 4 }}
+  annotations:
+    # Kept when the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if $p.storageClass }}
+  storageClassName: {{ if eq $p.storageClass "-" }}""{{ else }}{{ $p.storageClass }}{{ end }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size }}
+{{- end }}
+{{- end }}

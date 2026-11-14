@@ -1,0 +1,313 @@
+---
+# Source: avsys/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: avsys
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+
+---
+# Source: avsys/templates/secret.yaml
+# Secrets given in values.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: avsys
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+type: Opaque
+stringData:
+  github-client-secret: "github-secret"
+  discord-client-secret: "discord-secret"
+  curseforge-api-key: "curseforge-key"
+  offsite-password: "offsite-password"
+
+---
+# Source: avsys/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: avsys-data
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+  annotations:
+    # Kept when the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# Source: avsys/templates/pvc.yaml
+# Snapshots of every organization's servers. Size it for the worlds you host,
+# on storage you would be sorry to lose.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: avsys-backups
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+  annotations:
+    # Kept when the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# Source: avsys/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+rules:
+  # The panel's own resource.
+  - apiGroups: ["avsys.dev"]
+    resources: ["minecraftservers", "minecraftservers/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Installing and upgrading the CRD on startup.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "create", "patch"]
+  # One namespace per organization, and one for a while to measure nodes'
+  # speed in; those are listed to remove any a restart left behind.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "delete"]
+  # What each server is made of.
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Deleted only when a server is moved off a node its volume is tied to,
+  # its files then being in a snapshot.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "create", "patch", "delete"]
+  # Choosing a node for a new server: node speed scores and free memory,
+  # and which node an existing volume is tied to.
+  - apiGroups: [""]
+    resources: ["nodes", "persistentvolumes"]
+    verbs: ["get", "list"]
+  # What servers' games and nodes use of memory and CPU, for the graphs and
+  # the Nodes page, where the cluster has a metrics API. Read only.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  # Setting a node's speed score, and whether it takes new servers, from
+  # the Nodes page. Only labels are changed.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch"]
+  # RCON passwords and the workspace key. Read one at a time, never listed.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update"]
+  # Console output, and reaching pods when the panel runs outside the cluster.
+  - apiGroups: [""]
+    resources: ["pods/log", "pods/portforward"]
+    verbs: ["get", "create"]
+
+---
+# Source: avsys/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: avsys
+subjects:
+  - kind: ServiceAccount
+    name: avsys
+    namespace: avsys
+
+---
+# Source: avsys/templates/service.yaml
+# The panel, SSH and the Minecraft router. Players and SSH need plain TCP;
+# put the panel's http port behind an ingress for TLS if you prefer.
+apiVersion: v1
+kind: Service
+metadata:
+  name: avsys
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: avsys
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+    - name: ssh
+      port: 2222
+      targetPort: ssh
+      nodePort: 30022
+    - name: minecraft
+      port: 25565
+      targetPort: minecraft
+      nodePort: 30565
+
+---
+# Source: avsys/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: avsys
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+spec:
+  replicas: 1
+  # The database is a single file on a ReadWriteOnce volume, so the old pod
+  # must be gone before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: avsys
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: avsys
+        app.kubernetes.io/instance: avsys
+        app.kubernetes.io/version: "edge"
+        app.kubernetes.io/managed-by: Helm
+        helm.sh/chart: avsys-0.0.0-dev
+      annotations:
+        # Restarts the panel when a secret given in values changes.
+        checksum/secret: b28d18d29c1a5a9ac255257e29ce8379ba18b9c2f875636003f873df7d5d442f
+    spec:
+      serviceAccountName: avsys
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: avsys
+          image: "ghcr.io/gt-drehmal/avsys:edge"
+          imagePullPolicy: Always
+          env:
+            - name: AVSYS_PUBLIC_URL
+              value: "https://panel.example.org"
+            - name: AVSYS_BACKUP_DIR
+              value: /backups
+            # The Service that carries the router, whose address servers'
+            # extra ports share.
+            - name: AVSYS_ROUTER_SERVICE
+              value: avsys
+            - name: AVSYS_ROUTER_PUBLIC_PORT
+              value: "30565"
+            - name: AVSYS_SSH_PUBLIC_PORT
+              value: "30022"
+            - name: AVSYS_PACK_CACHE
+              value: "512"
+            - name: AVSYS_ALLOW_SIGNUPS
+              value: "false"
+            - name: AVSYS_NAMESPACE_PREFIX
+              value: "mc-"
+            - name: AVSYS_INSTALL_CRDS
+              value: "true"
+            - name: AVSYS_GITHUB_CLIENT_ID
+              value: "github-id"
+            - name: AVSYS_GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: avsys
+                  key: github-client-secret
+            - name: AVSYS_DISCORD_CLIENT_ID
+              value: "discord-id"
+            - name: AVSYS_DISCORD_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: avsys
+                  key: discord-client-secret
+            - name: AVSYS_CURSEFORGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: avsys
+                  key: curseforge-api-key
+            - name: AVSYS_OFFSITE_REPOSITORY
+              value: "s3:https://s3.example.org/bucket/avsys"
+            - name: AVSYS_OFFSITE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: avsys
+                  key: offsite-password
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: ssh
+              containerPort: 2222
+            - name: minecraft
+              containerPort: 25565
+          readinessProbe:
+            httpGet:
+              path: /api/v1/meta
+              port: http
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: backups
+              mountPath: /backups
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: avsys-data
+        - name: backups
+          persistentVolumeClaim:
+            claimName: avsys-backups

@@ -1,0 +1,202 @@
+# Values for the avSYS chart.
+#
+#   helm install avsys oci://ghcr.io/gt-drehmal/charts/avsys -n avsys --create-namespace -f values.yaml
+#
+# Most installs set publicURL and pick how the panel's ports are reached
+# (expose). Everything else has a working default.
+
+# The address people open the panel at. Sign-in callbacks, links and the host
+# shown in SSH instructions are built from it.
+publicURL: https://panel.example.com
+
+image:
+  repository: ghcr.io/gt-drehmal/avsys
+  # Empty: the chart's appVersion, which is the release the chart came with.
+  tag: ""
+  # Empty: Always for :edge and :latest, which move, and IfNotPresent for a
+  # release tag, which does not.
+  pullPolicy: ""
+# For a registry that needs signing in to, as a mirror of the images.
+imagePullSecrets: []
+
+# The SSH workspace image started next to each server. Empty:
+# ghcr.io/gt-drehmal/avsys-workspace of the panel's own version, which is
+# what a release is tested with.
+workspaceImage: ""
+
+# How players, SSH and the panel are reached. The panel listens on three
+# ports: http (the web UI and API), ssh (the SSH gateway) and minecraft (the
+# router that sends players to the server their address names).
+expose:
+  # LoadBalancer: one Service with an address of its own, from the
+  #   cluster's load balancer (k3s ServiceLB, MetalLB, a cloud's).
+  # NodePort: the three ports on every node, at the node ports below.
+  # hostPort: the three ports on one node, the one named below, which the
+  #   panel is pinned to. For a cluster with no load balancer.
+  mode: LoadBalancer
+  # The Service's ports. With LoadBalancer these are the public ones.
+  ports:
+    http: 80
+    ssh: 2222
+    minecraft: 25565
+  # NodePort: the node ports, in the cluster's node port range (normally
+  # 30000-32767). ssh and minecraft are required, since they are shown in
+  # addresses; http may be left for the cluster to pick.
+  nodePorts:
+    http: null
+    ssh: null
+    minecraft: null
+  # hostPort: the node, by its kubernetes.io/hostname label, and the ports
+  # opened on it.
+  node: ""
+  hostPorts:
+    http: 8080
+    ssh: 2222
+    minecraft: 25565
+  # LoadBalancer: annotations for the load balancer, as
+  # metallb.universe.tf/allow-shared-ip: avsys to share an address with the
+  # extra ports below, and its address or class if it needs telling.
+  annotations: {}
+  loadBalancerIP: ""
+  loadBalancerClass: ""
+  # Local keeps players' own addresses visible to the cluster.
+  externalTrafficPolicy: ""
+
+# Hostname shown in SSH instructions, if not the host of publicURL.
+sshPublicHost: ""
+
+router:
+  # A domain with a wildcard DNS record pointing at the router: new servers
+  # then default to <server>.<org>.<domain>.
+  domain: ""
+
+# Extra ports (voice chat, Geyser, maps) of servers that share the router's
+# address. Each server gets ports from this range, as 25600-25699, on a
+# LoadBalancer Service of its own. Empty: the cluster gives each a node port.
+extraPorts:
+  range: ""
+  # Put on those Services: how the load balancer is told to share the
+  # router's address, as metallb.universe.tf/allow-shared-ip: avsys.
+  annotations: {}
+
+# Resource packs uploaded to servers are served to players from the panel's
+# own address. If the panel is not reachable by players (on a private
+# network, say), serve them from a listener of their own on another port
+# and give the address players reach it at.
+packs:
+  listener:
+    enabled: false
+    # The Service's port, and the node's with hostPort.
+    port: 8081
+    nodePort: null
+    hostPort: 8081
+  # Address players' games fetch packs from. Empty: publicURL.
+  url: ""
+  # Most MiB the packs kept in the data volume may take; 0 for no limit.
+  cacheMiB: 512
+
+# Sign-in with other accounts. Register the callback
+# <publicURL>/api/v1/auth/<provider>/callback with each provider, put its
+# client ID here, and its secret either here or in an existing Secret.
+signIn:
+  # A Secret of your own with the keys github-client-secret,
+  # discord-client-secret and google-client-secret, for the providers that
+  # have a client ID below. Used instead of the clientSecret values.
+  existingSecret: ""
+  github:
+    clientId: ""
+    clientSecret: ""
+  discord:
+    clientId: ""
+    clientSecret: ""
+  google:
+    clientId: ""
+    clientSecret: ""
+
+# true lets anyone create an account. Otherwise accounts are made from
+# invites, after the first, which becomes the instance administrator.
+signups: false
+
+# Passed to servers for CurseForge downloads: here, or as the key api-key in
+# an existing Secret.
+curseforge:
+  apiKey: ""
+  existingSecret: ""
+
+persistence:
+  # The panel's database.
+  data:
+    size: 1Gi
+    # Empty: the cluster's default class.
+    storageClass: ""
+    # A claim of your own to use instead.
+    existingClaim: ""
+  # Snapshots of every organization's servers. Size it for the worlds you
+  # host: a snapshot stores only what changed since the last, but the first
+  # of each server is about that server's size. Put it on storage you would
+  # be sorry to lose, as this is the only copy until an offsite one is set.
+  backups:
+    size: 50Gi
+    storageClass: ""
+    existingClaim: ""
+  # Both claims are kept when the release is uninstalled, so that removing
+  # the chart never removes the worlds' snapshots. Delete them by hand.
+
+# An offsite copy of every organization's snapshots, in any place restic can
+# reach without ssh: S3 and what speaks it (Backblaze B2, Cloudflare R2,
+# Wasabi), Azure, Google Cloud, a rest-server. The bucket has to exist.
+offsite:
+  # As s3:https://s3.us-west-004.backblazeb2.com/my-bucket/avsys. Empty: no
+  # offsite copy.
+  repository: ""
+  # A Secret of your own holding the password under the key password. Keep
+  # a copy of the password somewhere else: it is what opens the copy once
+  # this cluster is gone.
+  existingSecret: ""
+  # Or the password itself, kept in a Secret the chart makes.
+  password: ""
+  # Credentials restic reads for that kind of place, as environment
+  # variables from keys of existingSecret, as
+  #   AWS_ACCESS_KEY_ID: access-key-id
+  #   AWS_SECRET_ACCESS_KEY: secret-access-key
+  secretEnv: {}
+
+# Prefix of the namespace made for each organization.
+namespacePrefix: mc-
+
+# The panel installs and upgrades the MinecraftServer CRD each time it
+# starts, which is how the CRD is upgraded with the panel: Helm installs
+# what is in crds/ only once. Turn this off only if you manage the CRD
+# yourself.
+installCRDs: true
+
+# More environment variables for the panel, as for a flag not listed here
+# (every flag is also AVSYS_<FLAG>), or credentials from a Secret.
+extraEnv: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  # Pruning a large snapshot repository is what needs the room.
+  limits:
+    memory: 1Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+
+serviceAccount:
+  # Made by the chart. Otherwise give the name of one that exists.
+  create: true
+  name: ""
+  annotations: {}
+
+# The ClusterRole the panel needs, and its binding to the service account.
+rbac:
+  create: true
+
+nameOverride: ""
+fullnameOverride: ""

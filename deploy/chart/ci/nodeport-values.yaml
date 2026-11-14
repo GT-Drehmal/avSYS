@@ -1,0 +1,20 @@
+# Node ports, with every secret given in values: the chart keeps them in a
+# Secret of its own.
+publicURL: https://panel.example.org
+expose:
+  mode: NodePort
+  nodePorts:
+    ssh: 30022
+    minecraft: 30565
+signIn:
+  github:
+    clientId: github-id
+    clientSecret: github-secret
+  discord:
+    clientId: discord-id
+    clientSecret: discord-secret
+curseforge:
+  apiKey: curseforge-key
+offsite:
+  repository: s3:https://s3.example.org/bucket/avsys
+  password: offsite-password
