@@ -431,6 +431,11 @@ const (
 	listRecord     = ".var-list-manifest.json"
 )
 
+// urlRecord is the start script's own record of the URLs the image is
+// known to have installed a file from, kept with the server's files so it
+// goes wherever they go.
+const urlRecord = "/data/.avsys/urls"
+
 // modrinthAPI is Modrinth's API, as the image asks it.
 const modrinthAPI = "https://api.modrinth.com"
 
@@ -445,15 +450,20 @@ const modrinthAPI = "https://api.modrinth.com"
 //     dependencies too, is there. When Modrinth does not answer, the image is
 //     not given the projects, and leaves its files and record as they are.
 //   - A mod, plugin or datapack from a URL, when the file it was saved as,
-//     the last part of the URL, is there, and for a mod or plugin, in the
-//     image's record of that list. When its site does not answer, the image
-//     copies that file in place of the URL, or for a datapack, leaves it.
+//     the last part of the URL, is there, for a mod or plugin in the image's
+//     record of that list, and the image is known to have installed it from
+//     that very URL. The script notes the URLs it hands the image, and takes
+//     them as installed once the image's record of the list, or the
+//     datapack's file, is newer than the note. When the site gives no answer
+//     or a server error, the image copies the file in place of the URL, or
+//     for a datapack, leaves it. Any other answer, a refusal of the request
+//     or a file not found too, is left to the image.
 //
 // Anything else is left to the image, as before: a first start, a project
-// added, taken off or pinned to another version, a file missing, a world
-// other than the one the datapacks are in, old files the image is told to
-// remove first. MODRINTH_API_BASE_URL, in a server's own environment, is
-// where the image and this ask Modrinth.
+// added, taken off or pinned to another version, a URL changed, a file
+// missing, a world other than the one the datapacks are in, old files the
+// image is told to remove first. MODRINTH_API_BASE_URL, in a server's own
+// environment, is where the image and this ask Modrinth.
 const keepContent = `level=${LEVEL:-world}
 # Lines of a list as the image reads one: split at commas and line ends,
 # without comments, trimmed.
@@ -507,19 +517,55 @@ if [ -n "$want" ] && [ -z "$removes" ] && had=$(listed projects "$m") && [ "$(pr
     unset MODRINTH_PROJECTS
   fi
 fi
-# Mods and plugins from URLs, in the one folder the image puts both in.
+# Mods and plugins from URLs, in the one folder the image puts both in, and
+# datapacks, in the world's.
 case "${USES_MODS:-}${USES_PLUGINS:-}$kind" in
   PAPER | FOLIA | PURPUR) dir=${PLUGINS_OUT_DIR:-/data/plugins} ;;
   FABRIC | QUILT | FORGE | NEOFORGE) dir=${MODS_OUT_DIR:-/data/mods} ;;
   *) dir= ;;
 esac
+packs=/data/$level/datapacks
+# The URLs the image is known to have installed a file from, and those it
+# was handed at the last start: "list URL" or "datapack URL", a line each.
+known=` + urlRecord + `
+noted=$known.pending
+# Whether the image installed what it was handed since: the whole list, once
+# its record of it is newer than the note; a datapack, once its file is.
+since() {
+  case $1 in
+    list) [ -n "$dir" ] && [ "$dir/` + listRecord + `" -nt "$noted" ] ;;
+    datapack) [ "$packs/$(saved "$2")" -nt "$noted" ] ;;
+  esac
+}
+if [ -f "$noted" ]; then
+  while read -r k u; do
+    [ -n "$u" ] || continue
+    n=$(saved "$u")
+    # Two of one name in one place: which the file came from cannot be told.
+    [ "$(while read -r k2 u2; do [ "$k2" = "$k" ] && [ "$(saved "$u2")" = "$n" ] && echo x; done <"$noted")" = x ] || continue
+    if since "$k" "$u" || { [ -f "$known" ] && grep -qxF "$k $u" "$known"; }; then echo "$k $u"; fi
+  done <"$noted" 2>/dev/null >"$known.new" && mv "$known.new" "$known" 2>/dev/null
+  rm -f "$noted" "$known.new" 2>/dev/null
+fi
+installed() { [ -f "$known" ] && grep -qxF "$1 $2" "$known"; }
+# Whether a file's site is down: no answer at all, or a server error. Any
+# other answer, a refusal or a file not found too, is the image's to deal
+# with, as before.
+down() {
+  code=$(curl -sS -o /dev/null -I -L -w '%{http_code}' --connect-timeout 3 -m 5 "$1" 2>/dev/null)
+  case $code in [1234][0-9][0-9]) return 1 ;; esac
+}
+asked=$(
+  [ -z "$dir" ] || { lines "${MODS:-}"; lines "${PLUGINS:-}"; } | grep -E '^https?://' | sed 's/^/list /'
+  printf '%s\n' "${DATAPACKS:-}" | tr ', \t' '\n\n\n' | grep -E '^https?://' | sed 's/^/datapack /'
+)
 kept() {
   got=$(listed files "$dir/` + listRecord + `") || got=
   lines "$1" | while IFS= read -r e; do
     case $e in
       http://* | https://*)
         n=$(saved "$e")
-        if [ -n "$n" ] && [ -f "$dir/$n" ] && printf '%s\n' "$got" | grep -qxF -e "$n" && ! answers -I -L "$e"; then
+        if [ -n "$n" ] && [ -f "$dir/$n" ] && printf '%s\n' "$got" | grep -qxF -e "$n" && installed list "$e" && down "$e"; then
           offline "$e" "$n"
           e=$dir/$n
         fi
@@ -545,7 +591,7 @@ if [ -n "${DATAPACKS:-}" ] && [ -z "$removes" ]; then
     case $e in
       http://* | https://*)
         n=$(saved "$e")
-        if [ -n "$n" ] && [ -f "/data/$level/datapacks/$n" ] && ! answers -I -L "$e"; then
+        if [ -n "$n" ] && [ -f "$packs/$n" ] && installed datapack "$e" && down "$e"; then
           offline "$e" "$n"
           continue
         fi
@@ -555,6 +601,8 @@ if [ -n "${DATAPACKS:-}" ] && [ -z "$removes" ]; then
   done)
   [ "$now" = "$was" ] || export DATAPACKS="$now"
 fi
+# What the image is handed, known as installed once it has been.
+mkdir -p "${known%/*}" 2>/dev/null && { [ -z "$asked" ] || printf '%s\n' "$asked"; } 2>/dev/null >"$noted"
 `
 
 // startScript is the game container's command for a server run by the
