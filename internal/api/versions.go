@@ -20,6 +20,10 @@ const mojangManifest = "https://launchermeta.mojang.com/mc/game/version_manifest
 type manifest struct {
 	Latest   map[string]string `json:"latest"`
 	Versions []gameVersion     `json:"versions"`
+	// Loader is the kind of server the list is of, when it is of the
+	// versions that kind has a build for. Empty for every version there is,
+	// as when that kind's own list could not be read.
+	Loader avsysv1.Loader `json:"loader,omitempty"`
 }
 
 type gameVersion struct {
@@ -306,7 +310,7 @@ func (s *Server) minecraftVersions(w http.ResponseWriter, r *http.Request, _ *st
 			// Pre-releases it has a build for are listed too, so that a
 			// server on one is not taken for one with no build.
 			all := m.Versions
-			m.Versions, m.Latest = nil, map[string]string{"release": "", "snapshot": ""}
+			m.Versions, m.Latest, m.Loader = nil, map[string]string{"release": "", "snapshot": ""}, loader
 			for _, v := range all {
 				if !sup.all[v.ID] {
 					continue

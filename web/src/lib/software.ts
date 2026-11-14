@@ -31,6 +31,9 @@ export function useGameVersions(loader?: Loader | null) {
       ordered: m.versions.map((v) => v.id),
       // Snapshots and pre-releases too, for telling whether a version has a build at all.
       all: new Set(m.versions.map((v) => v.id)),
+      // Whose builds the list is of. Unset when that could not be found
+      // out, and it is every version there is.
+      loader: m.loader,
     }),
   });
 }
