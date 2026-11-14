@@ -31,7 +31,7 @@ func TestPlayerLists(t *testing.T) {
 		t.Fatalf("create: %v, id %q", err, club.ID)
 	}
 	// Each player once, by name whatever its case.
-	if got := names(club); got != "alex Steve" {
+	if got := playerNamesOf(club); got != "alex Steve" {
 		t.Errorf("players made with: %q", got)
 	}
 	// A name is the organization's once, whatever its case; another may have it.
@@ -46,7 +46,7 @@ func TestPlayerLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	lists, err := s.PlayerLists(ctx, a.ID)
-	if err != nil || len(lists) != 2 || lists[0].Name != "Bingo event" || len(lists[0].Players) != 0 || names(&lists[1]) != "alex Steve" {
+	if err != nil || len(lists) != 2 || lists[0].Name != "Bingo event" || len(lists[0].Players) != 0 || playerNamesOf(&lists[1]) != "alex Steve" {
 		t.Fatalf("lists: %+v, %v", lists, err)
 	}
 	if _, err := s.PlayerList(ctx, b.ID, club.ID); !errors.Is(err, ErrNotFound) {
@@ -58,8 +58,8 @@ func TestPlayerLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.PlayerList(ctx, a.ID, club.ID)
-	if err != nil || names(got) != "Alex Notch Steve" {
-		t.Errorf("after adding: %q, %v", names(got), err)
+	if err != nil || playerNamesOf(got) != "Alex Notch Steve" {
+		t.Errorf("after adding: %q, %v", playerNamesOf(got), err)
 	}
 	if err := s.AddListPlayers(ctx, b.ID, club.ID, []ListPlayer{{UUID: "u-x", Name: "X"}}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("adding to another organization's: %v", err)
@@ -78,8 +78,8 @@ func TestPlayerLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	lists, _ = s.PlayerLists(ctx, a.ID)
-	if names(&lists[0]) != "Stefan" || names(&lists[1]) != "Alex Stefan" {
-		t.Errorf("after a rename: %q, %q", names(&lists[0]), names(&lists[1]))
+	if playerNamesOf(&lists[0]) != "Stefan" || playerNamesOf(&lists[1]) != "Alex Stefan" {
+		t.Errorf("after a rename: %q, %q", playerNamesOf(&lists[0]), playerNamesOf(&lists[1]))
 	}
 
 	if err := s.RenamePlayerList(ctx, a.ID, event.ID, "Club"); !errors.Is(err, ErrPlayerListNameTaken) {
