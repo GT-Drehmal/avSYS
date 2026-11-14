@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"time"
 )
 
@@ -35,16 +36,40 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 // CreateUser inserts u, assigning its ID. The first user ever created becomes
 // the instance admin.
 func (s *Store) CreateUser(ctx context.Context, u *User) error {
+	_, err := s.SignUp(ctx, u, Signup{})
+	return err
+}
+
+// ErrNotFirst is what SignUp says when the account was to be the panel's
+// first and another was made before it.
+var ErrNotFirst = errors.New("there is an account already")
+
+// Signup is what a new account is made on the strength of.
+type Signup struct {
+	// FirstOnly makes it only as the panel's very first account.
+	FirstOnly bool
+	// Invite is accepted with it. If it cannot be, no account is made.
+	Invite string
+}
+
+// SignUp inserts u, as CreateUser does, together with what lets it be made:
+// being the first account, or an invite, which it accepts and whose
+// organization it returns. Two people setting up an empty panel at once,
+// or taking the last use of an invite, cannot both get in.
+func (s *Store) SignUp(ctx context.Context, u *User, how Signup) (*Org, error) {
 	u.ID = NewID(10)
 	u.CreatedAt = unix(now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
-		return err
+		return nil, err
+	}
+	if count > 0 && how.FirstOnly {
+		return nil, ErrNotFirst
 	}
 	if count == 0 {
 		u.IsAdmin = true
@@ -52,9 +77,15 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	_, err = tx.ExecContext(ctx, `INSERT INTO users (`+userColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Username, u.DisplayName, u.Email, u.AvatarURL, u.PasswordHash, u.IsAdmin, u.CreatedAt.Unix())
 	if err != nil {
-		return mapErr(err)
+		return nil, mapErr(err)
 	}
-	return tx.Commit()
+	var org *Org
+	if how.Invite != "" {
+		if org, err = acceptInvite(ctx, tx, how.Invite, u.ID); err != nil {
+			return nil, err
+		}
+	}
+	return org, tx.Commit()
 }
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {

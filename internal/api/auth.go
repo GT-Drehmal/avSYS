@@ -48,27 +48,54 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// canSignUp reports whether a new account may be created: always for the very
-// first one, otherwise only with open signups or a usable invite.
-func (s *Server) canSignUp(r *http.Request, invite string) (bool, error) {
+// signup says on what grounds a new account may be made, or why it may not.
+// With an invite, only on that, and only while it can still be used. Without
+// one, when signups are open, or, on a panel with no accounts yet, as the
+// first: whoever sets the panel up, and nobody after.
+func (s *Server) signup(r *http.Request, invite string) (store.Signup, error) {
+	if invite != "" {
+		inv, err := s.Store.Invite(r.Context(), invite)
+		if errors.Is(err, store.ErrNotFound) || err == nil && !inv.Usable() {
+			return store.Signup{}, errInviteUnusable
+		}
+		return store.Signup{Invite: invite}, err
+	}
+	if s.Config.AllowSignups {
+		return store.Signup{}, nil
+	}
 	count, err := s.Store.CountUsers(r.Context())
 	if err != nil {
-		return false, err
+		return store.Signup{}, err
 	}
-	if count == 0 || s.Config.AllowSignups {
-		return true, nil
+	if count > 0 {
+		return store.Signup{}, errSignupClosed
 	}
-	if invite == "" {
-		return false, nil
-	}
-	inv, err := s.Store.Invite(r.Context(), invite)
-	if errors.Is(err, store.ErrNotFound) {
-		return false, nil
-	}
-	return err == nil && inv.Usable(), err
+	return store.Signup{FirstOnly: true}, nil
 }
 
-var errSignupClosed = &Error{Status: http.StatusForbidden, Code: "signup_closed", Message: "You need an invite link to create an account here."}
+// signUp makes the account on the grounds signup gave, failing as it would
+// have if what they were has changed since: another account was made
+// first, or the invite was used up or revoked.
+func (s *Server) signUp(r *http.Request, u *store.User, how store.Signup) error {
+	org, err := s.Store.SignUp(r.Context(), u, how)
+	switch {
+	case errors.Is(err, store.ErrNotFirst):
+		return errSignupClosed
+	case how.Invite != "" && (errors.Is(err, store.ErrInviteUnusable) || errors.Is(err, store.ErrNotFound)):
+		return errInviteUnusable
+	case err != nil:
+		return err
+	}
+	if org != nil {
+		s.syncOpsSoon(org)
+	}
+	return nil
+}
+
+var (
+	errSignupClosed   = &Error{Status: http.StatusForbidden, Code: "signup_closed", Message: "You need an invite link to create an account here."}
+	errInviteUnusable = &Error{Status: http.StatusGone, Code: "invite_unusable", Message: "This invite is no longer valid. Ask for a new one."}
+)
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
 	var in struct{ Username, Password, DisplayName, Invite string }
@@ -82,25 +109,17 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
 	if len(in.Password) < 8 {
 		return errBadRequest("Use a password of at least 8 characters.")
 	}
-	if ok, err := s.canSignUp(r, in.Invite); err != nil {
+	how, err := s.signup(r, in.Invite)
+	if err != nil {
 		return err
-	} else if !ok {
-		return errSignupClosed
 	}
 	hash, err := auth.HashPassword(in.Password)
 	if err != nil {
 		return err
 	}
 	u := &store.User{Username: in.Username, DisplayName: strings.TrimSpace(in.DisplayName), PasswordHash: hash}
-	if err := s.Store.CreateUser(r.Context(), u); err != nil {
+	if err := s.signUp(r, u, how); err != nil {
 		return err
-	}
-	if in.Invite != "" {
-		if org, err := s.Store.AcceptInvite(r.Context(), in.Invite, u.ID); err != nil {
-			s.Log.Warn("accepting invite at signup", "error", err)
-		} else {
-			s.syncOpsSoon(org)
-		}
 	}
 	if err := s.startSession(w, r, u.ID); err != nil {
 		return err
@@ -259,19 +278,25 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) error {
 			http.Redirect(w, r, next, http.StatusFound)
 			return nil
 		}
-		if ok, err := s.canSignUp(r, invite); err != nil {
+		how, err := s.signup(r, invite)
+		var refused *Error
+		if errors.As(err, &refused) {
+			return bounce(refused.Message)
+		} else if err != nil {
 			return err
-		} else if !ok {
-			return bounce(errSignupClosed.Message)
 		}
-		user, err = s.createOAuthUser(r, profile)
-		if err != nil {
+		user, err = s.createOAuthUser(r, profile, how)
+		if errors.As(err, &refused) {
+			return bounce(refused.Message)
+		} else if err != nil {
 			return err
 		}
 		identity.UserID = user.ID
 		if err := s.Store.LinkIdentity(r.Context(), identity); err != nil {
 			return err
 		}
+		// The invite went with the account.
+		invite = ""
 	}
 	if invite != "" {
 		if org, err := s.Store.AcceptInvite(r.Context(), invite, user.ID); err != nil {
@@ -291,7 +316,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) error {
 
 var nonUsernameChars = regexp.MustCompile(`[^a-z0-9_-]+`)
 
-func (s *Server) createOAuthUser(r *http.Request, p auth.Profile) (*store.User, error) {
+func (s *Server) createOAuthUser(r *http.Request, p auth.Profile, how store.Signup) (*store.User, error) {
 	base := p.Login
 	if base == "" {
 		base, _, _ = strings.Cut(p.Email, "@")
@@ -309,7 +334,7 @@ func (s *Server) createOAuthUser(r *http.Request, p auth.Profile) (*store.User, 
 			username = fmt.Sprintf("%s%d", base, attempt+1)
 		}
 		u := &store.User{Username: username, DisplayName: p.Name, Email: p.Email, AvatarURL: p.AvatarURL}
-		err := s.Store.CreateUser(r.Context(), u)
+		err := s.signUp(r, u, how)
 		if err == nil {
 			return u, nil
 		}

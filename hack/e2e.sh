@@ -1024,6 +1024,31 @@ fi
 
 if part servers; then
 
+step "invites"
+# Someone new joins with an invite link, as the invite page does it: with a
+# cookie, not a token. The panel cannot delete accounts, so theirs is left
+# behind, in no organization once they leave.
+INVITE=$(call -d '{"role":"viewer","maxUses":1,"expiresInHours":1}' "$API/orgs/$ORG/invites" | field "d['token']") || fail "no invite was made"
+expect "an invite says what it is for to whoever has the link" "$(curl -sS "$API/invites/$INVITE" | field "(d['org']['slug'], d['role'], d['usable'])")" "('$ORG', 'viewer', True)"
+GUEST=guest-$(date +%s)
+guest() { curl -sS -b "$WORK/guest.jar" -c "$WORK/guest.jar" -H 'X-Avsys: 1' "$@"; }
+expect "someone new makes an account with it" "$(guest -o /dev/null -w '%{http_code}' -d "{\"username\":\"$GUEST\",\"password\":\"e2e guest password\",\"invite\":\"$INVITE\"}" "$API/auth/register")" 201
+expect "and is a member, with the role it gave" "$(call "$API/orgs/$ORG/members" | field "[m['role'] for m in d if m['username'] == '$GUEST']")" "['viewer']"
+expect "in that organization only, and not an administrator" "$(guest "$API/me" | field "(d['user']['isAdmin'], [o['slug'] for o in d['orgs']])")" "(False, ['$ORG'])"
+expect "they see its servers" "$(guest -o /dev/null -w '%{http_code}' "$SRV")" 200
+expect "but as a viewer cannot stop one" "$(guest -o /dev/null -w '%{http_code}' -X POST "$SRV/stop")" 403
+expect "the invite was for one person" "$(call "$API/orgs/$ORG/invites" | field "[(i['uses'], i['maxUses']) for i in d if i['token'] == '$INVITE']")" "[(1, 1)]"
+expect "and its link says so" "$(curl -sS "$API/invites/$INVITE" | field "d['usable']")" False
+expect "the next to follow it is told so, and no account is made" "$(curl -sS -H 'X-Avsys: 1' -d "{\"username\":\"$GUEST-2\",\"password\":\"e2e guest password\",\"invite\":\"$INVITE\"}" "$API/auth/register" | field "d['code']")" invite_unusable
+expect "nor can they sign in" "$(curl -sS -o /dev/null -w '%{http_code}' -H 'X-Avsys: 1' -d "{\"username\":\"$GUEST-2\",\"password\":\"e2e guest password\"}" "$API/auth/login")" 401
+GUEST_ID=$(guest "$API/me" | field "d['user']['id']")
+expect "a member can leave" "$(guest -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/members/$GUEST_ID")" 204
+expect "and then sees nothing of it" "$(guest -o /dev/null -w '%{http_code}' "$SRV")" 404
+expect "an invite can be revoked" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/invites/$INVITE")" 204
+expect "and its link is then gone" "$(curl -sS -o /dev/null -w '%{http_code}' "$API/invites/$INVITE")" 404
+guest -o /dev/null -X POST "$API/auth/logout"
+expect "their session ends on signing out" "$(guest -o /dev/null -w '%{http_code}' "$API/me")" 401
+
 step "nodes"
 # Measuring every node's speed goes on while the rest of this step runs.
 expect "the nodes' speed is measured from the panel" "$(call -o /dev/null -w '%{http_code}' -X POST "$API/nodes/measure")" 202
