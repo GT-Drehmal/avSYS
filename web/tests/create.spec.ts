@@ -946,7 +946,9 @@ test("a copy whose own files did not all come is not given the rest, and says wh
   await page.getByRole("dialog").locator('input[type="file"]').setInputFiles([{ name: "mine.jar", mimeType: "application/java-archive", buffer: Buffer.from("PK jar") }]);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Duplicate", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Setting up Survival copy" })).toContainText("Creating this server did not finish, so files are missing.");
+  // The mark is looked at six times, a second apart, before it is believed:
+  // five seconds of waiting at least, and more on a busy machine.
+  await expect(page.getByRole("region", { name: "Setting up Survival copy" })).toContainText("Creating this server did not finish, so files are missing.", { timeout: 20_000 });
   expect(asked).toEqual([]);
 });
 

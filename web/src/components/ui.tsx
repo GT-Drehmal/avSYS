@@ -256,7 +256,10 @@ export function Modal({ open, onOpenChange, title, description, children, size =
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px]" />
+        {/* Dimmed, not blurred: a blur behind the whole page is drawn again for
+            every frame of anything that moves in front of it, and a browser
+            drawing without a graphics card falls to a few frames a second. */}
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
         <Dialog.Content
           // Start in the first field rather than on the close button.
           onOpenAutoFocus={(e) => {
