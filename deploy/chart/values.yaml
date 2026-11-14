@@ -170,6 +170,11 @@ namespacePrefix: mc-
 # yourself.
 installCRDs: true
 
+# The panel asks GitHub every few hours whether a newer release is out, and
+# tells the instance administrator on the Nodes page, with the command that
+# upgrades. false for a panel that should not reach the internet.
+updateCheck: true
+
 # More environment variables for the panel, as for a flag not listed here
 # (every flag is also AVSYS_<FLAG>), or credentials from a Secret.
 extraEnv: []

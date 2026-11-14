@@ -33,9 +33,11 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -45,6 +47,7 @@ import (
 	"github.com/GT-Drehmal/avSYS/internal/api"
 	"github.com/GT-Drehmal/avSYS/internal/auth"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/release"
 	"github.com/GT-Drehmal/avSYS/internal/router"
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
@@ -107,7 +110,9 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 	// Nothing runs here to wait for: a server's files are not there at once.
 	gateway := &sshgw.Gateway{Store: db, Dialer: noPods{}, Log: log, WorkspaceTries: 1}
 	srv := &api.Server{
-		Config:  api.Config{NamespacePrefix: "mc-", SSHHost: "panel.test", SSHPort: 2222, RouterDomain: "play.test", Version: "uitest"},
+		Config: api.Config{NamespacePrefix: "mc-", SSHHost: "panel.test", SSHPort: 2222, RouterDomain: "play.test", Version: "v0.1.0",
+			// Installed with the chart: see the Service below.
+			RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"}},
 		Store:   db,
 		Client:  cluster,
 		Reader:  cluster,
@@ -145,6 +150,17 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 		backfill(ctx, srv, metrics)
 	}
 	go srv.RunUsage(ctx)
+
+	// A newer release than this one (v0.1.0) is out, as upstream says, and
+	// the panel was installed with the chart, as its Service says.
+	panelService := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "avsys", Name: "avsys",
+		Labels:      map[string]string{"helm.sh/chart": "avsys-0.1.0"},
+		Annotations: map[string]string{"meta.helm.sh/release-name": "avsys", "meta.helm.sh/release-namespace": "avsys"}}}
+	if err := cluster.Create(ctx, panelService); err != nil {
+		return err
+	}
+	srv.Updates = &release.Checker{Current: srv.Config.Version, Client: &http.Client{Transport: up}}
+	srv.Updates.Refresh(ctx)
 
 	ready, _ := json.Marshal(map[string]any{"url": srv.Config.PublicURL, "password": password, "tokens": tokens})
 	fmt.Println(string(ready))
