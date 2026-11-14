@@ -163,6 +163,8 @@ set_spec() {
 
 cleanup() {
   status=$?
+  # A node cordoned for a check that failed takes servers again.
+  [ -n "${CORDONED:-}" ] && sh -c "$AVSYS_E2E_ON_NODE kubectl uncordon $CORDONED" >/dev/null 2>&1 || true
   if [ $status -ne 0 ] && [ -n "${AVSYS_E2E_KEEP_ON_FAILURE:-}" ]; then
     # Whoever started this wants to look at what is left, and will remove it.
     # The key goes regardless: its private half is deleted with $WORK, so it
@@ -1043,6 +1045,25 @@ if [ -n "$OTHER_NODE" ]; then
   expect "and is as it was, stopped" "$(call "$PLACED" | field "(d['spec']['state'], d['status']['phase'])")" "('Stopped', 'Stopped')"
   expect "the snapshot that carried them is kept" "$(call "$PLACED/snapshots" | field "[s['trigger'] for s in d['snapshots']]")" "'move'"
   expect "and it cannot be moved to where it is" "$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move" | field "d['message']")" "on $OTHER_NODE already"
+  # Its node is cordoned, as before maintenance: the server is moved off it,
+  # its files read where they are, and none is moved to it. Cordoning is
+  # done on the cluster, through AVSYS_E2E_ON_NODE.
+  if [ -n "${AVSYS_E2E_ON_NODE:-}" ]; then
+    echo "written on a cordoned node" | call -X PUT --data-binary @- "$PLACED/files/content?path=/cordoned.txt" >/dev/null
+    CORDONED=$OTHER_NODE
+    sh -c "$AVSYS_E2E_ON_NODE kubectl cordon $CORDONED" >/dev/null
+    expect "a cordoned node says so" "$(call "$API/nodes" | field "[(n['ready'], n.get('cordoned', False)) for n in d['nodes'] if n['name'] == '$CORDONED']")" "[(False, True)]"
+    moved=$(call -X POST -d "{\"node\":\"$NODE\"}" "$PLACED/move?wait=true")
+    case "$moved" in *'"code"'*) fail "moving the server off a cordoned node: $moved" ;; esac
+    expect "a server is moved off a cordoned node" "$(call "$PLACED" | field "d['status'].get('node')")" "$NODE"
+    expect "with its files" "$(call "$PLACED/files/content?path=/cordoned.txt") $(call "$PLACED/files/content?path=/moved.txt")" "written on a cordoned node moved with it"
+    expect "and is as it was, stopped" "$(call "$PLACED" | field "(d['spec']['state'], d['status']['phase'])")" "('Stopped', 'Stopped')"
+    expect "a server is not moved to a cordoned node" "$(call -X POST -d "{\"node\":\"$CORDONED\"}" "$PLACED/move" | field "d['message']")" "$CORDONED is cordoned"
+    sh -c "$AVSYS_E2E_ON_NODE kubectl uncordon $CORDONED" >/dev/null
+    CORDONED=
+  else
+    echo "skip: cordoning a node needs AVSYS_E2E_ON_NODE"
+  fi
   # Its snapshot is let go of, so that the organization's are the probe's.
   ids=$(call "$PLACED/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
   call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null

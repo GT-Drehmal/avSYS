@@ -33,6 +33,9 @@ type nodeView struct {
 	Name string `json:"name"`
 	// Ready is whether it is up and takes pods.
 	Ready bool `json:"ready"`
+	// Cordoned is whether it is kept from taking new pods, as before
+	// maintenance. What runs on it can still be moved off.
+	Cordoned bool `json:"cordoned,omitempty"`
 	// Automatic is whether new servers may be placed on it without asking.
 	Automatic bool `json:"automatic"`
 	// Hosts is whether it is set to take new servers, up or not.
@@ -79,6 +82,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 		v := nodeView{
 			Name:      n.Name,
 			Ready:     controller.NodeReady(n),
+			Cordoned:  n.Spec.Unschedulable,
 			Automatic: controller.NodeUsable(n),
 			Hosts:     n.Labels[avsysv1.LabelNodeHosts] != "false",
 			Score:     controller.NodeScore(n),
@@ -148,6 +152,9 @@ func (s *Server) checkNode(ctx context.Context, name string, memory resource.Qua
 	}
 	if node == nil {
 		return errBadRequest("There is no node named %q.", name)
+	}
+	if node.Spec.Unschedulable {
+		return errBadRequest("%s is cordoned. Choose another node.", name)
 	}
 	if !controller.NodeReady(node) {
 		return errBadRequest("%s is not taking new servers right now.", name)

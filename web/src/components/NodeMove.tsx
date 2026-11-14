@@ -59,7 +59,7 @@ export function NodeMove({ server }: { server: Server }) {
             {others.map((n) => (
               <option key={n.name} value={n.name} disabled={!fits(n)}>
                 {n.name} · {n.score > 0 ? `speed ${n.score.toFixed(2)}` : "speed not measured"} · {gb(n.free)} free
-                {!n.ready ? " · down" : n.free < need ? " · too little memory" : ""}
+                {n.cordoned ? " · cordoned" : !n.ready ? " · down" : n.free < need ? " · too little memory" : ""}
               </option>
             ))}
           </Select>

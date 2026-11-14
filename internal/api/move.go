@@ -376,6 +376,8 @@ func (s *Server) stopAnew(ctx context.Context, key client.ObjectKey, stamp strin
 	return s.stopReplacing(ctx, key, stamp, func(mc *avsysv1.MinecraftServer) {
 		// In the same change as the stop, so that a panel restarting before
 		// the move gets further finds it and puts the server back as it was.
+		// Marked so, its pod is made again on its node even if that node is
+		// cordoned, to read its files there (see controller.readingForMove).
 		mc.Annotations[avsysv1.AnnotationMoveWas] = string(mc.Spec.State)
 		if mc.Spec.State == "" {
 			mc.Annotations[avsysv1.AnnotationMoveWas] = string(avsysv1.StateRunning)
@@ -408,7 +410,7 @@ func (s *Server) stopReplacing(ctx context.Context, key client.ObjectKey, stamp 
 // stopped: a game still loading is let finish first, for up to
 // controller.LoadGrace, and then saves and stops, which a large world can
 // take minutes to.
-const stopWait = controller.LoadGrace + 3*time.Minute
+var stopWait = controller.LoadGrace + 3*time.Minute
 
 // waitRestarted waits for a server's pod made again with this stamp to have
 // its workspace up.
