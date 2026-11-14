@@ -210,6 +210,15 @@ func (c *pooledSFTP) close() {
 var errNoWorkspaces = errors.New("this panel has no SSH gateway to reach server files through")
 
 func (p *workspacePool) get(ctx context.Context, namespace, server string) (*sftp.Client, error) {
+	return p.connect(ctx, namespace, server, p.gateway.DialWorkspace)
+}
+
+// getNow is get without waiting for a workspace whose pod is not up yet.
+func (p *workspacePool) getNow(ctx context.Context, namespace, server string) (*sftp.Client, error) {
+	return p.connect(ctx, namespace, server, p.gateway.DialWorkspaceNow)
+}
+
+func (p *workspacePool) connect(ctx context.Context, namespace, server string, dial func(context.Context, string, string) (*ssh.Client, error)) (*sftp.Client, error) {
 	key := namespace + "/" + server
 	p.mu.Lock()
 	if c := p.conns[key]; c != nil {
@@ -228,7 +237,7 @@ func (p *workspacePool) get(ctx context.Context, namespace, server string) (*sft
 	if p.gateway == nil {
 		return nil, errNoWorkspaces
 	}
-	conn, err := p.gateway.DialWorkspace(ctx, namespace, server)
+	conn, err := dial(ctx, namespace, server)
 	if err != nil {
 		return nil, err
 	}
