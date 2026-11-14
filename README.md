@@ -177,6 +177,8 @@ Members are also made operators in game, from the operator role up. Neither need
 - **Each server sets both**, under **Settings → Players**: who is whitelisted by membership (every member, a role and above, or nobody) and who is an operator by role (operators and above by default).
 - **Someone taken off the whitelist is put out**, not only kept out: servers made this way also set the game's `enforce-whitelist`.
 - **Players you add yourself stay.** Friends who are not in the panel go in a server's Whitelisted players list, and extra operators in its Operators list. The panel only ever takes off players it put on.
+- **Players added in game stay too**, with `/whitelist add` or `/op`, and show under **Settings → Players** as "Added in game". Keep one there to list them in the settings, or remove them.
+- **Members stay on.** The panel reads who is on each list in game once a minute. A member taken off with `/whitelist remove` or `/deop` is put back. To keep a member off, untick them under **Settings → Players → Members**: the panel then takes them off and leaves them off.
 - To keep someone an operator whatever their role, list them under Operators: opping in game a player the panel already made one changes nothing it can see.
 - **A linked account is not proof of owning it.** For operators that does not matter: a member with the operator role can already op anyone from the console. For the whitelist it means each member has one place to give, to the one account they link, which is usually their own and need not be.
 - Which players the panel put on is kept with a server's snapshots, so restoring an old one does not hand a place or operator back to someone who has since left.

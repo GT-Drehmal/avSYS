@@ -143,6 +143,16 @@ func (t *ticker) keep(servers map[string]types.UID, running map[string]bool) {
 	}
 }
 
+// forGame makes what is kept that of the game mc runs now: one that runs
+// other software is asked afresh, over a connection of its own.
+func (st *tickState) forGame(mc *avsysv1.MinecraftServer) {
+	game := string(mc.Spec.Loader) + " " + mc.Status.Version
+	if st.uid != mc.UID || st.game != game {
+		st.hangUp()
+		st.uid, st.game, st.way = mc.UID, game, tickUnasked
+	}
+}
+
 func (st *tickState) hangUp() {
 	if st.session != nil {
 		st.session.Close()
@@ -224,11 +234,7 @@ func (s *Server) askTicks(ctx context.Context, key string, mc *avsysv1.Minecraft
 	}
 	defer st.mu.Unlock()
 	defer func() { s.ticks.setSilent(key, mc.UID, st.way == tickNone) }()
-	game := string(mc.Spec.Loader) + " " + mc.Status.Version
-	if st.uid != mc.UID || st.game != game {
-		st.hangUp()
-		st.uid, st.game, st.way = mc.UID, game, tickUnasked
-	}
+	st.forGame(mc)
 	ways := []tickWay{st.way}
 	switch {
 	case st.way == tickNone:

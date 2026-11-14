@@ -30,6 +30,8 @@ export const keys = {
   backupPolicy: (org: string) => ["backup-policy", org] as const,
   offsite: (org: string) => ["offsite", org] as const,
   activity: (org: string, server: string) => ["activity", org, server] as const,
+  /** Who is on a server's whitelist and operators in game other than by the panel. */
+  gameLists: (org: string, server: string) => ["game-lists", org, server] as const,
   /** An organization's templates, and under it each one asked for alone. */
   templates: (org: string) => ["templates", org] as const,
   template: (org: string, id: string) => ["templates", org, id] as const,
