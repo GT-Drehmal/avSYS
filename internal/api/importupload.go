@@ -91,8 +91,11 @@ type uploaded struct {
 }
 
 // importUploaded says how much of the archive ?upload= names has been sent.
+// A server made a moment ago is found even before the panel has seen it: the
+// page asks this after a first part lost, and a server said to be gone is
+// given up on.
 func (s *Server) importUploaded(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	_, mc, err := s.serverMaybeNew(r, u, false)
+	_, mc, err := s.serverMaybeNew(r, u, true)
 	if err != nil {
 		return err
 	}

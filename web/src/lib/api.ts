@@ -183,8 +183,10 @@ export async function sendInParts(part: (q: PartQuery) => string, received: (q: 
       try {
         // With how large it is: one all there is then moved into place.
         at = (await request<{ received: number }>("GET", received({ upload: name, size: file.size }))).received;
-      } catch {
-        // Asked again on the next try.
+      } catch (asked) {
+        // Turned down, as when the file cannot be put where it goes: said
+        // as the panel says it. Not reached: asked again on the next try.
+        if (asked instanceof ApiError && asked.status >= 400 && asked.status < 500 && asked.status !== 408 && asked.status !== 429) throw asked;
       }
       stopped();
     }

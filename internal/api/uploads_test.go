@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,7 +16,12 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
@@ -369,5 +375,30 @@ func TestLastPartWrittenNotMoved(t *testing.T) {
 	}
 	if _, err := sc.Stat(fileUpload(full, "partial0123456789a")); err != nil {
 		t.Errorf("part of one was moved: %v", err)
+	}
+}
+
+// How much of an archive arrived is asked after a first part is lost, which
+// can be just after its server was made, before the panel has seen it: that
+// server is not said to be gone, which would give the upload up. One that is
+// gone still is.
+func TestImportUploadAskedOfServerJustMade(t *testing.T) {
+	p := newPanel(t)
+	cluster := p.srv.Client.(client.WithWatch)
+	p.addServer("alpha", "fresh", "fresh.alpha.example")
+	p.srv.Reader = cluster
+	p.srv.Client = interceptor.NewClient(cluster, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*avsysv1.MinecraftServer); ok && key.Name == "fresh" {
+				return apierrors.NewNotFound(schema.GroupResource{Group: "avsys.dev", Resource: "minecraftservers"}, key.Name)
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+	if code, _ := p.do("admin", "GET", "/orgs/alpha/servers/fresh/import/upload?upload=fresh0123456789ab", ""); code == http.StatusNotFound {
+		t.Error("a server just made was said to be gone")
+	}
+	if code, _ := p.do("admin", "GET", "/orgs/alpha/servers/gone/import/upload?upload=fresh0123456789ab", ""); code != http.StatusNotFound {
+		t.Errorf("a server that is gone: %d", code)
 	}
 }

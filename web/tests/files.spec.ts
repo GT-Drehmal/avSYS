@@ -864,6 +864,38 @@ test("a large file whose last part was written but not put in place is put in pl
   expect(placed).toBe(true);
 });
 
+test("a large file that cannot be put in place says why, not that a part is out of turn", async ({ page }) => {
+  await files(page);
+  const big = Buffer.alloc(40 << 20, 7);
+  let received = 0;
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*upload=*", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    const offset = Number(q.get("offset"));
+    if (offset !== received) return route.fulfill({ status: 409, json: { code: "offset", message: "This part is not the next one.", received } });
+    received = offset + Number(q.get("length"));
+    // The last part is written, and its answer lost.
+    if (received === big.length) return route.abort();
+    return route.fulfill({ json: { received } });
+  });
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/upload?*", (route) => {
+    asked.push(route.request().method());
+    if (route.request().method() === "DELETE") return route.fulfill({ status: 204 });
+    // Out of reach at first, which is asked again; then turned down, as when
+    // a folder took the file's name meanwhile.
+    if (asked.length === 1) return route.fulfill({ status: 502, json: { code: "workspace", message: "The server's files are out of reach." } });
+    return route.fulfill({ status: 400, json: { code: "invalid", message: "There is a folder called world.zip." } });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  const file = path.join(test.info().outputDir, "world.zip");
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, big);
+  await page.getByLabel("Files to upload").setInputFiles(file);
+  await expect(page.getByText("There is a folder called world.zip.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("This part is not the next one.")).toHaveCount(0);
+  await expect.poll(() => asked).toEqual(["GET", "GET", "DELETE"]);
+});
+
 test("what was sent of a large file given up on is taken away", async ({ page }) => {
   await files(page);
   const discarded: string[] = [];
