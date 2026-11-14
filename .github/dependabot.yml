@@ -21,9 +21,10 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  # The images the panel and the workspace are built from and copy restic out
-  # of. They are named by digest, so a new build of a tag (a Go patch release,
-  # Debian's fixes) arrives here as a pull request and not by itself.
+  # The images the panel and the workspace are built from. They are named by
+  # digest, so a new build of a tag (a Go patch release, Debian's fixes)
+  # arrives here as a pull request and not by itself. restic is built from
+  # its source and is not followed here: see images/restic/build.sh.
   - package-ecosystem: docker
     directories: ["/", "/images/workspace"]
     schedule: { interval: weekly }
