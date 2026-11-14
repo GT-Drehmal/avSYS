@@ -534,7 +534,10 @@ func (s *Server) readServerIcon(ctx context.Context, namespace, name string) ([]
 	}
 	done := make(chan result, 1)
 	go func() {
-		sc, err := s.workspaces.get(ctx, namespace, name)
+		// A workspace whose pod is not up, as one being made or moved, is
+		// not waited for: the picture is not worth seconds of a page or a
+		// server list waiting, and is asked again soon.
+		sc, err := s.workspaces.getNow(ctx, namespace, name)
 		if err != nil {
 			done <- result{err: err}
 			return
