@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -31,7 +32,7 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	providers := []providerInfo{}
-	for _, id := range auth.ProviderIDs {
+	for _, id := range auth.Offered {
 		if p := s.Config.Providers[id]; p != nil {
 			providers = append(providers, providerInfo{ID: p.ID, Name: p.Name})
 		}
@@ -200,76 +201,104 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) error {
 	if p == nil {
 		return errNotFound
 	}
-	state := store.NewID(16)
+	flow, to, err := p.Begin(r.Context())
+	if err != nil {
+		s.Log.Warn("starting sign-in", "provider", p.ID, "error", err)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("Could not reach "+p.Name+". Try again later."), http.StatusFound)
+		return nil
+	}
 	q := r.URL.Query()
-	value := url.Values{"state": {state}, "invite": {q.Get("invite")}, "next": {safeNext(q.Get("next"))}}.Encode()
+	value := url.Values{
+		"provider": {p.ID}, "state": {flow.State}, "verifier": {flow.Verifier}, "nonce": {flow.Nonce},
+		"invite": {q.Get("invite")}, "next": {safeNext(q.Get("next"))},
+	}.Encode()
 	http.SetCookie(w, &http.Cookie{
 		Name: oauthCookie, Value: url.QueryEscape(value), Path: "/api/v1/auth",
 		MaxAge: 600, HttpOnly: true, Secure: s.secureCookies(), SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, p.AuthURL(state), http.StatusFound)
+	http.Redirect(w, r, to, http.StatusFound)
 	return nil
 }
 
 func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) error {
-	// Failures here land the browser back on the sign-in page with a reason,
-	// since there is no script around to read a JSON error.
-	bounce := func(msg string) error {
-		http.Redirect(w, r, "/login?error="+url.QueryEscape(msg), http.StatusFound)
-		return nil
-	}
 	p := s.Config.Providers[r.PathValue("provider")]
 	if p == nil {
 		return errNotFound
+	}
+	// Failures here land the browser back on a page with a reason, since
+	// there is no script around to read a JSON error: the sign-in page, or,
+	// for someone who was linking an account, the page they came from.
+	back := "/login"
+	bounce := func(msg string) error {
+		to, _ := url.Parse(back)
+		q := to.Query()
+		q.Set("error", msg)
+		to.RawQuery = q.Encode()
+		http.Redirect(w, r, to.String(), http.StatusFound)
+		return nil
 	}
 	c, err := r.Cookie(oauthCookie)
 	if err != nil {
 		return bounce("The sign-in attempt expired. Try again.")
 	}
-	http.SetCookie(w, &http.Cookie{Name: oauthCookie, Path: "/api/v1/auth", MaxAge: -1})
+	// The attempt is over whatever happens next: a second try starts again.
+	http.SetCookie(w, &http.Cookie{Name: oauthCookie, Path: "/api/v1/auth", MaxAge: -1, HttpOnly: true, Secure: s.secureCookies(), SameSite: http.SameSiteLaxMode})
 	raw, _ := url.QueryUnescape(c.Value)
 	saved, _ := url.ParseQuery(raw)
-	if saved.Get("state") == "" || saved.Get("state") != r.URL.Query().Get("state") {
+	state := r.URL.Query().Get("state")
+	if saved.Get("provider") != p.ID || saved.Get("state") == "" || subtle.ConstantTimeCompare([]byte(saved.Get("state")), []byte(state)) != 1 {
 		return bounce("The sign-in attempt could not be verified. Try again.")
 	}
-	if r.URL.Query().Get("code") == "" {
+	invite, next := saved.Get("invite"), safeNext(saved.Get("next"))
+	current, err := s.currentUser(r)
+	if err != nil && !errors.Is(err, errUnauthorized) {
+		return err
+	}
+	if current != nil {
+		back = next
+	}
+	code := r.URL.Query().Get("code")
+	if code == "" {
 		return bounce(p.Name + " sign-in was cancelled.")
 	}
-	profile, err := p.Exchange(r.Context(), r.URL.Query().Get("code"))
-	if err != nil {
-		s.Log.Warn("oauth exchange failed", "provider", p.ID, "error", err)
+	profile, err := p.Exchange(r.Context(), code, auth.Flow{State: state, Verifier: saved.Get("verifier"), Nonce: saved.Get("nonce")})
+	if errors.Is(err, auth.ErrNotAllowed) {
+		return bounce("Your " + p.Name + " account is not allowed to sign in here.")
+	} else if err != nil {
+		s.Log.Warn("sign-in exchange failed", "provider", p.ID, "error", err)
 		return bounce("Could not sign in with " + p.Name + ".")
 	}
-	invite, next := saved.Get("invite"), safeNext(saved.Get("next"))
 	identity := store.Identity{Provider: p.ID, Subject: profile.Subject, Login: profile.Login}
 
 	user, err := s.Store.UserByIdentity(r.Context(), p.ID, profile.Subject)
 	switch {
+	case err == nil && current != nil && current.ID != user.ID:
+		// Someone signed in who links a provider account that is another
+		// person's here stays who they are.
+		return bounce("That " + p.Name + " account is linked to someone else here.")
 	case err == nil:
+		// Known: a sign-in, or a link that is there already.
 	case !errors.Is(err, store.ErrNotFound):
 		return err
-	default:
-		// An unknown provider account either gets linked to whoever is signed
-		// in already, or becomes a new user.
-		if current, err := s.currentUser(r); err == nil {
-			identity.UserID = current.ID
-			if err := s.Store.LinkIdentity(r.Context(), identity); err != nil {
-				return err
-			}
-			http.Redirect(w, r, next, http.StatusFound)
-			return nil
+	case current != nil:
+		// An unknown provider account is linked to whoever is signed in.
+		identity.UserID = current.ID
+		if err := s.Store.LinkIdentity(r.Context(), identity); errors.Is(err, store.ErrConflict) {
+			return bounce("That " + p.Name + " account is linked to someone else here.")
+		} else if err != nil {
+			return err
 		}
+		http.Redirect(w, r, next, http.StatusFound)
+		return nil
+	default:
+		// Or it becomes a new user, where one may be made.
 		if ok, err := s.canSignUp(r, invite); err != nil {
 			return err
 		} else if !ok {
 			return bounce(errSignupClosed.Message)
 		}
-		user, err = s.createOAuthUser(r, profile)
+		user, err = s.createOAuthUser(r, profile, identity)
 		if err != nil {
-			return err
-		}
-		identity.UserID = user.ID
-		if err := s.Store.LinkIdentity(r.Context(), identity); err != nil {
 			return err
 		}
 	}
@@ -291,7 +320,11 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) error {
 
 var nonUsernameChars = regexp.MustCompile(`[^a-z0-9_-]+`)
 
-func (s *Server) createOAuthUser(r *http.Request, p auth.Profile) (*store.User, error) {
+// createOAuthUser makes the account for a provider account seen for the
+// first time, with the identity linked to it. Should the same provider
+// account have come in twice at once, the one account made for it is
+// returned.
+func (s *Server) createOAuthUser(r *http.Request, p auth.Profile, identity store.Identity) (*store.User, error) {
 	base := p.Login
 	if base == "" {
 		base, _, _ = strings.Cut(p.Email, "@")
@@ -309,9 +342,12 @@ func (s *Server) createOAuthUser(r *http.Request, p auth.Profile) (*store.User, 
 			username = fmt.Sprintf("%s%d", base, attempt+1)
 		}
 		u := &store.User{Username: username, DisplayName: p.Name, Email: p.Email, AvatarURL: p.AvatarURL}
-		err := s.Store.CreateUser(r.Context(), u)
+		err := s.Store.CreateUserWithIdentity(r.Context(), u, identity)
 		if err == nil {
 			return u, nil
+		}
+		if errors.Is(err, store.ErrIdentityTaken) {
+			return s.Store.UserByIdentity(r.Context(), identity.Provider, identity.Subject)
 		}
 		if !errors.Is(err, store.ErrConflict) {
 			return nil, err

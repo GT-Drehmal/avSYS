@@ -80,6 +80,15 @@ type options struct {
 	podDial             string
 	allowSignups        bool
 	installCRDs         bool
+	// An install's own OpenID Connect provider. Its client secret is read
+	// from oidcSecretFile or AVSYS_OIDC_CLIENT_SECRET, never from a flag.
+	oidcIssuer        string
+	oidcClientID      string
+	oidcSecretFile    string
+	oidcName          string
+	oidcScopes        string
+	oidcAllowedGroups string
+	oidcGroupsClaim   string
 }
 
 // env returns the value of AVSYS_<NAME> for a flag called name, or fallback.
@@ -127,6 +136,13 @@ func parseFlags() options {
 	str(&o.podDial, "pod-dial", "auto", "how to reach pods: direct, forward (through the API server), or auto")
 	flag.BoolVar(&o.allowSignups, "allow-signups", env("allow-signups", "") == "true", "let anyone create an account without an invite")
 	flag.BoolVar(&o.installCRDs, "install-crds", env("install-crds", "true") == "true", "install or upgrade the MinecraftServer CRD on startup")
+	str(&o.oidcIssuer, "oidc-issuer", "", "issuer URL of an OpenID Connect provider to sign in with (Authentik, Keycloak, Authelia, Google Workspace, Entra ID); the callback to register is <public-url>/api/v1/auth/oidc/callback")
+	str(&o.oidcClientID, "oidc-client-id", "", "client ID registered with the OpenID Connect provider")
+	str(&o.oidcSecretFile, "oidc-client-secret-file", "", "file holding the OpenID Connect client secret (or set AVSYS_OIDC_CLIENT_SECRET)")
+	str(&o.oidcName, "oidc-name", "SSO", "what the sign-in button calls the OpenID Connect provider")
+	str(&o.oidcScopes, "oidc-scopes", "openid profile email", "scopes asked of the OpenID Connect provider, separated by spaces")
+	str(&o.oidcAllowedGroups, "oidc-allowed-groups", "", "groups, separated by commas, one of which a person must be in to sign in through the OpenID Connect provider (empty: anyone it signs in)")
+	str(&o.oidcGroupsClaim, "oidc-groups-claim", "groups", "claim of the ID token (or user info) that lists a person's groups")
 	flag.Parse()
 	o.publicURL = strings.TrimRight(o.publicURL, "/")
 	o.packURL = strings.TrimRight(o.packURL, "/")
@@ -167,6 +183,35 @@ func providers(publicURL string) (map[string]*auth.Provider, error) {
 	return out, nil
 }
 
+// oidcProvider configures the install's OpenID Connect provider, if one is
+// given.
+func oidcProvider(opts options) (*auth.Provider, error) {
+	secret := os.Getenv("AVSYS_OIDC_CLIENT_SECRET")
+	if opts.oidcSecretFile != "" {
+		data, err := os.ReadFile(opts.oidcSecretFile)
+		if err != nil {
+			return nil, fmt.Errorf("reading the OpenID Connect client secret: %w", err)
+		}
+		secret = strings.TrimSpace(string(data))
+	}
+	if opts.oidcIssuer == "" {
+		if opts.oidcClientID != "" || secret != "" {
+			return nil, errors.New("OpenID Connect sign-in needs --oidc-issuer")
+		}
+		return nil, nil
+	}
+	var groups []string
+	for _, g := range strings.Split(opts.oidcAllowedGroups, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			groups = append(groups, g)
+		}
+	}
+	return auth.NewOIDCProvider(auth.OIDCConfig{
+		Issuer: opts.oidcIssuer, ClientID: opts.oidcClientID, ClientSecret: secret, Name: opts.oidcName,
+		Scopes: strings.Fields(opts.oidcScopes), AllowedGroups: groups, GroupsClaim: opts.oidcGroupsClaim,
+	}, opts.publicURL)
+}
+
 func run(opts options, log *slog.Logger) error {
 	ctx := ctrl.SetupSignalHandler()
 
@@ -190,6 +235,18 @@ func run(opts options, log *slog.Logger) error {
 	oauth, err := providers(opts.publicURL)
 	if err != nil {
 		return err
+	}
+	if p, err := oidcProvider(opts); err != nil {
+		return err
+	} else if p != nil {
+		oauth[p.ID] = p
+		// Looked up now, to say early what is wrong; one that cannot be
+		// reached is looked up again when someone signs in.
+		if err := p.Discover(ctx); err != nil {
+			log.Warn("the OpenID Connect provider could not be reached; it is tried again at the next sign-in", "error", err)
+		} else {
+			log.Info("signing in through OpenID Connect is on")
+		}
 	}
 
 	scheme := runtime.NewScheme()

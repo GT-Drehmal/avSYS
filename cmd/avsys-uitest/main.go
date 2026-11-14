@@ -40,6 +40,7 @@ import (
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/api"
 	"github.com/GT-Drehmal/avSYS/internal/auth"
+	"github.com/GT-Drehmal/avSYS/internal/auth/fakeidp"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/router"
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
@@ -118,6 +119,19 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 	}
 	gateway.Authz = srv
 
+	// An OpenID Connect provider of its own, which signs in whoever is typed
+	// on its page. "outsider" there is the outsider here.
+	idp, err := fakeidp.Start("avsys-uitest", "uitest-secret", srv.Config.PublicURL+"/api/v1/auth/oidc/callback")
+	if err != nil {
+		return err
+	}
+	defer idp.Close()
+	provider, err := auth.NewOIDCProvider(auth.OIDCConfig{Issuer: idp.URL, ClientID: idp.ClientID, ClientSecret: idp.ClientSecret, Name: "Test ID"}, srv.Config.PublicURL)
+	if err != nil {
+		return err
+	}
+	srv.Config.Providers = map[string]*auth.Provider{provider.ID: provider}
+
 	// People, one for each role in the first organization, and one who is
 	// in neither.
 	hash, err := auth.HashPassword(password)
@@ -136,6 +150,9 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 			return err
 		}
 		users[name], tokens[name] = u, secret
+	}
+	if err := db.LinkIdentity(ctx, store.Identity{Provider: provider.ID, Subject: auth.OIDCSubject(idp.URL, "outsider"), UserID: users["outsider"].ID, Login: "outsider"}); err != nil {
+		return err
 	}
 	friends := &store.Org{Name: "Friends", Slug: "friends"}
 	if err := db.CreateOrg(ctx, friends, users["owner"].ID); err != nil {

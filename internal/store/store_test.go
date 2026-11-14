@@ -40,6 +40,53 @@ func TestOnlyFirstUserIsAdmin(t *testing.T) {
 	}
 }
 
+// A provider account belongs to one user. Making a second user with it, as
+// two sign-ins at once would, makes neither the user nor the link; linking
+// it to another user leaves it where it is.
+func TestIdentityBelongsToOneUser(t *testing.T) {
+	s, ctx := open(t), context.Background()
+	id := Identity{Provider: "oidc", Subject: "https://idp.test steve", Login: "steve"}
+	first := &User{Username: "steve"}
+	if err := s.CreateUserWithIdentity(ctx, first, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUserWithIdentity(ctx, &User{Username: "steve2"}, id); !errors.Is(err, ErrIdentityTaken) {
+		t.Errorf("second user with the identity: err = %v, want ErrIdentityTaken", err)
+	}
+	if _, err := s.UserByUsername(ctx, "steve2"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the second user was made: %v", err)
+	}
+	if n, _ := s.CountUsers(ctx); n != 1 {
+		t.Errorf("%d users, want 1", n)
+	}
+	// A username taken is a conflict, and links nothing.
+	if err := s.CreateUserWithIdentity(ctx, &User{Username: "steve"}, Identity{Provider: "oidc", Subject: "other"}); !errors.Is(err, ErrConflict) {
+		t.Errorf("taken username: err = %v, want ErrConflict", err)
+	}
+	if _, err := s.UserByIdentity(ctx, "oidc", "other"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the identity was linked to no one: %v", err)
+	}
+
+	other := user(t, s, "other")
+	moved := id
+	moved.UserID = other.ID
+	if err := s.LinkIdentity(ctx, moved); !errors.Is(err, ErrConflict) {
+		t.Errorf("linking another user's identity: err = %v, want ErrConflict", err)
+	}
+	if got, err := s.UserByIdentity(ctx, id.Provider, id.Subject); err != nil || got.ID != first.ID {
+		t.Errorf("the identity is now %v, %v", got, err)
+	}
+	// Linking it again to its own user only updates the login.
+	again := id
+	again.UserID, again.Login = first.ID, "steve-renamed"
+	if err := s.LinkIdentity(ctx, again); err != nil {
+		t.Error(err)
+	}
+	if ids, _ := s.Identities(ctx, first.ID); len(ids) != 1 || ids[0].Login != "steve-renamed" {
+		t.Errorf("identities = %+v", ids)
+	}
+}
+
 func TestSessionLookupAndExpiry(t *testing.T) {
 	s, ctx := open(t), context.Background()
 	u := user(t, s, "someone")

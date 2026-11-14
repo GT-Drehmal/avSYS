@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"time"
 )
 
@@ -35,6 +36,17 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 // CreateUser inserts u, assigning its ID. The first user ever created becomes
 // the instance admin.
 func (s *Store) CreateUser(ctx context.Context, u *User) error {
+	return s.CreateUserWithIdentity(ctx, u, Identity{})
+}
+
+// ErrIdentityTaken is CreateUserWithIdentity's answer when the provider
+// account is linked to a user already.
+var ErrIdentityTaken = errors.New("identity already linked")
+
+// CreateUserWithIdentity inserts u, as CreateUser does, with a provider
+// account linked to it: both or neither, so that no user is made for a
+// provider account another user has. An empty identity links nothing.
+func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity) error {
 	u.ID = NewID(10)
 	u.CreatedAt = unix(now())
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -53,6 +65,15 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 		u.ID, u.Username, u.DisplayName, u.Email, u.AvatarURL, u.PasswordHash, u.IsAdmin, u.CreatedAt.Unix())
 	if err != nil {
 		return mapErr(err)
+	}
+	if id.Provider != "" {
+		_, err = tx.ExecContext(ctx, `INSERT INTO identities (provider, subject, user_id, login) VALUES (?, ?, ?, ?)`,
+			id.Provider, id.Subject, u.ID, id.Login)
+		if err = mapErr(err); errors.Is(err, ErrConflict) {
+			return ErrIdentityTaken
+		} else if err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -95,12 +116,23 @@ func (s *Store) UserByIdentity(ctx context.Context, provider, subject string) (*
 		provider, subject))
 }
 
+// LinkIdentity links a provider account to a user, or updates the login of
+// a link that is there. It is ErrConflict when the provider account is
+// linked to another user: a link never moves.
 func (s *Store) LinkIdentity(ctx context.Context, id Identity) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO identities (provider, subject, user_id, login) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(provider, subject) DO UPDATE SET login = excluded.login`,
+		 ON CONFLICT(provider, subject) DO UPDATE SET login = excluded.login WHERE user_id = excluded.user_id`,
 		id.Provider, id.Subject, id.UserID, id.Login)
-	return mapErr(err)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *Store) Identities(ctx context.Context, userID string) ([]Identity, error) {

@@ -98,6 +98,7 @@ Every flag can also be set as an environment variable: `--public-url` is `AVSYS_
 | `AVSYS_SSH_PUBLIC_HOST`, `AVSYS_SSH_PUBLIC_PORT` | Where the SSH gateway is reachable, if not the panel's host and port 2222. |
 | `AVSYS_ROUTER_DOMAIN` | A domain with a wildcard DNS record pointing at the router. New servers default to `<server>.<org>.<domain>`. |
 | `AVSYS_GITHUB_CLIENT_ID`, `AVSYS_GITHUB_CLIENT_SECRET` | Enable GitHub sign-in. Likewise `DISCORD` and `GOOGLE`. The callback URL to register is `<public-url>/api/v1/auth/<provider>/callback`. |
+| `AVSYS_OIDC_ISSUER`, `AVSYS_OIDC_CLIENT_ID`, `AVSYS_OIDC_CLIENT_SECRET` | Enable sign-in through your own OpenID Connect provider (Authentik, Keycloak, Authelia, Google Workspace, Entra ID). Give the issuer exactly as the provider names it; the callback URL to register is `<public-url>/api/v1/auth/oidc/callback`. `AVSYS_OIDC_NAME` is what the sign-in button calls it, `AVSYS_OIDC_SCOPES` the scopes asked for (default `openid profile email`), and `AVSYS_OIDC_ALLOWED_GROUPS` a comma-separated list of groups one of which a person must be in, read from the `groups` claim or the one `AVSYS_OIDC_GROUPS_CLAIM` names. `--oidc-client-secret-file` reads the secret from a file. Accounts are linked by the provider's subject, never by email. |
 | `AVSYS_ROUTER_PUBLIC_PORT` | The port players reach the router on, if not 25565. Shown in server addresses. |
 | `AVSYS_CURSEFORGE_API_KEY` | Passed to servers for CurseForge downloads. |
 | `AVSYS_ALLOW_SIGNUPS` | `true` lets anyone create an account. |
