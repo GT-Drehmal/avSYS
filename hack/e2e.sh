@@ -101,10 +101,13 @@ def route(url):
     return "/".join(parts), query
 
 budget = float(sys.argv[2])
-# Reads that list the repository's snapshots, or read one's record out of
-# it, run restic the first time after the repository changed, which takes a
-# good part of a second on a runner: they have budgets of their own.
-OWN = {"/orgs/{org}/snapshots": 2000, "/orgs/{org}/servers/{server}/snapshots": 2000, "/orgs/{org}/snapshots/{id}": 2000}
+# Reads that list the repository's snapshots run restic the first time after
+# the repository changed; those of one snapshot, or of a template, read its
+# record out of it the first time it is asked for. On a runner that takes up
+# to half a second, and the organization's list, which also measures the
+# repository, a second: they have budgets of their own, twice that.
+OWN = {"/orgs/{org}/snapshots": 2000, "/orgs/{org}/servers/{server}/snapshots": 1000,
+       "/orgs/{org}/snapshots/{id}": 1000, "/orgs/{org}/templates/{template}": 1000}
 by_route, over, lists, slowest, list_routes = {}, [], 0, (0.0, ""), {}
 for line in open(sys.argv[1]):
     try:

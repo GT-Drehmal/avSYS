@@ -37,13 +37,16 @@ test("once the cluster can be reached again, servers are asked for again, and no
     if (path === "/api/v1/orgs/friends/servers") asked.servers++;
     if (path === "/api/v1/orgs/friends/snapshots") asked.snapshots++;
   });
-  // One stream, which says the cluster is back, and no other.
+  const listed = (path: string) => page.waitForResponse((r) => new URL(r.url()).pathname === path);
+  const both = Promise.all([listed("/api/v1/orgs/friends/servers"), listed("/api/v1/orgs/friends/snapshots")]);
+  // One stream, which says the cluster is back once the page has both lists,
+  // and no other.
   let streams = 0;
-  await page.route("**/api/v1/events?*", (route) =>
-    streams++ === 0
-      ? route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: `${stream({ reachable: true })}event: resync\ndata: {"cluster":true}\n\n` })
-      : route.abort(),
-  );
+  await page.route("**/api/v1/events?*", async (route) => {
+    if (streams++ > 0) return route.abort();
+    await both;
+    await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: `${stream({ reachable: true })}event: resync\ndata: {"cluster":true}\n\n` });
+  });
   await page.goto("/o/friends/backups");
   await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
   await expect.poll(() => asked.servers).toBe(2);
