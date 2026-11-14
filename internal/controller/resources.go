@@ -397,7 +397,6 @@ const paperAPI = "https://fill.papermc.io"
 // records what it got. AVSYS_PAPER_API, in a server's own environment, asks
 // another site in place of Paper's.
 const keepBuild = `f=` + paperEnv + `
-kind=$(echo "${TYPE:-}" | tr a-z A-Z)
 # The build asked for, as the image reads it: for Folia, its own name for
 # it comes before Paper's older one.
 build=${PAPERBUILD:-}
@@ -412,7 +411,7 @@ if [ -z "${PAPER_CUSTOM_JAR:-}${PAPER_DOWNLOAD_URL:-}${FOLIA_DOWNLOAD_URL:-}$loa
   if [ -n "$jar" ] && [ -f "$jar" ] && [ "$(get TYPE)" = "$kind" ] && [ "$(get VERSION)" = "${VERSION:-}" ] &&
     { [ -z "$build" ] || [ "${jar%-"$build".jar}" != "$jar" ]; }; then
     project=$(echo "$kind" | tr A-Z a-z)
-    if curl -fsS -o /dev/null --connect-timeout 3 -m 5 "${AVSYS_PAPER_API:-` + paperAPI + `}/v3/projects/$project/versions/$VERSION/builds/latest" 2>/dev/null; then
+    if answers "${AVSYS_PAPER_API:-` + paperAPI + `}/v3/projects/$project/versions/$VERSION/builds/latest"; then
       echo "[avsys] Paper's site answers: looking for a newer build of $VERSION than ${jar##*/}"
     else
       echo "[avsys] Paper's site does not answer: starting on the installed ${jar##*/}"
@@ -420,16 +419,159 @@ if [ -z "${PAPER_CUSTOM_JAR:-}${PAPER_DOWNLOAD_URL:-}${FOLIA_DOWNLOAD_URL:-}$loa
     fi
   fi
 fi
-exec ` + imageStart + `
 `
 
-// keepsBuild says whether a server's game is started through keepBuild: one
-// on Paper or Folia, run by the image it is written for.
-func keepsBuild(mc *avsysv1.MinecraftServer) bool {
-	if mc.Spec.Modpack != nil || mc.Spec.Image != "" {
-		return false
-	}
-	return mc.Spec.Loader == avsysv1.LoaderPaper || mc.Spec.Loader == avsysv1.LoaderFolia
+// The records the image keeps, in /data, of what it installed from Modrinth
+// for MODRINTH_PROJECTS, and, in the folder plugins or mods go to, of what
+// it got for the MODS and PLUGINS lists. Each is written once all of its
+// list is installed, as JSON: the files, relative to its folder, and for
+// Modrinth the projects it was given, as given.
+const (
+	modrinthRecord = "/data/.modrinth-manifest.json"
+	listRecord     = ".var-list-manifest.json"
+)
+
+// modrinthAPI is Modrinth's API, as the image asks it.
+const modrinthAPI = "https://api.modrinth.com"
+
+// keepContent lets a server start with the mods, plugins and datapacks it
+// has when the sites they come from do not answer. On every start the image
+// asks Modrinth about each project, and fetches each file from a URL again
+// or asks whether it changed, and the start fails when one does not answer.
+// So the sites are asked first, for a few seconds, and only about content
+// the server already has as asked for:
+//   - Modrinth projects, when the image's record says it installed exactly
+//     these, each pinned to a version, and every file it got for them, their
+//     dependencies too, is there. When Modrinth does not answer, the image is
+//     not given the projects, and leaves its files and record as they are.
+//   - A mod, plugin or datapack from a URL, when the file it was saved as,
+//     the last part of the URL, is there, and for a mod or plugin, in the
+//     image's record of that list. When its site does not answer, the image
+//     copies that file in place of the URL, or for a datapack, leaves it.
+//
+// Anything else is left to the image, as before: a first start, a project
+// added, taken off or pinned to another version, a file missing, a world
+// other than the one the datapacks are in, old files the image is told to
+// remove first. MODRINTH_API_BASE_URL, in a server's own environment, is
+// where the image and this ask Modrinth.
+const keepContent = `level=${LEVEL:-world}
+# Lines of a list as the image reads one: split at commas and line ends,
+# without comments, trimmed.
+lines() { printf '%s\n' "$1" | tr , '\n' | sed 's/#.*//; s/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d'; }
+# The strings in the array $1 of the image's record $2, a line each. It
+# fails on a record it cannot read plainly.
+listed() {
+  [ -f "$2" ] || return 1
+  awk -v k="\"$1\":[" '{ s = s $0 "\n" } END {
+    i = index(s, k); if (!i) exit 1
+    s = substr(s, i + length(k))
+    for (;;) {
+      sub(/^[ \t\n]+/, "", s); c = substr(s, 1, 1)
+      if (c == "]") exit 0
+      if (c == ",") { s = substr(s, 2); continue }
+      if (c != "\"") exit 1
+      s = substr(s, 2); j = index(s, "\"")
+      if (!j) exit 1
+      v = substr(s, 1, j - 1)
+      if (index(v, "\\")) exit 1
+      print v; s = substr(s, j + 1)
+    }
+  }' "$2"
+}
+# The file a URL is saved as, as far as it can be told: the last part of its path.
+saved() { n=${1%%[?]*}; echo "${n##*/}"; }
+offline() { h=${1#*://}; echo "[avsys] ${h%%/*} does not answer: starting with the installed $2" >&2; }
+# Files the image is told to remove before it installs.
+removes=
+for v in "${REMOVE_OLD_MODS:-}" "${REMOVE_OLD_DATAPACKS:-}"; do
+  case $v in "" | [Ff][Aa][Ll][Ss][Ee]) ;; *) removes=yes ;; esac
+done
+m=` + modrinthRecord + `
+want=$(lines "${MODRINTH_PROJECTS:-}" | sort)
+# Installed as asked for, each pinned to a version, each file there, and
+# datapacks in this world.
+if [ -n "$want" ] && [ -z "$removes" ] && had=$(listed projects "$m") && [ "$(printf '%s\n' "$had" | sort)" = "$want" ] &&
+  files=$(listed files "$m") && [ -n "$files" ] &&
+  ! printf '%s\n' "$want" | sed 's/^datapack://' | grep -qv : &&
+  printf '%s\n' "$files" | {
+    while IFS= read -r p; do
+      case $p in */datapacks/*) case $p in "$level"/datapacks/*) ;; *) exit 1 ;; esac ;; esac
+      [ -f "/data/$p" ] || exit 1
+    done
+  }; then
+  names=$(printf '%s\n' "$files" | awk -F/ '{ printf "%s%s", (NR > 1 ? ", " : ""), $NF }')
+  if answers "${MODRINTH_API_BASE_URL:-` + modrinthAPI + `}/v2/tag/project_type"; then
+    echo "[avsys] Modrinth answers: checking the installed $names"
+  else
+    echo "[avsys] Modrinth does not answer: starting with the installed $names"
+    unset MODRINTH_PROJECTS
+  fi
+fi
+# Mods and plugins from URLs, in the one folder the image puts both in.
+case "${USES_MODS:-}${USES_PLUGINS:-}$kind" in
+  PAPER | FOLIA | PURPUR) dir=${PLUGINS_OUT_DIR:-/data/plugins} ;;
+  FABRIC | QUILT | FORGE | NEOFORGE) dir=${MODS_OUT_DIR:-/data/mods} ;;
+  *) dir= ;;
+esac
+kept() {
+  got=$(listed files "$dir/` + listRecord + `") || got=
+  lines "$1" | while IFS= read -r e; do
+    case $e in
+      http://* | https://*)
+        n=$(saved "$e")
+        if [ -n "$n" ] && [ -f "$dir/$n" ] && printf '%s\n' "$got" | grep -qxF -e "$n" && ! answers -I -L "$e"; then
+          offline "$e" "$n"
+          e=$dir/$n
+        fi
+        ;;
+    esac
+    printf '%s\n' "$e"
+  done
+}
+if [ -n "$dir" ] && [ -z "$removes" ]; then
+  if [ -n "${MODS:-}" ]; then
+    now=$(kept "$MODS")
+    [ "$now" = "$(lines "$MODS")" ] || export MODS="$now"
+  fi
+  if [ -n "${PLUGINS:-}" ]; then
+    now=$(kept "$PLUGINS")
+    [ "$now" = "$(lines "$PLUGINS")" ] || export PLUGINS="$now"
+  fi
+fi
+# Datapacks from URLs, which the image fetches again on every start.
+if [ -n "${DATAPACKS:-}" ] && [ -z "$removes" ]; then
+  was=$(printf '%s\n' "$DATAPACKS" | tr ', \t' '\n\n\n' | sed '/^$/d')
+  now=$(printf '%s\n' "$was" | while IFS= read -r e; do
+    case $e in
+      http://* | https://*)
+        n=$(saved "$e")
+        if [ -n "$n" ] && [ -f "/data/$level/datapacks/$n" ] && ! answers -I -L "$e"; then
+          offline "$e" "$n"
+          continue
+        fi
+        ;;
+    esac
+    printf '%s\n' "$e"
+  done)
+  [ "$now" = "$was" ] || export DATAPACKS="$now"
+fi
+`
+
+// startScript is the game container's command for a server run by the
+// image it is written for: what the server has installed is kept when the
+// sites it came from do not answer, and then the image starts as it does
+// by itself.
+const startScript = `kind=$(echo "${TYPE:-}" | tr a-z A-Z)
+# Whether a site answers, within a few seconds.
+answers() { curl -fsS -o /dev/null --connect-timeout 3 -m 5 "$@" 2>/dev/null; }
+` + keepBuild + keepContent + `exec ` + imageStart + `
+`
+
+// startsThroughScript says whether a server's game is started through
+// startScript: one run by the image it is written for, and not from a
+// modpack, which the image installs its own way.
+func startsThroughScript(mc *avsysv1.MinecraftServer) bool {
+	return mc.Spec.Modpack == nil && mc.Spec.Image == ""
 }
 
 func rconPasswordEnv(mc *avsysv1.MinecraftServer) corev1.EnvVar {
@@ -542,14 +684,15 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 	// Also after the hash, so that servers already running are not asked to
 	// restart for it: the end of the game's log is kept when it fails, and
 	// that is how the status can say why it stopped (see startFailure).
-	// So is starting on the build a server has: it changes nothing a running
-	// game would be restarted for, and is what each start after this one
-	// does. Whatever changes it, its software, changes the hash itself.
+	// So is starting on the build and content a server has: it changes
+	// nothing a running game would be restarted for, and is what each start
+	// after this one does. Whatever changes it, its software or content,
+	// changes the hash itself.
 	for i := range spec.Containers {
 		if spec.Containers[i].Name == MinecraftContainer {
 			spec.Containers[i].TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
-			if keepsBuild(mc) {
-				spec.Containers[i].Command = []string{"/bin/sh", "-c", keepBuild}
+			if startsThroughScript(mc) {
+				spec.Containers[i].Command = []string{"/bin/sh", "-c", startScript}
 			}
 		}
 	}
