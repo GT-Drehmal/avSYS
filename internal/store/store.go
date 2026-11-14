@@ -147,7 +147,8 @@ CREATE TABLE IF NOT EXISTS worlds (
 	size        INTEGER NOT NULL DEFAULT 0,
 	unpacked    INTEGER NOT NULL DEFAULT 0,
 	source      TEXT NOT NULL DEFAULT '',
-	failed      TEXT NOT NULL DEFAULT ''
+	failed      TEXT NOT NULL DEFAULT '',
+	pack        TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS worlds_name ON worlds(org_id, name);
 CREATE TABLE IF NOT EXISTS player_lists (
@@ -228,6 +229,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
+	if err := addWorldPack(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -255,6 +260,17 @@ func addTemplateWorld(db *sql.DB) error {
 		return err
 	}
 	_, err := db.Exec(`ALTER TABLE templates ADD COLUMN world TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// addWorldPack gives a table of worlds from before a world could name a
+// resource pack the column for it.
+func addWorldPack(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('worlds') WHERE name = 'pack'`).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE worlds ADD COLUMN pack TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 

@@ -246,6 +246,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"DELETE /orgs/{org}/templates/{template}/versions/{id}", "/orgs/alpha/templates/nope/versions/aaaa1111", "", store.RoleAdmin, 404},
 		{"PUT /orgs/{org}/templates/{template}/world", "/orgs/alpha/templates/nope/world?root=World", "", store.RoleAdmin, 404},
 		{"DELETE /orgs/{org}/templates/{template}/world", "/orgs/alpha/templates/nope/world", "", store.RoleAdmin, 404},
+		{"PATCH /orgs/{org}/templates/{template}/world", "/orgs/alpha/templates/nope/world", `{"resourcePack":null}`, store.RoleAdmin, 404},
 		// 400: allowed, and no upload was named. 503: allowed, and there is
 		// nowhere to keep it.
 		{"GET /orgs/{org}/uploads", "", "", store.RoleOperator, 400},
@@ -270,6 +271,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET /orgs/{org}/worlds/{world}/archive", "/orgs/alpha/worlds/nope/archive", "", store.RoleOperator, 404},
 		{"GET /orgs/{org}/worlds/{world}/icon", "/orgs/alpha/worlds/nope/icon", "", store.RoleViewer, 404},
 		{"PUT /orgs/{org}/worlds/{world}/icon", "/orgs/alpha/worlds/nope/icon", "", store.RoleOperator, 404},
+		{"PUT /orgs/{org}/worlds/{world}/resource-pack", "/orgs/alpha/worlds/nope/resource-pack", "x", store.RoleOperator, 503},
 		{"DELETE /orgs/{org}/worlds/{world}/icon", "/orgs/alpha/worlds/nope/icon", "", store.RoleOperator, 404},
 		{"GET /orgs/{org}/presence", "", "", store.RoleViewer, 200},
 		{"PUT /orgs/{org}/presence", "", `{"tab":"tab-of-{who}","server":"survival"}`, store.RoleViewer, 204},

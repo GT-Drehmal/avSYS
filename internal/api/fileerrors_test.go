@@ -33,13 +33,14 @@ func filesFrom(t *testing.T, p *panel, h sftp.Handlers) *sftp.Client {
 	used := &atomic.Int64{}
 	used.Store(time.Now().UnixNano())
 	p.srv.workspaces.mu.Lock()
-	p.srv.workspaces.conns[p.srv.Namespace("alpha")+"/world"] = &pooledSFTP{sftp: sc, lastUsed: used}
+	key := p.srv.Namespace("alpha") + "/world"
+	p.srv.workspaces.conns[key] = &pooledSFTP{sftp: sc, lastUsed: used}
 	p.srv.workspaces.mu.Unlock()
-	// Taken out again: with no SSH connection under it, the pool, which
-	// outlives the test, could not close it once it was idle.
+	// Taken out again when the test ends: left in, the pool would close it
+	// once it was idle, and it has no SSH connection to close.
 	t.Cleanup(func() {
 		p.srv.workspaces.mu.Lock()
-		delete(p.srv.workspaces.conns, p.srv.Namespace("alpha")+"/world")
+		delete(p.srv.workspaces.conns, key)
 		p.srv.workspaces.mu.Unlock()
 	})
 	return sc

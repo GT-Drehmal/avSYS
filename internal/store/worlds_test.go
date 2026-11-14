@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 )
 
@@ -59,6 +61,29 @@ func TestWorlds(t *testing.T) {
 	if got, err := s.World(ctx, a.ID, arena.ID); err != nil || got.Name != "Arena 2" || got.Description != "Reset each round" || got.Root != "world" || got.Version != "1.21.5" || got.Size != 42 || got.Unpacked != 84 || got.Source != "server:arena" || got.Failed != "" {
 		t.Errorf("changed: %+v, %v", got, err)
 	}
+	// A resource pack named, kept with the rest, and taken off again.
+	if err := s.SetWorldPack(ctx, a.ID, arena.ID, `{"url":"https://example.com/p.zip"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.World(ctx, a.ID, arena.ID); err != nil || got.Pack != `{"url":"https://example.com/p.zip"}` || got.Name != "Arena 2" || got.Size != 42 {
+		t.Errorf("given a pack: %+v, %v", got, err)
+	}
+	if err := s.SetWorldPack(ctx, b.ID, arena.ID, "{}"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another organization's given a pack: %v", err)
+	}
+	if err := s.SetWorldPack(ctx, a.ID, arena.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.World(ctx, a.ID, arena.ID); got.Pack != "" {
+		t.Errorf("its pack stayed: %q", got.Pack)
+	}
+	withPack := &World{OrgID: a.ID, Name: "Map", Pack: `{"url":"https://example.com/m.zip"}`}
+	if err := s.CreateWorld(ctx, withPack); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.World(ctx, a.ID, withPack.ID); got.Pack != withPack.Pack {
+		t.Errorf("made with a pack: %q", got.Pack)
+	}
 	// Its picture goes with it.
 	if err := s.SetImage(ctx, WorldImage(arena.ID), []byte("png")); err != nil {
 		t.Fatal(err)
@@ -71,5 +96,50 @@ func TestWorlds(t *testing.T) {
 	}
 	if data, _, err := s.Image(ctx, WorldImage(arena.ID)); data != nil {
 		t.Errorf("its picture stayed: %q, %v", data, err)
+	}
+}
+
+// A table of worlds from before a world could name a resource pack gets the
+// column, and the worlds in it have none.
+func TestWorldPackAdded(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "worlds.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := &Org{Slug: "old", Name: "Old"}
+	if err := s.CreateOrg(ctx, org, user(t, s, "owner").ID); err != nil {
+		t.Fatal(err)
+	}
+	old := &World{OrgID: org.ID, Name: "Old", Root: "world"}
+	if err := s.CreateWorld(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE worlds DROP COLUMN pack`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	for range 2 {
+		if s, err = Open(path); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.World(ctx, org.ID, old.ID); err != nil || got.Pack != "" || got.Root != "world" {
+			t.Errorf("after opening: %+v %v", got, err)
+		}
+		s.Close()
+	}
+	s, _ = Open(path)
+	defer s.Close()
+	if err := s.SetWorldPack(ctx, org.ID, old.ID, `{"url":"https://example.com/p.zip"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.World(ctx, org.ID, old.ID); got.Pack == "" {
+		t.Error("an old world was not given a pack")
 	}
 }

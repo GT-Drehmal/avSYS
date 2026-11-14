@@ -848,7 +848,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return err
 	}
-	all := append(versionsOf(list, t.ID), worldsOf(list, t.ID)...)
+	all := append(append(versionsOf(list, t.ID), worldsOf(list, t.ID)...), keptPackSnapshots(list, worldHost(t.ID))...)
 	if len(all) > 0 {
 		release, err := s.claimToDelete(r.Context(), a, all)
 		if err != nil {
@@ -863,7 +863,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 			return snapshotError(err)
 		}
 	}
-	s.forgetTemplateSnapshotsOf(context.WithoutCancel(r.Context()), a.Org, templateHost(t.ID), worldHost(t.ID))
+	s.forgetTemplateSnapshotsOf(context.WithoutCancel(r.Context()), a.Org, templateHost(t.ID), worldHost(t.ID), packHost(worldHost(t.ID)))
 	if err := s.Store.DeleteTemplate(r.Context(), a.Org.ID, t.ID); err != nil {
 		return err
 	}

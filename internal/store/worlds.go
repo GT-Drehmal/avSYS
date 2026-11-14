@@ -39,14 +39,16 @@ type World struct {
 	Source string
 	// Failed says why its archive could not be made, for one that was not.
 	Failed string
+	// Pack is the resource pack it names, as JSON, or "" for none.
+	Pack string
 }
 
-const worldColumns = `id, org_id, name, description, created_by, created_at, updated_at, root, version, file, size, unpacked, source, failed`
+const worldColumns = `id, org_id, name, description, created_by, created_at, updated_at, root, version, file, size, unpacked, source, failed, pack`
 
 func scanWorld(row interface{ Scan(...any) error }) (*World, error) {
 	var w World
 	var created, updated int64
-	if err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.CreatedBy, &created, &updated, &w.Root, &w.Version, &w.File, &w.Size, &w.Unpacked, &w.Source, &w.Failed); err != nil {
+	if err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.CreatedBy, &created, &updated, &w.Root, &w.Version, &w.File, &w.Size, &w.Unpacked, &w.Source, &w.Failed, &w.Pack); err != nil {
 		return nil, err
 	}
 	w.CreatedAt, w.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
@@ -58,8 +60,8 @@ func (s *Store) CreateWorld(ctx context.Context, w *World) error {
 	w.ID = NewID(8)
 	w.CreatedAt = time.Now().Truncate(time.Second)
 	w.UpdatedAt = w.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO worlds (`+worldColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.OrgID, w.Name, w.Description, w.CreatedBy, w.CreatedAt.Unix(), w.UpdatedAt.Unix(), w.Root, w.Version, w.File, w.Size, w.Unpacked, w.Source, w.Failed)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO worlds (`+worldColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.OrgID, w.Name, w.Description, w.CreatedBy, w.CreatedAt.Unix(), w.UpdatedAt.Unix(), w.Root, w.Version, w.File, w.Size, w.Unpacked, w.Source, w.Failed, w.Pack)
 	return worldNameTaken(err)
 }
 
@@ -109,6 +111,19 @@ func (s *Store) UpdateWorld(ctx context.Context, w *World) error {
 // saved, leaving the rest of it as it is now.
 func (s *Store) SetWorldArchive(ctx context.Context, orgID, id, root, version string, size, unpacked int64) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE worlds SET root = ?, version = ?, size = ?, unpacked = ?, failed = '', updated_at = ? WHERE org_id = ? AND id = ?`, root, version, size, unpacked, time.Now().Unix(), orgID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetWorldPack keeps the resource pack a world names, as JSON, or "" for
+// none, and says it was changed now.
+func (s *Store) SetWorldPack(ctx context.Context, orgID, id, pack string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE worlds SET pack = ?, updated_at = ? WHERE org_id = ? AND id = ?`, pack, time.Now().Unix(), orgID, id)
 	if err != nil {
 		return err
 	}

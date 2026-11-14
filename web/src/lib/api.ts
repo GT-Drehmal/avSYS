@@ -481,6 +481,8 @@ export interface OwnWorld {
   version?: string;
   file?: string;
   size: number;
+  /** The resource pack uploaded to the library world it was given, kept with it. */
+  resourcePack?: ResourcePack | null;
 }
 
 export interface Template {
@@ -531,6 +533,8 @@ export interface LibraryWorld {
   ready: boolean;
   /** Why it could not be saved, for one that was not. */
   error?: string;
+  /** The resource pack it is played with: one from an address, or one uploaded, with no address. */
+  resourcePack?: ResourcePack | null;
 }
 
 /** Where a library world's picture is. */

@@ -1,8 +1,10 @@
 package api
 
 import (
-	"archive/tar"
+	"archive/zip"
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,7 +22,9 @@ import (
 )
 
 // The library: worlds uploaded or saved from a snapshot, named, given a
-// picture, downloaded as they were kept, and taken out again.
+// picture, downloaded, and taken out again. One uploaded is downloaded as it
+// was sent; one saved, as a zip of a single-player save, with the resource
+// pack its server had.
 func TestWorldLibrary(t *testing.T) {
 	if _, err := exec.LookPath("restic"); err != nil {
 		t.Skip("restic is not installed")
@@ -41,6 +45,7 @@ func TestWorldLibrary(t *testing.T) {
 	}
 	dir := t.TempDir()
 	p.srv.Backups = &backup.Manager{Dir: dir, Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	p.srv.Config.PackDir = t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "alpha.key"), []byte("x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -90,16 +95,23 @@ func TestWorldLibrary(t *testing.T) {
 		t.Errorf("its picture: %d", code)
 	}
 
-	// Saved from a snapshot: its world's folders, and nothing else.
+	// Saved from a snapshot: its world's folders, and nothing else, and the
+	// resource pack its server had uploaded, required as it was.
 	root := t.TempDir()
-	record := `{"format":1,"org":"alpha","server":"survival","spec":{"eula":true,"loader":"paper","version":"1.21.4","resources":{"memory":"4Gi"},"storage":{"size":"10Gi"},"expose":{"type":"Router"}}}`
+	pack := packBytes(t, "the map's")
+	sha := sha1Of(pack)
+	record := `{"format":1,"org":"alpha","server":"survival","spec":{"eula":true,"loader":"paper","version":"1.21.4","resources":{"memory":"4Gi"},"storage":{"size":"10Gi"},"expose":{"type":"Router"},` +
+		`"resourcePack":{"url":"https://panel.example/packs/` + sha + `.zip","sha1":"` + sha + `","enforce":true,"prompt":"Take it","uploaded":{"name":"map.zip","size":` + fmt.Sprint(len(pack)) + `,"time":"2026-01-01T00:00:00Z"}}}}`
 	for path, content := range map[string]string{
-		"data/server.properties":     "motd=hi",
-		"data/world/level.dat":       "the world",
-		"data/world_nether/DIM-1/r":  "the nether",
-		"data/server-icon.png":       string(asPNG(t, picture(64, 64))),
-		"data/.avsys/snapshot.json":  record,
-		"data/plugins/LuckPerms.jar": "a plugin",
+		"data/server.properties":                    "motd=hi",
+		"data/world/level.dat":                      "the world",
+		"data/world/resources.zip":                  "a pack the map came with",
+		"data/world_nether/DIM-1/r":                 "the nether",
+		"data/world_nether/level.dat":               "Paper's copy",
+		"data/server-icon.png":                      string(asPNG(t, picture(64, 64))),
+		"data/.avsys/snapshot.json":                 record,
+		"data/.avsys/resource-pack-" + sha + ".zip": string(pack),
+		"data/plugins/LuckPerms.jar":                "a plugin",
 	} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o755); err != nil {
 			t.Fatal(err)
@@ -136,26 +148,23 @@ func TestWorldLibrary(t *testing.T) {
 	if saved["ready"] != true || saved["root"] != "world" || saved["version"] != "1.21.4" || saved["source"] != "snapshot:survival" || saved["unpacked"] != saved["size"] {
 		t.Errorf("saved as %v", saved)
 	}
-	code, got := call("operator", "GET", "/orgs/alpha/worlds/"+savedID+"/archive", "")
-	if code != http.StatusOK {
-		t.Fatalf("its archive: %d", code)
+	rp, _ := saved["resourcePack"].(map[string]any)
+	if up, _ := rp["uploaded"].(map[string]any); rp["sha1"] != sha || rp["url"] != "" || rp["enforce"] != true || rp["prompt"] != "Take it" || up["name"] != "map.zip" || up["size"] != float64(len(pack)) {
+		t.Errorf("saved with the pack %v", rp)
 	}
-	files := map[string]string{}
-	tr := tar.NewReader(bytes.NewReader(got))
-	for {
-		h, err := tr.Next()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		data, _ := io.ReadAll(tr)
-		if h.Typeflag == tar.TypeReg {
-			files[h.Name] = string(data)
-		}
+	// A zip, named for the world, with the world at its top as a save in
+	// the game has it: its Nether in it, and its pack as its own, in place
+	// of one its files had.
+	req := httptest.NewRequest("GET", "/api/v1/orgs/alpha/worlds/"+savedID+"/archive", nil)
+	req.Header.Set("Authorization", "Bearer "+p.tokens["operator"])
+	rec := httptest.NewRecorder()
+	p.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/zip" || !strings.Contains(rec.Header().Get("Content-Disposition"), "Survival.zip") {
+		t.Fatalf("its archive: %d %v", rec.Code, rec.Header())
 	}
-	if len(files) != 2 || files["world/level.dat"] != "the world" || files["world_nether/DIM-1/r"] != "the nether" {
-		t.Errorf("its archive holds %v", files)
+	files := unzipped(t, rec.Body.Bytes())
+	if len(files) != 3 || files["Survival/level.dat"] != "the world" || files["Survival/DIM-1/r"] != "the nether" || files["Survival/resources.zip"] != string(pack) {
+		t.Errorf("its archive holds %v", keysOf(files))
 	}
 	// With the server's picture.
 	if code, _ := call("viewer", "GET", "/orgs/alpha/worlds/"+savedID+"/icon", ""); code != http.StatusOK {
@@ -233,6 +242,7 @@ func TestWorldLibrary(t *testing.T) {
 			t.Errorf("deleted: %d", code)
 		}
 	}
+	// Its pack goes with it.
 	list, err = p.srv.Backups.List(t.Context(), "alpha")
 	if err != nil || len(list) != 3 {
 		t.Errorf("left in the repository: %v %v", list, err)
@@ -245,4 +255,59 @@ func TestWorldLibrary(t *testing.T) {
 	if code, _ := call("viewer", "GET", "/orgs/alpha/worlds/"+id+"/icon", ""); code != http.StatusNotFound {
 		t.Errorf("its picture stayed: %d", code)
 	}
+}
+
+// packBytes is a resource pack the game would take, said to be described.
+func packBytes(t *testing.T, described string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	z := zip.NewWriter(&buf)
+	w, err := z.Create("pack.mcmeta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(w, `{"pack":{"pack_format":46,"description":%q}}`, described)
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func sha1Of(data []byte) string {
+	sum := sha1.Sum(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// unzipped are the files in a zip, which must be one, by name.
+func unzipped(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("not a zip: %v", err)
+	}
+	out := map[string]string{}
+	for _, f := range z.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		r, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(r)
+		r.Close()
+		if err != nil {
+			t.Fatalf("%s: %v", f.Name, err)
+		}
+		out[f.Name] = string(b)
+	}
+	return out
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

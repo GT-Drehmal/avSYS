@@ -7,9 +7,10 @@ import { keys, useMeta, watchReplace } from "../lib/queries";
 import { useGameVersions } from "../lib/software";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
 import { worldSummary } from "../lib/worlds";
+import { packTitle } from "./Content";
 import { Picture } from "./Picture";
 import { WorldPicker } from "./StartPicker";
-import { Button, cx, Modal, Notice } from "./ui";
+import { Button, cx, Modal, Notice, Toggle } from "./ui";
 import { cancelled, UploadProgress, useUpload } from "./Uploading";
 
 /**
@@ -24,6 +25,8 @@ export function ReplaceWorld({ server }: { server: Server }) {
   // One of one's own, uploaded, or one from the organization's library.
   const [from, setFrom] = useState<"upload" | "library">("upload");
   const [picked, setPicked] = useState<LibraryWorld | null>(null);
+  // The resource pack the world from the library names, given with it unless switched off.
+  const [withPack, setWithPack] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [world, setWorld] = useState<FoundWorld | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +59,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
       setFile(null);
       setWorld(null);
       setPicked(null);
+      setWithPack(true);
       setFrom("upload");
       setError(null);
     }
@@ -70,7 +74,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
     const watch = watchReplace(server.org, server.name, server.spec.displayName || server.name);
     try {
       const path = serverPath(server.org, server.name);
-      if (from === "library" && picked) await api.put<Server>(`${path}/import?${qs({ world: "true", replace: "true", library: picked.id })}`, undefined);
+      if (from === "library" && picked) await api.put<Server>(`${path}/import?${qs({ world: "true", replace: "true", library: picked.id, ...(picked.resourcePack && withPack ? { pack: "true" } : {}) })}`, undefined);
       else if (file && world) await sendParts<Server>(file.name, path, file, (upload) => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", from: "upload", upload, size: file.size })}`, {}));
       watch.taken();
       setBusy(false);
@@ -154,6 +158,15 @@ export function ReplaceWorld({ server }: { server: Server }) {
             </p>
           )}
           </>
+          )}
+          {from === "library" && picked?.resourcePack && (
+            <Toggle
+              checked={withPack}
+              onChange={setWithPack}
+              disabled={busy}
+              label="Use the world's resource pack"
+              hint={`${packTitle(picked.resourcePack)}.${server.spec.resourcePack?.url ? " Replaces the server's resource pack." : ""}`}
+            />
           )}
           {newer && <Notice>This server runs {version}, older than the version this world was last opened in. The game cannot open the world.</Notice>}
           {error && <Notice tone="danger">{error}</Notice>}

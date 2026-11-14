@@ -33,14 +33,21 @@ import (
 const maxStack = 32
 
 // addToStack puts an uploaded pack on top of the server's stack. A server
-// with one pack, not stacked yet, has it as the one under.
+// with one pack, not stacked yet, has it as the one under. With ?world= or
+// ?template= the pack is the one a world in the library or a template's own
+// world has, rather than the one sent.
 func (s *Server) addToStack(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	return s.addPackTo(w, r, u, func(to *os.File, limit int64) (stacked avsysv1.StackedPack, err error) {
-		size, sha, err := copyHashed(to, r.Body, limit)
+	return s.addPackTo(w, r, u, func(a *access, to *os.File, limit int64) (stacked avsysv1.StackedPack, err error) {
+		body, name, done, err := s.packSource(r, a)
+		if err != nil {
+			return stacked, err
+		}
+		defer done()
+		size, sha, err := copyHashed(to, body, limit)
 		if err != nil {
 			return stacked, errBadRequest("The upload was incomplete.")
 		}
-		name := path.Base(strings.ReplaceAll(r.URL.Query().Get("name"), "\\", "/"))
+		name = path.Base(strings.ReplaceAll(name, "\\", "/"))
 		if name == "." || name == "/" {
 			name = ""
 		}
@@ -63,7 +70,7 @@ func (s *Server) addURLToStack(w http.ResponseWriter, r *http.Request, u *store.
 	if in.Project != nil && (in.Project.Source != "modrinth" || in.Project.ID == "") {
 		return errBadRequest("A resource pack picked from a project names the project: source modrinth, and the project's id.")
 	}
-	return s.addPackTo(w, r, u, func(to *os.File, limit int64) (avsysv1.StackedPack, error) {
+	return s.addPackTo(w, r, u, func(_ *access, to *os.File, limit int64) (avsysv1.StackedPack, error) {
 		stacked, err := downloadPack(r.Context(), to, in.URL, in.SHA1, limit)
 		stacked.Project = in.Project
 		return stacked, err
@@ -74,7 +81,7 @@ func (s *Server) addURLToStack(w http.ResponseWriter, r *http.Request, u *store.
 // stack. get is given how large it may be. With ?wait=true it is for a
 // server made a moment ago, given its packs before it first starts: its
 // volume is waited for.
-func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User, get func(to *os.File, limit int64) (avsysv1.StackedPack, error)) error {
+func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User, get func(a *access, to *os.File, limit int64) (avsysv1.StackedPack, error)) error {
 	wait := r.URL.Query().Get("wait") == "true"
 	a, mc, err := s.serverMaybeNew(r, u, wait)
 	if err != nil {
@@ -87,7 +94,7 @@ func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User
 	defer release()
 	defer s.lockContent(client.ObjectKeyFromObject(mc))()
 	if s.Config.PackDir == "" {
-		return &Error{Status: http.StatusServiceUnavailable, Code: "packs_unavailable", Message: "Resource pack uploads are not set up on this panel."}
+		return errPacksUnavailable
 	}
 	tmp, err := s.packTemp("upload-*")
 	if err != nil {
@@ -97,7 +104,7 @@ func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User
 	defer tmp.Close()
 	game := controller.GameVersionOf(&mc.Spec)
 	limit := packLimit(game)
-	top, err := get(tmp, limit)
+	top, err := get(a, tmp, limit)
 	if err != nil {
 		return err
 	}
