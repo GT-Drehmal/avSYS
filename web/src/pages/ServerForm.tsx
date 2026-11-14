@@ -148,14 +148,23 @@ function packWorldOf(library: LibraryWorld | null, template: { id: string; world
   return null;
 }
 
+/** What a pack in the form is, to tell one there twice: its SHA-1, or its address. */
+function packKey(p: FormPack): string | undefined {
+  if (p.from === "file") return undefined;
+  if (p.from === "original") return p.stacked?.sha1 || p.pack?.sha1 || p.pack?.url;
+  return p.pack.sha1 || p.pack.url || undefined;
+}
+
 /**
  * The form's packs with a world's on top in place of another world's. Given
  * to a form with no other pack, it says too whether players must take it,
- * and what they are asked.
+ * and what they are asked. One the form has already is not added again, and
+ * a template, which has one pack, keeps the one it has.
  */
-function withWorldPack(v: Values, w: PackWorld | null): Values {
+function withWorldPack(v: Values, w: PackWorld | null, onePack = false): Values {
   const others = v.packs.filter((p) => !fromWorld(p));
-  if (!w?.entry) return { ...v, packs: others };
+  const key = w?.entry ? packKey(w.entry) : undefined;
+  if (!w?.entry || (key && others.some((p) => packKey(p) === key)) || (onePack && others.length > 0)) return { ...v, packs: others };
   return { ...v, packs: [w.entry, ...others], ...(others.length === 0 ? { packRequired: !!w.pack?.enforce, packPrompt: w.pack?.prompt ?? "" } : {}) };
 }
 
@@ -536,7 +545,7 @@ export function ServerForm({
     // The pack of the world it starts with comes with it.
     const worldGiven = source ? worldChoosable : values.kind === "game";
     const packWorld = !worldGiven ? null : packWorldOf(given ?? null, theirs && theirsFrom ? { id: theirsFrom, world: theirs } : null);
-    return { values: packWorld ? withWorldPack(values, packWorld) : values, packWorld: packWorld?.key ?? "" };
+    return { values: packWorld ? withWorldPack(values, packWorld, forTemplate) : values, packWorld: packWorld?.key ?? "" };
   });
   const start = initial.values;
   const [description, setDescription] = useState(editing?.description ?? "");
@@ -566,7 +575,7 @@ export function ServerForm({
   useEffect(() => {
     if (lastPackWorld.current === packWorldKey) return;
     lastPackWorld.current = packWorldKey;
-    setValues((was) => withWorldPack(was, packWorld));
+    setValues((was) => withWorldPack(was, packWorld, forTemplate));
   }, [packWorldKey]);
   // The pack uploaded to that world, while it is on the list.
   const keptWorldPack = v.packs.find((p): p is Extract<FormPack, { from: "world" }> => p.from === "world");

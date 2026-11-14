@@ -412,9 +412,13 @@ func zipEntry(entry, root, name string) (string, bool) {
 
 // zipWorld writes the world in a tar, a saved world's archive, into zw, in
 // the folder name, and says what it wrote. A file the world has twice, as
-// one with its Nether both in it and beside it, is written once.
-func zipWorld(zw *zip.Writer, archive io.Reader, root, name string) (map[string]bool, error) {
+// one with its Nether both in it and beside it, is written once; one in
+// skip is not written at all.
+func zipWorld(zw *zip.Writer, archive io.Reader, root, name string, skip map[string]bool) (map[string]bool, error) {
 	written := map[string]bool{}
+	for f := range skip {
+		written[f] = true
+	}
 	tr := tar.NewReader(archive)
 	for {
 		h, err := tr.Next()
@@ -464,30 +468,37 @@ func (s *Server) writeWorldZip(ctx context.Context, a *access, world *store.Worl
 	// Region files are compressed already: as fast as it goes, not as small.
 	zw.RegisterCompressor(zip.Deflate, func(w io.Writer) (io.WriteCloser, error) { return flate.NewWriter(w, flate.BestSpeed) })
 	name := saveName(world.Name)
+	// The pack it names is the world's own, in place of any its files have.
+	var kept *backup.Snapshot
+	skip := map[string]bool{}
+	rp := worldPackOf(world)
+	if rp != nil && rp.Uploaded != nil {
+		var err error
+		if kept, err = s.keptPack(ctx, a.Org.Slug, libraryHost(world.ID)); err != nil {
+			s.Log.Warn("a world was downloaded without its resource pack", "world", world.ID, "error", err)
+		} else {
+			skip[name+"/"+packKeptFile] = true
+		}
+	}
 	body, done := s.readSnapshotFile(ctx, a.Org.Slug, snap.ID, "/"+ownWorldFile)
-	written, err := zipWorld(zw, body, world.Root, name)
+	written, err := zipWorld(zw, body, world.Root, name, skip)
 	done()
 	if err != nil {
 		return err
 	}
-	if len(written) == 0 {
+	if len(written) == len(skip) {
 		return errors.New("the world's archive holds no world")
 	}
-	if rp := worldPackOf(world); rp != nil && rp.Uploaded != nil && !written[name+"/"+packKeptFile] {
-		kept, err := s.keptPack(ctx, a.Org.Slug, libraryHost(world.ID))
+	if kept != nil {
+		f, err := zw.CreateHeader(&zip.FileHeader{Name: name + "/" + packKeptFile, Method: zip.Deflate, Modified: rp.Uploaded.Time.Time})
 		if err != nil {
-			s.Log.Warn("a world was downloaded without its resource pack", "world", world.ID, "error", err)
-		} else {
-			f, err := zw.CreateHeader(&zip.FileHeader{Name: name + "/" + packKeptFile, Method: zip.Deflate, Modified: rp.Uploaded.Time.Time})
-			if err != nil {
-				return err
-			}
-			body, done := s.readSnapshotFile(ctx, a.Org.Slug, kept.ID, "/"+packKeptFile)
-			_, err = io.Copy(f, body)
-			done()
-			if err != nil {
-				return err
-			}
+			return err
+		}
+		body, done := s.readSnapshotFile(ctx, a.Org.Slug, kept.ID, "/"+packKeptFile)
+		_, err = io.Copy(f, body)
+		done()
+		if err != nil {
+			return err
 		}
 	}
 	return zw.Close()

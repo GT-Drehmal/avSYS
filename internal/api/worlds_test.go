@@ -105,6 +105,7 @@ func TestWorldLibrary(t *testing.T) {
 	for path, content := range map[string]string{
 		"data/server.properties":                    "motd=hi",
 		"data/world/level.dat":                      "the world",
+		"data/world/resources.zip":                  "a pack the map came with",
 		"data/world_nether/DIM-1/r":                 "the nether",
 		"data/world_nether/level.dat":               "Paper's copy",
 		"data/server-icon.png":                      string(asPNG(t, picture(64, 64))),
@@ -152,7 +153,8 @@ func TestWorldLibrary(t *testing.T) {
 		t.Errorf("saved with the pack %v", rp)
 	}
 	// A zip, named for the world, with the world at its top as a save in
-	// the game has it: its Nether in it, and its pack as its own.
+	// the game has it: its Nether in it, and its pack as its own, in place
+	// of one its files had.
 	req := httptest.NewRequest("GET", "/api/v1/orgs/alpha/worlds/"+savedID+"/archive", nil)
 	req.Header.Set("Authorization", "Bearer "+p.tokens["operator"])
 	rec := httptest.NewRecorder()

@@ -716,3 +716,55 @@ test("a stopped server's world replaced with one from the library takes its reso
   expect(sent[1]).toMatchObject({ library: "w1", replace: "true" });
   expect(sent[1].pack).toBeUndefined();
 });
+
+test("a world's resource pack the form has already is not added twice, and a template keeps the one pack it has", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const fromUrl = { url: "https://example.com/map.zip", sha1: "ab".repeat(20), enforce: false, project: null, uploaded: null };
+  await library(page, [world("w1", "Island", { resourcePack: fromUrl }), world("w2", "Arena", { resourcePack: mapPack })], slug);
+  const addUrl = async () => {
+    await page.getByRole("button", { name: "Add resource pack" }).click();
+    const picker = page.getByRole("dialog");
+    await picker.getByRole("button", { name: "From URL" }).click();
+    await picker.getByLabel("Download URL").fill(fromUrl.url);
+    await picker.getByLabel("SHA-1").fill(fromUrl.sha1);
+    await picker.getByRole("button", { name: /Use this pack|Add/ }).last().click();
+    await expect(picker).toHaveCount(0);
+  };
+  const packs = page.getByRole("list", { name: "Packs, the top one first" }).getByRole("listitem");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await addUrl();
+  await expect(packs).toHaveCount(1);
+  // The same pack, with Island: once.
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect(page.getByTestId("world-summary")).toContainText("with a resource pack");
+  await expect(packs).toHaveCount(1);
+  // Another, with Arena: both.
+  await page.getByRole("button", { name: "Change" }).last().click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Arena/ }).click();
+  await expect(packs).toHaveCount(2);
+
+  // A template has one pack: one it has stays, and the world's is not kept.
+  const put: string[] = [];
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/templates/[^/]+/world(\\?.*)?$`), (route) => {
+    put.push(`${route.request().method()} ${new URL(route.request().url()).search}`);
+    return route.fulfill({ json: {} });
+  });
+  await page.goto(`/o/${slug}/templates/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByLabel("Name", { exact: true }).fill("Arena base");
+  await addUrl();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Arena/ }).click();
+  await expect(page.getByTestId("world-summary")).toContainText("with a resource pack");
+  await expect(packs).toHaveCount(1);
+  await expect(packs).toContainText("map");
+  await expect(packs).not.toContainText("the world's");
+  await page.getByRole("button", { name: "Create template" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  expect(put).toEqual(["PUT ?library=w2"]);
+});
