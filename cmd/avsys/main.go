@@ -561,8 +561,9 @@ func annotationsOf(s string) map[string]string {
 	return out
 }
 
-// routerService is the panel's own Service, which carries the router: avsys
-// in the namespace the panel runs in, as deploy/install.yaml makes it.
+// routerService is the panel's own Service, which carries the router: in the
+// namespace the panel runs in, named avsys or as AVSYS_ROUTER_SERVICE says
+// (the chart sets it to the name of the Service it makes).
 func routerService() types.NamespacedName {
 	ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {

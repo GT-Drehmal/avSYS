@@ -82,10 +82,17 @@ jobs:
           docker cp "$(docker create avsys-workspace:ci)":/usr/local/bin/restic /usr/local/bin/restic
           restic version
           AVSYS_TEST_WORKSPACE_IMAGE=avsys-workspace:ci go test -count=1 ./internal/backup/
+      # The CRD from api/, and deploy/install.yaml and the chart's test
+      # renders from deploy/chart (hack/chart.sh). Then helm lint with each
+      # set of values, and values the chart must refuse. That what it makes
+      # works is the e2e's: it installs the panel with the chart.
       - name: Generated code is current
         run: |
-          make generate
-          git diff --exit-code -- api deploy/crds
+          make generate chart
+          git add -N -- api deploy
+          git diff --exit-code -- api deploy
+      - name: Chart
+        run: make chart-check
       # The lint is two rules about React hooks, which the type checker
       # cannot see: a hook called conditionally, and an effect that does not
       # say what it depends on. Configured in web/biome.json. The audit is
@@ -135,9 +142,10 @@ jobs:
           done
           exit "$failed"
 
-  # Installs the panel into an empty cluster the way a user would, then runs a
-  # real Minecraft server through it. This is what catches a broken manifest,
-  # missing permissions or a panel that cannot make its first start.
+  # Installs the panel into an empty cluster with the chart, the way a user
+  # would, then runs a real Minecraft server through it. This is what catches
+  # a broken chart, missing permissions or a panel that cannot make its
+  # first start.
   #
   # In four parts side by side, each on a cluster of its own: most of its
   # time is games starting, one after another.

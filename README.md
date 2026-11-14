@@ -78,45 +78,79 @@ After upgrading from a version without snapshots, a server has to be restarted o
 
 ## Install
 
+With [Helm](https://helm.sh):
+
+```sh
+helm install avsys oci://ghcr.io/gt-drehmal/charts/avsys -n avsys --create-namespace \
+  --set publicURL=https://panel.example.com
+```
+
+Or with `kubectl` alone, after setting `AVSYS_PUBLIC_URL` in the file to the address you will open the panel at:
+
 ```sh
 kubectl apply -f deploy/install.yaml
 ```
 
-Edit `AVSYS_PUBLIC_URL` in that file first. It creates the `avsys` namespace, a service account with the permissions the panel needs, a 1Gi volume for the database, a 50Gi volume for snapshots, and a LoadBalancer service for the three ports. Size the snapshots volume for the worlds you host. The panel installs and upgrades the `MinecraftServer` CRD itself.
+Both make the same thing: the `avsys` namespace, a service account with the permissions the panel needs, a 1Gi volume for the database, a 50Gi volume for snapshots, and a LoadBalancer service for the three ports. `deploy/install.yaml` is the chart in `deploy/chart` with its default values; anything else is a value of the chart. Size the snapshots volume for the worlds you host. The panel installs and upgrades the `MinecraftServer` CRD itself each time it starts, so upgrading the panel upgrades the CRD too (Helm installs the chart's copy only on the first install). Uninstalling keeps both volumes; delete them by hand if you mean to.
 
-Images are published to `ghcr.io/gt-drehmal/avsys` for amd64 and arm64. `:edge` follows the main branch; releases are `:v1.2.3`, with `:latest` on the newest. The panel starts the workspace image of its own version, so there is only the one image to choose.
+The chart is published with each release. To install from a checkout instead, use `./deploy/chart` in place of the `oci://` address.
 
-The first account you create becomes the instance administrator. After that, accounts are created through invite links unless `AVSYS_ALLOW_SIGNUPS=true`.
+Images are published to `ghcr.io/gt-drehmal/avsys` for amd64 and arm64. Releases are `:v1.2.3`, with `:latest` on the newest; `:edge` follows the main branch. A chart runs the release it was published with; set `image.tag` for another. The panel starts the workspace image of its own version, so there is only the one image to choose.
+
+The first account you create becomes the instance administrator. After that, accounts are created through invite links unless `signups` is `true`.
+
+### Upgrading
+
+```sh
+helm upgrade avsys oci://ghcr.io/gt-drehmal/charts/avsys -n avsys --reset-then-reuse-values --version 0.2.0
+```
+
+`--reset-then-reuse-values` keeps the values you set and takes the new release's defaults for the rest. Without Helm, apply the newer `deploy/install.yaml` with your changes carried over.
+
+To move an install made from `deploy/install.yaml` to Helm, mark its objects as the release's and then install the chart with values that match what you changed:
+
+```sh
+for o in serviceaccount/avsys service/avsys deployment/avsys pvc/avsys-data pvc/avsys-backups clusterrole/avsys clusterrolebinding/avsys; do
+  kubectl -n avsys label "$o" app.kubernetes.io/managed-by=Helm --overwrite
+  kubectl -n avsys annotate "$o" meta.helm.sh/release-name=avsys meta.helm.sh/release-namespace=avsys --overwrite
+done
+```
 
 ### Configuration
 
-Every flag can also be set as an environment variable: `--public-url` is `AVSYS_PUBLIC_URL`. Run `avsys --help` for the full list.
+The chart's values are in [`deploy/chart/values.yaml`](deploy/chart/values.yaml), each with what it does. The ones most installs set:
 
-| Variable | Purpose |
+| Value | Purpose |
 | --- | --- |
-| `AVSYS_PUBLIC_URL` | Address people open the panel at. OAuth callbacks are built from it. |
-| `AVSYS_SSH_PUBLIC_HOST`, `AVSYS_SSH_PUBLIC_PORT` | Where the SSH gateway is reachable, if not the panel's host and port 2222. |
-| `AVSYS_ROUTER_DOMAIN` | A domain with a wildcard DNS record pointing at the router. New servers default to `<server>.<org>.<domain>`. |
-| `AVSYS_GITHUB_CLIENT_ID`, `AVSYS_GITHUB_CLIENT_SECRET` | Enable GitHub sign-in. Likewise `DISCORD` and `GOOGLE`. The callback URL to register is `<public-url>/api/v1/auth/<provider>/callback`. |
-| `AVSYS_ROUTER_PUBLIC_PORT` | The port players reach the router on, if not 25565. Shown in server addresses. |
-| `AVSYS_CURSEFORGE_API_KEY` | Passed to servers for CurseForge downloads. |
-| `AVSYS_ALLOW_SIGNUPS` | `true` lets anyone create an account. |
-| `AVSYS_BACKUP_DIR` | Where the snapshot repositories are kept. Defaults to `backups` in the data directory; the manifest gives it a volume of its own. |
-| `AVSYS_OFFSITE_REPOSITORY`, `AVSYS_OFFSITE_PASSWORD` | A second place every organization's snapshots are copied to, and the password that opens them there. See [Offsite copy](#offsite-copy). |
+| `publicURL` | Address people open the panel at. Sign-in callbacks are built from it. |
+| `expose.mode` | How the three ports are reached: `LoadBalancer` (the default), `NodePort`, or `hostPort` on one node. See [Clusters without a load balancer](#clusters-without-a-load-balancer). |
+| `router.domain` | A domain with a wildcard DNS record pointing at the router. New servers default to `<server>.<org>.<domain>`. |
+| `extraPorts.range`, `extraPorts.annotations` | Public ports, as `25600-25699`, for servers' extra ports (voice chat, Geyser, maps) on the router's address, and how the load balancer is told to share it. |
+| `signIn.github.clientId`, `signIn.github.clientSecret` | Enable GitHub sign-in. Likewise `discord` and `google`. Secrets can instead come from a Secret of your own, `signIn.existingSecret`. The callback URL to register is `<publicURL>/api/v1/auth/<provider>/callback`. |
+| `signups` | `true` lets anyone create an account. |
+| `persistence.data`, `persistence.backups` | Size and storage class of the database and snapshot volumes, or a claim of your own. |
+| `offsite.repository`, `offsite.existingSecret` | A second place every organization's snapshots are copied to, and the Secret with the password that opens them there. See [Offsite copy](#offsite-copy). |
+| `sshPublicHost` | Hostname shown in SSH instructions, if not the panel's. |
+| `curseforge.apiKey` | Passed to servers for CurseForge downloads. |
+
+The panel itself takes flags, each of which can also be set as an environment variable: `--public-url` is `AVSYS_PUBLIC_URL`. Run `avsys --help` for the full list; the chart sets them from its values, and `extraEnv` passes any other.
 
 ### Offsite copy
 
 Snapshots live on the cluster's own storage. To keep a copy somewhere else, give the panel a place and a password:
 
+```sh
+kubectl -n avsys create secret generic avsys-offsite --from-literal=password=... \
+  --from-literal=access-key-id=... --from-literal=secret-access-key=...
+```
+
 ```yaml
-- name: AVSYS_OFFSITE_REPOSITORY
-  value: s3:https://s3.us-west-004.backblazeb2.com/my-bucket/avsys
-- name: AVSYS_OFFSITE_PASSWORD
-  valueFrom: { secretKeyRef: { name: avsys-offsite, key: password } }
-- name: AWS_ACCESS_KEY_ID
-  valueFrom: { secretKeyRef: { name: avsys-offsite, key: access-key-id } }
-- name: AWS_SECRET_ACCESS_KEY
-  valueFrom: { secretKeyRef: { name: avsys-offsite, key: secret-access-key } }
+offsite:
+  repository: s3:https://s3.us-west-004.backblazeb2.com/my-bucket/avsys
+  existingSecret: avsys-offsite
+  secretEnv:
+    AWS_ACCESS_KEY_ID: access-key-id
+    AWS_SECRET_ACCESS_KEY: secret-access-key
 ```
 
 - **The place** is a restic repository location. Each organization gets its own repository under it, named after the organization; write `{org}` where the name should go if the end is not the right spot, as in `b2:my-bucket:avsys/{org}`. The credentials are the environment variables restic itself reads for that kind of place. The bucket has to exist already. Locations that go over ssh (`sftp:`) do not work: the panel's image has no ssh client.
@@ -140,18 +174,19 @@ Nodes without a score can still host, after every node that has one. "Room" mean
 
 ### Clusters without a load balancer
 
-The manifest exposes the panel with a `LoadBalancer` service. If your cluster has none (k3s started with ServiceLB disabled and no MetalLB, for example), that service never gets an address. Pin the panel to one node and publish its ports on that node instead: add a `nodeSelector` and a `hostPort` beside each `containerPort` in the Deployment, and change the Service to `type: ClusterIP`.
+The panel's ports are exposed by a `LoadBalancer` service. If your cluster has none (k3s started with ServiceLB disabled and no MetalLB, for example), that service never gets an address. Pin the panel to one node and open its ports there instead:
 
 ```yaml
-      nodeSelector:
-        kubernetes.io/hostname: my-node
-      containers:
-        - name: avsys
-          ports:
-            - { name: http, containerPort: 8080, hostPort: 8080 }
-            - { name: ssh, containerPort: 2222, hostPort: 2222 }
-            - { name: minecraft, containerPort: 25565, hostPort: 25565 }
+expose:
+  mode: hostPort
+  node: my-node        # its kubernetes.io/hostname label
+  hostPorts:
+    http: 8080
+    ssh: 2222
+    minecraft: 25565
 ```
+
+Or open them on every node with `expose.mode: NodePort` and `expose.nodePorts`.
 
 ### Addresses
 
@@ -271,7 +306,8 @@ make test       # unit tests, static checks, type checks and lint
 make test-snapshots  # the snapshot engine against a real workspace container
 make test-browser    # the web UI in Chromium and WebKit, against a panel with nothing behind it
 make e2e        # creates a real server through a running panel and checks it end to end
-make e2e-cluster  # the same from nothing: an empty k3s in Docker, installed from deploy/install.yaml
+make e2e-cluster  # the same from nothing: an empty k3s in Docker, installed with the chart
+make chart      # after changing deploy/chart: deploy/install.yaml and the chart's test renders
 make generate   # after changing api/
 ```
 
@@ -279,7 +315,7 @@ make generate   # after changing api/
 
 `make test-browser` needs neither a cluster nor the internet. It starts `cmd/avsys-uitest`, which is the real API and web UI with stand-ins for everything they reach out to: servers are remembered but never run, and what the panel looks up at Modrinth, Mojang and the build sites is answered from `web/tests/upstream`. The tests in `web/tests` open every page, use the dialogs and forms, and check what each role is shown, in both engines, and fail on any error thrown in the page. Fetch the browsers once with `cd web && bunx playwright install`. A change to the web UI should come with a test here.
 
-`make e2e-cluster` needs only Docker. It starts an empty single-node k3s in a container, builds both images, applies `deploy/install.yaml`, creates the first account and then runs the same check. CI runs it on every push, and images are published only if it passes.
+`make e2e-cluster` needs only Docker. It starts an empty single-node k3s in a container, builds both images, installs the chart, creates the first account and then runs the same check. CI runs it on every push, and images are published only if it passes.
 
 The API tests in `internal/api` run the panel in-process and check every route against every role. A new route under an organization has to be added to that table, or the tests fail.
 
@@ -298,7 +334,7 @@ To cut a release, push a version tag: `git tag v0.1.0 && git push origin v0.1.0`
 | `internal/backup` | Snapshot repositories, snapshot and restore |
 | `images/workspace` | The SSH sidecar image |
 | `web` | The React UI |
-| `deploy` | CRD and install manifest |
+| `deploy` | CRD, Helm chart and install manifest |
 
 Earlier planning notes: <https://docs.google.com/document/d/1D_mDTFApseszykIvamCIFB8B9JzJdk8vqC-D3iDWjWQ/edit?usp=sharing>
 

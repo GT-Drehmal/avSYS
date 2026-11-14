@@ -1,0 +1,19 @@
+avSYS {{ include "avsys.tag" . }} is installed in the {{ .Release.Namespace }} namespace.
+
+Open {{ .Values.publicURL }} and create the first account: it becomes the
+instance administrator.
+{{- if contains "example.com" .Values.publicURL }}
+
+publicURL is still the example address. Set it to the address you open the
+panel at, as --set publicURL=https://panel.mydomain.org, and upgrade.
+{{- end }}
+{{- if eq .Values.expose.mode "LoadBalancer" }}
+
+The address of the panel, SSH and the router:
+
+  kubectl -n {{ .Release.Namespace }} get service {{ include "avsys.fullname" . }}
+{{- end }}
+
+To upgrade later:
+
+  helm upgrade {{ .Release.Name }} oci://ghcr.io/gt-drehmal/charts/avsys -n {{ .Release.Namespace }} --reset-then-reuse-values --version <version>

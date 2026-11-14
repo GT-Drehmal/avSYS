@@ -1,0 +1,69 @@
+# A load balancer told how to share the router's address with servers' extra
+# ports, secrets from Secrets of the installer's own, and most other values
+# away from their defaults.
+publicURL: https://panel.example.org
+image:
+  repository: registry.example.org/avsys
+  tag: sha-1234567
+  pullPolicy: IfNotPresent
+imagePullSecrets:
+  - name: registry
+workspaceImage: registry.example.org/avsys-workspace:sha-1234567
+expose:
+  ports:
+    http: 8080
+    ssh: 22
+    minecraft: 25565
+  annotations:
+    metallb.universe.tf/allow-shared-ip: avsys
+  loadBalancerIP: 192.0.2.10
+  externalTrafficPolicy: Local
+sshPublicHost: ssh.example.org
+router:
+  domain: mc.example.org
+extraPorts:
+  range: 25600-25699
+  annotations:
+    metallb.universe.tf/allow-shared-ip: avsys
+    metallb.universe.tf/loadBalancerIPs: 192.0.2.10
+signIn:
+  existingSecret: sign-in
+  google:
+    clientId: google-id
+curseforge:
+  existingSecret: curseforge
+offsite:
+  repository: b2:bucket:avsys/{org}
+  existingSecret: offsite
+  secretEnv:
+    B2_ACCOUNT_ID: account-id
+    B2_ACCOUNT_KEY: account-key
+persistence:
+  data:
+    existingClaim: panel-data
+  backups:
+    size: 500Gi
+    storageClass: ceph
+namespacePrefix: games-
+installCRDs: false
+extraEnv:
+  - name: AVSYS_WORKSPACE_IMAGE_PULL_POLICY
+    value: IfNotPresent
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 2Gi
+nodeSelector:
+  kubernetes.io/arch: amd64
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: avsys
+    effect: NoSchedule
+podAnnotations:
+  example.org/scrape: "false"
+serviceAccount:
+  annotations:
+    example.org/role: panel
