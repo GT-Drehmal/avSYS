@@ -110,8 +110,25 @@ func TestOffsiteThroughTheAPI(t *testing.T) {
 	run("init")
 	run("backup", files, "--host", "world", "--tag", "avsys", "--tag", "trigger=manual")
 
+	// Whether each snapshot in the list says it is offsite, newest first.
+	marks := func() []any {
+		t.Helper()
+		code, got := p.get("viewer", "GET", "/orgs/alpha/snapshots", "")
+		if code != 200 {
+			t.Fatalf("listing snapshots: %d %v", code, got)
+		}
+		var out []any
+		for _, s := range got["snapshots"].([]any) {
+			out = append(out, s.(map[string]any)["offsite"])
+		}
+		return out
+	}
+
 	if code, got := p.get("viewer", "GET", "/orgs/alpha/offsite", ""); code != 200 || got["configured"] != true || got["pending"] != true || got["lastSuccess"] != nil {
 		t.Fatalf("before the first copy: %d %v", code, got)
+	}
+	if got := marks(); len(got) != 1 || got[0] != nil {
+		t.Errorf("offsite before the first copy: %v, want not said", got)
 	}
 	if code, got := p.get("admin", "POST", "/orgs/alpha/offsite/run?wait=true", ""); code != 200 || got["copied"] != float64(1) || got["snapshots"] != float64(1) {
 		t.Fatalf("copy now: %d %v", code, got)
@@ -119,13 +136,24 @@ func TestOffsiteThroughTheAPI(t *testing.T) {
 	if code, got := p.get("viewer", "GET", "/orgs/alpha/offsite", ""); code != 200 || got["pending"] != false || got["snapshots"] != float64(1) || got["lastSuccess"] == nil || got["error"] != nil {
 		t.Errorf("after the copy: %d %v", code, got)
 	}
+	if got := marks(); len(got) != 1 || got[0] != true {
+		t.Errorf("offsite after the copy: %v, want true", got)
+	}
+	// One taken since is not offsite yet.
+	if err := os.WriteFile(filepath.Join(files, "level.dat"), []byte("a world, later"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("backup", files, "--host", "world", "--tag", "avsys", "--tag", "trigger=manual")
+	if got := marks(); len(got) != 2 || got[0] != nil || got[1] != true {
+		t.Errorf("offsite with one taken since the copy: %v, want [<nil> true]", got)
+	}
 	// Nothing is brought back into an organization that has its snapshots.
 	if code, name := p.do("root", "POST", "/orgs/alpha/offsite/fetch", ""); code != 409 || name != "has_snapshots" {
 		t.Errorf("fetch into an organization with snapshots: %d %s, want 409 has_snapshots", code, name)
 	}
 
 	// The panel's storage is lost.
-	for _, path := range []string{repo, key, filepath.Join(dir, "alpha.offsite")} {
+	for _, path := range []string{repo, key, filepath.Join(dir, "alpha.offsite"), filepath.Join(dir, "alpha.copies")} {
 		if err := os.RemoveAll(path); err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +169,7 @@ func TestOffsiteThroughTheAPI(t *testing.T) {
 	}
 	code, got := p.get("viewer", "GET", "/orgs/alpha/snapshots", "")
 	list, _ := got["snapshots"].([]any)
-	if code != 200 || len(list) != 1 || list[0].(map[string]any)["server"] != "world" {
+	if code != 200 || len(list) != 1 || list[0].(map[string]any)["server"] != "world" || list[0].(map[string]any)["offsite"] != true {
 		t.Errorf("snapshots here after the fetch: %d %v", code, got)
 	}
 
@@ -222,7 +250,7 @@ func TestFetchingOffsiteKeepsHistoriesApart(t *testing.T) {
 		t.Fatalf("copy now: %d %v", code, got)
 	}
 	// The panel's storage is lost, and a new server is made under the old name.
-	for _, path := range []string{repo, key, filepath.Join(dir, "alpha.offsite")} {
+	for _, path := range []string{repo, key, filepath.Join(dir, "alpha.offsite"), filepath.Join(dir, "alpha.copies")} {
 		if err := os.RemoveAll(path); err != nil {
 			t.Fatal(err)
 		}

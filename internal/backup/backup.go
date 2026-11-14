@@ -135,6 +135,9 @@ type Manager struct {
 	answers map[string]repoAnswers
 	// records are the records read out of snapshots, which never change.
 	records map[string][]byte
+	// copies is what was last read of each organization's copies file; see
+	// offsiteCopies.
+	copies map[string]keptCopies
 }
 
 // Snapshot is one saved state of a server.
@@ -156,6 +159,9 @@ type Snapshot struct {
 	// Lineage is the same for a snapshot and for every copy of it in another
 	// repository, which each have an ID of their own.
 	Lineage string `json:"-"`
+	// Offsite is set on a snapshot that has a copy in the offsite
+	// repository, as of the last time that was read; see offsiteCopies.
+	Offsite bool `json:"offsite,omitempty"`
 }
 
 // Meta describes the server a snapshot is being taken of.
@@ -463,7 +469,7 @@ func (m *Manager) List(ctx context.Context, org string) ([]Snapshot, error) {
 
 // list is List for callers that already hold the repository's lock. Taking a
 // read lock twice deadlocks as soon as a writer is waiting in between.
-// Rejected snapshots are left out.
+// Rejected snapshots are left out, and those with a copy offsite say so.
 func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
 	all, err := m.listAll(ctx, org)
 	if err != nil {
@@ -473,12 +479,11 @@ func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(rejected) == 0 {
-		return all, nil
-	}
+	copied := m.offsiteCopies(org)
 	out := all[:0:0]
 	for _, s := range all {
 		if !rejected[s.ID] {
+			s.Offsite = copied[s.Lineage]
 			out = append(out, s)
 		}
 	}
@@ -1162,7 +1167,7 @@ func (m *Manager) Destroy(org string) error {
 		return err
 	}
 	// The offsite copy is left as it is: nothing here says to remove it.
-	for _, file := range []string{m.removedFile(org), m.statusFile(org)} {
+	for _, file := range []string{m.removedFile(org), m.statusFile(org), m.copiesFile(org)} {
 		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

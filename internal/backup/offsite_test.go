@@ -325,3 +325,120 @@ func TestFetchLeavesBehindWhatWasRemoved(t *testing.T) {
 		t.Errorf("sync after deleting everything: %+v, %v; want 2 removed", res, err)
 	}
 }
+
+// Each snapshot says whether it has a copy offsite, as of the last sync,
+// without the far end being asked when snapshots are listed.
+func TestSnapshotsSayWhetherTheyAreOffsite(t *testing.T) {
+	m, take, _ := offsiteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	// Each snapshot here, oldest first, and whether it is offsite.
+	offsite := func(m *Manager) string {
+		t.Helper()
+		list, err := m.List(ctx, "alpha")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for i := len(list) - 1; i >= 0; i-- {
+			s, mark := list[i], "here"
+			if s.Offsite {
+				mark = "offsite"
+			}
+			out = append(out, s.Server+" "+s.Trigger+" "+mark)
+		}
+		return strings.Join(out, ", ")
+	}
+	sync := func() {
+		t.Helper()
+		if _, err := m.SyncOffsite(ctx, "alpha"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	take("world", TriggerManual, "one")
+	take("world", TriggerScheduled, "two")
+	if got, want := offsite(m), "world manual here, world scheduled here"; got != want {
+		t.Errorf("before any sync: %q, want %q", got, want)
+	}
+	sync()
+	if got, want := offsite(m), "world manual offsite, world scheduled offsite"; got != want {
+		t.Errorf("after a sync: %q, want %q", got, want)
+	}
+
+	// One taken since is here only until the next sync.
+	take("other", TriggerScheduled, "three")
+	if got, want := offsite(m), "world manual offsite, world scheduled offsite, other scheduled here"; got != want {
+		t.Errorf("with one taken since the sync: %q, want %q", got, want)
+	}
+	// One removed since leaves the others as they were.
+	list, err := m.List(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(ctx, "alpha", list[len(list)-1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := offsite(m), "world scheduled offsite, other scheduled here"; got != want {
+		t.Errorf("with one removed since the sync: %q, want %q", got, want)
+	}
+	sync()
+	if got, want := offsite(m), "world scheduled offsite, other scheduled offsite"; got != want {
+		t.Errorf("after the next sync: %q, want %q", got, want)
+	}
+	// The copy of the one removed is gone there, and is not counted.
+	if copied := m.offsiteCopies("alpha"); len(copied) != 2 {
+		t.Errorf("%d snapshots noted as offsite, want 2", len(copied))
+	}
+
+	// A template version made of a snapshot is a snapshot of its own, not
+	// offsite until it is copied.
+	list, err = m.List(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	made, err := m.CopyAs(ctx, "alpha", list[0].ID, "template-t1", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Offsite {
+		t.Error("a template version made since the sync is offsite")
+	}
+	if got, want := offsite(m), "world scheduled offsite, other scheduled offsite, template-t1 template here"; got != want {
+		t.Errorf("with a template version made since the sync: %q, want %q", got, want)
+	}
+	sync()
+	if got, want := offsite(m), "world scheduled offsite, other scheduled offsite, template-t1 template offsite"; got != want {
+		t.Errorf("after copying the template version: %q, want %q", got, want)
+	}
+
+	// It is kept beside the repository: a panel started again knows it.
+	again := &Manager{Dir: m.Dir, Restic: m.Restic, Log: m.Log, Offsite: &Offsite{Repository: m.Offsite.Repository, Password: m.Offsite.Password}}
+	if got, want := offsite(again), offsite(m); got != want {
+		t.Errorf("after a restart: %q, want %q", got, want)
+	}
+	// Another offsite repository has none of them until it is synced.
+	again.Offsite.Repository = filepath.Join(t.TempDir(), "elsewhere")
+	if got := offsite(again); strings.Contains(got, "offsite") {
+		t.Errorf("with the offsite copy moved: %q, want none offsite", got)
+	}
+	// And with no offsite copy at all, none is.
+	again.Offsite = nil
+	if got := offsite(again); strings.Contains(got, "offsite") {
+		t.Errorf("with no offsite copy: %q, want none offsite", got)
+	}
+
+	// Lost here and brought back: all of it is offsite.
+	if err := m.Destroy("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(m.copiesFile("alpha")); !os.IsNotExist(err) {
+		t.Errorf("what was offsite is still noted for an organization that is gone: %v", err)
+	}
+	if n, err := m.FetchOffsite(ctx, "alpha"); err != nil || n != 3 {
+		t.Fatalf("fetch: %d, %v; want 3", n, err)
+	}
+	if got, want := offsite(m), "world scheduled offsite, other scheduled offsite, template-t1 template offsite"; got != want {
+		t.Errorf("after bringing them back: %q, want %q", got, want)
+	}
+}

@@ -17,10 +17,16 @@ export type Role = "owner" | "admin" | "operator" | "viewer";
  */
 export const withMetrics = "http://127.0.0.1:8098";
 
+/**
+ * Where the panel that copies snapshots offsite listens, with the older of
+ * the first organization's snapshots there already.
+ */
+export const withOffsite = "http://127.0.0.1:8097";
+
 const panels = new Map<string, Panel>();
-/** The panel at baseURL: the one without a metrics API unless it is withMetrics. */
+/** The panel at baseURL: the plain one unless it is withMetrics or withOffsite. */
 const info = (baseURL?: string) => {
-  const file = baseURL === withMetrics ? "tests/.panel-metrics.json" : "tests/.panel.json";
+  const file = baseURL === withMetrics ? "tests/.panel-metrics.json" : baseURL === withOffsite ? "tests/.panel-offsite.json" : "tests/.panel.json";
   let panel = panels.get(file);
   if (!panel) {
     panel = JSON.parse(readFileSync(file, "utf8")) as Panel;

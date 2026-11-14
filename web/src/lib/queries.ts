@@ -108,6 +108,8 @@ export function useLiveServers() {
       qc.invalidateQueries({ queryKey: ["servers"] });
       qc.invalidateQueries({ queryKey: ["snapshots"] });
       qc.invalidateQueries({ queryKey: ["offsite"] });
+      // A sync may have finished unheard, copying the snapshot whose details are open.
+      qc.invalidateQueries({ queryKey: ["snapshot"] });
       // A move may have finished unheard.
       qc.invalidateQueries({ queryKey: ["placement"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
@@ -188,6 +190,8 @@ export function useLiveServers() {
       qc.invalidateQueries({ queryKey: keys.offsite(done.org) });
       // After snapshots were brought back there are some where there were none.
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
+      // And those copied are now offsite, also in a snapshot's details.
+      qc.invalidateQueries({ queryKey: ["snapshot", done.org] });
     });
     return () => source.close();
   }, [qc]);
