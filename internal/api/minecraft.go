@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -141,6 +142,26 @@ type autoOps struct {
 	// locks holds one lock per server, so that two looks at the same server
 	// do not interleave their commands.
 	locks sync.Map
+	// missing is when the game last said it knows no player of a name the
+	// panel put on a list, by server, list and name: not asked again for a
+	// while, since the next look would find them still not on it.
+	missing sync.Map
+}
+
+// missingFor is how long a name the game knows no player of is left before
+// it is tried again.
+const missingFor = time.Hour
+
+// notMissing is the names to add less those the game lately knew no player of.
+func (o *autoOps) notMissing(list string, names []string) []string {
+	var out []string
+	for _, name := range names {
+		if at, ok := o.missing.Load(list + "/" + strings.ToLower(name)); ok && time.Since(at.(time.Time)) < missingFor {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 // A roleList is one of the lists of players a server keeps that the panel
@@ -148,6 +169,12 @@ type autoOps struct {
 type roleList struct {
 	// what names it in the log.
 	what string
+	// key is what the API calls it, as the server's settings do.
+	key string
+	// file is where the game keeps it, in the server's folder.
+	file string
+	// query asks the game who is on it, where it can be asked.
+	query string
 	// note is the annotation recording which players the panel put on it.
 	note string
 	// add and remove are the commands, less the player's name.
@@ -162,12 +189,12 @@ type roleList struct {
 
 var roleLists = []roleList{
 	{
-		what: "operators", note: avsysv1.AnnotationAutoOps, add: "op ", remove: "deop ", from: opRole,
+		what: "operators", key: "ops", file: "ops.json", note: avsysv1.AnnotationAutoOps, add: "op ", remove: "deop ", from: opRole,
 		picks: func(spec *avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks { return spec.OpMembers },
 		kept:  func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Ops },
 	},
 	{
-		what: "whitelist", note: avsysv1.AnnotationAutoWhitelist, add: "whitelist add ", remove: "whitelist remove ", from: whitelistRole,
+		what: "whitelist", key: "whitelist", file: "whitelist.json", query: "whitelist list", note: avsysv1.AnnotationAutoWhitelist, add: "whitelist add ", remove: "whitelist remove ", from: whitelistRole,
 		picks: func(spec *avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks { return spec.WhitelistMembers },
 		kept:  func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Whitelist },
 	},
@@ -299,24 +326,61 @@ func hasName(list []string, name string) bool {
 	return false
 }
 
-// opChanges is what to do to get from the players the panel has put on a
-// list on a server to the ones it should have.
-func opChanges(made, wanted []string) (add, remove []string) {
+// listChanges is what to do to a list on a server to get the players the
+// panel should have put on it there, from those it has (made).
+//
+// With who is on it in game known (on), that is gone by: a player it should
+// have who is not on it, taken off by hand, is put back, and one it put
+// there that is gone already needs nothing done. Without, the note is
+// taken to be true of the game. Either way only players the panel put on
+// it are ever taken off: one added by hand is not its to remove.
+func listChanges(made, wanted, on []string, known bool) (add, remove []string) {
+	if !known {
+		on = made
+	}
 	for _, name := range wanted {
-		if !hasName(made, name) {
+		if !hasName(on, name) {
 			add = append(add, name)
 		}
 	}
 	for _, name := range made {
-		if !hasName(wanted, name) {
+		if !hasName(wanted, name) && hasName(on, name) {
 			remove = append(remove, name)
 		}
 	}
 	return add, remove
 }
 
-// syncOps makes one running server's operators what its organization's
-// roles say. It does nothing, and costs nothing, when they already are.
+// stillOn is who of the players the panel has put on a list, or should
+// have, are on it in game: the note as it is true of the game now.
+func stillOn(made, wanted, on []string) []string {
+	var out []string
+	for _, name := range on {
+		if (hasName(made, name) || hasName(wanted, name)) && !hasName(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// sameNames is whether two lists have the same players, in any order.
+func sameNames(a, b []string) bool {
+	for _, n := range a {
+		if !hasName(b, n) {
+			return false
+		}
+	}
+	for _, n := range b {
+		if !hasName(a, n) {
+			return false
+		}
+	}
+	return true
+}
+
+// syncOps makes one running server's operators and whitelist what its
+// organization's roles and its settings say, as they are in game. It runs
+// no command when they already are.
 func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, members []store.Member) error {
 	if mc.Status.Phase != avsysv1.PhaseRunning {
 		// One that is not running is put right when it next is: the note
@@ -324,9 +388,9 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 		return nil
 	}
 	key := client.ObjectKeyFromObject(mc)
-	lock, _ := s.autoOps.locks.LoadOrStore(key.String(), &sync.Mutex{})
-	lock.(*sync.Mutex).Lock()
-	defer lock.(*sync.Mutex).Unlock()
+	lock := s.autoOps.lock(key)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// As it is now that the lock is held: another look may have changed
 	// the note of who was made an operator while this one waited. Read from
@@ -362,17 +426,38 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	for _, list := range roleLists {
 		made := splitNames(fresh.Annotations[list.note])
 		wanted := withKept(wantedFrom(list.from(&fresh.Spec), list.picks(&fresh.Spec), members), list.kept(&fresh.Spec))
-		add, remove := opChanges(made, wanted)
-		if len(add) == 0 && len(remove) == 0 {
+		// Who is on it in game: anyone at the console may have changed it.
+		// Where that cannot be read, the note is gone by as it is.
+		players, err := s.readList(ctx, fresh, list)
+		known := err == nil
+		if !known {
+			s.Log.Debug("could not read a server's list", "server", key.String(), "list", list.what, "error", err)
+		}
+		on := playerNames(players)
+		add, remove := listChanges(made, wanted, on, known)
+		listKey := key.String() + "/" + list.key
+		add = s.autoOps.notMissing(listKey, add)
+		from := made
+		if known {
+			from = stillOn(made, wanted, on)
+		}
+		if len(add) == 0 && len(remove) == 0 && sameNames(from, made) {
 			continue
 		}
 		// The note follows each command as it is carried out, so that a
 		// failure part of the way leaves it true of the game. A player put
 		// on a list and not noted would never be taken off again.
-		done, err := applyNames(made, add, remove, wanted, func(command string) error {
-			_, err := s.rcon(ctx, fresh, command)
+		done, missing, err := applyNames(from, add, remove, func(command string) error {
+			out, err := s.listCommand(ctx, fresh, command)
+			if err == nil && noSuchPlayer.MatchString(plain(out)) {
+				return errNoSuchPlayer
+			}
 			return err
 		}, list.add, list.remove)
+		for _, name := range missing {
+			s.autoOps.missing.Store(listKey+"/"+strings.ToLower(name), time.Now())
+			s.Log.Warn("the game knows no player of a name for its "+list.what, "server", key.String(), "player", name)
+		}
 		if note := strings.Join(done, ","); note == "" {
 			delete(fresh.Annotations, list.note)
 		} else {
@@ -383,7 +468,9 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			failed = err
 			break
 		}
-		s.Log.Info(list.what+" brought in step with roles", "server", key.String(), "added", add, "removed", remove)
+		if len(add) > 0 || len(remove) > 0 {
+			s.Log.Info(list.what+" brought in step with roles", "server", key.String(), "added", add, "removed", remove)
+		}
 	}
 	if changed {
 		if err := s.Client.Patch(ctx, fresh, client.MergeFrom(orig)); err != nil {
@@ -394,29 +481,31 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 }
 
 // applyNames carries out the additions and removals of one list with run,
-// and returns who the panel has put on it afterwards: wanted, if everything
-// went through, and otherwise made as changed by the commands that did.
-func applyNames(made, add, remove, wanted []string, run func(command string) error, adding, removing string) ([]string, error) {
-	now := append([]string{}, made...)
+// and returns who the panel has put on it afterwards: from, as changed by
+// the commands that went through, in order if all did. A player the game
+// says it knows nothing of is not noted as added, but is among missing; one
+// it cannot take off for that reason is not on it to take off.
+func applyNames(from, add, remove []string, run func(command string) error, adding, removing string) (noted, missing []string, err error) {
+	now := append([]string{}, from...)
 	for _, name := range add {
-		if err := run(adding + name); err != nil {
-			return now, err
+		if err := run(adding + name); errors.Is(err, errNoSuchPlayer) {
+			missing = append(missing, name)
+			continue
+		} else if err != nil {
+			return now, missing, err
 		}
-		now = append(now, name)
+		if !hasName(now, name) {
+			now = append(now, name)
+		}
 	}
 	for _, name := range remove {
-		if err := run(removing + name); err != nil {
-			return now, err
+		if err := run(removing + name); err != nil && !errors.Is(err, errNoSuchPlayer) {
+			return now, missing, err
 		}
-		kept := now[:0]
-		for _, n := range now {
-			if !strings.EqualFold(n, name) {
-				kept = append(kept, n)
-			}
-		}
-		now = kept
+		now = slices.DeleteFunc(now, func(n string) bool { return strings.EqualFold(n, name) })
 	}
-	return wanted, nil
+	sort.Strings(now)
+	return now, missing, nil
 }
 
 // syncOrgOps does syncOps for every server of an organization.

@@ -593,26 +593,7 @@ func keepListed(sc *sftp.Client, file string, names []string) error {
 	if len(kept) == len(entries) {
 		return nil
 	}
-	out, err := json.MarshalIndent(kept, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := file + ".avsys-tmp"
-	w, err := sc.Create(tmp)
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(out)
-	if cerr := w.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = sc.PosixRename(tmp, file)
-	}
-	if err != nil {
-		_ = sc.Remove(tmp)
-	}
-	return err
+	return writeListFile(sc, file, kept)
 }
 
 // markImporting sets or clears the mark of an import on a server.

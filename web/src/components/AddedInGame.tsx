@@ -1,0 +1,49 @@
+import { useQuery } from "@tanstack/react-query";
+import { api, serverPath, type GameLists, type Server } from "../lib/api";
+import { keys, useAction } from "../lib/queries";
+import { Button } from "./ui";
+import { lines } from "./ServerFields";
+
+const titles = { whitelist: "the whitelist", ops: "the operators" } as const;
+
+/**
+ * Players on one of a server's lists in game that the panel did not put
+ * there: added at the console or by an operator. Each can be listed in the
+ * settings, or taken off.
+ */
+export function AddedInGame({ server, list, listed, onKeep }: { server: Server; list: keyof GameLists; listed: string; onKeep: (name: string) => void }) {
+  const path = serverPath(server.org, server.name);
+  const lists = useQuery({ queryKey: keys.gameLists(server.org, server.name), queryFn: () => api.get<GameLists>(`${path}/lists`), refetchInterval: 30_000 });
+  const remove = useAction((name: string) => api.del(`${path}/lists/${list}/${encodeURIComponent(name)}`), [keys.gameLists(server.org, server.name)]);
+  // One listed already, saved or not, is the settings' to keep.
+  const named = new Set(lines(listed).map((n) => n.toLowerCase()));
+  const players = (lists.data?.[list]?.inGame ?? []).filter((p) => !named.has(p.name.toLowerCase()));
+  if (players.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-xs font-medium text-muted">Added in game</div>
+      <ul aria-label={`Added in game to ${titles[list]}`} className="divide-y divide-line rounded-lg border border-line">
+        {players.map((p) => (
+          <li key={p.name} className="flex items-center justify-between gap-2 py-1 pr-1 pl-3 text-[13px]">
+            <span className="truncate font-mono text-fg">{p.name}</span>
+            <div className="flex gap-1">
+              <Button size="sm" variant="ghost" aria-label={`Keep ${p.name} on ${titles[list]}`} onClick={() => onKeep(p.name)}>
+                Keep
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Remove ${p.name} from ${titles[list]}`}
+                loading={remove.isPending && remove.variables === p.name}
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(p.name)}
+              >
+                Remove
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

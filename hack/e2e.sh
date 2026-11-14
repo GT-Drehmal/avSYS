@@ -445,6 +445,20 @@ expect "and so is their main one" "$(whitelisted)" "$PLAYER"
 call -X DELETE "$API/me/minecraft-accounts/$ALT" >/dev/null
 for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" || break; sleep 1; done
 case "$(whitelisted)" in *jeb_*) fail "an alt unlinked stays on the whitelist" ;; *) echo "ok: an alt unlinked is taken off" ;; esac
+# Anyone at the console can change the whitelist too. A member taken off
+# there is put back at the next look at the lists; a player added there is
+# left on, and shown in Settings, from where they can be taken off.
+call -d '{"command":"whitelist add Grumm"}' "$SRV/console" >/dev/null
+expect "a member is taken off at the console" "$(call -d '{"command":"whitelist remove '"$PLAYER"'"}' "$SRV/console" | field "d['output']")" "Removed"
+# A change to who is picked is such a look, at once.
+set_spec '{"spec":{"whitelistMembers":{"also":["'"$ME"'"]}}}'
+for _ in $(seq 1 20); do whitelisted | grep -q "$PLAYER" && break; sleep 1; done
+expect "a member taken off at the console is put back" "$(whitelisted)" "$PLAYER"
+expect "a player added at the console is left on" "$(whitelisted)" "Grumm"
+expect "and shown in Settings as added in game" "$(call "$SRV/lists" | field "[p['name'] for p in d['whitelist']['inGame']]")" "Grumm"
+expect "and taken off from there" "$(call -X DELETE -o /dev/null -w '%{http_code}' "$SRV/lists/whitelist/Grumm")" 204
+case "$(whitelisted)" in *Grumm*) fail "a player taken off from Settings stays on the whitelist" ;; *) echo "ok: and is then off the whitelist" ;; esac
+expect "and the member is still on" "$(whitelisted)" "$PLAYER"
 set_spec '{"spec":{"autoWhitelist":"off","whitelistMembers":null}}'
 # One typed in its settings is put on at once, and taken off when it is
 # taken out: the image only ever adds to the list.

@@ -16,6 +16,7 @@ import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, Membe
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { ReplaceWorld } from "../../components/ReplaceWorld";
+import { AddedInGame } from "../../components/AddedInGame";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -341,8 +342,14 @@ export function Settings() {
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Whitelisted players">{(id) => <Textarea id={id} rows={4} {...text("whitelist")} className="font-mono" spellCheck={false} />}</Field>
-          <Field label="Operators">{(id) => <Textarea id={id} rows={4} {...text("ops")} className="font-mono" spellCheck={false} />}</Field>
+          {(["whitelist", "ops"] as const).map((list) => (
+            <div key={list} className="flex flex-col gap-3">
+              <Field label={list === "whitelist" ? "Whitelisted players" : "Operators"}>
+                {(id) => <Textarea id={id} rows={4} {...text(list)} className="font-mono" spellCheck={false} />}
+              </Field>
+              <AddedInGame server={server} list={list} listed={draft[list]} onKeep={(name) => setDraft((d) => ({ ...d, [list]: [...lines(d[list]), name].join("\n") }))} />
+            </div>
+          ))}
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field

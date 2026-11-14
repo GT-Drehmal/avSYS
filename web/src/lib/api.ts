@@ -592,6 +592,24 @@ export interface SnapshotList {
   usage?: { bytes: number; snapshots: number };
 }
 
+/** A player on one of a server's lists in game. */
+export interface ListedPlayer {
+  name: string;
+  uuid?: string;
+}
+
+/** One of a server's lists as the game has it: who is on it other than by the panel. */
+export interface GameList {
+  /** Whether it could be read. */
+  known: boolean;
+  inGame: ListedPlayer[];
+}
+
+export interface GameLists {
+  whitelist: GameList;
+  ops: GameList;
+}
+
 export interface Server {
   org: string;
   name: string;

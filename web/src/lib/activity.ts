@@ -26,6 +26,10 @@ export function didWhat(a: Activity): string {
       return "replaced the world";
     case "server.icon":
       return "changed the picture";
+    case "server.list-remove": {
+      const [name, list] = d.split(" ");
+      return list === "ops" ? `took ${name} off the operators` : `took ${name} off the whitelist`;
+    }
     case "server.resource-pack":
       return d === "removed" ? "removed the resource pack" : "changed the resource pack";
     case "content.upload":

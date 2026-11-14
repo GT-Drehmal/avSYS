@@ -283,6 +283,10 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST " + server + "/console", "", `{"command":"list"}`, store.RoleOperator, 409},
 		{"GET " + server + "/console", "", "", store.RoleViewer, 0},
 		{"GET " + server + "/activity", "", "", store.RoleViewer, 200},
+		// 200: allowed, and the lists could not be read, which it says. 502:
+		// allowed, and this panel reaches no server to take anyone off.
+		{"GET " + server + "/lists", "", "", store.RoleAdmin, 200},
+		{"DELETE " + server + "/lists/{list}/{name}", "/orgs/alpha/servers/world/lists/whitelist/Steve", "", store.RoleAdmin, 502},
 		// 502: allowed, and this panel reaches no server's files. 400: allowed,
 		// and that is no log.
 		{"GET " + server + "/logs", "", "", store.RoleViewer, 502},
