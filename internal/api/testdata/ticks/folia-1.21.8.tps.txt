@@ -1,0 +1,18 @@
+§x§4§f§a§4§f§0§lServer Health Report
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dOnline Players: §x§9§1§c§6§f§30
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dTotal regions: §x§9§1§c§6§f§33
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dUtilisation: §x§1§e§c§c§5§61.8§x§3§0§9§1§e§d% / §x§9§1§c§6§f§3100.0§x§3§0§9§1§e§d%
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dLoad rate: §x§9§1§c§6§f§30.00, §x§3§0§9§1§e§dGen rate: §x§9§1§c§6§f§32.00
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dLowest Region TPS: §x§1§e§c§c§5§619.98
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dMedian Region TPS: §x§1§e§c§c§5§719.99
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dHighest Region TPS: §x§1§e§c§c§5§820.00
+§x§4§f§a§4§f§0§lHighest §x§9§1§c§6§f§3§l3§x§4§f§a§4§f§0§l utilisation regions
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dRegion around block §x§9§1§c§6§f§3[w:'world_nether',7,80,7]§x§3§0§9§1§e§d:
+    §x§1§e§c§c§5§70.5§x§3§0§9§1§e§d% util at §x§1§e§c§c§5§70.29§x§3§0§9§1§e§d MSPT at §x§1§e§c§c§5§719.99§x§3§0§9§1§e§d TPS
+    Chunks: §x§9§1§c§6§f§349§x§3§0§9§1§e§d Players: §x§9§1§c§6§f§30§x§3§0§9§1§e§d Entities: §x§9§1§c§6§f§32
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dRegion around block §x§9§1§c§6§f§3[w:'world_the_end',7,80,7]§x§3§0§9§1§e§d:
+    §x§1§e§c§c§5§70.5§x§3§0§9§1§e§d% util at §x§1§e§c§c§5§70.26§x§3§0§9§1§e§d MSPT at §x§1§e§c§c§5§619.98§x§3§0§9§1§e§d TPS
+    Chunks: §x§9§1§c§6§f§349§x§3§0§9§1§e§d Players: §x§9§1§c§6§f§30§x§3§0§9§1§e§d Entities: §x§9§1§c§6§f§310
+§x§2§1§6§1§b§c§l - §x§3§0§9§1§e§dRegion around block §x§9§1§c§6§f§3[w:'world',7,80,7]§x§3§0§9§1§e§d:
+    §x§1§e§c§c§5§70.4§x§3§0§9§1§e§d% util at §x§1§e§c§c§5§70.23§x§3§0§9§1§e§d MSPT at §x§1§e§c§c§5§820.00§x§3§0§9§1§e§d TPS
+    Chunks: §x§9§1§c§6§f§349§x§3§0§9§1§e§d Players: §x§9§1§c§6§f§30§x§3§0§9§1§e§d Entities: §x§9§1§c§6§f§30

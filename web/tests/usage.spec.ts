@@ -130,3 +130,83 @@ test("on a cluster with no metrics API, the panel's own samples show players and
   await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toHaveAttribute("aria-label", "Players: 2 now, 2 at most");
   await expect(page.getByRole("region", { name: /^(Memory|CPU)$/ })).toHaveCount(0);
 });
+
+test("how fast the game ticks is drawn against the rate it aims for, with the time each tick takes", async ({ page }) => {
+  const start = Date.now() - 3600_000;
+  // A busy spell in the middle: ticks take longer than they may, and the rate drops.
+  const samples = Array.from({ length: 120 }, (_, i) => {
+    const mspt = i >= 50 && i < 60 ? 80 : 8;
+    return { t: new Date(start + i * 30_000).toISOString(), cpu: 500, memory: 2 * gib, players: 1, tps: Math.min(20, 1000 / mspt), tickTarget: 20, mspt };
+  });
+  await usage(page, { available: true, limit: 4 * gib, every: 30, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  const rate = page.getByRole("region", { name: "Ticks per second" });
+  await expect(rate).toContainText("20.0 target");
+  await expect(rate.getByRole("img")).toHaveAttribute("aria-label", "Ticks per second: 20.0 now, 12.5 lowest, 20.0 target");
+  await expect(rate.locator("line")).toHaveCount(1);
+  const time = page.getByRole("region", { name: "Time per tick" });
+  await expect(time.getByRole("img")).toHaveAttribute("aria-label", "Time per tick: 8.0 ms now, 80 ms at most, 50 ms allowed");
+  await expect(page.getByText("Not reported by this server.")).toHaveCount(0);
+  // Pointing into the busy spell shows the rate then.
+  const box = (await rate.getByRole("img").boundingBox())!;
+  await page.mouse.move(box.x + (box.width * 55) / 119, box.y + box.height / 2);
+  await expect(rate.getByRole("tooltip")).toContainText("12.5 ");
+  await expect(time.getByRole("tooltip")).toContainText("80 ms ");
+});
+
+test("a game set to another tick rate is drawn against that rate", async ({ page }) => {
+  const start = Date.now() - 3600_000;
+  const samples = Array.from({ length: 120 }, (_, i) => ({ t: new Date(start + i * 30_000).toISOString(), players: 1, tps: 40, tickTarget: 40, mspt: 3 }));
+  await usage(page, { available: false, limit: 4 * gib, every: 30, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  await expect(page.getByRole("region", { name: "Ticks per second" }).getByRole("img")).toHaveAttribute("aria-label", "Ticks per second: 40.0 now, 40.0 lowest, 40.0 target");
+  await expect(page.getByRole("region", { name: "Time per tick" }).getByRole("img")).toHaveAttribute("aria-label", "Time per tick: 3.0 ms now, 3.0 ms at most, 25 ms allowed");
+});
+
+test("a game that says its tick rate but not the time per tick has the rate alone", async ({ page }) => {
+  const start = Date.now() - 3600_000;
+  const samples = Array.from({ length: 120 }, (_, i) => ({ t: new Date(start + i * 30_000).toISOString(), players: 1, tps: 19.98, tickTarget: 20 }));
+  await usage(page, { available: false, limit: 4 * gib, every: 30, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  await expect(page.getByRole("region", { name: "Ticks per second" }).getByRole("img")).toHaveAttribute("aria-label", "Ticks per second: 20.0 now, 20.0 lowest, 20.0 target");
+  await expect(page.getByRole("region", { name: "Time per tick" })).toHaveCount(0);
+});
+
+test("a game that does not say how fast it ticks says so, beside the rest", async ({ page }) => {
+  const start = Date.now() - 3600_000;
+  const samples = Array.from({ length: 120 }, (_, i) => ({ t: new Date(start + i * 30_000).toISOString(), cpu: 500, memory: 2 * gib, players: 1 }));
+  await usage(page, { available: true, limit: 4 * gib, every: 30, noTicks: true, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  const rate = page.getByRole("region", { name: "Ticks per second" });
+  await expect(rate).toContainText("Not reported by this server.");
+  await expect(rate.getByRole("img")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Time per tick" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Memory" }).getByRole("img")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toBeVisible();
+});
+
+test("a game not yet asked how fast it ticks shows nothing of that", async ({ page }) => {
+  const start = Date.now() - 3600_000;
+  const samples = Array.from({ length: 120 }, (_, i) => ({ t: new Date(start + i * 30_000).toISOString(), players: 1 }));
+  await usage(page, { available: false, limit: 4 * gib, every: 30, samples });
+  await page.goto("/o/friends/s/survival/usage");
+  await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toBeVisible();
+  await expect(page.getByRole("region", { name: /tick/i })).toHaveCount(0);
+});
+
+// Against the panel itself, which has asked its running servers how fast
+// their games tick: survival runs Paper, and classic a version from before
+// the game could say.
+test("the panel's own samples draw how fast a running server ticks", async ({ page }) => {
+  await page.goto("/o/friends/s/survival/usage");
+  await expect(page.getByRole("region", { name: "Ticks per second" }).getByRole("img")).toHaveAttribute("aria-label", /^Ticks per second: [\d.]+ now, 1\d\.\d lowest, 20\.0 target$/);
+  await expect(page.getByRole("region", { name: "Time per tick" }).getByRole("img")).toHaveAttribute("aria-label", /^Time per tick: [\d.]+ ms now, \d+ ms at most, 50 ms allowed$/);
+});
+
+test("a running server whose game does not say how fast it ticks says so", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/club/s/classic/usage");
+  await expect(page.getByRole("region", { name: "Ticks per second" })).toContainText("Not reported by this server.");
+  await expect(page.getByRole("region", { name: "Players" }).getByRole("img")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Time per tick" })).toHaveCount(0);
+});
