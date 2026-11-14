@@ -15,6 +15,9 @@
 # it last exited, given the organization and the server as $1 and $2. The
 # panel's console shows the game that is running, which after an exit is the
 # next one; why the last one stopped is only in its own log.
+# AVSYS_E2E_PYTHON_ON_NODE (python3) is a python3 that runs a script it is
+# given on its input from where AVSYS_E2E_NODE_IP can be reached, which
+# reaches servers' extra ports as players' programs do.
 # AVSYS_E2E_PART runs one part of it: content, lifecycle, history or servers. Each
 # makes its own server, so that the parts can run side by side, each on a
 # cluster of its own, as CI runs them. Unset, all of them run, one after
@@ -371,11 +374,19 @@ public_port() {
   fail "its port $1 was not opened: $(call "$SRV" | field "d['status'].get('ports')")"
 }
 
-# portping WHAT PORT: reaches a public port of the node as a player's program
-# does (see portping.py), retrying while the port is not yet answered.
+# probe_port WHAT PORT: reaches a public port of the node once, as a player's
+# program does (see portping.py). It is run by AVSYS_E2E_PYTHON_ON_NODE, a
+# python3 that reads the script from its input, from where the node's
+# address can be reached: the machine running this may not reach it.
+probe_port() {
+  ${AVSYS_E2E_PYTHON_ON_NODE:-python3} - "$1" "$AVSYS_E2E_NODE_IP" "$2" < "$HERE/portping.py"
+}
+
+# portping WHAT PORT: probe_port, retrying while the port is not yet
+# answered.
 portping() {
   for _ in $(seq 1 20); do
-    out=$(python3 "$HERE/portping.py" "$1" "$AVSYS_E2E_NODE_IP" "$2" 2>&1) && [ "$out" != unreachable ] && echo "$out" && return 0
+    out=$(probe_port "$1" "$2" 2>&1) && [ "$out" != unreachable ] && echo "$out" && return 0
     sleep 2
   done
   echo "$out"
@@ -644,10 +655,10 @@ if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
   set_spec '{"spec":{"sleep":{"enabled":false}}}'
   wait_phase Running
   for _ in $(seq 1 30); do
-    case "$(python3 "$HERE/portping.py" http "$AVSYS_E2E_NODE_IP" "$MAP")" in *"Starting up"*) sleep 1 ;; *) break ;; esac
+    case "$(probe_port http "$MAP")" in *"Starting up"*) sleep 1 ;; *) break ;; esac
   done
   # Nothing in the game's pod listens on it.
-  case "$(python3 "$HERE/portping.py" http "$AVSYS_E2E_NODE_IP" "$MAP")" in *"Starting up"*) fail "running, its map's port is still answered for it" ;; esac
+  case "$(probe_port http "$MAP")" in *"Starting up"*) fail "running, its map's port is still answered for it" ;; esac
   echo "ok: running, its port reaches its pod again"
   set_spec '{"spec":{"ports":[]}}'
 else
@@ -1061,7 +1072,7 @@ if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
   expect "Bedrock's server list is told it is asleep" "$(portping bedrock "$GEYSER")" "MCPE;Asleep. Join to wake it up.;"
   stays Sleeping 5
   echo "ok: and that does not wake it"
-  python3 "$HERE/portping.py" join "$AVSYS_E2E_NODE_IP" "$GEYSER" >/dev/null
+  probe_port join "$GEYSER" >/dev/null
   wait_until Starting
   echo "ok: a Bedrock player joining wakes it"
   set_spec '{"spec":{"sleep":{"enabled":false}}}'

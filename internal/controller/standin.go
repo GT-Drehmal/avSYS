@@ -38,6 +38,10 @@ func StandInSliceName(server string) string { return PortsServiceName(server) + 
 // own controller of endpoints leaves alone.
 const standInManager = "avsys.dev/stand-in"
 
+// clusterSlices marks the endpoints the cluster makes for a Service with a
+// selector.
+const clusterSlices = "endpointslice-controller.k8s.io"
+
 // standingIn says whether the panel answers on a server's extra ports: while
 // its game is not running, if the panel can.
 func (r *Reconciler) standingIn(ctx context.Context, mc *avsysv1.MinecraftServer) (bool, error) {
@@ -71,6 +75,18 @@ func (r *Reconciler) pointPorts(ctx context.Context, mc *avsysv1.MinecraftServer
 	if !standIn {
 		r.closeStandIn(key)
 		return r.dropSlice(ctx, slice)
+	}
+	// The cluster makes no endpoints for a Service without a selector, but
+	// leaves those it made while it had one, of the game's pod: traffic
+	// would still be shared out to them.
+	var made discoveryv1.EndpointSliceList
+	if err := r.Reader.List(ctx, &made, client.InNamespace(mc.Namespace), client.MatchingLabels{discoveryv1.LabelServiceName: svc.Name, discoveryv1.LabelManagedBy: clusterSlices}); err != nil {
+		return err
+	}
+	for i := range made.Items {
+		if err := r.Delete(ctx, &made.Items[i]); client.IgnoreNotFound(err) != nil {
+			return err
+		}
 	}
 	ip, at, err := r.Config.StandIn.Open(key, open)
 	if err != nil {
