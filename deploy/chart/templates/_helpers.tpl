@@ -118,6 +118,15 @@ IfNotPresent
 {{- if and $oidc.issuer (not $oidc.clientId) -}}
 {{- fail "signIn.oidc has an issuer but no clientId" -}}
 {{- end -}}
+{{- if not .Values.passwords -}}
+{{- $any := false -}}
+{{- range $id := list "github" "discord" "google" "oidc" -}}
+{{- if (index $.Values.signIn $id).clientId -}}{{- $any = true -}}{{- end -}}
+{{- end -}}
+{{- if not $any -}}
+{{- fail "passwords false needs a provider in signIn to sign in through" -}}
+{{- end -}}
+{{- end -}}
 {{- $o := .Values.offsite -}}
 {{- if and $o.repository (not $o.existingSecret) (not $o.password) -}}
 {{- fail "offsite.repository needs a password: offsite.existingSecret or offsite.password" -}}

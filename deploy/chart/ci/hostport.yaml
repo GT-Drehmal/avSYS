@@ -239,6 +239,8 @@ spec:
               value: "2048"
             - name: AVSYS_ALLOW_SIGNUPS
               value: "true"
+            - name: AVSYS_PASSWORDS
+              value: "true"
             - name: AVSYS_NAMESPACE_PREFIX
               value: "mc-"
             - name: AVSYS_INSTALL_CRDS

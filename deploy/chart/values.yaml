@@ -134,6 +134,12 @@ signIn:
 # invites, after the first, which becomes the instance administrator.
 signups: false
 
+# false turns password sign-in off: everyone signs in through a provider in
+# signIn, and no password can be used or set. With no account yet, the
+# panel's log gives a setup link; whoever signs in through it becomes the
+# administrator.
+passwords: true
+
 # Passed to servers for CurseForge downloads: here, or as the key api-key in
 # an existing Secret.
 curseforge:

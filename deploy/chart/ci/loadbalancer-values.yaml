@@ -37,6 +37,7 @@ signIn:
     scopes: openid profile email groups
     allowedGroups: [minecraft, admins]
     groupsClaim: roles
+passwords: false
 curseforge:
   existingSecret: curseforge
 offsite:
