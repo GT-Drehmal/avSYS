@@ -4,21 +4,28 @@
 #
 # Built from the repository root, so that the license can be included:
 #   docker build -f images/workspace/Dockerfile .
+#
+# Images are named by digest as well as tag, so that a commit builds from
+# the same images each time. Dependabot moves the digests.
 
 # Snapshots are taken from in here, where the server's files are.
-FROM restic/restic:0.19.1 AS restic
+FROM restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510 AS restic
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 LABEL org.opencontainers.image.source="https://github.com/GT-Drehmal/avSYS" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="avSYS workspace: the SSH sidecar next to each Minecraft server"
 
 ARG TARGETARCH
-ARG RCON_CLI_VERSION=1.7.7
+ARG RCON_CLI_VERSION=1.7.10
 ARG MICROMAMBA_VERSION=2.3.2-0
+# CI sets this to the day's date. The packages are then installed afresh
+# each day, with Debian's security fixes, and not kept from an older build.
+ARG PACKAGES_DATE
 
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       openssh-server ca-certificates tini \
       bash-completion curl wget git rsync tar gzip unzip zip libarchive-tools \

@@ -57,12 +57,18 @@ jobs:
       # can add to its organization's repository but not delete from it, and
       # that a restore touches nothing outside the server's own files.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The workspace's packages are installed afresh once a day (see its
+      # Dockerfile), here and wherever else it is built.
+      - name: Date
+        id: date
+        run: echo "today=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Workspace image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: images/workspace/Dockerfile
           load: true
+          build-args: PACKAGES_DATE=${{ steps.date.outputs.today }}
           tags: avsys-workspace:ci
           cache-from: |
             type=gha,scope=e2e-workspace
@@ -87,6 +93,41 @@ jobs:
           bun audit --audit-level=moderate
           bun run lint
           bun run build
+      # The images, for what govulncheck and the audit do not see: the
+      # Debian packages in the workspace and in the panel's base. Fails on a
+      # high or critical advisory that has a fix; one with no fix yet is
+      # nothing anyone here can act on. The nightly run scans again, so an
+      # advisory against an image that has not changed still shows up.
+      #
+      # The panel adds only its own program and restic to its base, so the
+      # base is what is scanned, as the Dockerfile names it, and the panel is
+      # not built here. The Go programs in the workspace are listed but do
+      # not fail the build: restic and rcon-cli are other projects'
+      # releases, fixed by taking a newer one, which Dependabot proposes for
+      # restic. The panel's own program is govulncheck's, above.
+      #
+      # Trivy is fetched by version and checked against the release's hash.
+      - name: Image vulnerabilities
+        env:
+          TRIVY_VERSION: 0.76.2
+          TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+          TRIVY_DISABLE_VEX_NOTICE: "1"
+        run: |
+          panel_base=$(awk '$1 == "FROM" { ref = $NF } END { print ref }' Dockerfile)
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "$TRIVY_SHA256  trivy.tar.gz" | sha256sum -c -
+          tar -xzf trivy.tar.gz trivy
+          scan() { ./trivy image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed "$@"; }
+          echo "::group::Go programs in the workspace, listed only"
+          scan --pkg-types library avsys-workspace:ci
+          echo "::endgroup::"
+          failed=0
+          for image in avsys-workspace:ci "$panel_base"; do
+            echo "Packages in $image:"
+            scan --pkg-types os --exit-code 1 "$image" || failed=1
+          done
+          exit "$failed"
 
   # Installs the panel into an empty cluster the way a user would, then runs a
   # real Minecraft server through it. This is what catches a broken manifest,
@@ -105,6 +146,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Date
+        id: date
+        run: echo "today=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       # Built from what earlier runs kept, here and in publishing: only what
       # changed is built again. One part keeps what it built for the next run.
       - name: Workspace image
@@ -113,6 +157,7 @@ jobs:
           context: .
           file: images/workspace/Dockerfile
           load: true
+          build-args: PACKAGES_DATE=${{ steps.date.outputs.today }}
           tags: ghcr.io/gt-drehmal/avsys-workspace:e2e
           cache-from: |
             type=gha,scope=e2e-workspace
@@ -262,7 +307,7 @@ jobs:
           open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
           body="The nightly run of $(date -u +%Y-%m-%d) failed on \`${GITHUB_SHA::7}\`: $RUN
 
-          Nothing was merged to cause it at that hour, so look first at what the run depends on outside this repository: the game image, Paper's builds, Modrinth."
+          Nothing was merged to cause it at that hour, so look first at what the run depends on outside this repository: the game image, Paper's builds, Modrinth, or a new advisory against something in the images (the test job's last step)."
           if [ -n "$open" ]; then
             gh issue comment "$open" --body "$body"
           else
@@ -304,6 +349,7 @@ jobs:
           else
             echo "version=sha-$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
           fi
+          echo "today=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -320,6 +366,7 @@ jobs:
           file: images/workspace/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: PACKAGES_DATE=${{ steps.version.outputs.today }}
           tags: |
             ${{ env.WORKSPACE }}:${{ steps.version.outputs.version }}
             ${{ steps.version.outputs.moving && format('{0}:{1}', env.WORKSPACE, steps.version.outputs.moving) || '' }}
