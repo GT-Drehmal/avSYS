@@ -35,6 +35,13 @@ func filesFrom(t *testing.T, p *panel, h sftp.Handlers) *sftp.Client {
 	p.srv.workspaces.mu.Lock()
 	p.srv.workspaces.conns[p.srv.Namespace("alpha")+"/world"] = &pooledSFTP{sftp: sc, lastUsed: used}
 	p.srv.workspaces.mu.Unlock()
+	// Taken out again: with no SSH connection under it, the pool, which
+	// outlives the test, could not close it once it was idle.
+	t.Cleanup(func() {
+		p.srv.workspaces.mu.Lock()
+		delete(p.srv.workspaces.conns, p.srv.Namespace("alpha")+"/world")
+		p.srv.workspaces.mu.Unlock()
+	})
 	return sc
 }
 
