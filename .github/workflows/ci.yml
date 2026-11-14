@@ -73,6 +73,10 @@ jobs:
           cache-from: |
             type=gha,scope=e2e-workspace
             type=gha,scope=workspace
+      # restic for both platforms at once, as publishing builds it: the two
+      # builds share a module cache, which once broke publishing alone.
+      - name: restic for every platform
+        run: docker buildx build --platform linux/amd64,linux/arm64 --target restic --progress plain .
       - name: Snapshots
         run: |
           docker cp "$(docker create avsys-workspace:ci)":/usr/local/bin/restic /usr/local/bin/restic
