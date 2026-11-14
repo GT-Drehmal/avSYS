@@ -166,6 +166,8 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 		{org: "friends", name: "lobby", display: "Lobby", loader: avsysv1.LoaderVanilla, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseSleeping, sleep: true},
 		{org: "friends", name: "broken", display: "Broken", loader: avsysv1.LoaderPaper, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseError, message: "The server exited with code 1."},
 		{org: "club", name: "survival", display: "Survival", loader: avsysv1.LoaderVanilla, version: "1.21.4", state: avsysv1.StateStopped, phase: avsysv1.PhaseStopped},
+		// On a version from before the game could say how fast it ticks.
+		{org: "club", name: "classic", display: "Classic", loader: avsysv1.LoaderVanilla, version: "1.20.1", state: avsysv1.StateRunning, phase: avsysv1.PhaseRunning},
 	} {
 		mc := &avsysv1.MinecraftServer{
 			ObjectMeta: metav1.ObjectMeta{Namespace: srv.Namespace(s.org), Name: s.name, CreationTimestamp: metav1.NewTime(time.Now().Add(-48 * time.Hour))},
@@ -182,7 +184,10 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 		}
 		mc.Status = avsysv1.MinecraftServerStatus{Phase: s.phase, Message: s.message, Players: s.players, Address: mc.Spec.Expose.Hostname, MaxPlayers: 20}
 		if s.phase == avsysv1.PhaseRunning {
-			mc.Status.Version = "Paper " + s.version
+			mc.Status.Version = s.version
+			if s.loader == avsysv1.LoaderPaper {
+				mc.Status.Version = "Paper " + s.version
+			}
 		}
 		if s.lastBackup > 0 {
 			at := metav1.NewTime(time.Now().Add(-s.lastBackup))
@@ -199,6 +204,7 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 
 	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
 	srv.Metrics = metrics
+	srv.GameCommand = metrics.gameCommand
 	if withMetrics {
 		if err := seedNodes(ctx, cluster); err != nil {
 			return err

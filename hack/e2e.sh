@@ -529,6 +529,20 @@ expect "and says its name" "$(call "$SRV/files/search?q=R.0.0")" '"name":"r.0.0.
 expect "a pattern is only looked for" "$(call "$SRV/files/search?q=*")" '"results":[]'
 for p in /e2e-world /e2e-world.zip /e2e-configs.zip; do call -X DELETE "$SRV/files?path=$p" >/dev/null; done
 
+step "how fast the game ticks"
+# The panel asks every 30 seconds, over one connection it keeps open: the
+# game logs each connection made to it, and asking over a new one each time
+# would fill its log.
+ticked() { call "$SRV/usage" | field "len([s for s in d['samples'] if 'tps' in s])"; }
+for _ in $(seq 1 40); do [ "$(ticked)" -gt 0 ] && break; sleep 2; done
+expect "Paper says how fast it ticks, against 20 a second, and how long a tick takes" "$(call "$SRV/usage" | field "[(s['tps'] > 0, s['tickTarget'] == 20, s['mspt'] >= 0) for s in d['samples'] if 'tps' in s][-1]")" "(True, True, True)"
+connections() { call -f "$SRV/files/content?path=/logs/latest.log" | grep -c 'Thread RCON Client .* started' || true; }
+before=$(ticked) made=$(connections)
+for _ in $(seq 1 40); do [ "$(ticked)" -gt "$before" ] && break; sleep 2; done
+[ "$(ticked)" -gt "$before" ] || fail "the game was not asked again"
+[ "$(connections)" = "$made" ] || fail "the game was asked again over a new connection: $made connections logged before, $(connections) after"
+echo "ok: asked again, over the same connection"
+
 step "datapacks"
 # restarted asks for a restart and waits it out: down first, then up.
 restarted() {
