@@ -358,6 +358,12 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		env["WHITELIST"] = strings.Join(mc.Spec.Whitelist, "\n")
 	}
 
+	// Set only where a port was opened for a mod, so that other servers
+	// keep the environment, and the pod, they have.
+	if ports := modPortsEnv(mc, mc.Status.Ports); ports != "" {
+		env["AVSYS_MOD_PORTS"] = ports
+	}
+
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
@@ -618,13 +624,31 @@ mkdir -p "${known%/*}" 2>/dev/null && { [ -z "$asked" ] || printf '%s\n' "$asked
 
 // startScript is the game container's command for a server run by the
 // image it is written for: what the server has installed is kept when the
-// sites it came from do not answer, and then the image starts as it does
-// by itself.
+// sites it came from do not answer, the mods ports were opened for are set
+// up to use them, and then the image starts as it does by itself.
 const startScript = `kind=$(echo "${TYPE:-}" | tr a-z A-Z)
 # Whether a site answers, within a few seconds.
 answers() { curl -fsS -o /dev/null --connect-timeout 3 -m 5 "$@" 2>/dev/null; }
-` + keepBuild + keepContent + `exec ` + imageStart + `
+` + keepBuild + keepContent + modConfig + `exec ` + imageStart + `
 `
+
+// modpackScript is the game container's command for a server from a
+// modpack with ports opened for mods: those are set up, and the image
+// installs and starts the pack as it does by itself. The pack's loader, as
+// the panel recorded it, says where its mods keep their config: the image
+// only finds out once the script has run.
+func modpackScript(pack *avsysv1.ModpackSpec) string {
+	kind := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' {
+			return r - 'a' + 'A'
+		}
+		if r >= 'A' && r <= 'Z' {
+			return r
+		}
+		return -1
+	}, pack.Loader)
+	return "kind=" + kind + "\n" + modConfig + "exec " + imageStart + "\n"
+}
 
 // startsThroughScript says whether a server's game is started through
 // startScript: one run by the image it is written for, and not from a
@@ -755,6 +779,8 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 			spec.Containers[i].TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
 			if startsThroughScript(mc) {
 				spec.Containers[i].Command = []string{"/bin/sh", "-c", startScript}
+			} else if mc.Spec.Image == "" && modPortsEnv(mc, mc.Status.Ports) != "" {
+				spec.Containers[i].Command = []string{"/bin/sh", "-c", modpackScript(mc.Spec.Modpack)}
 			}
 		}
 	}

@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
+import { modPortsNote } from "../../components/ExtraPorts";
 import { ProjectIcon } from "../../components/ModrinthSearch";
 import { Button, Field, Input, Notice, Toggle } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
@@ -148,6 +149,7 @@ export function Mods() {
                 mods={at.map((i) => mods[i])}
                 gameJava={server.java.game}
                 showKind={false}
+                note={(m) => modPortsNote(m, server.spec.ports)}
                 onRemove={canEdit ? (j) => update.mutate({ mods: mods.filter((_, i) => i !== at[j]) }) : undefined}
                 extra={(m, j) =>
                   m.source === "modrinth" && (

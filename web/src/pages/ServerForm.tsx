@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive as ArchiveIcon, ChevronLeft, Undo2, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit, packTitle, type PickKind, type Software } from "../components/Content";
 import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
-import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../components/ExtraPorts";
+import { ExtraPorts, fitModPorts, modPortsNote, type PortDraft, portDrafts, portsOf, touchesKnownMods } from "../components/ExtraPorts";
 import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
 import { PackDrop, PackFiles, PackIcon } from "../components/Modpack";
 import { ModrinthSearch } from "../components/ModrinthSearch";
@@ -571,7 +571,16 @@ export function ServerForm({
   const [description, setDescription] = useState(editing?.description ?? "");
   // A new server can start from a template, a server or a snapshot, picked here.
   const [picking, setPicking] = useState<StartKind | null>(source || preset || forTemplate ? null : (pick ?? null));
-  const [v, setValues] = useState(start);
+  const [v, setRawValues] = useState(start);
+  // The ports opened for mods come and go with the mods, as the panel has them.
+  const setValues = useCallback(
+    (change: SetStateAction<Values>) =>
+      setRawValues((was) => {
+        const next = typeof change === "function" ? change(was) : change;
+        return next.mods === was.mods ? next : { ...next, ports: fitModPorts(was.mods, next.mods, next.ports) };
+      }),
+    [],
+  );
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
   // As the template it comes from says, where it says.
@@ -642,7 +651,7 @@ export function ServerForm({
     if (source || importing || v.version === "LATEST" || !versions.data || versions.isPlaceholderData || versions.data.all.has(v.version)) return;
     toast.info(`${loaders.find((l) => l.id === v.loader)?.name ?? "This software"} has no build for ${v.version} yet`);
     setValues((was) => ({ ...was, version: "LATEST" }));
-  }, [source, importing, v.version, versions.data, versions.isPlaceholderData, v.loader]);
+  }, [source, importing, v.version, versions.data, versions.isPlaceholderData, v.loader, setValues]);
   const [addingMods, setAddingMods] = useState<PickKind | null>(null);
   // A mod whose version is being picked, by where it is in the list.
   const [versioning, setVersioning] = useState<number | null>(null);
@@ -957,7 +966,9 @@ export function ServerForm({
       ...(base?.opMembers ? { opMembers: base.opMembers } : {}),
       ...(base?.whitelistMembers ? { whitelistMembers: base.whitelistMembers } : {}),
       expose: v.exposeType === "None" ? { type: "None" } : { type: v.exposeType, hostname: v.hostname.trim() },
-      ...(portsOf(v.ports).length > 0 ? { ports: portsOf(v.ports) } : {}),
+      // Said even as none where mods need ports: left out, the panel would
+      // open theirs again.
+      ...(portsOf(v.ports).length > 0 || touchesKnownMods([], v.mods) ? { ports: portsOf(v.ports) } : {}),
       mods: v.mods,
       // The rest are the server's once it is made.
       ...(requested?.from === "url" ? { resourcePack: { ...requested.pack, ...packSettings } } : {}),
@@ -1009,7 +1020,8 @@ export function ServerForm({
       changes.backups = v.schedule === "off" ? ({ enabled: false, minute: null, keep: null } satisfies BackupOverride) : v.schedule === "own" ? ownBackups() : null;
     }
     if (modsChanged) changes.mods = v.mods;
-    if (portsChanged) changes.ports = portsOf(v.ports);
+    // With mods that need ports changed, the ports are said as they are here.
+    if (portsChanged || (modsChanged && touchesKnownMods(start.mods, v.mods))) changes.ports = portsOf(v.ports);
     // A template says whether its servers start a world of their own: one
     // of its own is one too, put in once its files are.
     if (forTemplate) Object.assign(changes, { world: world === "kept" ? null : "new" });
@@ -1729,7 +1741,8 @@ export function ServerForm({
                       note={(_, j) => {
                         const upload = j >= mods.length ? v.uploads[ups[j - mods.length]] : null;
                         const off = v.unused.includes(upload ? upload.file.name : v.mods[mods[j]].project) && "not on in the world before";
-                        return [upload && `${bytes(upload.file.size)} · uploaded when created`, off].filter(Boolean).join(" · ") || undefined;
+                        const open = !upload && modPortsNote(v.mods[mods[j]], portsOf(v.ports));
+                        return [upload && `${bytes(upload.file.size)} · uploaded when created`, off, open].filter(Boolean).join(" · ") || undefined;
                       }}
                       onRemove={(j) => (j < mods.length ? set("mods", v.mods.filter((_, i) => i !== mods[j])) : set("uploads", v.uploads.filter((_, i) => i !== ups[j - mods.length])))}
                       extra={(m, j) =>

@@ -410,6 +410,8 @@ export interface ExtraPort {
   name: string;
   port: number;
   protocol?: "TCP" | "UDP";
+  /** The mod the panel opened it for, by its Modrinth slug: closed again with the mod. */
+  for?: string;
 }
 
 /** Where an extra port is reached from outside. */

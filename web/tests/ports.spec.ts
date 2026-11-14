@@ -34,7 +34,7 @@ test("an installed mod that needs a port is said, and opening it is one press an
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.ports).toEqual([
-    { name: "voice-chat", port: 24454, protocol: "UDP" },
+    { name: "voice-chat", port: 24454, protocol: "UDP", for: "simple-voice-chat" },
     { name: "votifier", port: 8192, protocol: "TCP" },
   ]);
 });
