@@ -790,7 +790,7 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 		return err
 	}
 	orig := mc.DeepCopy()
-	mc.Spec.State = final
+	mc.Spec.State = finalState(&mc.Spec, final)
 	delete(mc.Annotations, avsysv1.AnnotationRestoring)
 	delete(mc.Annotations, avsysv1.AnnotationCreating)
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))

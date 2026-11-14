@@ -166,6 +166,17 @@ func modpackMissing(spec *avsysv1.MinecraftServerSpec) error {
 	return nil
 }
 
+// finalState is the state a server made from a snapshot or another server
+// is left in once its files are there: the one asked for, except that one
+// whose modpack file was never uploaded, as its original's was not, stays
+// stopped until it is. It has nothing to start with.
+func finalState(spec *avsysv1.MinecraftServerSpec, asked avsysv1.DesiredState) avsysv1.DesiredState {
+	if modpackMissing(spec) != nil {
+		return avsysv1.StateStopped
+	}
+	return asked
+}
+
 // putModpack takes an uploaded .mrpack as the server's modpack: it is read,
 // kept on the server's volume by its SHA-1, and the server's settings say
 // it, with what it is built for. The one before is removed. The body is the
@@ -265,6 +276,10 @@ func (s *Server) putModpack(w http.ResponseWriter, r *http.Request, u *store.Use
 		pack.Title = strings.TrimSuffix(name, path.Ext(name))
 	}
 	file := path.Join(controller.ContentDir, pack.UploadedFile())
+	// One there already, of the same pack uploaded before, may be what the
+	// settings say: it is never removed for a failure here.
+	_, statErr := sc.Stat(file)
+	had := statErr == nil
 	if err := sc.PosixRename(tmp, file); err != nil {
 		return fileError(err)
 	}
@@ -292,8 +307,8 @@ func (s *Server) putModpack(w http.ResponseWriter, r *http.Request, u *store.Use
 		}
 		if !apierrors.IsConflict(err) || attempt == 3 {
 			// The settings still say the pack before: the new file goes,
-			// unless it is that one.
-			if previous == nil || previous.Modpack.UploadedFile() != pack.UploadedFile() {
+			// unless it was there already.
+			if !had {
 				_ = sc.Remove(file)
 			}
 			return err

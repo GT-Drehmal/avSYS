@@ -7,6 +7,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"path"
 	"strings"
 	"sync/atomic"
@@ -14,7 +15,9 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
@@ -314,5 +317,135 @@ func TestTemplateRefusesUploadedModpack(t *testing.T) {
 	body := `{"name":"Packed","spec":{"modpack":{"source":"upload","project":"p.mrpack","gameVersion":"1.21.4","loader":"fabric"},"resources":{"memory":"2Gi"},"storage":{"size":"2Gi"}}}`
 	if code, _ := p.do("owner", "POST", "/orgs/alpha/templates", body); code != 400 {
 		t.Errorf("made: %d", code)
+	}
+}
+
+// packedServer makes a stopped server whose uploaded modpack is pack, its
+// file kept in its files, which are in memory.
+func packedServer(p *panel, name string, pack []byte) (*sftp.Client, string) {
+	p.t.Helper()
+	sum := sha1.Sum(pack)
+	sha := hex.EncodeToString(sum[:])
+	mc := &avsysv1.MinecraftServer{
+		ObjectMeta: metav1.ObjectMeta{Namespace: p.srv.Namespace("alpha"), Name: name},
+		Spec: avsysv1.MinecraftServerSpec{
+			EULA: true, State: avsysv1.StateStopped,
+			Modpack: &avsysv1.ModpackSpec{Source: avsysv1.SourceUpload, Project: "probe.mrpack", Version: sha, Title: "Probe Pack", GameVersion: "1.21.4", Loader: "fabric"},
+		},
+	}
+	p.srv.applyDefaults("alpha", name, &mc.Spec)
+	if err := p.srv.Client.Create(context.Background(), mc); err != nil {
+		p.t.Fatal(err)
+	}
+	p.setPhase("alpha", name, avsysv1.PhaseStopped)
+	sc := p.withFiles("alpha", name)
+	if err := sc.MkdirAll(controller.ContentDir); err != nil {
+		p.t.Fatal(err)
+	}
+	file := path.Join(controller.ContentDir, sha+".mrpack")
+	f, err := sc.Create(file)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	_, _ = f.Write(pack)
+	f.Close()
+	return sc, file
+}
+
+// While a snapshot of the server is taken, its modpack's file is not taken
+// away by a change of settings: the snapshot would record the pack without
+// its file. Other changes still go through.
+func TestModpackFileStaysDuringASnapshot(t *testing.T) {
+	p := newPanel(t)
+	sc, file := packedServer(p, "packed", mrpack(t, fabricIndex, nil))
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "packed", kindSnapshot, ""); !ok {
+		t.Fatal("could not start a snapshot")
+	}
+	off := `{"spec":{"modpack":null,"loader":"fabric","version":"1.21.4"}}`
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/packed", off); code != 409 || msg != "busy" {
+		t.Errorf("taken off during a snapshot: %d %s", code, msg)
+	}
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/packed", `{"spec":{"properties":{"motd":"hi"}}}`); code != 200 {
+		t.Errorf("another change during a snapshot: %d %s", code, msg)
+	}
+	if _, err := sc.Stat(file); err != nil {
+		t.Fatalf("the file went during the snapshot: %v", err)
+	}
+	p.srv.ops.end("mc-alpha", "packed")
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/packed", off); code != 200 {
+		t.Fatalf("taken off after: %d %s", code, msg)
+	}
+	if _, err := sc.Stat(file); err == nil {
+		t.Error("the file of a modpack taken off is still there")
+	}
+}
+
+// A pack whose file has a name the panel changes, as one with letters
+// outside ASCII, makes a server under the name its upload will have.
+func TestNewServerNamesItsModpackAsItsUploadWill(t *testing.T) {
+	p := newPanel(t)
+	body := `{"name":"cafe","spec":{"eula":true,"state":"Stopped","modpack":{"source":"upload","project":"Café Pack.mrpack","gameVersion":"1.21.4","loader":"fabric"}}}`
+	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", body); code != 201 {
+		t.Fatalf("made: %d %s", code, msg)
+	}
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: "mc-alpha", Name: "cafe"}, mc); err != nil {
+		t.Fatal(err)
+	}
+	if want, _ := modpackFilename("Café Pack.mrpack"); mc.Spec.Modpack.Project != want || want != "Caf_ Pack.mrpack" {
+		t.Errorf("project %q, want %q", mc.Spec.Modpack.Project, want)
+	}
+	if code, _ := p.do("owner", "POST", "/orgs/alpha/servers", strings.NewReplacer(`"cafe"`, `"other"`, "Café Pack.mrpack", "pack.zip").Replace(body)); code != 400 {
+		t.Errorf("not a .mrpack: %d", code)
+	}
+}
+
+// A server made from another whose modpack file was never uploaded stays
+// stopped, whatever it was asked to be: it has nothing to start with.
+func TestFinalState(t *testing.T) {
+	missing := &avsysv1.MinecraftServerSpec{Modpack: &avsysv1.ModpackSpec{Source: avsysv1.SourceUpload, Project: "p.mrpack"}}
+	there := &avsysv1.MinecraftServerSpec{Modpack: &avsysv1.ModpackSpec{Source: avsysv1.SourceUpload, Project: "p.mrpack", Version: strings.Repeat("ab", 20)}}
+	modrinth := &avsysv1.MinecraftServerSpec{Modpack: &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "p"}}
+	for name, c := range map[string]struct {
+		spec       *avsysv1.MinecraftServerSpec
+		asked, got avsysv1.DesiredState
+	}{
+		"not uploaded":          {missing, avsysv1.StateRunning, avsysv1.StateStopped},
+		"not uploaded, stopped": {missing, avsysv1.StateStopped, avsysv1.StateStopped},
+		"uploaded":              {there, avsysv1.StateRunning, avsysv1.StateRunning},
+		"from Modrinth":         {modrinth, avsysv1.StateRunning, avsysv1.StateRunning},
+		"none":                  {&avsysv1.MinecraftServerSpec{}, avsysv1.StateRunning, avsysv1.StateRunning},
+	} {
+		if got := finalState(c.spec, c.asked); got != c.got {
+			t.Errorf("%s: %s, want %s", name, got, c.got)
+		}
+	}
+}
+
+// The same pack uploaded again, when the server cannot then be read again,
+// leaves the file its settings say where it is.
+func TestModpackFileStaysWhenTheServerCannotBeRead(t *testing.T) {
+	p := newPanel(t)
+	pack := mrpack(t, fabricIndex, nil)
+	sc, file := packedServer(p, "packed", pack)
+	var gets atomic.Int32
+	p.srv.Client = interceptor.NewClient(p.srv.Client.(client.WithWatch), interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			// The request's first read of it goes; the read again, once
+			// the file is in place, does not.
+			if _, ok := obj.(*avsysv1.MinecraftServer); ok && gets.Add(1) > 1 {
+				return errors.New("the cluster does not answer")
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+	if rec := p.send("owner", "PUT", "/orgs/alpha/servers/packed/modpack?name=probe.mrpack", pack, "X-Avsys", "1"); rec.Code < 500 {
+		t.Fatalf("the upload went through: %d %s", rec.Code, rec.Body)
+	}
+	if gets.Load() < 2 {
+		t.Fatal("the server was not read again")
+	}
+	if _, err := sc.Stat(file); err != nil {
+		t.Errorf("the file its settings say is gone: %v", err)
 	}
 }

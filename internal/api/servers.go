@@ -468,6 +468,12 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return errBadRequest("A new server with an uploaded modpack is made stopped, given the file with PUT /orgs/{org}/servers/{server}/modpack?wait=true, then started.")
 		}
 		p.Version = ""
+		// Named as the upload will name it, from the name the file has.
+		name, err := modpackFilename(p.Project)
+		if err != nil {
+			return err
+		}
+		p.Project = name
 	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	// A new server has Aikar's flags unless asked not to. Only here: one
@@ -601,7 +607,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return errBadRequest("Nothing to change: send {\"spec\": {...}}.")
 	}
 	var previous *avsysv1.MinecraftServerSpec
-	var unlock, dropPack func()
+	var unlock, dropPack, dropModpack func()
 	defer func() {
 		if unlock != nil {
 			unlock()
@@ -626,6 +632,13 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 				return err
 			}
 			defer dropPack()
+		}
+		// So is an uploaded modpack's file, once another modpack, or none, is the server's.
+		if was := previous.Modpack.UploadedFile(); dropModpack == nil && was != "" && was != mc.Spec.Modpack.UploadedFile() {
+			if dropModpack, err = s.changing(mc, true); err != nil {
+				return err
+			}
+			defer dropModpack()
 		}
 		// The server's content is held still from here until what was taken
 		// off it is removed.
