@@ -93,6 +93,11 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "create", "update"]
+  # The extra ports of a server whose game is not running are pointed at
+  # the panel, which answers in its place, by endpoints of its own.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Console output, and reaching pods when the panel runs outside the cluster.
   - apiGroups: [""]
     resources: ["pods/log", "pods/portforward"]
@@ -210,6 +215,12 @@ spec:
               value: "https://panel.example.org"
             - name: AVSYS_BACKUP_DIR
               value: /backups
+            # Servers' extra ports are pointed at the panel while their games
+            # are not running, so that reaching one wakes a sleeping server.
+            - name: AVSYS_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
             # The Service that carries the router, whose address servers'
             # extra ports share.
             - name: AVSYS_ROUTER_SERVICE

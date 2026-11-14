@@ -234,6 +234,12 @@ spec:
               value: "https://panel.example.com"
             - name: AVSYS_BACKUP_DIR
               value: /backups
+            # Servers' extra ports are pointed at the panel while their games
+            # are not running, so that reaching one wakes a sleeping server.
+            - name: AVSYS_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
             # The Service that carries the router, whose address servers'
             # extra ports share.
             - name: AVSYS_ROUTER_SERVICE
