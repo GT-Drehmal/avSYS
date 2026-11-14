@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
@@ -363,7 +365,8 @@ func (s *Server) deletePlayerList(w http.ResponseWriter, r *http.Request, u *sto
 }
 
 // dropSavedList takes a list out of every server of the organization that
-// uses it.
+// uses it. Each is read as it is now and changed only if it has not been
+// changed since, so that lists picked for it meanwhile are kept.
 func (s *Server) dropSavedList(ctx context.Context, a *access, id string) error {
 	var servers avsysv1.MinecraftServerList
 	if err := s.Client.List(ctx, &servers, client.InNamespace(a.Namespace)); err != nil {
@@ -371,24 +374,36 @@ func (s *Server) dropSavedList(ctx context.Context, a *access, id string) error 
 	}
 	var failed error
 	for i := range servers.Items {
-		mc := &servers.Items[i]
-		if !slices.Contains(mc.Spec.WhitelistLists, id) && !slices.Contains(mc.Spec.OpLists, id) {
-			continue
-		}
-		orig := mc.DeepCopy()
-		drop := func(ids []string) []string {
-			out := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == id })
-			if len(out) == 0 {
-				return nil
-			}
-			return out
-		}
-		mc.Spec.WhitelistLists, mc.Spec.OpLists = drop(mc.Spec.WhitelistLists), drop(mc.Spec.OpLists)
-		if err := s.Client.Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
+		if err := s.dropSavedListFrom(ctx, &servers.Items[i], id); err != nil {
 			failed = err
 		}
 	}
 	return failed
+}
+
+func (s *Server) dropSavedListFrom(ctx context.Context, mc *avsysv1.MinecraftServer, id string) error {
+	drop := func(ids []string) []string {
+		out := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == id })
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	for attempt := 1; ; attempt++ {
+		now, err := s.live(ctx, mc)
+		if err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if !slices.Contains(now.Spec.WhitelistLists, id) && !slices.Contains(now.Spec.OpLists, id) {
+			return nil
+		}
+		orig := now.DeepCopy()
+		now.Spec.WhitelistLists, now.Spec.OpLists = drop(now.Spec.WhitelistLists), drop(now.Spec.OpLists)
+		err = s.Client.Patch(ctx, now, client.MergeFromWithOptions(orig, client.MergeFromWithOptimisticLock{}))
+		if !apierrors.IsConflict(err) || attempt == 5 {
+			return err
+		}
+	}
 }
 
 // addListPlayers puts the players named on a list, as Mojang has them.
@@ -412,6 +427,9 @@ func (s *Server) addListPlayers(w http.ResponseWriter, r *http.Request, u *store
 		return err
 	}
 	if len(found) > 0 {
+		if err := s.checkRoomFor(ctx, a, id, found); err != nil {
+			return err
+		}
 		if err := s.Store.AddListPlayers(ctx, a.Org.ID, id, found); err != nil {
 			return listStoreError(err, l.Name)
 		}
@@ -423,6 +441,27 @@ func (s *Server) addListPlayers(w http.ResponseWriter, r *http.Request, u *store
 		s.syncOpsSoon(a.Org)
 	}
 	return s.writePlayerList(w, r, a, id, http.StatusOK, missing)
+}
+
+// checkRoomFor says whether every server that uses a list has room for
+// more players from saved lists, with these added to it.
+func (s *Server) checkRoomFor(ctx context.Context, a *access, id string, more []store.ListPlayer) error {
+	saved, err := s.savedLists(ctx, a.Org.ID)
+	if err != nil {
+		return err
+	}
+	var servers avsysv1.MinecraftServerList
+	if err := s.Client.List(ctx, &servers, client.InNamespace(a.Namespace)); err != nil {
+		return err
+	}
+	for _, mc := range servers.Items {
+		for _, ids := range [][]string{mc.Spec.WhitelistLists, mc.Spec.OpLists} {
+			if slices.Contains(ids, id) && savedPlayerCount(ids, saved, more) > maxFromSavedLists {
+				return errBadRequest("%s would have more than %d players from saved lists.", cmp.Or(mc.Spec.DisplayName, mc.Name), maxFromSavedLists)
+			}
+		}
+	}
+	return nil
 }
 
 // removeListPlayer takes a player off a list, by UUID.

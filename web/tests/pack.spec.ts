@@ -301,7 +301,7 @@ test("settings no longer have the pack, and saving them says nothing of it", asy
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByRole("heading", { name: "Resource pack" })).toHaveCount(0);
   await page.getByLabel("Display name").fill("Survival, renamed");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => state.sent.length).toBe(1);
   expect(state.sent[0].displayName).toBe("Survival, renamed");
   expect(state.sent[0]).not.toHaveProperty("resourcePack");

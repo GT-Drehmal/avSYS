@@ -115,6 +115,9 @@ type Server struct {
 	offsite    offsite
 	autoOps    autoOps
 	heads      heads
+	// listNameChecks is when each player on a saved list was last looked
+	// up for a new name, by UUID.
+	listNameChecks sync.Map
 	// serverIcons holds each server's icon for a short while.
 	serverIcons serverIcons
 	// snapshotIcons holds the icons read out of snapshots, which never change.

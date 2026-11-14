@@ -220,7 +220,37 @@ func (s *Server) tidySavedLists(ctx context.Context, namespace string, spec *avs
 		return out
 	}
 	spec.WhitelistLists, spec.OpLists = keep(spec.WhitelistLists), keep(spec.OpLists)
+	for what, ids := range map[string][]string{"whitelist": spec.WhitelistLists, "operators": spec.OpLists} {
+		if n := savedPlayerCount(ids, saved, nil); n > maxFromSavedLists {
+			return errBadRequest("The saved lists chosen for the %s have %d players. A server can have up to %d from saved lists.", what, n, maxFromSavedLists)
+		}
+	}
 	return nil
+}
+
+// maxFromSavedLists is how many players a server's whitelist, and its
+// operators, can have from saved lists: as many as a list can have. The
+// note of who the panel put on each is kept on the server, which holds
+// only so much.
+const maxFromSavedLists = store.MaxListPlayers
+
+// savedPlayerCount is how many players the saved lists named have between
+// them, with more added to them.
+func savedPlayerCount(ids []string, saved map[string]*store.PlayerList, more []store.ListPlayer) int {
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if l := saved[id]; l != nil {
+			for _, p := range l.Players {
+				seen[p.UUID] = true
+			}
+		}
+	}
+	if len(ids) > 0 {
+		for _, p := range more {
+			seen[p.UUID] = true
+		}
+	}
+	return len(seen)
 }
 
 func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec *avsysv1.MinecraftServerSpec) error {

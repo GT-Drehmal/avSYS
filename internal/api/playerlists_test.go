@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -20,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
 // mojangAccounts answers Mojang's lookup of a name as Mojang does: the
@@ -380,5 +382,100 @@ func TestPlayerHead(t *testing.T) {
 		if rec := p.send("viewer", "GET", "/players/"+who+"/head", nil); rec.Code != http.StatusNotFound {
 			t.Errorf("%s: %d", who, rec.Code)
 		}
+	}
+}
+
+// A server takes up to a thousand players from saved lists for each of its
+// lists, the most a list has: chosen, or added to a list it uses.
+func TestSavedListsBounded(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	p.srv.catalog.http.Transport = newMojangAccounts("Steve")
+	org, err := p.srv.Store.OrgBySlug(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	made := func(name string, from, n int) string {
+		l := &store.PlayerList{OrgID: org.ID, Name: name}
+		for i := from; i < from+n; i++ {
+			l.Players = append(l.Players, store.ListPlayer{UUID: fmt.Sprintf("%032d", i), Name: fmt.Sprintf("P%d", i)})
+		}
+		if err := p.srv.Store.CreatePlayerList(ctx, l); err != nil {
+			t.Fatal(err)
+		}
+		return l.ID
+	}
+	big, other, full := made("Big", 0, 600), made("Other", 300, 600), made("Full", 1000, 1000)
+	// 900 between them, those on both counted once.
+	if code, msg := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"whitelistLists":["`+big+`","`+other+`"]}}`); code != http.StatusOK {
+		t.Fatalf("900 players: %d %s", code, msg)
+	}
+	if code, _ := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"opLists":["`+big+`","`+full+`"]}}`); code != http.StatusBadRequest {
+		t.Errorf("1600 operators: %d", code)
+	}
+	if code, _ := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"opLists":["`+full+`"]}}`); code != http.StatusOK {
+		t.Errorf("a full list alone: %d", code)
+	}
+	// Full, it takes nobody more; a list with room does.
+	if code, text := call(p, "admin", "POST", "/orgs/alpha/player-lists/"+full+"/players", `{"names":["Steve"]}`); code != http.StatusBadRequest {
+		t.Errorf("adding to a full one: %d %s", code, text)
+	}
+	if code, text := call(p, "admin", "POST", "/orgs/alpha/player-lists/"+big+"/players", `{"names":["Steve"]}`); code != http.StatusOK {
+		t.Errorf("adding where there is room: %d %s", code, text)
+	}
+}
+
+// A deleted list is taken out of a server as the server is now: lists
+// picked for it since the panel last looked are kept.
+func TestDeletedListKeepsOthersPickedMeanwhile(t *testing.T) {
+	p := newPanel(t)
+	stale := world(t, p).DeepCopy()
+	stale.Spec.WhitelistLists = []string{"a"}
+	changeWorld(t, p, func(mc *avsysv1.MinecraftServer) { mc.Spec.WhitelistLists = []string{"a", "b"} })
+	if err := p.srv.dropSavedListFrom(context.Background(), stale, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if got := world(t, p).Spec.WhitelistLists; !slices.Equal(got, []string{"b"}) {
+		t.Errorf("lists after a was deleted: %v, want b kept", got)
+	}
+}
+
+// Players on saved lists are looked up for a new name a few at a time, and
+// each not again for hours.
+func TestListNamesRefreshedAFewAtATime(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	m := newMojangAccounts()
+	p.srv.catalog.http.Transport = m
+	org, err := p.srv.Store.OrgBySlug(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &store.PlayerList{OrgID: org.ID, Name: "Club"}
+	for _, n := range []string{"Ann", "Bob", "Cat"} {
+		uuid := strings.Repeat(strings.ToLower(n[:1]), 32)
+		l.Players = append(l.Players, store.ListPlayer{UUID: uuid, Name: n})
+		m.files["https://sessionserver.mojang.com/session/minecraft/profile/"+uuid] = []byte(`{"id":"` + uuid + `","name":"` + n + `2"}`)
+	}
+	if err := p.srv.Store.CreatePlayerList(ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	names := func() string {
+		got, _ := p.srv.Store.PlayerList(ctx, org.ID, l.ID)
+		var out []string
+		for _, p := range got.Players {
+			out = append(out, p.Name)
+		}
+		return strings.Join(out, " ")
+	}
+	budget := 2
+	p.srv.refreshListNames(ctx, org.ID, &budget)
+	if got := names(); got != "Ann2 Bob2 Cat" || budget != 0 {
+		t.Errorf("after one look: %s, %d left", got, budget)
+	}
+	budget = 2
+	p.srv.refreshListNames(ctx, org.ID, &budget)
+	if got := names(); got != "Ann2 Bob2 Cat2" || budget != 1 {
+		t.Errorf("after two: %s, %d left, want only Cat asked", got, budget)
 	}
 }

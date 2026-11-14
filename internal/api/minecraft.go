@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -618,34 +619,68 @@ func (s *Server) refreshNames(ctx context.Context, members []store.Member) {
 	}
 }
 
-// refreshListNames brings each player on an organization's saved lists up
-// to their current name, as refreshNames does for members, and for the same
-// reason.
-func (s *Server) refreshListNames(ctx context.Context, orgID string) {
+// listNamesEvery is how often each player on a saved list is looked up for
+// a new name, and listNamesPerLook how many are looked up at most in one
+// look, over every organization: a list can have a thousand players, and
+// Mojang can be slow or away.
+const (
+	listNamesEvery   = 6 * time.Hour
+	listNamesPerLook = 30
+)
+
+// refreshListNames brings players on an organization's saved lists up to
+// their current name, as refreshNames does for members, and for the same
+// reason: those not looked up for a while, as many as budget has left.
+// Each is asked of Mojang on its own, not through the catalog's cache,
+// which a thousand of them would empty.
+func (s *Server) refreshListNames(ctx context.Context, orgID string, budget *int) {
 	lists, err := s.Store.PlayerLists(ctx, orgID)
 	if err != nil {
 		return
 	}
-	seen := map[string]bool{}
 	for _, l := range lists {
 		for _, p := range l.Players {
-			if seen[p.UUID] {
+			if *budget <= 0 {
+				return
+			}
+			if at, ok := s.listNameChecks.Load(p.UUID); ok && time.Since(at.(time.Time)) < listNamesEvery {
 				continue
 			}
-			seen[p.UUID] = true
-			body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(p.UUID), 6*time.Hour)
-			if err != nil {
+			s.listNameChecks.Store(p.UUID, time.Now())
+			*budget--
+			name, err := s.currentName(ctx, p.UUID)
+			if err != nil || name == p.Name {
 				continue
 			}
-			var profile struct{ Name string }
-			if json.Unmarshal(body, &profile) != nil || !minecraftNamePattern.MatchString(profile.Name) || profile.Name == p.Name {
-				continue
-			}
-			if err := s.Store.RenameListPlayer(ctx, p.UUID, profile.Name); err == nil {
-				s.Log.Info("a player on a saved list was renamed", "from", p.Name, "to", profile.Name)
+			if err := s.Store.RenameListPlayer(ctx, p.UUID, name); err == nil {
+				s.Log.Info("a player on a saved list was renamed", "from", p.Name, "to", name)
 			}
 		}
 	}
+}
+
+// currentName asks Mojang what an account is called now.
+func (s *Server) currentName(ctx context.Context, uuid string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(uuid), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", s.catalog.userAgent)
+	resp, err := s.catalog.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", errNotFound
+	}
+	var profile struct{ Name string }
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&profile); err != nil || !minecraftNamePattern.MatchString(profile.Name) {
+		return "", errNotFound
+	}
+	return profile.Name, nil
 }
 
 // syncOpsFor brings one server in step, as it is in mc, without making
@@ -737,6 +772,7 @@ func (s *Server) opsTick(ctx context.Context) {
 			running[all.Items[i].Namespace] = true
 		}
 	}
+	names := listNamesPerLook
 	for ns := range running {
 		slug, ok := s.orgOfNamespace(ns)
 		if !ok {
@@ -746,10 +782,11 @@ func (s *Server) opsTick(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		// Players on its saved lists who were renamed: looked at here, with
-		// the look every minute, and not each time a list is changed.
-		s.refreshListNames(ctx, org.ID)
 		s.syncOrgOps(ctx, org)
+		// Players on its saved lists who were renamed: looked at once its
+		// servers are in step, a few at a time, and not each time a list is
+		// changed. A name changed here is acted on with the next look.
+		s.refreshListNames(ctx, org.ID, &names)
 	}
 }
 

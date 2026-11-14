@@ -152,6 +152,7 @@ test("a template's saved lists fill in a server made from it, and more can be pi
   await expect(whitelist.getByRole("checkbox", { name: "Event on the whitelist" })).not.toBeChecked();
   await whitelist.getByRole("checkbox", { name: "Event on the whitelist" }).check();
   await page.getByLabel("Display name").fill("Night one");
+  await page.getByLabel("Short name").fill("night-one");
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/night-one$`));
