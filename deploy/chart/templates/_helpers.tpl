@@ -66,7 +66,7 @@ IfNotPresent
 {{- $v := .Values -}}
 {{- $any := false -}}
 {{- if not $v.signIn.existingSecret -}}
-{{- range $id := list "github" "discord" "google" -}}
+{{- range $id := list "github" "discord" "google" "oidc" -}}
 {{- $p := index $v.signIn $id -}}
 {{- if and $p.clientId $p.clientSecret -}}{{- $any = true -}}{{- end -}}
 {{- end -}}
@@ -102,7 +102,7 @@ IfNotPresent
 {{- if and (eq $e.mode "hostPort") (not $e.node) (not .Values.nodeSelector) -}}
 {{- fail "expose.mode hostPort needs expose.node (or a nodeSelector), the node whose ports are opened" -}}
 {{- end -}}
-{{- range $id := list "github" "discord" "google" -}}
+{{- range $id := list "github" "discord" "google" "oidc" -}}
 {{- $p := index $.Values.signIn $id -}}
 {{- if and $p.clientSecret (not $p.clientId) -}}
 {{- fail (printf "signIn.%s has a clientSecret but no clientId" $id) -}}
@@ -110,6 +110,13 @@ IfNotPresent
 {{- if and $p.clientId (not $p.clientSecret) (not $.Values.signIn.existingSecret) -}}
 {{- fail (printf "signIn.%s needs a clientSecret, or signIn.existingSecret" $id) -}}
 {{- end -}}
+{{- end -}}
+{{- $oidc := .Values.signIn.oidc -}}
+{{- if and $oidc.clientId (not $oidc.issuer) -}}
+{{- fail "signIn.oidc needs an issuer" -}}
+{{- end -}}
+{{- if and $oidc.issuer (not $oidc.clientId) -}}
+{{- fail "signIn.oidc has an issuer but no clientId" -}}
 {{- end -}}
 {{- $o := .Values.offsite -}}
 {{- if and $o.repository (not $o.existingSecret) (not $o.password) -}}

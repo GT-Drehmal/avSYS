@@ -80,6 +80,8 @@ check() {
   refused "needs expose.node" --set expose.mode=hostPort
   refused "signIn.github needs a clientSecret" --set signIn.github.clientId=abc
   refused "signIn.google has a clientSecret but no clientId" --set signIn.google.clientSecret=abc
+  refused "signIn.oidc needs an issuer" --set signIn.oidc.clientId=abc --set signIn.oidc.clientSecret=abc
+  refused "signIn.oidc has an issuer but no clientId" --set signIn.oidc.issuer=https://auth.example.com
   refused "offsite.repository needs a password" --set offsite.repository=s3:https://s3.example.com/bucket
   refused "offsite.secretEnv names keys of offsite.existingSecret" --set offsite.repository=s3:https://s3.example.com/bucket --set offsite.password=pw --set offsite.secretEnv.AWS_ACCESS_KEY_ID=key
   refused "packs.listener needs packs.url" --set packs.listener.enabled=true

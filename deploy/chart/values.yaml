@@ -100,8 +100,9 @@ packs:
 # client ID here, and its secret either here or in an existing Secret.
 signIn:
   # A Secret of your own with the keys github-client-secret,
-  # discord-client-secret and google-client-secret, for the providers that
-  # have a client ID below. Used instead of the clientSecret values.
+  # discord-client-secret, google-client-secret and oidc-client-secret, for
+  # the providers that have a client ID below. Used instead of the
+  # clientSecret values.
   existingSecret: ""
   github:
     clientId: ""
@@ -112,6 +113,22 @@ signIn:
   google:
     clientId: ""
     clientSecret: ""
+  # Your own OpenID Connect provider (Authentik, Keycloak, Authelia, Google
+  # Workspace, Entra ID). The issuer exactly as the provider names it; the
+  # callback is <publicURL>/api/v1/auth/oidc/callback. Accounts are linked
+  # by the provider's subject, never by email.
+  oidc:
+    issuer: ""
+    clientId: ""
+    clientSecret: ""
+    # What the sign-in button calls it. Empty: SSO.
+    name: ""
+    # The scopes asked for, separated by spaces. Empty: openid profile email.
+    scopes: ""
+    # Groups one of which a person must be in to sign in, read from the
+    # claim groupsClaim names (empty: groups). None: anyone it signs in.
+    allowedGroups: []
+    groupsClaim: ""
 
 # true lets anyone create an account. Otherwise accounts are made from
 # invites, after the first, which becomes the instance administrator.

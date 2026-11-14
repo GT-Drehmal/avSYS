@@ -30,6 +30,13 @@ signIn:
   existingSecret: sign-in
   google:
     clientId: google-id
+  oidc:
+    issuer: https://auth.example.org/application/o/avsys/
+    clientId: avsys
+    name: Authentik
+    scopes: openid profile email groups
+    allowedGroups: [minecraft, admins]
+    groupsClaim: roles
 curseforge:
   existingSecret: curseforge
 offsite:

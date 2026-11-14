@@ -245,6 +245,23 @@ spec:
                 secretKeyRef:
                   name: sign-in
                   key: google-client-secret
+            - name: AVSYS_OIDC_CLIENT_ID
+              value: "avsys"
+            - name: AVSYS_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sign-in
+                  key: oidc-client-secret
+            - name: AVSYS_OIDC_ISSUER
+              value: "https://auth.example.org/application/o/avsys/"
+            - name: AVSYS_OIDC_NAME
+              value: "Authentik"
+            - name: AVSYS_OIDC_SCOPES
+              value: "openid profile email groups"
+            - name: AVSYS_OIDC_ALLOWED_GROUPS
+              value: "minecraft,admins"
+            - name: AVSYS_OIDC_GROUPS_CLAIM
+              value: "roles"
             - name: AVSYS_CURSEFORGE_API_KEY
               valueFrom:
                 secretKeyRef:
