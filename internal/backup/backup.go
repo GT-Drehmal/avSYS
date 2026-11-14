@@ -506,7 +506,14 @@ func (m *Manager) listAll(ctx context.Context, org string) ([]Snapshot, error) {
 	for _, r := range raw {
 		list = append(list, r.snapshot())
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Time.After(list[j].Time) })
+	// Two of the same time, as copies made in the same second are, by ID:
+	// in the same order each time.
+	sort.Slice(list, func(i, j int) bool {
+		if !list[i].Time.Equal(list[j].Time) {
+			return list[i].Time.After(list[j].Time)
+		}
+		return list[i].ID < list[j].ID
+	})
 	m.keep(org, state, func(a *repoAnswers) { a.list = slices.Clone(list) })
 	return list, nil
 }
@@ -661,6 +668,19 @@ func (m *Manager) Record(ctx context.Context, org, id string) ([]byte, error) {
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	// One named in full that is there, and not rejected, is found without
+	// listing them all: its record is read straight away, if it was not
+	// before.
+	if m.there(org, id) {
+		if record, ok := m.keptRecord(org, id); ok {
+			return record, nil
+		}
+		record, err := m.restic(ctx, org, "dump", "--no-lock", id, RecordPath)
+		if err == nil {
+			m.keepRecord(org, id, record)
+		}
+		return record, err
+	}
 	snap, err := m.get(ctx, org, id)
 	if err != nil {
 		return nil, err

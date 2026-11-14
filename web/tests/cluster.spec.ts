@@ -28,3 +28,25 @@ test("a cluster that can be reached says nothing", async ({ page, as }) => {
   await page.waitForTimeout(500);
   await expect(page.getByRole("alert").filter({ hasText: "Can't reach the cluster" })).toHaveCount(0);
 });
+
+test("once the cluster can be reached again, servers are asked for again, and not what the panel told meanwhile", async ({ page, as }) => {
+  await as("owner");
+  const asked = { servers: 0, snapshots: 0 };
+  page.on("request", (r) => {
+    const path = new URL(r.url()).pathname;
+    if (path === "/api/v1/orgs/friends/servers") asked.servers++;
+    if (path === "/api/v1/orgs/friends/snapshots") asked.snapshots++;
+  });
+  // One stream, which says the cluster is back, and no other.
+  let streams = 0;
+  await page.route("**/api/v1/events?*", (route) =>
+    streams++ === 0
+      ? route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: `${stream({ reachable: true })}event: resync\ndata: {"cluster":true}\n\n` })
+      : route.abort(),
+  );
+  await page.goto("/o/friends/backups");
+  await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
+  await expect.poll(() => asked.servers).toBe(2);
+  await page.waitForTimeout(500);
+  expect(asked.snapshots).toBe(1);
+});

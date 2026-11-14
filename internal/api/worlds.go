@@ -129,7 +129,7 @@ func (s *Server) libraryWorld(ctx context.Context, a *access, id string) (*store
 	} else if err != nil {
 		return nil, nil, err
 	}
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+	list, err := s.templateSnapshots(ctx, a.Org)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -165,7 +165,7 @@ func (s *Server) listWorlds(w http.ResponseWriter, r *http.Request, u *store.Use
 	if err != nil {
 		return err
 	}
-	list, err := s.templateSnapshots(r.Context(), a.Org.Slug)
+	list, err := s.templateSnapshots(r.Context(), a.Org)
 	if err != nil {
 		return err
 	}
@@ -266,6 +266,9 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	kept, err := s.Backups.KeepFile(ctx, a.Org.Slug, libraryHost(world.ID), ownWorldFile, u.Username, body)
 	if err == nil {
 		world.Size = kept.Size
+		err = s.noteTemplateSnapshot(ctx, a.Org, kept)
+	}
+	if err == nil {
 		err = s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, kept.Size, world.Unpacked)
 	}
 	if err != nil {
@@ -287,6 +290,8 @@ func (s *Server) forgetWorld(ctx context.Context, a *access, id string, kept *ba
 	if kept != nil {
 		if err := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); err != nil {
 			s.Log.Error("could not remove a world's archive kept for nothing", "world", id, "snapshot", kept.ID, "error", err)
+		} else {
+			s.forgetTemplateSnapshots(ctx, a.Org, kept.ID)
 		}
 	}
 	if err := s.Store.DeleteWorld(ctx, a.Org.ID, id); err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -400,6 +405,8 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 			if kept != nil {
 				if derr := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); derr != nil {
 					s.Log.Error("could not remove a world's archive kept for nothing", "world", saved.ID, "snapshot", kept.ID, "error", derr)
+				} else {
+					s.forgetTemplateSnapshots(ctx, a.Org, kept.ID)
 				}
 				kept = nil
 			}
@@ -426,6 +433,9 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		}
 		// A tar is as large as what is in it.
 		saved.Size, saved.Unpacked = kept.Size, kept.Size
+		if err := s.noteTemplateSnapshot(ctx, a.Org, kept); err != nil {
+			return kept, err
+		}
 		if err := s.Store.SetWorldArchive(ctx, a.Org.ID, saved.ID, saved.Root, saved.Version, saved.Size, saved.Unpacked); err != nil {
 			return kept, err
 		}
@@ -505,7 +515,7 @@ func (s *Server) deleteWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	defer release()
 	ctx := context.WithoutCancel(r.Context())
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+	list, err := s.repoSnapshots(ctx, a.Org.Slug)
 	if err != nil {
 		return err
 	}
@@ -518,6 +528,7 @@ func (s *Server) deleteWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err := s.Backups.DeleteMany(ctx, a.Org.Slug, ids); err != nil {
 		return snapshotError(err)
 	}
+	s.forgetTemplateSnapshotsOf(ctx, a.Org, libraryHost(world.ID))
 	if err := s.Store.DeleteWorld(ctx, a.Org.ID, world.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
