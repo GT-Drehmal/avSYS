@@ -28,6 +28,8 @@ import (
 type mojangAccounts struct {
 	mu    sync.Mutex
 	known map[string]string // UUID by lowercase name
+	// names are the accounts' names as they have them, by lowercase name.
+	names map[string]string
 	asked []string
 	down  bool
 	// files are other addresses' answers, as offline's.
@@ -35,9 +37,10 @@ type mojangAccounts struct {
 }
 
 func newMojangAccounts(names ...string) *mojangAccounts {
-	m := &mojangAccounts{known: map[string]string{}, files: map[string][]byte{}}
+	m := &mojangAccounts{known: map[string]string{}, names: map[string]string{}, files: map[string][]byte{}}
 	for i, name := range names {
 		m.known[strings.ToLower(name)] = strings.Repeat(string(rune('a'+i)), 32)
+		m.names[strings.ToLower(name)] = name
 	}
 	return m
 }
@@ -53,16 +56,9 @@ func (m *mojangAccounts) RoundTrip(r *http.Request) (*http.Response, error) {
 		if m.down {
 			return nil, errors.New("offline")
 		}
-		for known, uuid := range m.known {
-			if strings.EqualFold(known, name) {
-				// As the account has it, whatever the case asked in.
-				for _, n := range []string{"Steve", "Alex", "Notch", "jeb_", "Dinnerbone"} {
-					if strings.EqualFold(n, name) {
-						name = n
-					}
-				}
-				return answer(http.StatusOK, []byte(`{"id":"`+uuid+`","name":"`+name+`"}`))
-			}
+		// As the account has it, whatever the case asked in.
+		if uuid, ok := m.known[strings.ToLower(name)]; ok {
+			return answer(http.StatusOK, []byte(`{"id":"`+uuid+`","name":"`+m.names[strings.ToLower(name)]+`"}`))
 		}
 		return answer(http.StatusNotFound, nil)
 	}
@@ -363,7 +359,7 @@ func TestPlayerHead(t *testing.T) {
 	m.files["https://textures.minecraft.net/texture/abc"] = buf.Bytes()
 	m.files["https://sessionserver.mojang.com/session/minecraft/profile/"+strings.Repeat("b", 32)] = []byte(`{"id":"bbb","name":"Plain","properties":[]}`)
 
-	rec := p.send("viewer", "GET", "/api/v1/players/069a79f4-44e9-4726-a5be-fca90e38aaf5/head", nil)
+	rec := p.send("viewer", "GET", "/players/069a79f4-44e9-4726-a5be-fca90e38aaf5/head", nil)
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" {
 		t.Fatalf("head: %d %s", rec.Code, rec.Body.String())
 	}
@@ -381,7 +377,7 @@ func TestPlayerHead(t *testing.T) {
 		t.Errorf("the face: %v", face.At(1, 1))
 	}
 	for _, who := range []string{strings.Repeat("b", 32), "not-a-uuid", strings.Repeat("c", 32)} {
-		if rec := p.send("viewer", "GET", "/api/v1/players/"+who+"/head", nil); rec.Code != http.StatusNotFound {
+		if rec := p.send("viewer", "GET", "/players/"+who+"/head", nil); rec.Code != http.StatusNotFound {
 			t.Errorf("%s: %d", who, rec.Code)
 		}
 	}
