@@ -544,10 +544,13 @@ if [ "$(timed)" -eq 0 ]; then
 fi
 expect "Paper says how fast it ticks, against 20 a second, and how long a tick takes" "$(call "$SRV/usage" | field "[(s['tps'] > 0, s['tickTarget'] == 20, s['mspt'] >= 0) for s in d['samples'] if 'tps' in s and 'mspt' in s][-1]")" "(True, True, True)"
 connections() { call -f "$SRV/files/content?path=/logs/latest.log" | grep -c 'Thread RCON Client .* started' || true; }
+# Over three samples, a sampler opening a connection for each would add
+# three; one more is let pass, as the panel's other uses of the console
+# (the lists it keeps, a command typed) may open one meanwhile.
 before=$(ticked) made=$(connections)
-for _ in $(seq 1 40); do [ "$(ticked)" -gt "$before" ] && break; sleep 2; done
-[ "$(ticked)" -gt "$before" ] || fail "the game was not asked again"
-[ "$(connections)" = "$made" ] || fail "the game was asked again over a new connection: $made connections logged before, $(connections) after"
+for _ in $(seq 1 90); do [ "$(ticked)" -ge $((before + 3)) ] && break; sleep 2; done
+[ "$(ticked)" -ge $((before + 3)) ] || fail "the game was not asked again three times"
+[ $(( $(connections) - made )) -le 1 ] || fail "the game was asked over new connections: $made connections logged before three samples, $(connections) after"
 echo "ok: asked again, over the same connection"
 
 step "datapacks"
