@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -229,6 +230,7 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		}
 	}
 	if !sharesAddress(mc) || len(open) == 0 || theirs {
+		r.closeStandIn(client.ObjectKeyFromObject(mc))
 		if !theirs {
 			if err := r.Delete(ctx, own); client.IgnoreNotFound(err) != nil {
 				return nil, false, err
@@ -250,10 +252,18 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		}
 		return st, full || theirs, nil
 	}
+	// While the game is not running, the panel answers on them instead.
+	standIn, err := r.standingIn(ctx, mc)
+	if err != nil {
+		return nil, false, err
+	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, own, func() error {
 		own.Labels = labelsFor(mc)
 		own.Annotations = r.Config.PortsServiceAnnotations
 		own.Spec.Selector = map[string]string{avsysv1.LabelServer: mc.Name}
+		if standIn {
+			own.Spec.Selector = nil
+		}
 		own.Spec.Type = corev1.ServiceTypeNodePort
 		if r.Config.PortRange.First != 0 {
 			own.Spec.Type = corev1.ServiceTypeLoadBalancer
@@ -275,6 +285,13 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 	})
 	if err != nil {
 		return nil, false, err
+	}
+	// Not answered for, the ports reach nothing while the game does not
+	// run, which is no reason to hold up the server itself: it is tried
+	// again in a while.
+	if err := r.pointPorts(ctx, mc, own, open, standIn); err != nil {
+		log.FromContext(ctx).Error(err, "pointing extra ports at the panel")
+		full = true
 	}
 	st = portStatus(mc, own, public, r.Config)
 	// Where the load balancer put these ports on an address of their own,

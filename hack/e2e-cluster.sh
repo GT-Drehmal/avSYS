@@ -163,5 +163,8 @@ GAME_LOG="docker exec -i $NAME kubectl -n mc-\$1 logs \$2 -c minecraft"
 node_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$NAME")
 # The second node is taken down by freezing its container, as a node that
 # stops answering, and brought back by letting it go on.
+# The node has no Python; the workspace image, loaded here already, has, and
+# is run in the node's network to reach its ports as a player would.
+ON_NODE_PYTHON="docker run --rm -i --network container:$NAME --entrypoint python3 $WORKSPACE"
 AVSYS_E2E_DOWN_NODE=$AGENT_NODE AVSYS_E2E_NODE_DOWN="docker pause $AGENT" AVSYS_E2E_NODE_UP="docker unpause $AGENT" AVSYS_E2E_ON_DOWN_NODE="docker exec -i $AGENT" \
-AVSYS_E2E_NODE_IP=$node_ip AVSYS_E2E_ON_NODE="docker exec -i $NAME" AVSYS_E2E_PORT_RANGE=25600-25609 AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG AVSYS_E2E_CONTAINER_LOG=$GAME_LOG ./hack/e2e.sh
+AVSYS_E2E_NODE_IP=$node_ip AVSYS_E2E_ON_NODE="docker exec -i $NAME" AVSYS_E2E_PYTHON_ON_NODE=$ON_NODE_PYTHON AVSYS_E2E_PORT_RANGE=25600-25609 AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG AVSYS_E2E_CONTAINER_LOG=$GAME_LOG ./hack/e2e.sh

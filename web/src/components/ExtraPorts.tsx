@@ -186,7 +186,7 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
             ))}
       </div>
       {ports.length > 0 && sleeps && (
-        <p className="text-xs text-warn">These ports do not work while the server sleeps. Bedrock players through Geyser cannot wake the server.</p>
+        <p className="text-xs text-muted">While the server sleeps, these ports still answer: a Bedrock player joining, or a visit to a map, wakes the server.</p>
       )}
       {ports.length > 0 && (
         <p className="text-xs text-muted">

@@ -127,6 +127,11 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "create", "update"]
+  # The extra ports of a server whose game is not running are pointed at
+  # the panel, which answers in its place, by endpoints of its own.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Console output, and reaching pods when the panel runs outside the cluster.
   - apiGroups: [""]
     resources: ["pods/log", "pods/portforward"]

@@ -15,6 +15,9 @@
 # it last exited, given the organization and the server as $1 and $2. The
 # panel's console shows the game that is running, which after an exit is the
 # next one; why the last one stopped is only in its own log.
+# AVSYS_E2E_PYTHON_ON_NODE (python3) is a python3 that runs a script it is
+# given on its input from where AVSYS_E2E_NODE_IP can be reached, which
+# reaches servers' extra ports as players' programs do.
 # AVSYS_E2E_PART runs one part of it: content, lifecycle, history or servers. Each
 # makes its own server, so that the parts can run side by side, each on a
 # cluster of its own, as CI runs them. Unset, all of them run, one after
@@ -386,6 +389,35 @@ stays() {
   done
 }
 
+# public_port NAME: the public port the probe's extra port of that name was
+# given, once it has one.
+public_port() {
+  for _ in $(seq 1 60); do
+    n=$(call "$SRV" | field "next((p.get('publicPort', 0) for p in d['status'].get('ports', []) if p['name'] == '$1'), 0)")
+    [ "$n" != 0 ] && echo "$n" && return 0
+    sleep 2
+  done
+  fail "its port $1 was not opened: $(call "$SRV" | field "d['status'].get('ports')")"
+}
+
+# probe_port WHAT PORT: reaches a public port of the node once, as a player's
+# program does (see portping.py). It is run by AVSYS_E2E_PYTHON_ON_NODE, a
+# python3 that reads the script from its input, from where the node's
+# address can be reached: the machine running this may not reach it.
+probe_port() {
+  ${AVSYS_E2E_PYTHON_ON_NODE:-python3} - "$1" "$AVSYS_E2E_NODE_IP" "$2" < "$HERE/portping.py"
+}
+
+# portping WHAT PORT: probe_port, retrying while the port is not yet
+# answered.
+portping() {
+  for _ in $(seq 1 20); do
+    out=$(probe_port "$1" "$2" 2>&1) && [ "$out" != unreachable ] && echo "$out" && return 0
+    sleep 2
+  done
+  echo "$out"
+}
+
 step "organization and server"
 call -d "{\"name\":\"E2E $ORG\",\"slug\":\"$ORG\"}" "$API/orgs" >/dev/null
 POLICY=$API/orgs/$ORG/backup-policy
@@ -698,6 +730,31 @@ picked=$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://cdn.modrinth.
 expect "a pack picked from Modrinth says which" "$(echo "$picked" | field "(d['spec']['resourcePack']['project']['id'], d['spec']['resourcePack']['project']['versionName'])")" "('e2e-pack', '1.0')"
 expect "given another address, it is no longer the project's" "$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://example.org/pack.zip"}}}' "$SRV" | field "d['spec']['resourcePack'].get('project')")" None
 call -X DELETE "$SRV/resource-pack" >/dev/null
+
+step "a sleeping server's map"
+# While a server sleeps, the panel answers on its extra ports in the game's
+# place: a browser opening a map is told the server is starting, and that
+# wakes it. Once its game runs, the port reaches the game's pod again.
+if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
+  set_spec '{"spec":{"ports":[{"name":"map","port":8100,"protocol":"TCP"}],"sleep":{"enabled":true,"idleMinutes":1}}}'
+  MAP=$(public_port map)
+  wait_phase Sleeping
+  echo "ok: idle for a minute, it sleeps"
+  expect "a browser opening its map is told it is starting" "$(portping http "$MAP")" "Starting up. This page reloads in a moment."
+  wait_until Starting
+  echo "ok: and that wakes it"
+  set_spec '{"spec":{"sleep":{"enabled":false}}}'
+  wait_phase Running
+  for _ in $(seq 1 30); do
+    case "$(probe_port http "$MAP")" in *"Starting up"*) sleep 1 ;; *) break ;; esac
+  done
+  # Nothing in the game's pod listens on it.
+  case "$(probe_port http "$MAP")" in *"Starting up"*) fail "running, its map's port is still answered for it" ;; esac
+  echo "ok: running, its port reaches its pod again"
+  set_spec '{"spec":{"ports":[]}}'
+else
+  echo "skip: reaching an extra port needs a node's address"
+fi
 
 fi
 
@@ -1136,6 +1193,41 @@ voice_host=$VOICE
 expect "its voice server started" "$(call -f "$SRV/files/content?path=/logs/latest.log")" "Voice chat server started at port 24454"
 game_clean "and the game's log is clean"
 expect "taken off, its port is closed" "$(call -X PATCH -d "{\"spec\":{\"mods\":$mods}}" "$SRV" | field "d['spec'].get('ports') or []")" "[]"
+step "a sleeping server's Bedrock port"
+# While a server sleeps, the panel answers on its extra ports in the game's
+# place. Bedrock players, through Geyser, see it in their server list as
+# asleep, which does not wake it; joining does. Once its game runs, its
+# ports reach the game's pod again: a web server in the workspace stands in
+# for a map.
+if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
+  set_spec '{"spec":{"ports":[{"name":"geyser","port":19132,"protocol":"UDP"},{"name":"map","port":8100,"protocol":"TCP"}],"sleep":{"enabled":true,"idleMinutes":1}}}'
+  GEYSER=$(public_port geyser)
+  MAP=$(public_port map)
+  wait_phase Sleeping
+  echo "ok: idle for a minute, it sleeps"
+  expect "Bedrock's server list is told it is asleep" "$(portping bedrock "$GEYSER")" "MCPE;Asleep. Join to wake it up.;"
+  stays Sleeping 5
+  echo "ok: and that does not wake it"
+  probe_port join "$GEYSER" >/dev/null
+  wait_until Starting
+  echo "ok: a Bedrock player joining wakes it"
+  set_spec '{"spec":{"sleep":{"enabled":false}}}'
+  expect "and the list is told it is starting" "$(portping bedrock "$GEYSER")" "MCPE;Starting up. Try again in a moment.;"
+  wait_phase Running
+  ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p "$SSH_PORT" "probe.$ORG@$ssh_host" \
+    'echo reached its pod > /tmp/port.txt; cd /tmp && exec timeout 120 python3 -m http.server 8100' >/dev/null 2>&1 &
+  serving=$!
+  reached=""
+  for _ in $(seq 1 30); do
+    reached=$(${AVSYS_E2E_ON_NODE:-} wget -q -T 3 -O - "http://$AVSYS_E2E_NODE_IP:$MAP/port.txt" 2>/dev/null) && break
+    sleep 2
+  done
+  kill "$serving" 2>/dev/null || true
+  expect "running, its ports reach its pod again" "$reached" "reached its pod"
+  set_spec '{"spec":{"ports":[]}}'
+else
+  echo "skip: reaching an extra port needs a node's address"
+fi
 
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"

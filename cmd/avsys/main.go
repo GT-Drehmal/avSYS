@@ -22,6 +22,7 @@ import (
 	"github.com/go-logr/logr"
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -80,6 +81,7 @@ type options struct {
 	workspacePull       string
 	webDir              string
 	podDial             string
+	podIP               string
 	allowSignups        bool
 	installCRDs         bool
 	updateCheck         bool
@@ -139,6 +141,7 @@ func parseFlags() options {
 	str(&o.workspacePull, "workspace-image-pull-policy", "", "pull policy for the workspace image (default: Kubernetes' own)")
 	str(&o.webDir, "web-dir", "", "serve the web UI from this directory instead of the built-in copy")
 	str(&o.podDial, "pod-dial", "auto", "how to reach pods: direct, forward (through the API server), or auto")
+	str(&o.podIP, "pod-ip", "", "the panel's own address in the cluster: while a server's game is not running, the extra ports of servers that share the router's address are pointed here, to say so and to wake a sleeping one (empty: nothing answers on them then)")
 	flag.BoolVar(&o.allowSignups, "allow-signups", env("allow-signups", "") == "true", "let anyone create an account without an invite")
 	flag.BoolVar(&o.installCRDs, "install-crds", env("install-crds", "true") == "true", "install or upgrade the MinecraftServer CRD on startup")
 	flag.BoolVar(&o.updateCheck, "update-check", env("update-check", "true") == "true", "ask GitHub every few hours whether a newer release is out, to tell the instance administrator (a build of a commit never asks)")
@@ -294,8 +297,9 @@ func run(opts options, log *slog.Logger) error {
 		Scheme:  scheme,
 		Metrics: metricsserver.Options{BindAddress: "0"},
 		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
-			&corev1.Pod{}:     {Label: managed},
-			&corev1.Service{}: {Label: managed},
+			&corev1.Pod{}:                {Label: managed},
+			&corev1.Service{}:            {Label: managed},
+			&discoveryv1.EndpointSlice{}: {Label: managed},
 		}},
 		Client: client.Options{Cache: &client.CacheOptions{
 			DisableFor: []client.Object{&corev1.Secret{}, &corev1.PersistentVolumeClaim{}, &corev1.Namespace{}},
@@ -332,6 +336,15 @@ func run(opts options, log *slog.Logger) error {
 	if portRange.First != 0 && int(portRange.First) <= opts.routerPort && opts.routerPort <= int(portRange.Last) {
 		return fmt.Errorf("extra-ports: %s includes %d, the router's own port (--router-public-port); give a range beside it, as 25600-25699", opts.extraPorts, opts.routerPort)
 	}
+	// Where the panel runs in the cluster, it answers on servers' extra
+	// ports while their games are not running.
+	var standIn controller.StandIn
+	if opts.podIP != "" {
+		if net.ParseIP(opts.podIP) == nil {
+			return fmt.Errorf("pod-ip: %q is not an address", opts.podIP)
+		}
+		standIn = &router.StandIn{Client: mgr.GetClient(), Log: log.With("component", "stand-in"), IP: opts.podIP}
+	}
 	if err := (&controller.Reconciler{
 		Client: mgr.GetClient(),
 		Reader: mgr.GetAPIReader(),
@@ -346,6 +359,7 @@ func run(opts options, log *slog.Logger) error {
 			PortsServiceAnnotations:  annotationsOf(opts.extraPortsNotes),
 			RouterService:            routerService(),
 			PackURL:                  opts.packURL,
+			StandIn:                  standIn,
 		},
 	}).SetupWithManager(mgr); err != nil {
 		return err
