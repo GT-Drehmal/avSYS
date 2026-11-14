@@ -284,7 +284,15 @@ func (s *Store) AcceptInvite(ctx context.Context, token, userID string) (*Org, e
 		return nil, err
 	}
 	defer tx.Rollback()
+	org, err := acceptInvite(ctx, tx, token, userID)
+	if err != nil {
+		return nil, err
+	}
+	return org, tx.Commit()
+}
 
+// acceptInvite is AcceptInvite inside a transaction that the caller commits.
+func acceptInvite(ctx context.Context, tx *sql.Tx, token, userID string) (*Org, error) {
 	inv, err := scanInvite(tx.QueryRowContext(ctx, `SELECT `+inviteColumns+` FROM invites WHERE token = ?`, token))
 	if err != nil {
 		return nil, err
@@ -306,7 +314,7 @@ func (s *Store) AcceptInvite(ctx context.Context, token, userID string) (*Org, e
 	case err != nil:
 		return nil, err
 	case current.AtLeast(inv.Role):
-		return org, tx.Commit()
+		return org, nil
 	default:
 		_, err = tx.ExecContext(ctx, `UPDATE memberships SET role = ? WHERE org_id = ? AND user_id = ?`, inv.Role, inv.OrgID, userID)
 	}
@@ -316,7 +324,7 @@ func (s *Store) AcceptInvite(ctx context.Context, token, userID string) (*Org, e
 	if _, err := tx.ExecContext(ctx, `UPDATE invites SET uses = uses + 1 WHERE token = ?`, token); err != nil {
 		return nil, err
 	}
-	return org, tx.Commit()
+	return org, nil
 }
 
 // withMinecraftAccounts fills in every account each member has linked.

@@ -9,10 +9,12 @@
 // the files in --upstream. Pages that need a running server (console,
 // files, terminal, snapshots) are there to be opened and to fail politely.
 // The cluster has no metrics API unless --metrics is given, which also
-// gives it two nodes (see metrics.go).
+// gives it two nodes (see metrics.go). With --fresh it is a panel just
+// installed instead, with nobody and nothing in it, waiting to be set up.
 //
 // It prints one line of JSON when it is listening: the address, and an API
-// token for each of the people it was seeded with.
+// token for each of the people it was seeded with. --listen with port 0
+// takes any free port, which that line then says.
 package main
 
 import (
@@ -35,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
@@ -52,8 +55,9 @@ func main() {
 	upstreamDir := flag.String("upstream", "web/tests/upstream", "answers for the services the panel looks things up in")
 	readyFile := flag.String("ready", "", "also write the line printed when listening to this file")
 	metrics := flag.Bool("metrics", false, "stand in a metrics API, and two nodes for it to answer for")
+	fresh := flag.Bool("fresh", false, "seed nothing: a panel just installed, waiting for its first account")
 	flag.Parse()
-	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics); err != nil {
+	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *fresh); err != nil {
 		fmt.Fprintln(os.Stderr, "avsys-uitest:", err)
 		os.Exit(1)
 	}
@@ -62,7 +66,7 @@ func main() {
 // password is the one every seeded person signs in with.
 const password = "correct horse battery staple"
 
-func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error {
+func run(listen, webDir, upstreamDir, readyFile string, withMetrics, fresh bool) error {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	dir, err := os.MkdirTemp("", "avsys-uitest-")
@@ -101,7 +105,7 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 	// Nothing runs here to wait for: a server's files are not there at once.
 	gateway := &sshgw.Gateway{Store: db, Dialer: noPods{}, Log: log, WorkspaceTries: 1}
 	srv := &api.Server{
-		Config:  api.Config{NamespacePrefix: "mc-", PublicURL: "http://" + listen, SSHHost: "panel.test", SSHPort: 2222, RouterDomain: "play.test", Version: "uitest"},
+		Config:  api.Config{NamespacePrefix: "mc-", SSHHost: "panel.test", SSHPort: 2222, RouterDomain: "play.test", Version: "uitest"},
 		Store:   db,
 		Client:  cluster,
 		Reader:  cluster,
@@ -117,44 +121,85 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 		Upstream: up,
 	}
 	gateway.Authz = srv
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
+	}
+	srv.Config.PublicURL = "http://" + ln.Addr().String()
 
+	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
+	srv.Metrics = metrics
+	srv.GameCommand = metrics.gameCommand
+	tokens := map[string]string{}
+	if !fresh {
+		if tokens, err = populate(ctx, srv, cluster, dir); err != nil {
+			return err
+		}
+		if withMetrics {
+			if err := seedNodes(ctx, cluster); err != nil {
+				return err
+			}
+		}
+		backfill(ctx, srv, metrics)
+	}
+	go srv.RunUsage(ctx)
+
+	ready, _ := json.Marshal(map[string]any{"url": srv.Config.PublicURL, "password": password, "tokens": tokens})
+	fmt.Println(string(ready))
+	if readyFile != "" {
+		if err := os.WriteFile(readyFile, ready, 0o600); err != nil {
+			return err
+		}
+	}
+	return http.Serve(ln, srv.Handler())
+}
+
+// populate fills the panel with people, organizations, servers and
+// snapshots, and returns an API token for each person.
+func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir string) (map[string]string, error) {
+	db := srv.Store
 	// People, one for each role in the first organization, and one who is
 	// in neither.
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tokens := map[string]string{}
 	users := map[string]*store.User{}
 	for _, name := range []string{"owner", "admin", "operator", "viewer", "outsider"} {
 		u := &store.User{Username: name, DisplayName: strings.ToUpper(name[:1]) + name[1:], PasswordHash: hash}
 		if err := db.CreateUser(ctx, u); err != nil {
-			return err
+			return nil, err
 		}
 		secret, err := db.CreateAPIToken(ctx, &store.APIToken{UserID: u.ID, Name: "uitest"})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		users[name], tokens[name] = u, secret
 	}
 	friends := &store.Org{Name: "Friends", Slug: "friends"}
 	if err := db.CreateOrg(ctx, friends, users["owner"].ID); err != nil {
-		return err
+		return nil, err
 	}
 	for _, name := range []string{"admin", "operator", "viewer"} {
-		inv := &store.Invite{OrgID: friends.ID, Role: store.Role(name), CreatedBy: users["owner"].ID}
+		inv := &store.Invite{OrgID: friends.ID, Role: store.Role(name), CreatedBy: "owner"}
 		if err := db.CreateInvite(ctx, inv); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := db.AcceptInvite(ctx, inv.Token, users[name].ID); err != nil {
-			return err
+			return nil, err
 		}
+	}
+	// An invite that has run out, for its link to be followed.
+	expired := time.Now().Add(-time.Hour)
+	if err := db.CreateInvite(ctx, &store.Invite{OrgID: friends.ID, Role: store.RoleViewer, CreatedBy: "owner", ExpiresAt: &expired}); err != nil {
+		return nil, err
 	}
 	// A second organization of the same owner, with a server of the same
 	// name as one in the first.
 	club := &store.Org{Name: "Build Club", Slug: "club"}
 	if err := db.CreateOrg(ctx, club, users["owner"].ID); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Servers in each state a list has to draw.
@@ -180,7 +225,7 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 			},
 		}
 		if err := cluster.Create(ctx, mc); err != nil {
-			return err
+			return nil, err
 		}
 		mc.Status = avsysv1.MinecraftServerStatus{Phase: s.phase, Message: s.message, Players: s.players, Address: mc.Spec.Expose.Hostname, MaxPlayers: 20}
 		if s.phase == avsysv1.PhaseRunning {
@@ -194,37 +239,14 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 			mc.Status.Snapshots = &avsysv1.SnapshotStatus{LastRun: &at}
 		}
 		if err := cluster.Status().Update(ctx, mc); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if err := seedSnapshots(dir); err != nil {
-		return err
+		return nil, err
 	}
-
-	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
-	srv.Metrics = metrics
-	srv.GameCommand = metrics.gameCommand
-	if withMetrics {
-		if err := seedNodes(ctx, cluster); err != nil {
-			return err
-		}
-	}
-	backfill(ctx, srv, metrics)
-	go srv.RunUsage(ctx)
-
-	ln, err := net.Listen("tcp", listen)
-	if err != nil {
-		return err
-	}
-	ready, _ := json.Marshal(map[string]any{"url": "http://" + ln.Addr().String(), "password": password, "tokens": tokens})
-	fmt.Println(string(ready))
-	if readyFile != "" {
-		if err := os.WriteFile(readyFile, ready, 0o600); err != nil {
-			return err
-		}
-	}
-	return http.Serve(ln, srv.Handler())
+	return tokens, nil
 }
 
 // resticStandIn is what the panel runs as restic here. It answers the

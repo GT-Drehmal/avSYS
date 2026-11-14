@@ -311,7 +311,7 @@ func (s *Server) previewInvite(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) acceptInvite(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	org, err := s.Store.AcceptInvite(r.Context(), r.PathValue("token"), u.ID)
 	if errors.Is(err, store.ErrInviteUnusable) {
-		return &Error{Status: http.StatusGone, Code: "invite_unusable", Message: "This invite has expired or been used up."}
+		return errInviteUnusable
 	}
 	if err != nil {
 		return err

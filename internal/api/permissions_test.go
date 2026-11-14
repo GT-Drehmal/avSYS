@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,9 +45,9 @@ type panel struct {
 
 var everyone = []string{"", "outsider", "viewer", "operator", "admin", "owner", "root"}
 
-func newPanel(t *testing.T) *panel {
+// newEmptyPanel is a panel as it is first installed, with nobody in it.
+func newEmptyPanel(t *testing.T) *panel {
 	t.Helper()
-	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +87,14 @@ func newPanel(t *testing.T) *panel {
 	// Nothing here reaches the internet: what the panel looks up elsewhere
 	// is answered from offline, which tests fill in as they need.
 	p.srv.catalog.http.Transport = offline{}
+	return p
+}
 
+func newPanel(t *testing.T) *panel {
+	t.Helper()
+	ctx := context.Background()
+	p := newEmptyPanel(t)
+	db := p.srv.Store
 	for _, name := range []string{"root", "owner", "admin", "operator", "viewer", "outsider"} {
 		u := &store.User{Username: name, IsAdmin: name == "root"}
 		if err := db.CreateUser(ctx, u); err != nil {
@@ -574,8 +583,8 @@ func TestSignupNeedsAnInvite(t *testing.T) {
 	if got, code := register(`{"username":"walkin","password":"correct horse"}`); got != http.StatusForbidden || code != "signup_closed" {
 		t.Errorf("signup without an invite: got %d %q, want 403 signup_closed", got, code)
 	}
-	if got, code := register(`{"username":"walkin","password":"correct horse","invite":"made-up"}`); got != http.StatusForbidden || code != "signup_closed" {
-		t.Errorf("signup with a made-up invite: got %d %q, want 403 signup_closed", got, code)
+	if got, code := register(`{"username":"walkin","password":"correct horse","invite":"made-up"}`); got != http.StatusGone || code != "invite_unusable" {
+		t.Errorf("signup with a made-up invite: got %d %q, want 410 invite_unusable", got, code)
 	}
 
 	alpha, err := p.srv.Store.OrgBySlug(ctx, "alpha")
@@ -599,12 +608,124 @@ func TestSignupNeedsAnInvite(t *testing.T) {
 	if role, err := p.srv.Store.RoleIn(ctx, alpha.ID, guest.ID); err != nil || role != store.RoleOperator {
 		t.Errorf("invited user's role: %q, %v; want operator", role, err)
 	}
-	// The invite was for one person.
-	if got, code := register(`{"username":"second","password":"correct horse","invite":"` + inv.Token + `"}`); got != http.StatusForbidden || code != "signup_closed" {
-		t.Errorf("reusing a spent invite: got %d %q, want 403 signup_closed", got, code)
+	// The invite was for one person. Whoever else follows the link is told
+	// so, not that they need one.
+	if got, code := register(`{"username":"second","password":"correct horse","invite":"` + inv.Token + `"}`); got != http.StatusGone || code != "invite_unusable" {
+		t.Errorf("reusing a spent invite: got %d %q, want 410 invite_unusable", got, code)
 	}
 	if got, code := p.do("outsider", "POST", "/invites/"+inv.Token+"/accept", ""); got != http.StatusGone || code != "invite_unusable" {
 		t.Errorf("accepting a spent invite: got %d %q, want 410 invite_unusable", got, code)
+	}
+}
+
+// The first account made on a new panel is its administrator, and then
+// signups close. Several people setting it up at the same moment do not all
+// get in.
+func TestFirstAccountSetsUpThePanel(t *testing.T) {
+	p := newEmptyPanel(t)
+	ctx := context.Background()
+	setupRequired := func() bool {
+		rec := httptest.NewRecorder()
+		p.h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/meta", nil))
+		var meta struct{ SetupRequired bool }
+		if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
+			t.Fatal(err)
+		}
+		return meta.SetupRequired
+	}
+	if !setupRequired() {
+		t.Fatal("a panel with nobody in it does not ask to be set up")
+	}
+
+	const racers = 8
+	codes := make([]int, racers)
+	errs := make([]string, racers)
+	var wg sync.WaitGroup
+	for i := range racers {
+		wg.Go(func() {
+			codes[i], errs[i] = p.do("", "POST", "/auth/register", fmt.Sprintf(`{"username":"first%d","password":"correct horse"}`, i))
+		})
+	}
+	wg.Wait()
+	made := 0
+	for i := range racers {
+		switch {
+		case codes[i] == http.StatusCreated:
+			made++
+		case codes[i] != http.StatusForbidden || errs[i] != "signup_closed":
+			t.Errorf("signup %d: got %d %q, want 201 or 403 signup_closed", i, codes[i], errs[i])
+		}
+	}
+	if n, err := p.srv.Store.CountUsers(ctx); err != nil || made != 1 || n != 1 {
+		t.Fatalf("%d people setting up a new panel at once: %d were let in, %d accounts made (%v), want 1", racers, made, n, err)
+	}
+	for i := range racers {
+		if codes[i] != http.StatusCreated {
+			continue
+		}
+		u, err := p.srv.Store.UserByUsername(ctx, fmt.Sprintf("first%d", i))
+		if err != nil || !u.IsAdmin {
+			t.Errorf("the first account is not the administrator: %+v, %v", u, err)
+		}
+	}
+	if setupRequired() {
+		t.Error("the panel still asks to be set up")
+	}
+	if got, code := p.do("", "POST", "/auth/register", `{"username":"later","password":"correct horse"}`); got != http.StatusForbidden || code != "signup_closed" {
+		t.Errorf("signup after setup: got %d %q, want 403 signup_closed", got, code)
+	}
+}
+
+// The last use of an invite goes to one person: the others following the
+// link at the same moment are told it is no longer valid, and no account is
+// made for them that belongs nowhere.
+func TestInviteLastUseGoesToOne(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	alpha, err := p.srv.Store.OrgBySlug(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := &store.Invite{OrgID: alpha.ID, Role: store.RoleViewer, CreatedBy: "owner", MaxUses: 1}
+	if err := p.srv.Store.CreateInvite(ctx, inv); err != nil {
+		t.Fatal(err)
+	}
+	before, err := p.srv.Store.CountUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const racers = 8
+	codes := make([]int, racers)
+	errs := make([]string, racers)
+	var wg sync.WaitGroup
+	for i := range racers {
+		wg.Go(func() {
+			codes[i], errs[i] = p.do("", "POST", "/auth/register", fmt.Sprintf(`{"username":"guest%d","password":"correct horse","invite":"%s"}`, i, inv.Token))
+		})
+	}
+	wg.Wait()
+	made := 0
+	for i := range racers {
+		switch {
+		case codes[i] == http.StatusCreated:
+			made++
+			u, err := p.srv.Store.UserByUsername(ctx, fmt.Sprintf("guest%d", i))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if role, err := p.srv.Store.RoleIn(ctx, alpha.ID, u.ID); err != nil || role != store.RoleViewer {
+				t.Errorf("the one let in: role %q, %v; want viewer", role, err)
+			}
+		case codes[i] != http.StatusGone || errs[i] != "invite_unusable":
+			t.Errorf("signup %d: got %d %q, want 201 or 410 invite_unusable", i, codes[i], errs[i])
+		}
+	}
+	after, err := p.srv.Store.CountUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made != 1 || after != before+1 {
+		t.Errorf("%d people taking a single-use invite at once: %d let in, %d accounts made, want 1", racers, made, after-before)
 	}
 }
 
