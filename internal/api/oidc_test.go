@@ -41,6 +41,8 @@ type browser struct {
 	p       *panel
 	cookies map[string]string
 	token   string
+	// addr is the address requests come from, if not httptest's.
+	addr string
 }
 
 func (p *panel) browser() *browser {
@@ -51,6 +53,9 @@ func (p *panel) browser() *browser {
 func (b *browser) get(address string) (int, string) {
 	b.t.Helper()
 	req := httptest.NewRequest(http.MethodGet, address, nil)
+	if b.addr != "" {
+		req.RemoteAddr = b.addr
+	}
 	for name, value := range b.cookies {
 		req.AddCookie(&http.Cookie{Name: name, Value: value})
 	}

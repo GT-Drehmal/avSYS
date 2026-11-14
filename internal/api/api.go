@@ -41,7 +41,15 @@ type Config struct {
 	// created by the first-run setup and by accepting an invite.
 	AllowSignups bool
 	Providers    map[string]*auth.Provider
-	Version      string
+	// NoPasswords turns password sign-in off: everyone signs in through a
+	// provider, and no password can be set or used. See CheckSignIn.
+	NoPasswords bool
+	// SetupCode, with NoPasswords and no account yet, is what lets the
+	// first account be made through a provider: it is logged at startup,
+	// so that only someone who can read the panel's log becomes its
+	// administrator.
+	SetupCode string
+	Version   string
 	// PackDir is where the panel keeps the resource packs uploaded to it,
 	// by hash, to serve them. Empty, packs cannot be uploaded.
 	PackDir string

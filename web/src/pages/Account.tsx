@@ -323,32 +323,34 @@ function SignIn() {
           ))}
         </ul>
       )}
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          change.mutate(undefined, {
-            onSuccess: () => {
-              setCurrent("");
-              setNext("");
-              qc.invalidateQueries({ queryKey: keys.me });
-              toast.info("Password updated");
-            },
-          });
-        }}
-      >
-        {me.hasPassword && (
-          <Field label="Current password">{(id) => <Input id={id} type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}</Field>
-        )}
-        <Field label={me.hasPassword ? "New password" : "Set a password"} hint="At least 8 characters.">
-          {(id) => <Input id={id} type="password" required minLength={8} autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />}
-        </Field>
-        <div>
-          <Button type="submit" loading={change.isPending}>
-            {me.hasPassword ? "Change password" : "Set password"}
-          </Button>
-        </div>
-      </form>
+      {meta?.passwords !== false && (
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            change.mutate(undefined, {
+              onSuccess: () => {
+                setCurrent("");
+                setNext("");
+                qc.invalidateQueries({ queryKey: keys.me });
+                toast.info("Password updated");
+              },
+            });
+          }}
+        >
+          {me.hasPassword && (
+            <Field label="Current password">{(id) => <Input id={id} type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}</Field>
+          )}
+          <Field label={me.hasPassword ? "New password" : "Set a password"} hint="At least 8 characters.">
+            {(id) => <Input id={id} type="password" required minLength={8} autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />}
+          </Field>
+          <div>
+            <Button type="submit" loading={change.isPending}>
+              {me.hasPassword ? "Change password" : "Set password"}
+            </Button>
+          </div>
+        </form>
+      )}
     </Section>
   );
 }

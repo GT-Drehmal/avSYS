@@ -36,17 +36,36 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 // CreateUser inserts u, assigning its ID. The first user ever created becomes
 // the instance admin.
 func (s *Store) CreateUser(ctx context.Context, u *User) error {
-	return s.CreateUserWithIdentity(ctx, u, Identity{})
+	return s.CreateUserWithIdentity(ctx, u, Identity{}, AnyUser)
 }
 
-// ErrIdentityTaken is CreateUserWithIdentity's answer when the provider
-// account is linked to a user already.
-var ErrIdentityTaken = errors.New("identity already linked")
+// Which says which user CreateUserWithIdentity may make: any, only the
+// first (who is the administrator), or any but the first.
+type Which int
+
+const (
+	AnyUser Which = iota
+	FirstUser
+	LaterUser
+)
+
+var (
+	// ErrIdentityTaken is CreateUserWithIdentity's answer when the
+	// provider account is linked to a user already.
+	ErrIdentityTaken = errors.New("identity already linked")
+	// ErrNotFirst is its answer for FirstUser when there are users already.
+	ErrNotFirst = errors.New("not the first user")
+	// ErrFirst is its answer for LaterUser when there are none.
+	ErrFirst = errors.New("would be the first user")
+)
 
 // CreateUserWithIdentity inserts u, as CreateUser does, with a provider
 // account linked to it: both or neither, so that no user is made for a
 // provider account another user has. An empty identity links nothing.
-func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity) error {
+// which limits it to the first user or to any but the first. The check
+// and the insert are one transaction, so of two first sign-ups at once
+// only one is made.
+func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity, which Which) error {
 	u.ID = NewID(10)
 	u.CreatedAt = unix(now())
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -57,6 +76,12 @@ func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
 		return err
+	}
+	switch {
+	case count > 0 && which == FirstUser:
+		return ErrNotFirst
+	case count == 0 && which == LaterUser:
+		return ErrFirst
 	}
 	if count == 0 {
 		u.IsAdmin = true
@@ -76,6 +101,24 @@ func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity
 		}
 	}
 	return tx.Commit()
+}
+
+// Admins lists the instance administrators.
+func (s *Store) Admins(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+userColumns+` FROM users WHERE is_admin ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {

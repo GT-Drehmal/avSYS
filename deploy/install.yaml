@@ -178,6 +178,9 @@ spec:
             #   valueFrom: { secretKeyRef: { name: avsys-oidc, key: client-secret } }
             # - name: AVSYS_OIDC_NAME
             #   value: Authentik
+            # Everyone signs in through a provider; no passwords.
+            # - name: AVSYS_PASSWORDS
+            #   value: "false"
           ports:
             - { name: http, containerPort: 8080 }
             - { name: ssh, containerPort: 2222 }
