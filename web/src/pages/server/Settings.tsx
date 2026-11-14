@@ -7,6 +7,7 @@ import { launchOf } from "../../lib/launch";
 import { parseProperties, worldKeys } from "../../lib/properties";
 import { keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../../lib/software";
+import { softwareWords } from "../../lib/format";
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
@@ -148,6 +149,20 @@ function toPatch(d: Draft, current: ServerSpec, latest: string | undefined): Spe
   };
 }
 
+/**
+ * A newer game version than the server is on, of those its type has a
+ * build for: a release, or for a server on a snapshot or pre-release, the
+ * newest of either. None for a modpack, which has the pack's version, or
+ * while the type's own list is not known.
+ */
+function newerVersion(spec: ServerSpec, own: ReturnType<typeof useGameVersions>): string | undefined {
+  const list = own.data;
+  if (spec.modpack || own.isPlaceholderData || !list || list.loader !== spec.loader) return undefined;
+  const offer = onPreview(list, spec.version) ? list.ordered[0] : list.latest;
+  const at = list.ordered.indexOf(spec.version);
+  return offer && at > 0 && list.ordered.indexOf(offer) < at ? offer : undefined;
+}
+
 export function Settings() {
   const { server } = useServerContext();
   const navigate = useNavigate();
@@ -193,8 +208,9 @@ export function Settings() {
   const reported = server.status.version?.split(" ").at(-1);
   const ranOn = reported && order.includes(reported) ? reported : server.spec.version === "LATEST" ? latestOf(savedVersions) : server.spec.version;
   const goingTo = draft.version === "LATEST" ? latestOf(versions) : draft.version;
+  const newer = newerVersion(server.spec, savedVersions);
   // A world opened in a newer version cannot be opened in an older one.
-  const older = !server.spec.modpack && !!ranOn && !!goingTo && order.includes(ranOn) && order.indexOf(goingTo) > order.indexOf(ranOn);
+  const older =!server.spec.modpack && !!ranOn && !!goingTo && order.includes(ranOn) && order.indexOf(goingTo) > order.indexOf(ranOn);
 
   const [opening, setOpening] = useState(false);
   const [downgrading, setDowngrading] = useState(false);
@@ -271,6 +287,15 @@ export function Settings() {
                     />
                   </Select>
                   <PreviewsToggle versions={versions.data} previews={previews} onChange={setPreviews} selected={draft.version} />
+                  {/* Said while the server's own version is picked, and picked by hand: nothing changes by itself. */}
+                  {newer && draft.loader === saved.loader && draft.version === saved.version && (
+                    <p className="text-xs text-muted">
+                      {softwareWords(server.spec.loader, newer)} is out.{" "}
+                      <button type="button" onClick={() => set("version", newer)} className="text-accent hover:underline">
+                        Use {newer}
+                      </button>
+                    </p>
+                  )}
                 </div>
               )}
             </Field>
