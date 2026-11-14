@@ -37,7 +37,8 @@ func (s *Server) minecraftProfile(ctx context.Context, name string) (*store.Mine
 	if !minecraftNamePattern.MatchString(name) {
 		return nil, errBadRequest("%q is not a Minecraft username.", name)
 	}
-	body, err := s.catalog.get(ctx, "https://api.mojang.com/users/profiles/minecraft/"+url.PathEscape(name), 5*time.Minute)
+	// Asked in one case, so that a name typed in another is not asked again.
+	body, err := s.catalog.get(ctx, "https://api.mojang.com/users/profiles/minecraft/"+url.PathEscape(strings.ToLower(name)), 5*time.Minute)
 	if errors.Is(err, errNotFound) {
 		return nil, &Error{Status: http.StatusNotFound, Code: "no_such_player", Message: "There is no Minecraft account named " + name + "."}
 	}
@@ -185,6 +186,9 @@ type roleList struct {
 	picks func(*avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks
 	// kept is who is on it by the server's own settings.
 	kept func(*avsysv1.MinecraftServerSpec) []string
+	// saved are the organization's saved lists of players whose players are
+	// on it, by ID.
+	saved func(*avsysv1.MinecraftServerSpec) []string
 }
 
 var roleLists = []roleList{
@@ -192,11 +196,13 @@ var roleLists = []roleList{
 		what: "operators", key: "ops", file: "ops.json", note: avsysv1.AnnotationAutoOps, add: "op ", remove: "deop ", from: opRole,
 		picks: func(spec *avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks { return spec.OpMembers },
 		kept:  func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Ops },
+		saved: func(spec *avsysv1.MinecraftServerSpec) []string { return spec.OpLists },
 	},
 	{
 		what: "whitelist", key: "whitelist", file: "whitelist.json", query: "whitelist list", note: avsysv1.AnnotationAutoWhitelist, add: "whitelist add ", remove: "whitelist remove ", from: whitelistRole,
 		picks: func(spec *avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks { return spec.WhitelistMembers },
 		kept:  func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Whitelist },
+		saved: func(spec *avsysv1.MinecraftServerSpec) []string { return spec.WhitelistLists },
 	},
 }
 
@@ -279,6 +285,52 @@ func accountNames(m store.Member, trusted bool) []string {
 		}
 	}
 	return out
+}
+
+// fromSaved is the players of the saved lists named, by name, each once. A
+// list that is not there any more, deleted since, is nobody.
+func fromSaved(ids []string, saved map[string]*store.PlayerList) []string {
+	var out []string
+	for _, id := range ids {
+		l := saved[id]
+		if l == nil {
+			continue
+		}
+		for _, p := range l.Players {
+			if listedNamePattern.MatchString(p.Name) && !hasName(out, p.Name) {
+				out = append(out, p.Name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// wantedOn is who the panel should have on one of a server's lists, but for
+// the names in its settings: members, by role and picked, and the players of
+// the saved lists it uses.
+func wantedOn(list roleList, spec *avsysv1.MinecraftServerSpec, members []store.Member, saved map[string]*store.PlayerList) []string {
+	out := wantedFrom(list.from(spec), list.picks(spec), members)
+	for _, name := range fromSaved(list.saved(spec), saved) {
+		if !hasName(out, name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// savedLists is an organization's saved lists of players by ID.
+func (s *Server) savedLists(ctx context.Context, orgID string) (map[string]*store.PlayerList, error) {
+	lists, err := s.Store.PlayerLists(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*store.PlayerList, len(lists))
+	for i := range lists {
+		out[lists[i].ID] = &lists[i]
+	}
+	return out, nil
 }
 
 // wantedOps is who should be an operator on a server for their role.
@@ -407,13 +459,17 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	}
 	// The members too: a look that read them before an account was linked
 	// or unlinked, and got the lock after one that read them since, would
-	// otherwise undo it.
+	// otherwise undo it. And the saved lists, for the same reason.
+	var saved map[string]*store.PlayerList
 	if slug, ok := s.orgOfNamespace(fresh.Namespace); ok {
 		org, err := s.Store.OrgBySlug(ctx, slug)
 		if err != nil {
 			return err
 		}
 		if members, err = s.Store.Members(ctx, org.ID); err != nil {
+			return err
+		}
+		if saved, err = s.savedLists(ctx, org.ID); err != nil {
 			return err
 		}
 	}
@@ -425,7 +481,7 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	var failed error
 	for _, list := range roleLists {
 		made := splitNames(fresh.Annotations[list.note])
-		wanted := withKept(wantedFrom(list.from(&fresh.Spec), list.picks(&fresh.Spec), members), list.kept(&fresh.Spec))
+		wanted := withKept(wantedOn(list, &fresh.Spec, members, saved), list.kept(&fresh.Spec))
 		// Who is on it in game: anyone at the console may have changed it.
 		// Where that cannot be read, the note is gone by as it is.
 		players, err := s.readList(ctx, fresh, list)
@@ -562,6 +618,36 @@ func (s *Server) refreshNames(ctx context.Context, members []store.Member) {
 	}
 }
 
+// refreshListNames brings each player on an organization's saved lists up
+// to their current name, as refreshNames does for members, and for the same
+// reason.
+func (s *Server) refreshListNames(ctx context.Context, orgID string) {
+	lists, err := s.Store.PlayerLists(ctx, orgID)
+	if err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, l := range lists {
+		for _, p := range l.Players {
+			if seen[p.UUID] {
+				continue
+			}
+			seen[p.UUID] = true
+			body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(p.UUID), 6*time.Hour)
+			if err != nil {
+				continue
+			}
+			var profile struct{ Name string }
+			if json.Unmarshal(body, &profile) != nil || !minecraftNamePattern.MatchString(profile.Name) || profile.Name == p.Name {
+				continue
+			}
+			if err := s.Store.RenameListPlayer(ctx, p.UUID, profile.Name); err == nil {
+				s.Log.Info("a player on a saved list was renamed", "from", p.Name, "to", profile.Name)
+			}
+		}
+	}
+}
+
 // syncOpsFor brings one server in step, as it is in mc, without making
 // whoever changed it wait.
 func (s *Server) syncOpsFor(org *store.Org, mc *avsysv1.MinecraftServer) {
@@ -660,6 +746,9 @@ func (s *Server) opsTick(ctx context.Context) {
 		if err != nil {
 			continue
 		}
+		// Players on its saved lists who were renamed: looked at here, with
+		// the look every minute, and not each time a list is changed.
+		s.refreshListNames(ctx, org.ID)
 		s.syncOrgOps(ctx, org)
 	}
 }

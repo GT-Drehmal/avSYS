@@ -16,6 +16,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -357,6 +358,8 @@ type upstream struct {
 		URL  string `json:"url"`
 		Has  string `json:"has"`
 		File string `json:"file"`
+		// Status is what it answers with, where that is not 200 OK.
+		Status int `json:"status"`
 	}
 }
 
@@ -387,7 +390,8 @@ func (u *upstream) RoundTrip(r *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{"Content-Type": {"application/json"}}, Body: f, Request: r}, nil
+		status := cmp.Or(route.Status, http.StatusOK)
+		return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Header: http.Header{"Content-Type": {"application/json"}}, Body: f, Request: r}, nil
 	}
 	fmt.Fprintln(os.Stderr, "avsys-uitest: nothing answers", address)
 	return nil, errors.New("offline: " + r.URL.Host)

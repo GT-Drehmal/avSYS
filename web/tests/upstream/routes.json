@@ -105,6 +105,37 @@
   "file": "neoforge.json"
  },
  {
+  "url": "https://api.mojang.com/users/profiles/minecraft/alex",
+  "has": "",
+  "file": "profile-alex.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/notch",
+  "has": "",
+  "file": "profile-notch.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/jeb_",
+  "has": "",
+  "file": "profile-jeb.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/dinnerbone",
+  "has": "",
+  "file": "profile-dinnerbone.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/grumm",
+  "has": "",
+  "file": "profile-grumm.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/herobrine",
+  "has": "",
+  "file": "no-such-player.json",
+  "status": 404
+ },
+ {
   "url": "https://api.mojang.com/users/profiles/minecraft/",
   "has": "",
   "file": "profile.json"

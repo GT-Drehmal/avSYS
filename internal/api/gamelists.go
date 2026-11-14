@@ -223,16 +223,31 @@ type listState struct {
 	on                 []listedPlayer
 	err                error
 	made, wanted, kept []string
+	// members are those wanted for being members, as against those wanted
+	// for being on a saved list the server uses.
+	members []string
 }
 
-func (s *Server) listState(ctx context.Context, mc *avsysv1.MinecraftServer, list roleList, members []store.Member) listState {
+func (s *Server) listState(ctx context.Context, mc *avsysv1.MinecraftServer, list roleList, members []store.Member, saved map[string]*store.PlayerList) listState {
 	on, err := s.readList(ctx, mc, list)
 	return listState{
 		on: on, err: err,
-		made:   splitNames(mc.Annotations[list.note]),
-		wanted: wantedFrom(list.from(&mc.Spec), list.picks(&mc.Spec), members),
-		kept:   list.kept(&mc.Spec),
+		made:    splitNames(mc.Annotations[list.note]),
+		wanted:  wantedOn(list, &mc.Spec, members, saved),
+		members: wantedFrom(list.from(&mc.Spec), list.picks(&mc.Spec), members),
+		kept:    list.kept(&mc.Spec),
 	}
+}
+
+// savedListWith is the first of the saved lists named that has a player on
+// it, or nil.
+func savedListWith(ids []string, saved map[string]*store.PlayerList, name string) *store.PlayerList {
+	for _, id := range ids {
+		if l := saved[id]; l != nil && slices.ContainsFunc(l.Players, func(p store.ListPlayer) bool { return strings.EqualFold(p.Name, name) }) {
+			return l
+		}
+	}
+	return nil
 }
 
 // getGameLists says who is on a server's whitelist and operators other than
@@ -246,9 +261,13 @@ func (s *Server) getGameLists(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
+	saved, err := s.savedLists(r.Context(), a.Org.ID)
+	if err != nil {
+		return err
+	}
 	out := map[string]gameListView{}
 	for _, list := range roleLists {
-		st := s.listState(r.Context(), mc, list, members)
+		st := s.listState(r.Context(), mc, list, members, saved)
 		view := gameListView{Known: st.err == nil, InGame: []listedPlayer{}}
 		if st.err == nil {
 			view.InGame = addedInGame(st.on, st.made, st.wanted, st.kept)
@@ -287,7 +306,11 @@ func (s *Server) removeFromGameList(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return err
 	}
-	st := s.listState(ctx, mc, list, members)
+	saved, err := s.savedLists(ctx, a.Org.ID)
+	if err != nil {
+		return err
+	}
+	st := s.listState(ctx, mc, list, members, saved)
 	if st.err != nil {
 		s.Log.Warn("could not read a server's list", "server", key.String(), "list", list.what, "error", st.err)
 		return &Error{Status: http.StatusBadGateway, Code: "unreachable", Message: "The server's players could not be read right now. Try again in a moment."}
@@ -296,8 +319,11 @@ func (s *Server) removeFromGameList(w http.ResponseWriter, r *http.Request, u *s
 	switch {
 	case i < 0:
 		return &Error{Status: http.StatusNotFound, Code: "not_found", Message: fmt.Sprintf("%s is not on the %s.", name, list.what)}
-	case hasName(st.wanted, name):
+	case hasName(st.members, name):
 		return &Error{Status: http.StatusConflict, Code: "member", Message: fmt.Sprintf("%s is a member's player. Untick them under Members instead.", name)}
+	case savedListWith(list.saved(&mc.Spec), saved, name) != nil:
+		l := savedListWith(list.saved(&mc.Spec), saved, name)
+		return &Error{Status: http.StatusConflict, Code: "saved_list", Message: fmt.Sprintf("%s is on the list %s. Take them off that list, or stop using it here.", name, l.Name)}
 	case hasName(st.kept, name) || keptByUUID(st.kept, st.on[i].UUID):
 		return &Error{Status: http.StatusConflict, Code: "listed", Message: fmt.Sprintf("%s is listed in the settings. Take them out there instead.", name)}
 	}

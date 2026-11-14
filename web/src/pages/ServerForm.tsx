@@ -9,6 +9,7 @@ import { PackStack, SectionHead, VersionDialog } from "../components/ContentPart
 import { ModrinthSearch, ProjectIcon } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
+import { SavedListsField } from "../components/PlayerLists";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
 import { BottomBar, Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
@@ -247,6 +248,9 @@ interface Values {
   /** Players named by hand, one a line: on the whitelist, and operators. */
   whitelist: string;
   ops: string;
+  /** Saved lists of players, by ID, on the whitelist, and operators. */
+  whitelistLists: string[];
+  opLists: string[];
   memory: string;
   storage: string;
   /** The node to put it on; empty for the panel to choose. */
@@ -263,6 +267,9 @@ interface Values {
   /** What a schedule of its own sets; the organization's for the rest. */
   ownSchedule: BackupOverride | null;
 }
+
+/** Whether two choices of saved lists are the same lists, in any order. */
+const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((id) => b.includes(id));
 
 /** The server.properties entries the form has a control of its own for. The rest are "other properties". */
 const shown = new Set(["motd", "gamemode", "difficulty", "level-type", "level-seed", "generate-structures", "hardcore", "max-players", "pvp", "white-list", "enforce-whitelist"]);
@@ -300,6 +307,8 @@ const fresh: Values = {
   autoOp: "operator",
   whitelist: "",
   ops: "",
+  whitelistLists: [],
+  opLists: [],
   memory: "4",
   storage: "10",
   node: "",
@@ -355,6 +364,8 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     autoOp: spec.autoOp || "operator",
     whitelist: (spec.whitelist ?? []).join("\n"),
     ops: (spec.ops ?? []).join("\n"),
+    whitelistLists: spec.whitelistLists ?? [],
+    opLists: spec.opLists ?? [],
     memory: toGigabytes(spec.resources.memory) || "4",
     storage: String(Math.max(Number(toGigabytes(spec.storage.size)) || 10, leastStorage)),
     // The panel chooses for a copy too, unless asked: the original's node
@@ -824,6 +835,8 @@ export function ServerForm({
       ...(v.autoOp !== "operator" ? { autoOp: v.autoOp as ServerSpec["autoOp"] } : {}),
       ...(lines(v.whitelist).length > 0 ? { whitelist: lines(v.whitelist) } : {}),
       ...(lines(v.ops).length > 0 ? { ops: lines(v.ops) } : {}),
+      ...(v.whitelistLists.length > 0 ? { whitelistLists: v.whitelistLists } : {}),
+      ...(v.opLists.length > 0 ? { opLists: v.opLists } : {}),
       ...(v.sleep && routed ? { sleep: { enabled: true, idleMinutes: Number(v.idleMinutes) || 15 } } : {}),
       ...(v.schedule === "off" ? { backups: { enabled: false } } : v.schedule === "own" ? { backups: ownBackups() } : {}),
       jvm: { aikarFlags: v.aikar, extraFlags: v.extraFlags },
@@ -856,6 +869,8 @@ export function ServerForm({
     if (v.autoOp !== start.autoOp) changes.autoOp = v.autoOp as ServerSpec["autoOp"];
     if (v.whitelist !== start.whitelist) changes.whitelist = lines(v.whitelist);
     if (v.ops !== start.ops) changes.ops = lines(v.ops);
+    if (!sameIds(v.whitelistLists, start.whitelistLists)) changes.whitelistLists = v.whitelistLists;
+    if (!sameIds(v.opLists, start.opLists)) changes.opLists = v.opLists;
     const sleeps = v.sleep && routed;
     if (sleeps !== start.sleep || (sleeps && v.idleMinutes !== start.idleMinutes)) changes.sleep = { enabled: sleeps, idleMinutes: Number(v.idleMinutes) || 15 };
     if (v.schedule !== start.schedule || (v.schedule === "own" && JSON.stringify(v.ownSchedule) !== JSON.stringify(start.ownSchedule))) {
@@ -1867,6 +1882,16 @@ export function ServerForm({
               </Select>
             )}
           </Field>
+        </div>
+        <SavedListsField
+          org={org}
+          title="Whitelist from saved lists"
+          hint={v.join === "anyone" ? "Only used with a whitelist." : "Their players can join. A change to a list reaches this server too."}
+          label="whitelist"
+          value={v.whitelistLists}
+          onChange={(ids) => set("whitelistLists", ids)}
+        />
+        <div className="grid grid-cols-2 gap-4">
           <Field label="Whitelisted players" hint={v.join === "anyone" ? "Only used with a whitelist." : "One name per line."}>
             {(id) => <Textarea id={id} rows={3} value={v.whitelist} onChange={(e) => set("whitelist", e.target.value)} className="font-mono" spellCheck={false} />}
           </Field>
@@ -1874,6 +1899,7 @@ export function ServerForm({
             {(id) => <Textarea id={id} rows={3} value={v.ops} onChange={(e) => set("ops", e.target.value)} className="font-mono" spellCheck={false} />}
           </Field>
         </div>
+        <SavedListsField org={org} title="Operators from saved lists" label="operators" value={v.opLists} onChange={(ids) => set("opLists", ids)} />
         {open && <Notice>{openWarning}</Notice>}
         {v.join !== "anyone" && v.join !== "list" && me && !me.minecraft && (
           <p className="text-xs leading-relaxed text-muted">

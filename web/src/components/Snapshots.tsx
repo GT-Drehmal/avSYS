@@ -5,7 +5,7 @@ import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
 import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, type Snapshot, type SnapshotDetail } from "../lib/api";
 import { ago, bytes, softwareWords } from "../lib/format";
-import { keys, useAction, useOffsite, useServers } from "../lib/queries";
+import { keys, useAction, useOffsite, usePlayerLists, useServers } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
 import { ContentList, packTitle } from "./Content";
 import type { Selection } from "../lib/selection";
@@ -298,6 +298,9 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
     retry: false,
   });
   const offsite = useOffsite(org);
+  // The saved lists it used, by name: one deleted since is left out, as a server made from it would.
+  const savedLists = usePlayerLists(org, !!snapshot);
+  const listNames = (ids?: string[] | null) => (savedLists.data ?? []).filter((l) => ids?.includes(l.id)).map((l) => l.name);
   const s = snapshot;
   const spec = detail.data?.spec;
   const properties = Object.entries(spec?.properties ?? {}).sort(([a], [b]) => a.localeCompare(b));
@@ -354,6 +357,8 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
                   )}
                   {(spec.ops?.length ?? 0) > 0 && <Fact label="Operators">{spec.ops!.join(", ")}</Fact>}
                   {(spec.whitelist?.length ?? 0) > 0 && <Fact label="Whitelist">{spec.whitelist!.join(", ")}</Fact>}
+                  {listNames(spec.whitelistLists).length > 0 && <Fact label="Whitelist lists">{listNames(spec.whitelistLists).join(", ")}</Fact>}
+                  {listNames(spec.opLists).length > 0 && <Fact label="Operator lists">{listNames(spec.opLists).join(", ")}</Fact>}
                   {spec.resourcePack?.url && (
                     <Fact label="Resource pack">
                       {spec.resourcePack.project || spec.resourcePack.uploaded ? (

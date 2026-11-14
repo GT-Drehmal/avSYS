@@ -114,6 +114,7 @@ type Server struct {
 	schedule   schedule
 	offsite    offsite
 	autoOps    autoOps
+	heads      heads
 	// serverIcons holds each server's icon for a short while.
 	serverIcons serverIcons
 	// snapshotIcons holds the icons read out of snapshots, which never change.
@@ -414,6 +415,14 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/uploads", s.authed(s.stagedReceived))
 	api("PUT /orgs/{org}/uploads", s.authed(s.stagePart))
 	api("DELETE /orgs/{org}/uploads", s.authed(s.discardStaged))
+	api("GET /orgs/{org}/player-lists", s.authed(s.listPlayerLists))
+	api("POST /orgs/{org}/player-lists", s.authed(s.createPlayerList))
+	api("GET /orgs/{org}/player-lists/{list}", s.authed(s.getPlayerList))
+	api("PATCH /orgs/{org}/player-lists/{list}", s.authed(s.updatePlayerList))
+	api("DELETE /orgs/{org}/player-lists/{list}", s.authed(s.deletePlayerList))
+	api("POST /orgs/{org}/player-lists/{list}/players", s.authed(s.addListPlayers))
+	api("DELETE /orgs/{org}/player-lists/{list}/players/{uuid}", s.authed(s.removeListPlayer))
+	api("GET /players/{uuid}/head", s.authed(s.getPlayerHead))
 	api("GET /orgs/{org}/worlds", s.authed(s.listWorlds))
 	api("POST /orgs/{org}/worlds", s.authed(s.saveWorld))
 	api("POST /orgs/{org}/worlds/upload", s.authed(s.uploadWorld))

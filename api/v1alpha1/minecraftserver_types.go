@@ -446,6 +446,14 @@ type MinecraftServerSpec struct {
 	// leave the organization.
 	OpMembers        *MemberPicks `json:"opMembers,omitempty"`
 	WhitelistMembers *MemberPicks `json:"whitelistMembers,omitempty"`
+	// WhitelistLists and OpLists are saved lists of players of the
+	// organization, by their ID in the panel, whose players are on the
+	// whitelist and operators. The server follows each list as it is
+	// changed; a list deleted is dropped.
+	// +kubebuilder:validation:MaxItems=50
+	WhitelistLists []string `json:"whitelistLists,omitempty"`
+	// +kubebuilder:validation:MaxItems=50
+	OpLists []string `json:"opLists,omitempty"`
 
 	// Image overrides the server image. By default a tag of itzg/minecraft-server
 	// with the right Java for the game version is chosen.

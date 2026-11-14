@@ -764,6 +764,8 @@ var notRestored = map[string]string{
 	"AutoWhitelist":    "who can join by role is decided now, not by the files",
 	"OpMembers":        "as AutoOp: the members picked are decided now",
 	"WhitelistMembers": "as AutoWhitelist: the members picked are decided now",
+	"WhitelistLists":   "as AutoWhitelist: the saved lists used are decided now",
+	"OpLists":          "as AutoOp: the saved lists used are decided now",
 	// For the reason given at restoreSoftware.
 	"Image":        "not taken from a record the server could have written",
 	"Env":          "not taken from a record the server could have written",

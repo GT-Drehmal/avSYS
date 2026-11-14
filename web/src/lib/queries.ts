@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
+import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type PlayerList, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
 import { presenceKey, tab, tellAgain, type Present } from "./presence";
 import { toast } from "./toast";
 
@@ -37,6 +37,8 @@ export const keys = {
   template: (org: string, id: string) => ["templates", org, id] as const,
   /** An organization's library of worlds. */
   worlds: (org: string) => ["worlds", org] as const,
+  /** An organization's saved lists of players. */
+  playerLists: (org: string) => ["player-lists", org] as const,
 };
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
@@ -231,6 +233,8 @@ export const useWorlds = (org: string, enabled = true) =>
     refetchInterval: (q) => (q.state.data?.some((w) => w.saving) ? 3000 : false),
   });
 export const useTemplates = (org: string, enabled = true) => useQuery({ queryKey: keys.templates(org), queryFn: () => api.get<Template[]>(`/orgs/${org}/templates`), enabled });
+/** An organization's saved lists of players, each with its players and the servers that use it. */
+export const usePlayerLists = (org: string, enabled = true) => useQuery({ queryKey: keys.playerLists(org), queryFn: () => api.get<PlayerList[]>(`/orgs/${org}/player-lists`), enabled });
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });
