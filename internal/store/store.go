@@ -150,6 +150,23 @@ CREATE TABLE IF NOT EXISTS worlds (
 	failed      TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS worlds_name ON worlds(org_id, name);
+CREATE TABLE IF NOT EXISTS player_lists (
+	id         TEXT PRIMARY KEY,
+	org_id     TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+	name       TEXT NOT NULL COLLATE NOCASE,
+	created_by TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS player_lists_name ON player_lists(org_id, name);
+CREATE TABLE IF NOT EXISTS player_list_entries (
+	list_id  TEXT NOT NULL REFERENCES player_lists(id) ON DELETE CASCADE,
+	uuid     TEXT NOT NULL,
+	name     TEXT NOT NULL,
+	added_at INTEGER NOT NULL,
+	PRIMARY KEY (list_id, uuid)
+);
+CREATE INDEX IF NOT EXISTS player_list_entries_uuid ON player_list_entries(uuid);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);
 CREATE INDEX IF NOT EXISTS audit_target ON audit(org_id, target, id);
 `

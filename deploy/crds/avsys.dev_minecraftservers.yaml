@@ -477,6 +477,11 @@ spec:
                 description: NodeSelector constrains which nodes the server may run
                   on.
                 type: object
+              opLists:
+                items:
+                  type: string
+                maxItems: 50
+                type: array
               opMembers:
                 description: |-
                   OpMembers and WhitelistMembers pick members one by one, besides by
@@ -773,6 +778,16 @@ spec:
               whitelist:
                 items:
                   type: string
+                type: array
+              whitelistLists:
+                description: |-
+                  WhitelistLists and OpLists are saved lists of players of the
+                  organization, by their ID in the panel, whose players are on the
+                  whitelist and operators. The server follows each list as it is
+                  changed; a list deleted is dropped.
+                items:
+                  type: string
+                maxItems: 50
                 type: array
               whitelistMembers:
                 description: MemberPicks are members put on a list, or left off it,

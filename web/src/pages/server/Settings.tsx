@@ -17,6 +17,7 @@ import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../component
 import { NodeMove } from "../../components/NodeMove";
 import { ReplaceWorld } from "../../components/ReplaceWorld";
 import { AddedInGame } from "../../components/AddedInGame";
+import { SaveAsList, SavedListsField } from "../../components/PlayerLists";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -49,6 +50,8 @@ interface Draft {
   whitelist: string;
   opMembers: Picks;
   whitelistMembers: Picks;
+  whitelistLists: string[];
+  opLists: string[];
   env: string;
   image: string;
   aikar: boolean;
@@ -98,6 +101,8 @@ function toDraft(spec: ServerSpec): Draft {
     whitelist: (spec.whitelist ?? []).join("\n"),
     opMembers: picksOf(spec.opMembers),
     whitelistMembers: picksOf(spec.whitelistMembers),
+    whitelistLists: spec.whitelistLists ?? [],
+    opLists: spec.opLists ?? [],
     env: (launch.env ?? []).map((e) => `${e.name}=${e.value ?? ""}`).join("\n"),
     image: spec.image ?? "",
     aikar: launch.aikar,
@@ -141,6 +146,8 @@ function toPatch(d: Draft, current: ServerSpec, latest: string | undefined): Spe
     whitelist: lines(d.whitelist),
     opMembers: picksFor(d.opMembers),
     whitelistMembers: picksFor(d.whitelistMembers),
+    whitelistLists: d.whitelistLists.length > 0 ? d.whitelistLists : null,
+    opLists: d.opLists.length > 0 ? d.opLists : null,
     env: lines(d.env).flatMap((line) => {
       const i = line.indexOf("=");
       return i > 0 ? [{ name: line.slice(0, i).trim(), value: line.slice(i + 1) }] : [];
@@ -178,6 +185,7 @@ export function Settings() {
   const noBuild = draft.version !== "LATEST" && !!versions.data && !versions.isPlaceholderData && !versions.data.all.has(draft.version);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const [deleting, setDeleting] = useState(false);
+  const [savingList, setSavingList] = useState<"whitelist" | "ops" | null>(null);
 
   // Pick up changes made elsewhere, unless there are local edits to protect.
   const previous = useRef(saved);
@@ -341,6 +349,14 @@ export function Settings() {
             )}
           </Field>
         </div>
+        <SavedListsField
+          org={server.org}
+          title="Whitelist from saved lists"
+          hint={draft.whitelistLists.length > 0 && draft.whitelistOn !== "true" ? "Only matters with the whitelist on." : "A change to a list reaches this server too."}
+          label="whitelist"
+          value={draft.whitelistLists}
+          onChange={(ids) => set("whitelistLists", ids)}
+        />
         <div className="grid grid-cols-2 gap-4">
           {(["whitelist", "ops"] as const).map((list) => (
             <div key={list} className="flex flex-col gap-3">
@@ -348,9 +364,14 @@ export function Settings() {
                 {(id) => <Textarea id={id} rows={4} {...text(list)} className="font-mono" spellCheck={false} />}
               </Field>
               <AddedInGame server={server} list={list} listed={draft[list]} onKeep={(name) => setDraft((d) => ({ ...d, [list]: [...lines(d[list]), name].join("\n") }))} />
+              <Button size="sm" className="self-start" aria-label={list === "whitelist" ? "Save the whitelist as a list" : "Save the operators as a list"} onClick={() => setSavingList(list)}>
+                Save as list
+              </Button>
             </div>
           ))}
         </div>
+        <SavedListsField org={server.org} title="Operators from saved lists" label="operators" value={draft.opLists} onChange={(ids) => set("opLists", ids)} />
+        {savingList && <SaveAsList org={server.org} server={server.name} list={savingList} open onOpenChange={(o) => !o && setSavingList(null)} />}
         <div className="grid grid-cols-2 gap-4">
           <Field
             label="Whitelisted by membership"

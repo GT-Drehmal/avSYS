@@ -82,12 +82,13 @@ import re, statistics, sys
 PLACEHOLDER = {"orgs": "{org}", "servers": "{server}", "templates": "{template}",
                "worlds": "{world}", "snapshots": "{id}", "members": "{user}",
                "invites": "{token}", "ssh-keys": "{id}", "tokens": "{id}",
-               "minecraft-accounts": "{uuid}", "nodes": "{node}", "users": "{user}"}
+               "minecraft-accounts": "{uuid}", "nodes": "{node}", "users": "{user}",
+               "player-lists": "{list}", "players": "{uuid}"}
 # Reads of lists, and of one thing in them, that a page waits on. Not
 # streams, downloads, uploads, the files and logs of a server (read from its
 # volume), nor what is fetched from elsewhere (Modrinth, an offsite copy).
 LISTS = re.compile(r"^(/orgs(/\{org\}(/(servers(/\{server\}(/snapshots)?)?|members|invites|"
-                   r"templates(/\{template\})?|worlds(/\{world\})?|snapshots(/\{id\})?|"
+                   r"templates(/\{template\})?|worlds(/\{world\})?|player-lists(/\{list\})?|snapshots(/\{id\})?|"
                    r"backup-policy|domains))?)?|/me(/(ssh-keys|tokens|minecraft-accounts))?|/nodes)$")
 
 def route(url):
@@ -469,6 +470,47 @@ set_spec '{"spec":{"whitelist":null}}'
 for _ in $(seq 1 20); do whitelisted | grep -qi "Dinnerbone" || break; sleep 1; done
 case "$(whitelisted)" in *Dinnerbone*) fail "a player taken out of the settings stays on the whitelist" ;; *) echo "ok: and taken off when taken out" ;; esac
 if [ -n "$linked_here" ]; then call -X DELETE "$API/me/minecraft" >/dev/null; fi
+
+step "saved lists of players"
+# Two saved lists, one of them used for the whitelist from the start: their
+# players are on it, and it follows each list as it is changed.
+LISTS=$API/orgs/$ORG/player-lists
+CLUB=""
+EVENT=""
+for _ in $(seq 1 6); do
+  # Looked up with Mojang, which turns requests down now and then: then
+  # no list is made, and it is asked again.
+  CLUB=$(call -d '{"name":"Club","names":["Dinnerbone","jeb_"]}' "$LISTS" | field "d['id']" 2>/dev/null) && break
+  sleep 10
+done
+[ -n "$CLUB" ] || fail "a list of players could not be made"
+for _ in $(seq 1 6); do
+  EVENT=$(call -d '{"name":"Event","names":["Grumm"]}' "$LISTS" | field "d['id']" 2>/dev/null) && break
+  sleep 10
+done
+[ -n "$EVENT" ] || fail "a second list of players could not be made"
+set_spec '{"spec":{"whitelistLists":["'"$CLUB"'","'"$EVENT"'"]}}'
+for _ in $(seq 1 20); do whitelisted | grep -qi "Grumm" && whitelisted | grep -qi "Dinnerbone" && break; sleep 1; done
+expect "a saved list's players are put on the whitelist" "$(whitelisted)" "Dinnerbone"
+expect "and the other list's too" "$(whitelisted)" "Grumm"
+expect "both lists say the server uses them" "$(call "$LISTS" | field "sorted(len(l['servers']) for l in d)")" "[1, 1]"
+case "$(call "$SRV/lists" | field "[p['name'] for p in d['whitelist']['inGame']]")" in *jeb_*|*Grumm*) fail "a list's players are shown as added in game" ;; *) echo "ok: and are not shown as added in game" ;; esac
+# A change to the list reaches the server.
+call -d '{"names":["Notch"]}' "$LISTS/$CLUB/players" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -qi "Notch" && break; sleep 1; done
+expect "a player added to a list is put on the whitelist" "$(whitelisted)" "Notch"
+DINNERBONE=$(call "$LISTS/$CLUB" | field "[p['uuid'] for p in d['players'] if p['name'] == 'Dinnerbone'][0]")
+call -X DELETE "$LISTS/$CLUB/players/$DINNERBONE" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -qi "Dinnerbone" || break; sleep 1; done
+case "$(whitelisted)" in *Dinnerbone*) fail "a player taken off a list stays on the whitelist" ;; *) echo "ok: a player taken off a list is taken off the whitelist" ;; esac
+# A list deleted is dropped from the server, and its players taken off.
+expect "a list is deleted" "$(call -X DELETE -o /dev/null -w '%{http_code}' "$LISTS/$CLUB")" 204
+for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" || break; sleep 1; done
+case "$(whitelisted)" in *jeb_*|*Notch*) fail "a deleted list's players stay on the whitelist" ;; *) echo "ok: a deleted list's players are taken off" ;; esac
+expect "and the other list's stay on" "$(whitelisted)" "Grumm"
+expect "the server no longer names it" "$(call "$SRV" | field "d['spec'].get('whitelistLists')")" "['$EVENT']"
+set_spec '{"spec":{"whitelistLists":null}}'
+call -X DELETE "$LISTS/$EVENT" >/dev/null
 
 step "files"
 echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null

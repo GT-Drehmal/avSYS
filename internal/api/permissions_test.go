@@ -251,6 +251,16 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET /orgs/{org}/uploads", "", "", store.RoleOperator, 400},
 		{"PUT /orgs/{org}/uploads", "/orgs/alpha/uploads?upload=abcdef0123456789&offset=0", "x", store.RoleOperator, 503},
 		{"DELETE /orgs/{org}/uploads", "", "", store.RoleOperator, 400},
+		// Saved lists of players: seen by everyone, changed by those who can
+		// change a server's whitelist and operators. 404: allowed, and there
+		// is no such list.
+		{"GET /orgs/{org}/player-lists", "", "", store.RoleViewer, 200},
+		{"POST /orgs/{org}/player-lists", "", `{"name":"List of {who}"}`, store.RoleAdmin, 201},
+		{"GET /orgs/{org}/player-lists/{list}", "/orgs/alpha/player-lists/nope", "", store.RoleViewer, 404},
+		{"PATCH /orgs/{org}/player-lists/{list}", "/orgs/alpha/player-lists/nope", `{"name":"Club"}`, store.RoleAdmin, 404},
+		{"DELETE /orgs/{org}/player-lists/{list}", "/orgs/alpha/player-lists/nope", "", store.RoleAdmin, 404},
+		{"POST /orgs/{org}/player-lists/{list}/players", "/orgs/alpha/player-lists/nope/players", `{"names":[]}`, store.RoleAdmin, 404},
+		{"DELETE /orgs/{org}/player-lists/{list}/players/{uuid}", "/orgs/alpha/player-lists/nope/players/abc", "", store.RoleAdmin, 404},
 		{"GET /orgs/{org}/worlds", "", "", store.RoleViewer, 200},
 		{"POST /orgs/{org}/worlds", "", `{"name":"Island","server":"world"}`, store.RoleOperator, 503},
 		{"POST /orgs/{org}/worlds/upload", "/orgs/alpha/worlds/upload?name=Island&root=Island", "a world", store.RoleOperator, 503},

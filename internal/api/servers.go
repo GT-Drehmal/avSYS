@@ -186,6 +186,73 @@ func (s *Server) tidyPicks(ctx context.Context, namespace string, spec *avsysv1.
 	return nil
 }
 
+// maxSavedLists is how many saved lists one of a server's lists can use.
+const maxSavedLists = 50
+
+// tidySavedLists keeps, of the saved lists a server's whitelist and
+// operators use, those its organization has now, each once. A list deleted
+// since, as one named in a template or snapshot may have been, is dropped,
+// as is one of another organization's, for a server copied across.
+func (s *Server) tidySavedLists(ctx context.Context, namespace string, spec *avsysv1.MinecraftServerSpec) error {
+	if len(spec.WhitelistLists) == 0 && len(spec.OpLists) == 0 {
+		spec.WhitelistLists, spec.OpLists = nil, nil
+		return nil
+	}
+	if len(spec.WhitelistLists) > maxSavedLists || len(spec.OpLists) > maxSavedLists {
+		return errBadRequest("A server can use up to %d saved lists for each.", maxSavedLists)
+	}
+	slug, _ := s.orgOfNamespace(namespace)
+	org, err := s.Store.OrgBySlug(ctx, slug)
+	if err != nil {
+		return err
+	}
+	saved, err := s.savedLists(ctx, org.ID)
+	if err != nil {
+		return err
+	}
+	keep := func(ids []string) []string {
+		var out []string
+		for _, id := range ids {
+			if saved[id] != nil && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+		return out
+	}
+	spec.WhitelistLists, spec.OpLists = keep(spec.WhitelistLists), keep(spec.OpLists)
+	for what, ids := range map[string][]string{"whitelist": spec.WhitelistLists, "operators": spec.OpLists} {
+		if n := savedPlayerCount(ids, saved, nil); n > maxFromSavedLists {
+			return errBadRequest("The saved lists chosen for the %s have %d players. A server can have up to %d from saved lists.", what, n, maxFromSavedLists)
+		}
+	}
+	return nil
+}
+
+// maxFromSavedLists is how many players a server's whitelist, and its
+// operators, can have from saved lists: as many as a list can have. The
+// note of who the panel put on each is kept on the server, which holds
+// only so much.
+const maxFromSavedLists = store.MaxListPlayers
+
+// savedPlayerCount is how many players the saved lists named have between
+// them, with more added to them.
+func savedPlayerCount(ids []string, saved map[string]*store.PlayerList, more []store.ListPlayer) int {
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if l := saved[id]; l != nil {
+			for _, p := range l.Players {
+				seen[p.UUID] = true
+			}
+		}
+	}
+	if len(ids) > 0 {
+		for _, p := range more {
+			seen[p.UUID] = true
+		}
+	}
+	return len(seen)
+}
+
 func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec *avsysv1.MinecraftServerSpec) error {
 	if !spec.EULA {
 		return errBadRequest("Accept the Minecraft EULA to run a server.")
@@ -270,6 +337,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		return errBadRequest("The whitelist goes by role: viewer for every member, operator, admin, owner, or off. %q is none of those.", spec.AutoWhitelist)
 	}
 	if err := s.tidyPicks(ctx, namespace, spec); err != nil {
+		return err
+	}
+	if err := s.tidySavedLists(ctx, namespace, spec); err != nil {
 		return err
 	}
 	if spec.Backups != nil {
@@ -652,7 +722,8 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	// Who is on its lists in game, acted on now and not with the next look.
 	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist ||
 		!equality.Semantic.DeepEqual(previous.OpMembers, mc.Spec.OpMembers) || !equality.Semantic.DeepEqual(previous.WhitelistMembers, mc.Spec.WhitelistMembers) ||
-		!slices.Equal(previous.Ops, mc.Spec.Ops) || !slices.Equal(previous.Whitelist, mc.Spec.Whitelist) {
+		!slices.Equal(previous.Ops, mc.Spec.Ops) || !slices.Equal(previous.Whitelist, mc.Spec.Whitelist) ||
+		!slices.Equal(previous.OpLists, mc.Spec.OpLists) || !slices.Equal(previous.WhitelistLists, mc.Spec.WhitelistLists) {
 		s.syncOpsFor(a.Org, mc)
 	}
 	writeJSON(w, http.StatusOK, s.view(mc))

@@ -270,6 +270,16 @@ func (in *MinecraftServerSpec) DeepCopyInto(out *MinecraftServerSpec) {
 		*out = new(MemberPicks)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.WhitelistLists != nil {
+		in, out := &in.WhitelistLists, &out.WhitelistLists
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.OpLists != nil {
+		in, out := &in.OpLists, &out.OpLists
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Env != nil {
 		in, out := &in.Env, &out.Env
 		*out = make([]v1.EnvVar, len(*in))

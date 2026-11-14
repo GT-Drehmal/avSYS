@@ -31,7 +31,7 @@ test("an installed mod that needs a port is said, and opening it is one press an
   await page.getByRole("button", { name: "Add a port" }).click();
   await page.getByLabel("Port name").nth(1).fill("votifier");
   await page.getByLabel("Port number").nth(1).fill("8192");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.ports).toEqual([
     { name: "voice-chat", port: 24454, protocol: "UDP" },
@@ -48,7 +48,7 @@ test("an open port says where it is reached, and a port is taken off", async ({ 
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByText("survival.friends.play.example:25601")).toBeVisible();
   await page.getByRole("button", { name: "Remove geyser" }).click();
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.ports).toEqual([]);
 });

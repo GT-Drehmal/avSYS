@@ -518,7 +518,7 @@ test("launch flags: Aikar's on for a new server, as the original has them for a 
   await page.goto(`/o/${slug}/s/flags/settings`);
   await page.getByRole("switch", { name: /Aikar's flags/ }).click();
   await page.getByLabel("Extra JVM flags").fill("-XX:+UseZGC");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/flags`)).spec.jvm).toEqual({ aikarFlags: false, extraFlags: "-XX:+UseZGC" });
 });
 
@@ -586,7 +586,7 @@ test("a server with Aikar's flags in its environment shows them as its launch fl
   await expect(page.getByLabel("Extra JVM flags")).toHaveValue("-XX:+AlwaysPreTouch\n-Dfoo=bar");
   await expect(page.getByLabel("Environment")).toHaveValue("TZ=UTC");
   await page.getByLabel("Extra JVM flags").fill("-XX:+AlwaysPreTouch");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.jvm).toEqual({ aikarFlags: true, extraFlags: "-XX:+AlwaysPreTouch" });
   expect(sent[0].spec.env).toEqual([{ name: "TZ", value: "UTC" }]);
@@ -1062,13 +1062,13 @@ test("what is typed in a server's settings while a save is on its way is kept", 
     await route.fulfill({ response: res });
   });
   await page.getByLabel("Message of the day").fill("First");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/typed`)).spec.properties?.motd).toBe("First");
   await page.getByLabel("Message of the day").fill("Second");
   answer();
   await expect(page.getByText("Settings saved")).toBeVisible();
   await expect(page.getByLabel("Message of the day")).toHaveValue("Second");
-  await expect(page.getByRole("button", { name: /^Save/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
 });
 
 test("a server's whitelist is turned off only once that is confirmed", async ({ page, as, org, api }) => {
@@ -1082,17 +1082,17 @@ test("a server's whitelist is turned off only once that is confirmed", async ({ 
   // TRUE is on, as the game reads it.
   await expect(page.getByLabel("Whitelist", { exact: true })).toHaveValue("true");
   await page.getByLabel("Whitelist", { exact: true }).selectOption("false");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   const asked = page.getByRole("dialog");
   await expect(asked.getByText(/Anyone who finds the server's address can join/)).toBeVisible();
   await asked.getByRole("button", { name: "Cancel" }).click();
   expect((await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("TRUE");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Save without a whitelist" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("false");
   // Other changes to a server open already are not asked about.
   await page.getByLabel("Message of the day").fill("Still open");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties.motd).toBe("Still open");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });

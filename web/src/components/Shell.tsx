@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, ChevronsUpDown, Cpu, Globe, LayoutTemplate, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
+import { Archive, Check, ChevronsUpDown, Cpu, Globe, LayoutTemplate, ListChecks, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
@@ -235,6 +235,9 @@ export function Shell() {
             </NavItem>
             <NavItem to={`/o/${navOrg.slug}/worlds`} icon={<Globe />}>
               Worlds
+            </NavItem>
+            <NavItem to={`/o/${navOrg.slug}/players`} icon={<ListChecks />}>
+              Players
             </NavItem>
             <NavItem to={`/o/${navOrg.slug}/members`} icon={<Users />}>
               Members

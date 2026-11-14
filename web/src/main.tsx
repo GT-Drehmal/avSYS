@@ -32,6 +32,8 @@ const pages = {
   Templates: () => import("./pages/Templates"),
   Usage: () => import("./pages/server/Usage"),
   Worlds: () => import("./pages/Worlds"),
+  Players: () => import("./pages/Players"),
+  PlayerListPage: () => import("./pages/Players"),
 };
 const page = <K extends keyof typeof pages>(name: K) => lazy(() => pages[name]().then((m) => ({ default: (m as unknown as Record<K, ComponentType>)[name] })));
 
@@ -54,6 +56,8 @@ const TemplateForm = page("TemplateForm");
 const Templates = page("Templates");
 const Usage = page("Usage");
 const Worlds = page("Worlds");
+const Players = page("Players");
+const PlayerListPage = page("PlayerListPage");
 
 // The editor and terminal pull in large libraries: not until they are opened.
 const Files = lazy(() => import("./pages/server/Files"));
@@ -108,6 +112,8 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="templates/new" element={<TemplateForm />} />
                 <Route path="templates/:template/edit" element={<TemplateForm />} />
                 <Route path="worlds" element={<Worlds />} />
+                <Route path="players" element={<Players />} />
+                <Route path="players/:list" element={<PlayerListPage />} />
                 <Route path="members" element={<Members />} />
                 <Route path="settings" element={<OrgSettings />} />
                 <Route path="s/:server" element={<ServerPage />}>

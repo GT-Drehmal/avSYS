@@ -391,6 +391,9 @@ export interface ServerSpec {
   /** Members put on, or left off, the operators and the whitelist whatever their role, by user ID. */
   opMembers?: { also?: string[]; except?: string[] } | null;
   whitelistMembers?: { also?: string[]; except?: string[] } | null;
+  /** Saved lists of the organization, by ID, whose players are on the whitelist, and operators. */
+  whitelistLists?: string[] | null;
+  opLists?: string[] | null;
   /** Where the server's scheduled snapshots depart from its organization's. Absent, it follows them. */
   backups?: BackupOverride | null;
   image?: string;
@@ -591,6 +594,38 @@ export interface SnapshotList {
   operations: Operation[];
   usage?: { bytes: number; snapshots: number };
 }
+
+/** A player on a saved list. */
+export interface ListPlayer {
+  uuid: string;
+  name: string;
+}
+
+/** A server that uses a saved list, and for which of its lists. */
+export interface ListUse {
+  name: string;
+  displayName?: string;
+  whitelist?: boolean;
+  ops?: boolean;
+}
+
+/** A saved list of players of an organization. */
+export interface PlayerList {
+  id: string;
+  name: string;
+  createdBy?: string;
+  updatedAt: string;
+  players: ListPlayer[];
+  servers: ListUse[];
+}
+
+/** A list as a change to it answers: with the names asked for that no Minecraft account has. */
+export interface PlayerListChange extends PlayerList {
+  missing: string[];
+}
+
+/** Where a player's head is drawn from. */
+export const playerHead = (uuid: string) => `/api/v1/players/${uuid}/head`;
 
 /** A player on one of a server's lists in game. */
 export interface ListedPlayer {

@@ -277,7 +277,7 @@ test("members can be put on a server's whitelist and operators one by one, besid
   await ownerOp.uncheck();
   await expect(page.getByRole("row", { name: /^Viewer/ })).toContainText("picked");
   await expect(page.getByRole("row", { name: /^Owner/ })).toContainText("left out");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.whitelistMembers).toEqual({ also: [id("viewer")], except: [] });
   expect(sent[0].spec.opMembers).toEqual({ also: [], except: [id("owner")] });
