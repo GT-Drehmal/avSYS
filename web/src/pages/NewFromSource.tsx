@@ -65,11 +65,12 @@ export function NewFromSource({ org, origin, templating }: { org: string; origin
   const source: Source | null =
     origin.kind === "server"
       ? live
-        ? { origin, name: live.name, spec: live.spec, size: 0, live }
+        ? // Its world was last opened in what its game says it runs.
+          { origin, name: live.name, spec: live.spec, size: 0, live, worldVersion: live.status.version?.split(" ").at(-1) }
         : null
       : origin.kind === "template"
         ? template.data?.spec && version
-          ? { origin, name: slugify(template.data.name) || "server", spec: { ...template.data.spec, displayName: template.data.name }, size: version.size, taken: version.time, snapshot: version.id, world: template.data.world, ownWorld: template.data.ownWorld, flags: template.data.extraFlags }
+          ? { origin, name: slugify(template.data.name) || "server", spec: { ...template.data.spec, displayName: template.data.name }, size: version.size, taken: version.time, snapshot: version.id, world: template.data.world, ownWorld: template.data.ownWorld, flags: template.data.extraFlags, worldVersion: version.version }
           : null
         : snapshot.data
           ? { origin, name: snapshot.data.server, spec: snapshot.data.spec, size: snapshot.data.size, taken: snapshot.data.time, live: servers.data?.find((s) => s.name === snapshot.data.server) }

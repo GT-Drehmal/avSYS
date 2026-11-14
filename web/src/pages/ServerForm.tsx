@@ -12,6 +12,7 @@ import { Picture, PictureChange, pictureForRequest } from "../components/Picture
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
 import { BottomBar, Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
+import { NewerWorldConfirm } from "../components/NewerWorld";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
@@ -24,7 +25,7 @@ import { type Found, type FoundWorld, inspectServer, inspectWorld } from "../lib
 import { SetupFailed, type SetupWork, startSetup } from "../lib/setups";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
-import { worldSummary } from "../lib/worlds";
+import { newerThan, newerWorldWarning, worldSummary } from "../lib/worlds";
 
 const GiB = 1024 ** 3;
 
@@ -63,6 +64,8 @@ export interface Source {
   ownWorld?: OwnWorld;
   /** The launch flags a template was given in the panel, apart from those its files brought. */
   flags?: string;
+  /** The game version its world was last opened in, where that is known apart from its settings. */
+  worldVersion?: string;
 }
 
 /** A template of settings alone, which a new server is made with: there are no files to copy. */
@@ -512,7 +515,11 @@ export function ServerForm({
   const fromTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs && !!theirsFrom && !(forTemplate && editing && theirsFrom === editing.id) ? theirsFrom : null;
   const keepsTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs;
   // What is sent to be unpacked into the server once it is made.
-  const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false, listed: listed(found) } : mine ? { file: mine.file, root: mine.found.root, world: true, listed: false } : null;
+  const toImport = found && v.archive
+    ? { file: v.archive.file, root: found.root, world: false, listed: listed(found), version: found.world ? found.version : "" }
+    : mine
+      ? { file: mine.file, root: mine.found.root, world: true, listed: false, version: mine.found.version ?? "" }
+      : null;
   // Of the packs, the original's come with a copy, and the request itself
   // can give the lowest when it is from an address and there are none of
   // those. The rest go in once it is made, bottom first, and are put in
@@ -638,15 +645,25 @@ export function ServerForm({
       : leastStorage;
   // Every version, in the order they came out, to tell which is newer.
   const allVersions = useGameVersions();
-  const newer = (a: string, b: string) => {
-    const order = allVersions.data?.ordered;
-    const i = order?.indexOf(a) ?? -1;
-    const j = order?.indexOf(b) ?? -1;
-    return i >= 0 && j >= 0 && i < j;
-  };
-  // The version the world given was last opened in.
-  const givenVersion = mine?.found.version || fromLibrary?.version || "";
-  const worldTooNew = !!givenVersion && newer(givenVersion, effective(v.version));
+  // Made from another's files, it keeps their world unless given another.
+  const keepsOriginal = !!source && !(worldChoosable && world !== "kept");
+  // Where that world was last opened: as the original's game said, or in
+  // the version it was on.
+  const originalWorld = source?.worldVersion && allVersions.data?.ordered.includes(source.worldVersion) ? source.worldVersion : source?.spec.version;
+  // The version the world it starts with was last opened in, where known.
+  const givenVersion =
+    (mine ? mine.found.version : fromLibrary ? fromLibrary.version : keepsTheirs ? theirs?.version : found?.world ? found.version : keepsOriginal ? originalWorld : "") || "";
+  // A world from a newer version than it is to run, which that version cannot open.
+  const worldTooNew = v.kind !== "modpack" && newerThan(allVersions.data?.ordered, givenVersion, effective(v.version));
+  // A server made from a template's files with a world they did not come
+  // with: the files stay, and plugin data in them may be about the world
+  // they came with. The template's own world, or its files', is theirs; a
+  // new one is too where the template starts its servers with one.
+  const swapsWorld =
+    templated && !forTemplate && (world === "library" || (world === "mine" && !keepsTheirs) || (world === "new" && (!!theirs || source?.world !== "new")));
+  // Said to be meant once asked: the panel refuses it otherwise.
+  const meant = worldTooNew ? { newerWorld: "true" } : {};
+  const [askNewer, setAskNewer] = useState(false);
   const [readingWorld, setReadingWorld] = useState(false);
   const worldInput = useRef<HTMLInputElement>(null);
 
@@ -911,7 +928,7 @@ export function ServerForm({
     if (!fromLibrary) return;
     w.say("Putting the world in");
     try {
-      await api.put<Server>(`${serverPath(org, server)}/import?${qs({ world: "true", library: fromLibrary.id, wait: "true" })}`, undefined);
+      await api.put<Server>(`${serverPath(org, server)}/import?${qs({ world: "true", library: fromLibrary.id, ...meant, wait: "true" })}`, undefined);
     } catch (err) {
       const why = err instanceof ApiError ? err.message : "something went wrong.";
       throw new SetupFailed(`${title} was made without ${fromLibrary.name}: ${why} Replace the world in the server's Settings, then start the server.`, `/o/${org}/s/${server}/settings`);
@@ -923,7 +940,7 @@ export function ServerForm({
     if (!fromTheirs) return;
     w.say("Putting the world in");
     try {
-      await api.put<Server>(`${serverPath(org, server)}/import?${qs({ world: "true", template: fromTheirs, wait: "true" })}`, undefined);
+      await api.put<Server>(`${serverPath(org, server)}/import?${qs({ world: "true", template: fromTheirs, ...meant, wait: "true" })}`, undefined);
     } catch (err) {
       const why = err instanceof ApiError ? err.message : "something went wrong.";
       throw new SetupFailed(`${title} was made without the template's world: ${why} Replace the world in the server's Settings, then start the server.`, `/o/${org}/s/${server}/settings`);
@@ -944,7 +961,7 @@ export function ServerForm({
       // was sent, and an archive of any size goes.
       await w.sendParts(`Sending ${toImport.file.name}`, path, toImport.file, (upload) =>
         api.put<Server>(
-          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), from: "upload", upload, size: toImport.file.size, wait: "true" })}`,
+          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), version: toImport.version, ...meant, from: "upload", upload, size: toImport.file.size, wait: "true" })}`,
           {},
         ),
       );
@@ -1151,7 +1168,7 @@ export function ServerForm({
     }
   };
 
-  const submit = async (e?: React.FormEvent, sure = false) => {
+  const submit = async (e?: React.FormEvent, sure = false, sureNewer = false) => {
     e?.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
     if (!source && importing && !v.archive) return setError("Choose an archive.");
@@ -1163,6 +1180,9 @@ export function ServerForm({
       return;
     }
     if (forTemplate) return saveTemplate();
+    // A world the version picked cannot open: asked first.
+    if (worldTooNew && !sureNewer) return setAskNewer(true);
+    setAskNewer(false);
     if (ask && !sure) return setAskOpen(true);
     setAskOpen(false);
     setBusy(true);
@@ -1181,7 +1201,7 @@ export function ServerForm({
         // as it is now, and then puts the files in, which its page shows.
         // Without its world, for one to be made or put in.
         const fresh = worldChoosable && world !== "kept" ? { world: "new" } : source.world ? { world: "kept" } : {};
-        const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...from, ...fresh, ...pictured, ...placed });
+        const server = await api.post<Server>(`/orgs/${org}/servers${keepsOriginal && worldTooNew ? "?newerWorld=true" : ""}`, { name, ...from, ...fresh, ...pictured, ...placed });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files
         // are in. Files to upload join them after.
@@ -1250,7 +1270,11 @@ export function ServerForm({
     <Field
       label="Game version"
       hint={
-        onPreview(versions.data, v.version)
+        // Said here for the world it keeps or brings in its files; one
+        // picked or uploaded says so where it is picked.
+        worldTooNew && !mine && !fromLibrary && !keepsTheirs
+          ? newerWorldWarning(givenVersion, effective(v.version))
+          : onPreview(versions.data, v.version)
           ? previewWarning
           : (source || found) && versionChanged
             ? "A world opened in a newer version cannot open in an older one."
@@ -1719,11 +1743,7 @@ export function ServerForm({
               ) : (
                 <WorldPicker org={org} onPick={pickLibrary} />
               ))}
-            {world === "library" && worldTooNew && (
-              <Notice tone="warn">
-                This world was last opened in {givenVersion}, which is newer than {effective(v.version)}. Pick {givenVersion} or newer.
-              </Notice>
-            )}
+            {world === "library" && worldTooNew && <Notice tone="warn">{newerWorldWarning(givenVersion, effective(v.version))}</Notice>}
             {usingMine && (
               <>
                 <input
@@ -1784,13 +1804,10 @@ export function ServerForm({
                     <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz with the world's folder, the one with level.dat. A single-player save works.</p>
                   </div>
                 )}
-                {worldTooNew && (
-                  <Notice tone="warn">
-                    This world was last opened in {givenVersion}, which is newer than {effective(v.version)}. Pick {givenVersion} or newer.
-                  </Notice>
-                )}
+                {worldTooNew && <Notice tone="warn">{newerWorldWarning(givenVersion, effective(v.version))}</Notice>}
               </>
             )}
+            {swapsWorld && <Notice tone="info">Plugin data from the template, such as claims and warps, may point at places this world does not have.</Notice>}
           </>
         )}
         <div className="grid grid-cols-2 gap-4">
@@ -2048,7 +2065,15 @@ export function ServerForm({
         title="Open the server to anyone?"
         description={openWarning}
         action="Create without a whitelist"
-        onConfirm={() => void submit(undefined, true)}
+        onConfirm={() => void submit(undefined, true, true)}
+      />
+      <NewerWorldConfirm
+        open={askNewer}
+        onOpenChange={setAskNewer}
+        world={givenVersion}
+        version={effective(v.version)}
+        action={`${duplicating ? "Duplicate" : "Create server"} anyway`}
+        onConfirm={() => void submit(undefined, false, true)}
       />
     </>
   );

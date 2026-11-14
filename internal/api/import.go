@@ -257,6 +257,9 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	// A template's own world comes out of its snapshot rather than with the
 	// request, its folder in it as it was kept.
 	var archive func(io.Writer) error
+	// The version the world was last opened in: as the request says, for an
+	// archive sent with it, or as it was kept.
+	version := r.URL.Query().Get("version")
 	if from := r.URL.Query().Get("template"); from != "" {
 		if r.URL.Query().Get("world") != "true" {
 			return errBadRequest("A template's world is imported as a world: add world=true.")
@@ -265,7 +268,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		if err != nil {
 			return err
 		}
-		root = info.Root
+		root, version = info.Root, info.Version
 		org := a.Org.Slug
 		archive = func(dst io.Writer) error {
 			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
@@ -283,11 +286,14 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		if err != nil {
 			return err
 		}
-		root = world.Root
+		root, version = world.Root, world.Version
 		org := a.Org.Slug
 		archive = func(dst io.Writer) error {
 			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
 		}
+	}
+	if err := s.checkWorldVersion(r, version, &mc.Spec); err != nil {
+		return err
 	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindImport, "")
 	if !ok {

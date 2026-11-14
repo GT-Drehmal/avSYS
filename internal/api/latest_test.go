@@ -29,8 +29,9 @@ func TestLatestIsSettledWhenSet(t *testing.T) {
 	if got, code := patch(`"version":"LATEST"`); got != 200 || p.versionOf("picked") != "26.3" {
 		t.Errorf("set to latest: %d %s, on %s, want 26.3", got, code, p.versionOf("picked"))
 	}
-	// The newest of the software it is changed to.
-	if got, code := patch(`"loader":"folia","version":"LATEST"`); got != 200 || p.versionOf("picked") != "26.2" {
+	// The newest of the software it is changed to, which is older than its
+	// world: meant.
+	if got, code := p.do("owner", "PATCH", "/orgs/alpha/servers/picked?newerWorld=true", `{"spec":{"loader":"folia","version":"LATEST"}}`); got != 200 || p.versionOf("picked") != "26.2" {
 		t.Errorf("set to Folia's latest: %d %s, on %s, want 26.2", got, code, p.versionOf("picked"))
 	}
 	// A server still on "Latest" from before is left for PinLatest, unless

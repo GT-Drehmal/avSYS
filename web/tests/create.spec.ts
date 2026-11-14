@@ -1329,10 +1329,14 @@ test("a server set to an older version than its world was opened in is warned of
   await page.getByLabel("Game version").selectOption("1.21.4");
   await expect(page.getByText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
-  const dialog = page.getByRole("alertdialog", { name: "Go back to 1.21.4?" }).or(page.getByRole("dialog", { name: "Go back to 1.21.4?" }));
+  const dialog = page.getByRole("dialog", { name: "Open a 1.21.5 world in 1.21.4?" });
+  await expect(dialog).toContainText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.");
   await expect(dialog).toContainText("restore a snapshot from before 1.21.5");
   // Not saved unless asked to.
   await dialog.getByRole("button", { name: "Cancel" }).click();
+  expect((await api("owner").get(`/orgs/${slug}/servers/newer`)).spec.version).toBe("1.21.5");
+  // Nor by the panel, unless the request says it is meant.
+  await expect(api("owner").patch(`/orgs/${slug}/servers/newer`, { spec: { version: "1.21.4" } })).rejects.toThrow(/409.*newer_world/);
   expect((await api("owner").get(`/orgs/${slug}/servers/newer`)).spec.version).toBe("1.21.5");
   await page.getByRole("button", { name: "Save changes" }).click();
   await page.getByRole("button", { name: "Change to 1.21.4 anyway" }).click();

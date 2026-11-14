@@ -16,6 +16,8 @@ import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, Membe
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { ReplaceWorld } from "../../components/ReplaceWorld";
+import { NewerWorldConfirm } from "../../components/NewerWorld";
+import { newerThan, newerWorldWarning } from "../../lib/worlds";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -210,20 +212,22 @@ export function Settings() {
   const goingTo = draft.version === "LATEST" ? latestOf(versions) : draft.version;
   const newer = newerVersion(server.spec, savedVersions);
   // A world opened in a newer version cannot be opened in an older one.
-  const older =!server.spec.modpack && !!ranOn && !!goingTo && order.includes(ranOn) && order.indexOf(goingTo) > order.indexOf(ranOn);
+  const older = !server.spec.modpack && newerThan(order, ranOn, goingTo);
 
   const [opening, setOpening] = useState(false);
   const [downgrading, setDowngrading] = useState(false);
   const save = (e?: React.FormEvent, sure = false, sureOlder = false) => {
     e?.preventDefault();
     // Made older than its world, which it then cannot open: asked first.
-    if (!sureOlder && older && draft.version !== saved.version) return setDowngrading(true);
+    const goingOlder = older && draft.version !== saved.version;
+    if (!sureOlder && goingOlder) return setDowngrading(true);
     setDowngrading(false);
     // Opened to anyone by this change: asked first.
     if (!sure && isOpen(draft) && !isOpen(saved)) return setOpening(true);
     setOpening(false);
     const sent = draft;
-    update.mutate(toPatch(draft, server.spec, latestOf(versions)), {
+    const spec = toPatch(draft, server.spec, latestOf(versions));
+    update.mutate(goingOlder ? { spec, newerWorld: true } : spec, {
       onSuccess: (next) => {
         // Changed again while it was saved: that change is kept, to save next.
         setDraft((d) => (d === sent ? toDraft(next.spec) : d));
@@ -269,8 +273,8 @@ export function Settings() {
               hint={
                 noBuild
                   ? `${loaders.find((l) => l.id === draft.loader)?.name} has no build for ${draft.version}, so the server cannot start. The newest is ${versions.data?.latest}.`
-                  : older
-                    ? `The world was last opened in ${ranOn}. ${goingTo} cannot open the world, so the server will not start.`
+                  : older && ranOn && goingTo
+                    ? newerWorldWarning(ranOn, goingTo)
                     : onPreview(versions.data, draft.version)
                     ? previewWarning
                     : undefined
@@ -475,11 +479,12 @@ export function Settings() {
         loading={update.isPending}
         onConfirm={() => save(undefined, true, true)}
       />
-      <Confirm
+      <NewerWorldConfirm
         open={downgrading}
         onOpenChange={setDowngrading}
-        title={`Go back to ${goingTo}?`}
-        description={`The world was last opened in ${ranOn}, and ${goingTo} cannot open a world from a newer version: the server will not start. To go back, restore a snapshot from before ${ranOn} instead.`}
+        world={ranOn ?? ""}
+        version={goingTo ?? ""}
+        more={`To go back, restore a snapshot from before ${ranOn} instead.`}
         action={`Change to ${goingTo} anyway`}
         loading={update.isPending}
         onConfirm={() => save(undefined, false, true)}
