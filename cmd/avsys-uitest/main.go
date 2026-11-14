@@ -52,8 +52,9 @@ func main() {
 	upstreamDir := flag.String("upstream", "web/tests/upstream", "answers for the services the panel looks things up in")
 	readyFile := flag.String("ready", "", "also write the line printed when listening to this file")
 	metrics := flag.Bool("metrics", false, "stand in a metrics API, and two nodes for it to answer for")
+	offsite := flag.Bool("offsite", false, "copy snapshots offsite, with the older ones of the first organization there already")
 	flag.Parse()
-	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics); err != nil {
+	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *offsite); err != nil {
 		fmt.Fprintln(os.Stderr, "avsys-uitest:", err)
 		os.Exit(1)
 	}
@@ -62,7 +63,7 @@ func main() {
 // password is the one every seeded person signs in with.
 const password = "correct horse battery staple"
 
-func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error {
+func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite bool) error {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	dir, err := os.MkdirTemp("", "avsys-uitest-")
@@ -198,8 +199,16 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 		}
 	}
 
-	if err := seedSnapshots(dir); err != nil {
+	if err := seedSnapshots(dir, withOffsite); err != nil {
 		return err
+	}
+	if withOffsite {
+		// A directory standing in for the far end. The panel learns what
+		// is there the way it does after any sync.
+		srv.Backups.Offsite = &backup.Offsite{Repository: filepath.Join(dir, "offsite"), Password: password}
+		if _, err := srv.Backups.SyncOffsite(ctx, "friends"); err != nil {
+			return err
+		}
 	}
 
 	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
@@ -230,21 +239,31 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 // resticStandIn is what the panel runs as restic here. It answers the
 // questions the panel asks of a repository out of files beside it, and
 // agrees to everything else. Its arguments are as the panel gives them:
-// --repo DIR --password-file FILE --no-cache COMMAND ...
+// --repo DIR, then --password-file FILE --no-cache for its own repositories
+// or --cache-dir DIR for the offsite ones, then COMMAND ...
 const resticStandIn = `#!/bin/sh
 repo=$2
-case "$6" in
+shift 2
+while :; do
+  case "$1" in
+    --password-file|--cache-dir) shift 2 ;;
+    --no-cache) shift ;;
+    *) break ;;
+  esac
+done
+case "$1" in
   snapshots) cat "$repo/snapshots.json" 2>/dev/null || echo '[]' ;;
   stats) echo '{"total_size": 734003200, "snapshots_count": 6}' ;;
-  dump) cat "$repo/record-$8.json" 2>/dev/null || exit 1 ;;
+  dump) cat "$repo/record-$3.json" 2>/dev/null || exit 1 ;;
   forget) cat "$repo/forget.json" 2>/dev/null ;;
 esac
 `
 
 // seedSnapshots gives the first organization a repository with snapshots in
 // it: several of a server that runs every day, one of another, and the last
-// one of a server that has since been deleted.
-func seedSnapshots(dir string) error {
+// one of a server that has since been deleted. With offsite, the offsite
+// repository has copies of those more than a few hours old.
+func seedSnapshots(dir string, offsite bool) error {
 	if err := os.WriteFile(filepath.Join(dir, "restic"), []byte(resticStandIn), 0o755); err != nil {
 		return err
 	}
@@ -262,7 +281,9 @@ func seedSnapshots(dir string) error {
 		Added int64 `json:"data_added_packed"`
 	}
 	type snapshot struct {
-		ID       string    `json:"id"`
+		ID string `json:"id"`
+		// Original is the snapshot a copy was made of.
+		Original string    `json:"original,omitempty"`
 		Time     time.Time `json:"time"`
 		Hostname string    `json:"hostname"`
 		Tags     []string  `json:"tags"`
@@ -322,7 +343,29 @@ func seedSnapshots(dir string) error {
 	if err := write("snapshots.json", list); err != nil {
 		return err
 	}
-	return write("forget.json", []map[string]any{{"reasons": reasons}})
+	if err := write("forget.json", []map[string]any{{"reasons": reasons}}); err != nil {
+		return err
+	}
+	if !offsite {
+		return nil
+	}
+	// A copy has an ID of its own.
+	var copies []snapshot
+	for _, s := range list {
+		if now.Sub(s.Time) > 12*time.Hour {
+			s.Original, s.ID = s.ID, "f"+s.ID[1:]
+			copies = append(copies, s)
+		}
+	}
+	far := filepath.Join(dir, "offsite", "friends")
+	if err := os.MkdirAll(far, 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(copies)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(far, "snapshots.json"), data, 0o600)
 }
 
 // noPods is the way into servers' pods where there are none.

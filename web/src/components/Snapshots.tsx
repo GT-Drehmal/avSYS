@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CopyPlus, Globe, History, LayoutTemplate, Trash2 } from "lucide-react";
+import { CloudCheck, CopyPlus, Globe, History, LayoutTemplate, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
@@ -131,6 +131,11 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
                 {/* The start of the snapshot's ID, which is what the API and plain restic take. Copies the whole of it. */}
                 <span className="shrink-0">· ID</span>
                 <CopyText value={s.id} display={s.id.slice(0, 8)} className="shrink-0 text-xs! text-faint! hover:text-accent!" />
+                {s.offsite && (
+                  <span role="img" aria-label="Offsite" title="In the offsite copy" className="shrink-0">
+                    <CloudCheck className="size-3" />
+                  </span>
+                )}
               </p>
             </div>
             <div className="text-right max-sm:hidden">
@@ -301,8 +306,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
   const s = snapshot;
   const spec = detail.data?.spec;
   const properties = Object.entries(spec?.properties ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  // Everything that was here when a copy last went through is there.
-  const copied = !!s && !!offsite.data?.lastSuccess && new Date(s.time) <= new Date(offsite.data.lastSuccess);
+  const copied = !!(detail.data ?? s)?.offsite;
   return (
     <Modal open={!!s} onOpenChange={(open) => !open && onClose()} size="lg" title={s ? `Snapshot of ${s.server}` : ""} description={s ? `${ago(s.time)} · ${triggerLabel(s)}` : ""}>
       {s && (

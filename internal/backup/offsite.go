@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -60,6 +61,100 @@ func (m *Manager) offsiteRepo(org string) string {
 
 func (m *Manager) removedFile(org string) string { return filepath.Join(m.Dir, org+".removed") }
 func (m *Manager) statusFile(org string) string  { return filepath.Join(m.Dir, org+".offsite") }
+func (m *Manager) copiesFile(org string) string  { return filepath.Join(m.Dir, org+".copies") }
+
+// copies is which snapshots the offsite repository held when a sync or a
+// fetch last read it, by lineage: a copy has an ID of its own. Keeping it
+// beside the repository here saves asking the far end, which can be slow
+// or out of reach, every time snapshots are listed.
+type copies struct {
+	// Repository is where they were read, so that a list from another
+	// offsite repository is not taken for one of this.
+	Repository string   `json:"repository"`
+	Lineages   []string `json:"lineages"`
+}
+
+// keptCopies is what was read of a copies file, for as long as it is
+// unchanged.
+type keptCopies struct {
+	mod      time.Time
+	size     int64
+	lineages map[string]bool
+	repo     string
+}
+
+// noteCopies keeps which snapshots the offsite repository holds. A list
+// that could not be kept says less than it could, nothing worse: the next
+// sync tries again.
+func (m *Manager) noteCopies(org string, there []Snapshot) {
+	c := copies{Repository: m.offsiteRepo(org), Lineages: make([]string, 0, len(there))}
+	for _, s := range there {
+		c.Lineages = append(c.Lineages, s.Lineage)
+	}
+	sort.Strings(c.Lineages)
+	c.Lineages = slices.Compact(c.Lineages)
+	data, err := json.Marshal(c)
+	if err == nil {
+		// Whole or not at all: snapshots are listed while it is written.
+		var f *os.File
+		if f, err = os.CreateTemp(m.Dir, "."+org+".copies-*"); err == nil {
+			_, err = f.Write(data)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			if err == nil {
+				err = os.Rename(f.Name(), m.copiesFile(org))
+			}
+			if err != nil {
+				_ = os.Remove(f.Name())
+			}
+		}
+	}
+	if err != nil {
+		m.Log.Error("could not note which snapshots are offsite", "org", org, "error", err)
+	}
+}
+
+// offsiteCopies is the lineages of the snapshots the offsite repository
+// held when it was last read, or nothing when there is no offsite copy or
+// it has not been read. It is read again only when the file has changed.
+func (m *Manager) offsiteCopies(org string) map[string]bool {
+	if !m.HasOffsite() {
+		return nil
+	}
+	info, err := os.Stat(m.copiesFile(org))
+	if err != nil {
+		return nil
+	}
+	repo := m.offsiteRepo(org)
+	m.mu.Lock()
+	kept, ok := m.copies[org]
+	m.mu.Unlock()
+	if !ok || !kept.mod.Equal(info.ModTime()) || kept.size != info.Size() {
+		data, err := os.ReadFile(m.copiesFile(org))
+		if err != nil {
+			return nil
+		}
+		var c copies
+		if err := json.Unmarshal(data, &c); err != nil {
+			return nil
+		}
+		kept = keptCopies{mod: info.ModTime(), size: info.Size(), repo: c.Repository, lineages: make(map[string]bool, len(c.Lineages))}
+		for _, l := range c.Lineages {
+			kept.lineages[l] = true
+		}
+		m.mu.Lock()
+		if m.copies == nil {
+			m.copies = map[string]keptCopies{}
+		}
+		m.copies[org] = kept
+		m.mu.Unlock()
+	}
+	if kept.repo != repo {
+		return nil
+	}
+	return kept.lineages
+}
 
 // HasRepository reports whether an organization has a repository here.
 func (m *Manager) HasRepository(org string) bool { return m.exists(org) }
@@ -363,6 +458,9 @@ func (m *Manager) syncOffsite(ctx context.Context, org string) (OffsiteResult, e
 		return res, err
 	}
 	res.Copied, res.Snapshots = len(after)-len(before), len(after)
+	// What is there now, read as it is. Whatever comes of the removals
+	// below, all that is copied stays copied.
+	m.noteCopies(org, after)
 
 	gone, err := m.pendingRemovals(org)
 	if err != nil {
@@ -391,6 +489,13 @@ func (m *Manager) syncOffsite(ctx context.Context, org string) (OffsiteResult, e
 			return res, err
 		}
 		res.Removed, res.Snapshots = len(ids), len(after)-len(ids)
+		left := make([]Snapshot, 0, len(after)-len(ids))
+		for _, s := range after {
+			if !slices.Contains(ids, s.ID) {
+				left = append(left, s)
+			}
+		}
+		m.noteCopies(org, left)
 	}
 	if err := m.settleRemovals(org, gone); err != nil {
 		return res, err
@@ -477,6 +582,8 @@ func (m *Manager) FetchOffsite(ctx context.Context, org string) (int, error) {
 	if _, err := m.resticEnv(ctx, org, env, append(append([]string{"copy"}, from...), ids...)...); err != nil {
 		return 0, err
 	}
+	// Everything that came back has its copy there still.
+	m.noteCopies(org, there)
 	after, err := m.list(ctx, org)
 	if err != nil {
 		return 0, err

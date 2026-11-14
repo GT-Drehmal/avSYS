@@ -447,6 +447,8 @@ export interface Snapshot {
   /** What this snapshot added to the repository. */
   added: number;
   files: number;
+  /** In the offsite copy, as of its last sync. Absent when there is none, or this one is not in it yet. */
+  offsite?: boolean;
 }
 
 /** A snapshot with the settings its server had when it was taken. */

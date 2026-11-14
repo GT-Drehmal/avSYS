@@ -2,4 +2,5 @@ test-results/
 playwright-report/
 tests/.panel.json
 tests/.panel-metrics.json
+tests/.panel-offsite.json
 *.tsbuildinfo

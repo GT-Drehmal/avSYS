@@ -11,8 +11,8 @@ import { OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, softwa
 import { Button, Chip, cx, Empty, Loading, Notice, PageHeader } from "../components/ui";
 import { api, atLeast, serverIcon, serverPath, snapshotIcon, type Operation, type Server, type Snapshot } from "../lib/api";
 import { ago, bytes, displayName } from "../lib/format";
-import { keys, useAction, useBackupPolicy, useOrgSnapshots, useServers } from "../lib/queries";
-import { byCount, byTime, type ListOptions, useList } from "../lib/list";
+import { keys, useAction, useBackupPolicy, useOffsite, useOrgSnapshots, useServers } from "../lib/queries";
+import { byCount, byTime, type ListFilter, type ListOptions, useList } from "../lib/list";
 import { matches } from "../lib/search";
 import { useSelection, type Selection } from "../lib/selection";
 
@@ -45,8 +45,12 @@ const ages = ["7", "30", "90"];
 const day = 24 * 60 * 60 * 1000;
 const olderThan = (s: Snapshot) => ages.filter((days) => Date.now() - Date.parse(s.time) > Number(days) * day);
 
+/** Whether a snapshot is in the offsite copy, as the filter names it. */
+const places: Record<string, string> = { yes: "Offsite", no: "Only here" };
+const whereFilter: ListFilter<Snapshot> = { key: "offsite", label: "Where", values: (s) => [s.offsite ? "yes" : "no"], name: (v) => places[v] ?? v, order: Object.keys(places) };
+
 /** What arranges and narrows the list by time, and so what in an address asks for it. */
-const timeParams = ["sort", "server", "reason", "age"];
+const timeParams = ["sort", "server", "reason", "age", "offsite"];
 
 const sortsByTime: ListOptions<Snapshot>["sorts"] = [
   { key: "newest", label: "Newest", compare: byTime((s) => s.time) },
@@ -69,6 +73,7 @@ export function Backups() {
   const list = useOrgSnapshots(org);
   const servers = useServers(org);
   const policy = useBackupPolicy(org);
+  const offsite = useOffsite(org);
   const canAdmin = atLeast(membership?.role, "admin");
   const canOperate = atLeast(membership?.role, "operator");
   const [address] = useSearchParams();
@@ -112,6 +117,8 @@ export function Backups() {
       { key: "server", label: "Server", values: (s) => [s.server] },
       { key: "reason", label: "Reason", values: (s) => [s.trigger], name: (trigger) => reasons[trigger] ?? trigger, order: Object.keys(reasons) },
       { key: "age", label: "Age", values: olderThan, name: (days) => `Older than ${days} days`, order: ages },
+      // Only where there is an offsite copy to be in.
+      ...(offsite.data?.configured ? [whereFilter] : []),
     ],
   });
   const { query, shown: filtered } = byTimeList;
