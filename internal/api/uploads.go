@@ -388,6 +388,9 @@ func (s *Server) writeFilePart(w http.ResponseWriter, r *http.Request, u *store.
 	}
 	flags := os.O_WRONLY | os.O_APPEND
 	if offset == 0 {
+		if err := placeable(sc, full); err != nil {
+			return s.filePartError(err, server)
+		}
 		dropStaleParts(sc, path.Dir(full))
 		// There must be room for it on the server's volume.
 		if vfs, err := sc.StatVFS(path.Dir(full)); err == nil {
@@ -415,7 +418,7 @@ func (s *Server) writeFilePart(w http.ResponseWriter, r *http.Request, u *store.
 		return s.filePartError(err, server)
 	}
 	body := &readCounted{r: http.MaxBytesReader(w, r.Body, maxPart)}
-	n, err := io.Copy(f, body)
+	n, err := copyInto(f, body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -423,15 +426,20 @@ func (s *Server) writeFilePart(w http.ResponseWriter, r *http.Request, u *store.
 		err, body.err = io.ErrUnexpectedEOF, io.ErrUnexpectedEOF
 	}
 	if err != nil {
-		_ = sc.Truncate(tmp, offset)
 		var tooLarge *http.MaxBytesError
 		switch {
 		case errors.As(err, &tooLarge):
+			_ = sc.Truncate(tmp, offset)
 			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "A part can be at most 64 MB."}
 		case body.err != nil:
+			_ = sc.Truncate(tmp, offset)
 			return errBadRequest("The part did not arrive whole: %v.", body.err)
 		default:
-			return s.filePartError(err, server)
+			// Said before what was written is cut off, which would make
+			// room again.
+			said := s.filePartError(notPlaced(sc, err, full), server)
+			_ = sc.Truncate(tmp, offset)
+			return said
 		}
 	}
 	if offset+n == size {
@@ -447,7 +455,7 @@ func (s *Server) writeFilePart(w http.ResponseWriter, r *http.Request, u *store.
 // and remembers that it arrived.
 func (s *Server) placeFileParts(r *http.Request, u *store.User, a *access, server string, sc *sftp.Client, tmp, full, key string, size int64) error {
 	if err := sc.PosixRename(tmp, full); err != nil {
-		return s.filePartError(err, server)
+		return s.filePartError(notPlaced(sc, err, full), server)
 	}
 	keptSentWhole(key, size)
 	s.audit(r.Context(), u, a.Org, "files.write", server, relPath(full))
@@ -528,4 +536,12 @@ func (s *Server) filePartsReceived(w http.ResponseWriter, r *http.Request, u *st
 	}
 	writeJSON(w, http.StatusOK, uploaded{Received: got})
 	return nil
+}
+
+// copyInto writes what r has to f, in large writes, failing as any does.
+// Not io.Copy: through File.ReadFrom, a write that fails at the end of what
+// was sent is not said (pkg/sftp drops it when the last read comes up
+// short), and the file is taken for written whole.
+func copyInto(f *sftp.File, r io.Reader) (int64, error) {
+	return io.CopyBuffer(struct{ io.Writer }{f}, r, make([]byte, 1<<20))
 }

@@ -196,7 +196,7 @@ func (s *Server) importUploadPart(w http.ResponseWriter, r *http.Request, u *sto
 		return fileError(err)
 	}
 	body := &readCounted{r: http.MaxBytesReader(w, r.Body, maxPart)}
-	n, err := io.Copy(f, body)
+	n, err := copyInto(f, body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

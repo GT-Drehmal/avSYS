@@ -286,6 +286,29 @@ test("new files and uploads go in the folder chosen", async ({ page }) => {
   await expect.poll(() => state.made).toEqual(["/plugins/notes.txt", "/plugins/extra.yml"]);
 });
 
+test("a new file named as one there is refused, and the one there is kept", async ({ page }) => {
+  await files(page);
+  let text = "eula=true\n";
+  // As the panel does: a new file is never written over one already there;
+  // anything else is.
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*", async (route) => {
+    const req = route.request();
+    if (req.method() !== "PUT" || new URL(req.url()).searchParams.get("path") !== "/eula.txt") return route.fallback();
+    if ((await req.headerValue("If-None-Match")) === "*") return route.fulfill({ status: 409, json: { code: "exists", message: "A file named eula.txt already exists." } });
+    text = req.postData() ?? "";
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await page.getByRole("button", { name: "New file" }).click();
+  const dialog = page.getByRole("dialog", { name: "New file" });
+  await dialog.getByLabel("Name").fill("eula.txt");
+  await dialog.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByText("A file named eula.txt already exists.")).toBeVisible();
+  // Still asked, for another name.
+  await expect(dialog).toBeVisible();
+  expect(text).toBe("eula=true\n");
+});
+
 test("a big folder shows its first files, and more when asked", async ({ page }) => {
   await files(page, { "/world": Array.from({ length: 350 }, (_, i) => `r.${i}.mca`) });
   await page.goto("/o/friends/s/survival/files");

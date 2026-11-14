@@ -63,6 +63,11 @@ export async function saveFile(path: string, text: string, tag: string | null): 
   return res.headers.get("ETag");
 }
 
+/** Makes an empty file, never over one already there: that the panel refuses. */
+export async function makeFile(path: string): Promise<void> {
+  await send("PUT", path, { headers: { "If-None-Match": "*" }, body: "" });
+}
+
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),

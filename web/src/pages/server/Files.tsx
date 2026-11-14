@@ -5,7 +5,7 @@ import { useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
 import { Button, Confirm, cx, Empty, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Spinner } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
-import { api, ApiError, qs, readFile, saveFile, serverPath, type EditedFile, type FileEntry } from "../../lib/api";
+import { api, ApiError, makeFile, qs, readFile, saveFile, serverPath, type EditedFile, type FileEntry } from "../../lib/api";
 import { ago, bytes } from "../../lib/format";
 import { useAction, useMe, useMeta } from "../../lib/queries";
 import { vscodeURL } from "../../lib/ssh";
@@ -1072,7 +1072,7 @@ export default function Files() {
           onClose={() => setDialog(null)}
           onSubmit={async (name) => {
             const path = join(dialog.in, name);
-            await api.putRaw(`${base}/content?${qs({ path })}`, "");
+            await makeFile(`${base}/content?${qs({ path })}`);
             if (dialog.in !== "/") toggle(dialog.in, true);
             await refresh(dialog.in);
             setSelected({ path, dir: false });
