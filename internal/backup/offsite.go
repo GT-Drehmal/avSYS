@@ -115,6 +115,15 @@ func (m *Manager) noteCopies(org string, there []Snapshot) {
 	}
 }
 
+// MarkOffsite sets Offsite on each of snaps that has a copy offsite, as
+// List does: for snapshots known other than by listing the repository.
+func (m *Manager) MarkOffsite(org string, snaps []Snapshot) {
+	copied := m.offsiteCopies(org)
+	for i := range snaps {
+		snaps[i].Offsite = copied[snaps[i].Lineage]
+	}
+}
+
 // offsiteCopies is the lineages of the snapshots the offsite repository
 // held when it was last read, or nothing when there is no offsite copy or
 // it has not been read. It is read again only when the file has changed.

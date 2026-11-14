@@ -69,6 +69,7 @@ func (s *Server) templateSnapshots(ctx context.Context, org *store.Org) ([]backu
 		}
 		out = append(out, snapshotOfNoted(&noted[i]))
 	}
+	s.Backups.MarkOffsite(org.Slug, out)
 	return out, nil
 }
 
