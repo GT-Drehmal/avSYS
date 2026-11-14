@@ -837,7 +837,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return err
 	}
-	all := append(slices.Clone(v.Versions), worldsOf(list, t.ID)...)
+	all := append(append(slices.Clone(v.Versions), worldsOf(list, t.ID)...), keptPackSnapshots(list, worldHost(t.ID))...)
 	if len(all) > 0 {
 		release, err := s.claimToDelete(r.Context(), a, all)
 		if err != nil {

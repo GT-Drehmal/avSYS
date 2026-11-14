@@ -216,6 +216,10 @@ func archiveRoot(p string) (string, error) {
 // becomes the server's. With ?replace=true as well, it takes the place of the
 // world of a server that has files, once a snapshot of it is taken.
 //
+// A world from a template's own or from the library (?template= or
+// ?library=) comes with the resource pack it names, with ?pack=true: the
+// server's pack is that one once the world is in.
+//
 // It answers once the archive is in, and the panel sees the rest through:
 // how it went is told as the operation ends. With ?wait=true it answers when
 // all is done instead, and is for a server made a moment ago, whose volume is
@@ -257,6 +261,10 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	// A template's own world comes out of its snapshot rather than with the
 	// request, its folder in it as it was kept.
 	var archive func(io.Writer) error
+	// The pack that comes with it, given once it is in.
+	var givePack func(ctx context.Context) error
+	var given *avsysv1.ResourcePackSpec
+	withPack := r.URL.Query().Get("pack") == "true"
 	if from := r.URL.Query().Get("template"); from != "" {
 		if r.URL.Query().Get("world") != "true" {
 			return errBadRequest("A template's world is imported as a world: add world=true.")
@@ -269,6 +277,10 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		org := a.Org.Slug
 		archive = func(dst io.Writer) error {
 			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
+		}
+		if withPack && info.Pack != nil {
+			given = info.Pack
+			givePack = func(ctx context.Context) error { return s.giveKeptPack(ctx, a, mc, info.Pack, worldHost(from)) }
 		}
 	}
 	// So does one from the organization's library.
@@ -288,6 +300,17 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		archive = func(dst io.Writer) error {
 			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
 		}
+		if rp := worldPackOf(world); withPack && rp != nil {
+			given = rp
+			givePack = func(ctx context.Context) error { return s.giveKeptPack(ctx, a, mc, rp, libraryHost(world.ID)) }
+		}
+	}
+	if withPack && archive == nil {
+		return errBadRequest("A resource pack comes with a world from a template or from the library.")
+	}
+	// Said before the world is put in, rather than after.
+	if given != nil && given.Uploaded != nil && s.Config.PackDir == "" {
+		return errPacksUnavailable
 	}
 	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindImport, "")
 	if !ok {
@@ -312,6 +335,11 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	go func() {
 		undo, err := s.importInto(r, w, mc, root, archive, op, replace, a.Org.Slug, u.Username, onReceived)
 		ctx := context.WithoutCancel(r.Context())
+		if err == nil && givePack != nil {
+			if perr := givePack(ctx); perr != nil {
+				err = failed(perr, "the world is in place, but its resource pack was not given to the server")
+			}
+		}
 		if undo != nil || answered {
 			// What it replaced is in a snapshot, noted on the server as its
 			// newest. One answered before it was done says on the server how

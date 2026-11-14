@@ -7,7 +7,7 @@ export function worldSource(w: LibraryWorld) {
   return kind === "server" ? `from ${name}` : kind === "snapshot" ? `from a snapshot of ${name}` : "uploaded";
 }
 
-/** What a world is, in a line: its version, size and where it came from. */
+/** What a world is, in a line: its version, size, where it came from, and whether it has a resource pack. */
 export function worldSummary(w: LibraryWorld) {
-  return [w.version, w.ready ? bytes(w.size) : null, worldSource(w)].filter(Boolean).join(" · ");
+  return [w.version, w.ready ? bytes(w.size) : null, worldSource(w), w.resourcePack ? "with a resource pack" : null].filter(Boolean).join(" · ");
 }

@@ -4,8 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,6 +144,8 @@ func (s *Server) packURL(sha string) string {
 // putResourcePack takes an uploaded pack as the server's resource pack: it
 // is checked, kept in the server's files and in the panel's own, and served.
 // The server's pack settings, required or not and the prompt, are kept.
+// With ?world= or ?template= the pack is the one a world in the library or a
+// template's own world has, rather than the one sent.
 //
 // With ?wait=true it is for a server made a moment ago, made stopped to be
 // given it first: its volume is waited for.
@@ -164,91 +164,107 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 	defer release()
 	// One change to its files at a time: content, and its pack.
 	defer s.lockContent(client.ObjectKeyFromObject(mc))()
-	if s.Config.PackDir == "" {
-		return &Error{Status: http.StatusServiceUnavailable, Code: "packs_unavailable", Message: "Resource pack uploads are not set up on this panel."}
-	}
-	limit := packLimit(mc.Spec.Version)
-	if err := os.MkdirAll(s.Config.PackDir, 0o750); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(s.Config.PackDir, "upload-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-	h := sha1.New()
-	size, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r.Body, limit+1))
-	if err != nil {
-		return errBadRequest("The upload was incomplete.")
-	}
-	if size > limit {
-		return errBadRequest("That pack is over %d MB, the most the game takes for %s.", limit>>20, mc.Spec.Version)
-	}
-	if size == 0 {
-		return errBadRequest("The upload was empty.")
-	}
-	formats, err := checkPack(tmp, size)
-	if err != nil {
-		return err
-	}
-	sha := hex.EncodeToString(h.Sum(nil))
-	// Its version as it is now, which a change a moment ago may have
-	// lowered, before anything is written.
-	now, err := s.live(r.Context(), mc)
-	if err != nil {
-		return err
-	}
-	if limit := packLimit(now.Spec.Version); size > limit {
-		return errBadRequest("That pack is over %d MB, the most the game takes for %s.", limit>>20, now.Spec.Version)
-	}
-
-	// Into the server's files first, written beside its place and moved in.
-	sc, done, err := s.filesOf(r.Context(), mc, wait)
+	body, name, done, err := s.packSource(r, a)
 	if err != nil {
 		return err
 	}
 	defer done()
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+	now, err := s.installPack(r.Context(), mc, body, name, wait, nil)
+	if err != nil {
 		return err
 	}
+	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, now.Spec.ResourcePack.SHA1)
+	writeJSON(w, http.StatusOK, s.view(now))
+	return nil
+}
+
+// installPack makes the pack read from body the server's resource pack, as
+// putResourcePack does, under the name it was uploaded as. Whether it is
+// required and what is asked are the server's as they were, or those of
+// settings where it is given. The caller holds the server's content.
+func (s *Server) installPack(ctx context.Context, mc *avsysv1.MinecraftServer, body io.Reader, name string, wait bool, settings *avsysv1.ResourcePackSpec) (*avsysv1.MinecraftServer, error) {
+	if s.Config.PackDir == "" {
+		return nil, errPacksUnavailable
+	}
+	limit := packLimit(mc.Spec.Version)
+	tmp, err := s.packTemp("upload-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+	size, sha, err := copyHashed(tmp, body, limit)
+	if err != nil {
+		return nil, errBadRequest("The upload was incomplete.")
+	}
+	if size > limit {
+		return nil, errBadRequest("That pack is over %d MB, the most the game takes for %s.", limit>>20, mc.Spec.Version)
+	}
+	if size == 0 {
+		return nil, errBadRequest("The upload was empty.")
+	}
+	formats, err := checkPack(tmp, size)
+	if err != nil {
+		return nil, err
+	}
+	// Its version as it is now, which a change a moment ago may have
+	// lowered, before anything is written.
+	now, err := s.live(ctx, mc)
+	if err != nil {
+		return nil, err
+	}
+	if limit := packLimit(now.Spec.Version); size > limit {
+		return nil, errBadRequest("That pack is over %d MB, the most the game takes for %s.", limit>>20, now.Spec.Version)
+	}
+
+	// Into the server's files first, written beside its place and moved in.
+	sc, done, err := s.filesOf(ctx, mc, wait)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
 	if err := writePack(sc, tmp, sha); err != nil {
-		return err
+		return nil, err
 	}
 	// And kept by the panel, under its hash, to serve.
 	if err := tmp.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.Rename(tmp.Name(), s.cachedPack(sha)); err != nil {
-		return err
+		return nil, err
 	}
 
-	name := path.Base(strings.ReplaceAll(r.URL.Query().Get("name"), "\\", "/"))
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
 	if name == "." || name == "/" {
 		name = ""
 	}
 	orig := now.DeepCopy()
 	pack := &avsysv1.ResourcePackSpec{URL: s.packURL(sha), SHA1: sha, Uploaded: &avsysv1.UploadedPack{Name: name, Size: size, Time: metav1.Now()}, Formats: formats}
-	if old := now.Spec.ResourcePack; old != nil {
+	if old := now.Spec.ResourcePack; settings != nil {
+		pack.Enforce, pack.Prompt = settings.Enforce, settings.Prompt
+	} else if old != nil {
 		pack.Enforce, pack.Prompt = old.Enforce, old.Prompt
 	}
 	was := orig.Spec.ResourcePack
 	now.Spec.ResourcePack = pack
-	if err := s.Client.Patch(r.Context(), now, client.MergeFrom(orig)); err != nil {
+	if err := s.Client.Patch(ctx, now, client.MergeFrom(orig)); err != nil {
 		// The settings still say the pack before: the new file goes.
 		if was == nil || was.SHA1 != sha {
 			_ = sc.Remove(packFile(sha))
 		}
-		return err
+		return nil, err
 	}
 	// The settings say the new pack: any other is gone from them, and so
 	// are those of a stack it replaces.
-	s.dropPacks(r.Context(), sc, nil, client.ObjectKeyFromObject(mc), []string{sha}, was)
-	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, sha)
-	go s.prunePacksNow(context.WithoutCancel(r.Context()))
-	writeJSON(w, http.StatusOK, s.view(now))
-	return nil
+	s.dropPacks(ctx, sc, nil, client.ObjectKeyFromObject(mc), []string{sha}, was)
+	go s.prunePacksNow(context.WithoutCancel(ctx))
+	return now, nil
 }
+
+var errPacksUnavailable = &Error{Status: http.StatusServiceUnavailable, Code: "packs_unavailable", Message: "Resource pack uploads are not set up on this panel."}
 
 // deleteResourcePack takes a server's resource pack away, uploaded or not.
 func (s *Server) deleteResourcePack(w http.ResponseWriter, r *http.Request, u *store.User) error {

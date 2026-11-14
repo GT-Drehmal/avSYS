@@ -5,10 +5,12 @@ import { useNavigate, useParams } from "react-router";
 import { PictureChange, PictureZoom } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { ServerPicker, SnapshotPicker } from "../components/StartPicker";
-import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SelectAllRow, SelectionBar, Spinner, Textarea } from "../components/ui";
+import { AddContentDialog, packTitle } from "../components/Content";
+import { ProjectIcon } from "../components/ModrinthSearch";
+import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SelectAllRow, SelectionBar, Spinner, Textarea, Toggle } from "../components/ui";
 import { ListBar } from "../components/ListBar";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
-import { api, ApiError, atLeast, qs, type LibraryWorld, worldIcon } from "../lib/api";
+import { api, ApiError, atLeast, qs, type LibraryWorld, type ResourcePack, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes } from "../lib/format";
 import { keys, useMeta, useWorlds } from "../lib/queries";
@@ -176,6 +178,8 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
   };
   const [description, setDescription] = useState("");
   const [picture, setPicture] = useState<PictureChange>({ kind: "none" });
+  // The resource pack a map ships with, used unless switched off.
+  const [usePack, setUsePack] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { sending, sendStaged, cancel } = useUpload();
@@ -196,6 +200,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
     setError(null);
     setFile(chosen);
     setFound(null);
+    setUsePack(true);
     setPicture({ kind: "none" });
     // Named as the file is, at once: what it was downloaded as says what it
     // is better than what it calls itself.
@@ -235,6 +240,11 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
         made = await api.post<LibraryWorld>(`/orgs/${org}/worlds`, { name, description, ...(picked.server ? { server: picked.server } : { snapshot: picked.snapshot }) });
       }
       if (from === "upload" && picture.kind === "file") await api.putRaw(`/orgs/${org}/worlds/${made.id}/icon`, picture.file).catch(() => undefined);
+      if (from === "upload" && usePack && found?.pack) {
+        await api.putRaw(`/orgs/${org}/worlds/${made.id}/resource-pack?${qs({ name: found.pack.name })}`, found.pack).catch((err) => {
+          toast.error(`${made.name} was added without its resource pack: ${err instanceof ApiError ? err.message : "the upload failed."}`);
+        });
+      }
       await qc.invalidateQueries({ queryKey: keys.worlds(org) });
       onClose();
     } catch (err) {
@@ -336,6 +346,9 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
             }}
           />
         )}
+        {from === "upload" && found?.pack && (
+          <Toggle checked={usePack} onChange={setUsePack} disabled={busy} label="Use the map's resource pack" hint={`resources.zip · ${bytes(found.pack.size)}. Given to each server made with this world.`} />
+        )}
         {from === "server" && picked && <p className="text-xs text-muted">A snapshot of the server is taken first, and the world is saved from that.</p>}
         <Field label="Name">
           {(id) => (
@@ -368,19 +381,48 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
   );
 }
 
-/** A world's name, description and picture. */
+/** The resource pack a world is being given: the one it has, none, one from an address, or a file from here. */
+type PackDraft = { kind: "keep" } | { kind: "none" } | { kind: "url"; pack: ResourcePack } | { kind: "file"; file: File };
+
+/** A world's name, description, picture and resource pack. */
 function EditWorld({ org, world, onClose }: { org: string; world: LibraryWorld; onClose: () => void }) {
   const qc = useQueryClient();
   const [name, setName] = useState(world.name);
   const [description, setDescription] = useState(world.description);
   const [picture, setPicture] = useState<PictureChange>({ kind: "keep" });
+  const [pack, setPack] = useState<PackDraft>({ kind: "keep" });
+  const [required, setRequired] = useState(!!world.resourcePack?.enforce);
+  const [prompt, setPrompt] = useState(world.resourcePack?.prompt ?? "");
+  const [pickingPack, setPickingPack] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const had = world.resourcePack ?? null;
+  // The pack as it will be once saved.
+  const shown: ResourcePack | null =
+    pack.kind === "keep"
+      ? had
+      : pack.kind === "none"
+        ? null
+        : pack.kind === "url"
+          ? pack.pack
+          : { url: "", uploaded: { name: pack.file.name, size: pack.file.size, time: new Date().toISOString() }, project: null };
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      await api.patch(`/orgs/${org}/worlds/${world.id}`, { name, description });
+      // A file goes first: the rest says whether players must take it.
+      if (pack.kind === "file") await api.putRaw(`/orgs/${org}/worlds/${world.id}/resource-pack?${qs({ name: pack.file.name })}`, pack.file);
+      const settings = { enforce: required, prompt: prompt.trim() };
+      const settingsChanged = required !== !!had?.enforce || prompt.trim() !== (had?.prompt ?? "");
+      const resourcePack =
+        pack.kind === "none"
+          ? { resourcePack: null }
+          : pack.kind === "url"
+            ? { resourcePack: { url: pack.pack.url, sha1: pack.pack.sha1 ?? "", project: pack.pack.project ?? null, formats: pack.pack.formats ?? null, ...settings } }
+            : pack.kind === "file" || (had && settingsChanged)
+              ? { resourcePack: settings }
+              : {};
+      await api.patch(`/orgs/${org}/worlds/${world.id}`, { name, description, ...resourcePack });
       if (picture.kind === "file") await api.putRaw(`/orgs/${org}/worlds/${world.id}/icon`, picture.file);
       else if (picture.kind === "none") await api.del(`/orgs/${org}/worlds/${world.id}/icon`);
       await qc.invalidateQueries({ queryKey: keys.worlds(org) });
@@ -392,7 +434,9 @@ function EditWorld({ org, world, onClose }: { org: string; world: LibraryWorld; 
     }
   };
   return (
-    <Modal open onOpenChange={(o) => !o && !busy && onClose()} title={`Edit ${world.name}`}>
+    <>
+    {/* Set aside while a pack is picked, and back once it is. */}
+    <Modal open={!pickingPack} onOpenChange={(o) => !o && !busy && onClose()} title={`Edit ${world.name}`}>
       <form
         className="flex flex-col gap-4"
         onSubmit={(e) => {
@@ -403,6 +447,39 @@ function EditWorld({ org, world, onClose }: { org: string; world: LibraryWorld; 
         <PictureChange name={name} current={worldIcon(org, world.id)} value={picture} onChange={setPicture} optional="Optional. Shown in the library." kept="" />
         <Field label="Name">{(id) => <Input id={id} required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
         <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
+        <section aria-label="Resource pack" className="flex flex-col gap-2.5">
+          <p className="text-[13px] font-medium">Resource pack</p>
+          {shown ? (
+            <div className="flex items-center gap-3 rounded-md border border-line bg-surface px-3 py-2.5">
+              <ProjectIcon url={shown.project?.iconUrl} size={32} kind="resourcepack" name={packTitle(shown)} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium">{packTitle(shown)}</p>
+                <p className="truncate text-xs text-faint">{shown.uploaded ? bytes(shown.uploaded.size) : shown.url}</p>
+              </div>
+              <Button size="sm" disabled={busy} onClick={() => setPickingPack(true)}>
+                Replace
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setPack({ kind: "none" })}>
+                Remove
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="min-w-0 flex-1 text-[13px] text-muted">None. A pack added here is given to each server made with this world.</p>
+              <Button size="sm" icon={<Plus className="size-4" />} disabled={busy} onClick={() => setPickingPack(true)}>
+                Add resource pack
+              </Button>
+            </div>
+          )}
+          {shown && (
+            <>
+              <Toggle checked={required} onChange={setRequired} label="Required" hint="Players who decline the pack are disconnected." />
+              <Field label="Prompt" hint="Shown when the game asks to download the pack.">
+                {(id) => <Input id={id} value={prompt} maxLength={500} onChange={(e) => setPrompt(e.target.value)} placeholder="A pack made for this world" />}
+              </Field>
+            </>
+          )}
+        </section>
         {error && <Notice tone="danger">{error}</Notice>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} disabled={busy}>
@@ -414,6 +491,23 @@ function EditWorld({ org, world, onClose }: { org: string; world: LibraryWorld; 
         </div>
       </form>
     </Modal>
+    {pickingPack && (
+      <AddContentDialog
+        software={{ loader: "vanilla", version: world.version || "LATEST" }}
+        mods={[]}
+        onAdd={() => undefined}
+        description=""
+        start="resourcepack"
+        only
+        pack={{
+          current: shown,
+          onPick: async (picked) => setPack({ kind: "url", pack: picked }),
+          keep: (file) => setPack({ kind: "file", file }),
+        }}
+        onClose={() => setPickingPack(false)}
+      />
+    )}
+    </>
   );
 }
 

@@ -108,15 +108,56 @@ const listed = (f: Found) => f.jars.length > 0 && f.unread === 0;
 
 type Upload = { file: File; kind: ContentKind };
 
+/** Where a world's uploaded pack is kept: with a world in the library, or with a template's own world. */
+type PackHome = { world: string } | { template: string };
+
 /**
  * One of the resource packs a server is given, the top one first: one of
  * its original's, which comes with a copy (one of those it was joined from,
- * or its only one); one from Modrinth or an address; or a file from here.
+ * or its only one); one from Modrinth or an address; a file from here; or
+ * the one uploaded to the world it is given, from where that is kept.
  */
 type FormPack =
   | { id: string; from: "original"; stacked?: StackedPack; pack?: ResourcePack }
   | { id: string; from: "url"; pack: ResourcePack }
-  | { id: string; from: "file"; file: File };
+  | { id: string; from: "file"; file: File }
+  | { id: string; from: "world"; pack: ResourcePack; home: PackHome };
+
+/** The id of the pack that comes with a world: one at a time, whichever world is given. */
+const fromWorld = (p: FormPack) => p.id.startsWith("world:");
+
+/** The pack a world names, as the form has it: one from an address as any other, one uploaded from where it is kept. */
+function worldPack(rp: ResourcePack | null | undefined, home: PackHome): FormPack | null {
+  if (!rp) return null;
+  const id = `world:${"world" in home ? home.world : `template-${home.template}`}`;
+  if (rp.uploaded) return { id, from: "world", pack: rp, home };
+  if (!rp.url) return null;
+  return { id, from: "url", pack: { url: rp.url, sha1: rp.sha1, project: rp.project ?? null, formats: rp.formats ?? null, uploaded: null } };
+}
+
+/** The world whose pack a server is given, by a key of its own, and that pack. */
+interface PackWorld {
+  key: string;
+  pack: ResourcePack | null;
+  entry: FormPack | null;
+}
+
+function packWorldOf(library: LibraryWorld | null, template: { id: string; world: OwnWorld } | null): PackWorld | null {
+  if (library) return { key: `library:${library.id}`, pack: library.resourcePack ?? null, entry: worldPack(library.resourcePack, { world: library.id }) };
+  if (template) return { key: `template:${template.id}`, pack: template.world.resourcePack ?? null, entry: worldPack(template.world.resourcePack, { template: template.id }) };
+  return null;
+}
+
+/**
+ * The form's packs with a world's on top in place of another world's. Given
+ * to a form with no other pack, it says too whether players must take it,
+ * and what they are asked.
+ */
+function withWorldPack(v: Values, w: PackWorld | null): Values {
+  const others = v.packs.filter((p) => !fromWorld(p));
+  if (!w?.entry) return { ...v, packs: others };
+  return { ...v, packs: [w.entry, ...others], ...(others.length === 0 ? { packRequired: !!w.pack?.enforce, packPrompt: w.pack?.prompt ?? "" } : {}) };
+}
 
 let packIds = 0;
 const urlPack = (pack: ResourcePack): FormPack => ({ id: `url-${++packIds}`, from: "url", pack });
@@ -471,8 +512,16 @@ export function ServerForm({
   const startingName = source ? (templated ? freeName(source.name, new Set([...taken, ...history])) : copying ? freeName(`${source.name}-copy`, new Set([...taken, ...history])) : source.name) : "";
   const forTemplate = !!templating;
   const editing = templating?.template;
-  const [start] = useState(() =>
-    source
+  // A world of one's own goes with a new server of a game version.
+  // Made from another's files, it keeps their world unless it is given a
+  // new one or one of its own; one brought back keeps its own.
+  const worldChoosable = !!source && (copying || forTemplate);
+  // A world kept with the template it starts from, or with the one being changed.
+  const theirs = source?.ownWorld ?? preset?.ownWorld ?? editing?.ownWorld;
+  // Which template that is.
+  const theirsFrom = source?.origin.kind === "template" ? source.origin.id : (preset?.id ?? editing?.id);
+  const [initial] = useState(() => {
+    const values = source
       ? // A template made from another is called its copy, until named.
         valuesOf(source, startingName, forTemplate ? templated && !editing : copying && !templated, leastStorage)
       : preset
@@ -483,22 +532,19 @@ export function ServerForm({
           ? presetValues({ id: editing.id, name: editing.name, spec: editing.spec }, null)
           : given
             ? { ...fresh, displayName: given.name, storage: String(Math.max(Number(fresh.storage), roomFor(given))) }
-            : fresh,
-  );
+            : fresh;
+    // The pack of the world it starts with comes with it.
+    const worldGiven = source ? worldChoosable : values.kind === "game";
+    const packWorld = !worldGiven ? null : packWorldOf(given ?? null, theirs && theirsFrom ? { id: theirsFrom, world: theirs } : null);
+    return { values: packWorld ? withWorldPack(values, packWorld) : values, packWorld: packWorld?.key ?? "" };
+  });
+  const start = initial.values;
   const [description, setDescription] = useState(editing?.description ?? "");
   // A new server can start from a template, a server or a snapshot, picked here.
   const [picking, setPicking] = useState<StartKind | null>(source || preset || forTemplate ? null : (pick ?? null));
   const [v, setValues] = useState(start);
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
-  // A world of one's own goes with a new server of a game version.
-  // Made from another's files, it keeps their world unless it is given a
-  // new one or one of its own; one brought back keeps its own.
-  const worldChoosable = !!source && (copying || forTemplate);
-  // A world kept with the template it starts from, or with the one being changed.
-  const theirs = source?.ownWorld ?? preset?.ownWorld ?? editing?.ownWorld;
-  // Which template that is.
-  const theirsFrom = source?.origin.kind === "template" ? source.origin.id : (preset?.id ?? editing?.id);
   // As the template it comes from says, where it says.
   const [world, setWorld] = useState<WorldChoice>(given ? "library" : theirs ? "mine" : source?.world === "new" || !worldChoosable ? "new" : "kept");
   // One from the organization's library, put in once its files are.
@@ -511,6 +557,19 @@ export function ServerForm({
   // That world, for this one, unless another was chosen.
   const fromTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs && !!theirsFrom && !(forTemplate && editing && theirsFrom === editing.id) ? theirsFrom : null;
   const keepsTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs;
+  // The world whose resource pack it is given: whichever it is given, until
+  // that is taken off the list.
+  const packWorld = packWorldOf(fromLibrary, keepsTheirs && theirs && theirsFrom ? { id: theirsFrom, world: theirs } : null);
+  const packWorldKey = packWorld?.key ?? "";
+  const lastPackWorld = useRef(initial.packWorld);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only as the world changes
+  useEffect(() => {
+    if (lastPackWorld.current === packWorldKey) return;
+    lastPackWorld.current = packWorldKey;
+    setValues((was) => withWorldPack(was, packWorld));
+  }, [packWorldKey]);
+  // The pack uploaded to that world, while it is on the list.
+  const keptWorldPack = v.packs.find((p): p is Extract<FormPack, { from: "world" }> => p.from === "world");
   // What is sent to be unpacked into the server once it is made.
   const toImport = found && v.archive ? { file: v.archive.file, root: found.root, world: false, listed: listed(found) } : mine ? { file: mine.file, root: mine.found.root, world: true, listed: false } : null;
   // Of the packs, the original's come with a copy, and the request itself
@@ -606,7 +665,7 @@ export function ServerForm({
   const takes = software ? kindsFor(software) : [];
   const contentKinds = [...takes, ...(["mod", "plugin", "datapack"] as const).filter((k) => !takes.includes(k) && (v.mods.some((m) => (m.kind ?? "mod") === k) || v.uploads.some((u) => u.kind === k)))];
   // The one pack there is, where it says which game versions it is made for.
-  const onlyPack = v.packs.length === 1 ? (v.packs[0].from === "url" ? v.packs[0].pack : v.packs[0].from === "original" ? (v.packs[0].pack ?? null) : null) : null;
+  const onlyPack = v.packs.length === 1 ? (v.packs[0].from === "url" || v.packs[0].from === "world" ? v.packs[0].pack : v.packs[0].from === "original" ? (v.packs[0].pack ?? null) : null) : null;
   // "Latest release" is whichever version that is now: picked for a copy of
   // a server already on it, nothing changes.
   const effective = (version: string) => (version === "LATEST" ? (versions.data?.latest ?? version) : version);
@@ -1021,6 +1080,11 @@ export function ServerForm({
           : await api.patch<Server>(path, { spec: { resourcePack: { url, sha1, project, formats, ...packSettings } } });
       } else if (p.from === "file") {
         now = await w.send<Server>(label(p.file.name), `${path}/${has ? "resource-packs" : "resource-pack"}?${qs({ name: p.file.name, wait: "true" })}`, p.file, has ? "POST" : "PUT");
+      } else if (p.from === "world") {
+        // From where the panel keeps it, rather than from here.
+        w.say("Adding the world's resource pack");
+        const from = qs({ ...p.home, wait: "true" });
+        now = has ? await api.post<Server>(`${path}/resource-packs?${from}`) : await api.put<Server>(`${path}/resource-pack?${from}`, undefined);
       }
       const rp = now.spec.resourcePack;
       sha.set(p.id, rp?.stack?.[0]?.sha1 ?? rp?.sha1 ?? "");
@@ -1128,11 +1192,18 @@ export function ServerForm({
         const upload = await sendInParts(uploads, uploads, file, (p) => setSent(p.total ? p.sent / p.total : 0));
         await api.put(`${path}?${qs({ root: found.root, name: found.name, version: found.version ?? "", file: file.name, upload, size: file.size })}`, undefined);
       } else if (fromLibrary) {
-        await api.put(`${path}?${qs({ library: fromLibrary.id })}`, undefined);
+        await api.put(`${path}?${qs({ library: fromLibrary.id, ...(keptWorldPack ? { pack: "true" } : {}) })}`, undefined);
       } else if (keepsTheirs && theirsFrom && theirsFrom !== id) {
-        await api.put(`${path}?${qs({ from: theirsFrom })}`, undefined);
+        await api.put(`${path}?${qs({ from: theirsFrom, ...(keptWorldPack ? { pack: "true" } : {}) })}`, undefined);
       } else if (!keepsTheirs && editing?.ownWorld) {
         await api.del(path);
+      }
+      // The pack uploaded to its world is kept with the world, and so is
+      // whether players must take it and what they are asked.
+      if (keptWorldPack && (!!keptWorldPack.pack.enforce !== v.packRequired || (keptWorldPack.pack.prompt ?? "") !== v.packPrompt)) {
+        await api.patch(path, { resourcePack: { enforce: v.packRequired, prompt: v.packPrompt } });
+      } else if (!keptWorldPack && keepsTheirs && theirsFrom === id && editing?.ownWorld?.resourcePack) {
+        await api.patch(path, { resourcePack: null });
       }
       await qc.invalidateQueries({ queryKey: keys.templates(org) });
       navigate(`/o/${org}/templates`);
@@ -1582,7 +1653,10 @@ export function ServerForm({
                     stack={v.packs.map(shownPack)}
                     canEdit={!packsKept}
                     busy={false}
-                    note={(p) => (v.packs.find((x) => x.id === p.sha1)?.from === "file" ? "uploaded when created" : undefined)}
+                    note={(p) => {
+                      const from = v.packs.find((x) => x.id === p.sha1)?.from;
+                      return from === "file" ? "uploaded when created" : from === "world" ? "the world's" : undefined;
+                    }}
                     onOrder={async (order) => {
                       setValues((was) => ({ ...was, packs: order.flatMap((id) => was.packs.filter((p) => p.id === id)) }));
                       return order;
@@ -1641,7 +1715,7 @@ export function ServerForm({
               current: { url: "", project: null, stack: v.packs.map(shownPack) },
               onTop: v.packs.length > 0,
               onPick: async (pack) => {
-                if (pack.sha1 && v.packs.some((p) => (p.from === "url" ? p.pack.sha1 : p.from === "original" ? (p.stacked?.sha1 ?? p.pack?.sha1) : "") === pack.sha1)) {
+                if (pack.sha1 && v.packs.some((p) => (p.from === "url" || p.from === "world" ? p.pack.sha1 : p.from === "original" ? (p.stacked?.sha1 ?? p.pack?.sha1) : "") === pack.sha1)) {
                   throw new Error("That pack is in the list already.");
                 }
                 setValues((was) => ({ ...was, packs: [urlPack(pack), ...was.packs] }));

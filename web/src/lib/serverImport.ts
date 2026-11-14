@@ -296,11 +296,19 @@ export interface FoundWorld {
   size: number;
   /** The picture it has in its folder, as a save made in the game does. */
   icon?: Uint8Array;
+  /** The resource pack it ships with: resources.zip in its folder, or beside it. */
+  pack?: File;
 }
+
+/** The most the game takes of a resource pack. */
+const maxPack = 250 << 20;
 
 /** Finds the world in an archive, wherever it is in it. */
 export async function inspectWorld(file: File): Promise<FoundWorld> {
-  const { entries, files } = await readArchive(file, (path, size) => (base(path) === "level.dat" || base(path) === "icon.png") && size < 8 << 20 && !path.startsWith("__MACOSX/"));
+  const { entries, files } = await readArchive(
+    file,
+    (path, size) => !path.startsWith("__MACOSX/") && (((base(path) === "level.dat" || base(path) === "icon.png") && size < 8 << 20) || (base(path) === "resources.zip" && size <= maxPack)),
+  );
   const levels = entries.filter((e) => !e.dir && base(e.path) === "level.dat" && !e.path.startsWith("__MACOSX/"));
   // The shallowest: the Nether's folder in Paper's way has one of its own.
   const level = levels.sort((a, b) => depth(a.path) - depth(b.path) || a.path.length - b.path.length)[0];
@@ -312,7 +320,11 @@ export async function inspectWorld(file: File): Promise<FoundWorld> {
   const beside = root ? [`${root}_nether/`, `${root}_the_end/`] : [];
   const size = entries.filter((e) => (root === "" || e.path.startsWith(`${root}/`) || beside.some((b) => e.path.startsWith(b))) && !e.path.startsWith("__MACOSX/")).reduce((sum, e) => sum + e.size, 0);
   const icon = files.get(root ? `${root}/icon.png` : "icon.png");
-  return { root, name: plainName(read.name) || base(root) || archiveName(file), version: read.version, size, ...(icon ? { icon } : {}) };
+  // As maps ship one: in the world's folder, where the game looks for it, or beside it.
+  const nextTo = root.includes("/") ? `${dirname(root)}/resources.zip` : "resources.zip";
+  const packData = files.get(root ? `${root}/resources.zip` : "resources.zip") ?? (root ? files.get(nextTo) : undefined);
+  const pack = packData ? new File([packData.slice()], "resources.zip", { type: "application/zip" }) : undefined;
+  return { root, name: plainName(read.name) || base(root) || archiveName(file), version: read.version, size, ...(icon ? { icon } : {}), ...(pack ? { pack } : {}) };
 }
 
 /** A name without the game's formatting codes: § and the letter after it, which colour and style it. */
