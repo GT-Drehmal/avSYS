@@ -62,6 +62,27 @@ test.describe("with an offsite copy", () => {
     await page.getByRole("button", { name: /^About the snapshot of oldworld/ }).click();
     await expect(page.getByRole("dialog")).toContainText("In the offsite copy.");
   });
+
+  test("details left open say so once a copy has gone through", async ({ page, api }) => {
+    // The first answer is from before the copy.
+    let first = true;
+    await page.route(/\/api\/v1\/orgs\/friends\/snapshots\/[0-9a-f]+$/, async (route) => {
+      const res = await route.fetch();
+      const json = await res.json();
+      if (first) delete json.offsite;
+      first = false;
+      await route.fulfill({ response: res, json });
+    });
+    await page.goto("/o/friends/backups?server=oldworld");
+    await page.getByRole("button", { name: /^About the snapshot of oldworld/ }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Not in the offsite copy yet.");
+    // Another test may be copying already: its end is heard the same.
+    await api("admin")
+      .post("/orgs/friends/offsite/run?wait=true")
+      .catch(() => {});
+    await expect(dialog).toContainText("In the offsite copy.");
+  });
 });
 
 test("without an offsite copy, snapshots are neither marked nor narrowed by it", async ({ page, as }) => {
