@@ -1,9 +1,9 @@
 name: Dependabot auto-merge
 
 # Dependabot's pull requests for patch and minor updates merge by themselves
-# once the required checks (test, e2e, browser) pass. A major update, or one
-# whose size Dependabot cannot say (a new digest of the same image tag), is
-# left for a person.
+# once the required checks (test, e2e, browser) pass. A pull request with a
+# major update in it, or one whose size Dependabot cannot say (a new digest
+# of the same image tag), is left for a person.
 #
 # pull_request_target, because a run for Dependabot's own pull_request event
 # gets a token that can only read. Nothing from the pull request is checked
@@ -25,6 +25,11 @@ jobs:
       github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # One run at a time for each pull request, the latest: an earlier one
+    # finishing after it would undo what it decided.
+    concurrency:
+      group: dependabot-automerge-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     permissions:
       # Turning on auto-merge takes both.
       contents: write
@@ -37,17 +42,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.html_url }}
-          UPDATE: ${{ steps.metadata.outputs.update-type }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          UPDATES: ${{ steps.metadata.outputs.updated-dependencies-json }}
         run: |
-          case "$UPDATE" in
-            version-update:semver-patch | version-update:semver-minor)
-              gh pr merge --auto --merge "$PR"
-              ;;
-            *)
-              echo "Left for a person: ${UPDATE:-an update of unknown size}."
-              # Turned off if an earlier push had turned it on.
-              if [ "$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
-                gh pr merge --disable-auto "$PR"
-              fi
-              ;;
-          esac
+          # Every update in it, not only the largest: a group can hold a
+          # minor one beside one of unknown size, which is left for a person.
+          echo "$UPDATES" | jq -r '.[] | "\(.dependencyName): \(.updateType // "unknown size")"'
+          if echo "$UPDATES" | jq -e 'length > 0 and all(.[]; .updateType == "version-update:semver-patch" or .updateType == "version-update:semver-minor")' >/dev/null; then
+            # Only for the commit looked at: a newer push is decided by its own run.
+            gh pr merge --auto --merge --match-head-commit "$HEAD" "$PR"
+          else
+            echo "Left for a person."
+            # Turned off if an earlier push had turned it on.
+            if [ "$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+              gh pr merge --disable-auto "$PR"
+            fi
+          fi
