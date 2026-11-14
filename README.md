@@ -93,7 +93,7 @@ kubectl apply -f deploy/install.yaml
 
 Both make the same thing: the `avsys` namespace, a service account with the permissions the panel needs, a 1Gi volume for the database, a 50Gi volume for snapshots, and a LoadBalancer service for the three ports. `deploy/install.yaml` is the chart in `deploy/chart` with its default values; anything else is a value of the chart. Size the snapshots volume for the worlds you host. The panel installs and upgrades the `MinecraftServer` CRD itself each time it starts, so upgrading the panel upgrades the CRD too (Helm installs the chart's copy only on the first install). Uninstalling keeps both volumes; delete them by hand if you mean to.
 
-The chart is published with each release. To install from a checkout instead, use `./deploy/chart` in place of the `oci://` address.
+The chart is published with each [release](https://github.com/GT-Drehmal/avSYS/releases), whose notes have the commands for that version and its own `install.yaml`. To install from a checkout instead, use `./deploy/chart` in place of the `oci://` address.
 
 Images are published to `ghcr.io/gt-drehmal/avsys` for amd64 and arm64. Releases are `:v1.2.3`, with `:latest` on the newest; `:edge` follows the main branch. A chart runs the release it was published with; set `image.tag` for another. The panel starts the workspace image of its own version, so there is only the one image to choose.
 
@@ -317,7 +317,7 @@ make generate   # after changing api/
 
 The API tests in `internal/api` run the panel in-process and check every route against every role. A new route under an organization has to be added to that table, or the tests fail.
 
-To cut a release, push a version tag: `git tag v0.1.0 && git push origin v0.1.0`. CI tests it and publishes both images under that tag.
+To cut a release, push a version tag on main: `git tag v0.1.0 origin/main && git push origin v0.1.0`. CI tests it, publishes both images under that tag and the chart as version `0.1.0`, and makes a GitHub release with notes from the pull requests merged since the last one, the install and upgrade commands, and that version's `install.yaml`. A tag such as `v0.2.0-rc.1` makes a prerelease.
 
 `make dev` runs the panel on your machine against the current kubectl context, reaching pods through the API server, and keeps its database in `.dev/`. For UI work, also run `bun run dev` in `web/` and open the address Vite prints; it proxies API calls to the panel.
 

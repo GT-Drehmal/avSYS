@@ -325,7 +325,8 @@ jobs:
           fi
 
   # Publishes the panel and workspace images to GitHub's container registry,
-  # once the tests above pass.
+  # once the tests above pass. A tag's chart and release follow, further
+  # down.
   #
   #   push to main   ->  :edge and :sha-<commit>
   #   tag v1.2.3     ->  :v1.2.3 and :latest
@@ -420,3 +421,83 @@ jobs:
             [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$tip" ] && exit 0
           done
           echo "main kept moving; edge is left to the runs that follow"
+
+  # A version tag is a release, once its images are published: the chart,
+  # at the tag's version and running the tag's images, pushed to the
+  # registry beside them, and a GitHub release with the install and upgrade
+  # commands, the install manifest of that version, and notes made from the
+  # pull requests merged since the last release.
+  #
+  #   tag v1.2.3  ->  oci://ghcr.io/gt-drehmal/charts/avsys:1.2.3
+  #                   a release v1.2.3 with install.yaml
+  #
+  # A tag with a suffix, as v1.2.3-rc.1, is a prerelease, which the panel's
+  # update notice does not offer.
+  release:
+    needs: publish
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The Helm hack/chart.sh renders with, from its release, checked
+      # against the release's hash.
+      - name: Helm
+        env:
+          HELM_VERSION: 4.3.1
+          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "$HELM_SHA256  helm.tar.gz" | sha256sum -c -
+          tar -xzf helm.tar.gz --strip-components=1 linux-amd64/helm
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      # v1.2.3 is chart version 1.2.3, and runs the images :v1.2.3. The
+      # manifest is the chart's default render, as in the repository, but of
+      # this version.
+      - name: Chart
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::$TAG is not a version, as v1.2.3"; exit 1 ;;
+          esac
+          version=${TAG#v}
+          sed -i -e "s/^version: .*/version: $version/" -e "s/^appVersion: .*/appVersion: $TAG/" deploy/chart/Chart.yaml
+          HELM=helm ./hack/chart.sh render
+          grep -q "image: \"ghcr.io/gt-drehmal/avsys:$TAG\"" deploy/install.yaml
+          helm package deploy/chart --destination "$RUNNER_TEMP/chart"
+          echo "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          helm push "$RUNNER_TEMP/chart/avsys-$version.tgz" oci://ghcr.io/gt-drehmal/charts
+      - name: Release
+        run: |
+          version=${TAG#v}
+          cat > "$RUNNER_TEMP/notes.md" <<NOTES
+          ## Install
+
+          \`\`\`sh
+          helm install avsys oci://ghcr.io/gt-drehmal/charts/avsys --version $version \\
+            -n avsys --create-namespace --set publicURL=https://panel.example.com
+          \`\`\`
+
+          Or without Helm: download [install.yaml](https://github.com/$GH_REPO/releases/download/$TAG/install.yaml), set \`AVSYS_PUBLIC_URL\` in it, and \`kubectl apply -f install.yaml\`.
+
+          ## Upgrade
+
+          \`\`\`sh
+          helm upgrade avsys oci://ghcr.io/gt-drehmal/charts/avsys --version $version \\
+            -n avsys --reset-then-reuse-values
+          \`\`\`
+
+          Or apply this release's install.yaml with your changes carried over.
+
+          NOTES
+          prerelease=false
+          case "$TAG" in *-*) prerelease=true ;; esac
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes \
+            --notes-file "$RUNNER_TEMP/notes.md" --prerelease="$prerelease" deploy/install.yaml
