@@ -6,8 +6,9 @@ import { bytes } from "../lib/format";
 import { keys, useMeta, watchReplace } from "../lib/queries";
 import { useGameVersions } from "../lib/software";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
-import { worldSummary } from "../lib/worlds";
+import { newerThan, newerWorldWarning, worldSummary } from "../lib/worlds";
 import { packTitle } from "./Content";
+import { NewerWorldConfirm } from "./NewerWorld";
 import { Picture } from "./Picture";
 import { WorldPicker } from "./StartPicker";
 import { Button, cx, Modal, Notice, Toggle } from "./ui";
@@ -31,6 +32,8 @@ export function ReplaceWorld({ server }: { server: Server }) {
   const [world, setWorld] = useState<FoundWorld | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // A world from a newer version than the server runs: asked about first.
+  const [asking, setAsking] = useState(false);
   const { sending, sendParts, cancel } = useUpload();
   const reads = useRef(0);
   const stopped = server.spec.state === "Stopped" && server.status.phase === "Stopped";
@@ -65,8 +68,12 @@ export function ReplaceWorld({ server }: { server: Server }) {
     }
   };
 
-  const replace = async () => {
+  const replace = async (sure = false) => {
     if (from === "library" ? !picked : !file || !world) return;
+    if (newer && !sure) return setAsking(true);
+    setAsking(false);
+    // Said to be meant once asked; the panel refuses it otherwise.
+    const meant = newer ? { newerWorld: "true" } : {};
     setBusy(true);
     setError(null);
     // Answered once the archive is in. The panel does the rest, which the
@@ -74,8 +81,8 @@ export function ReplaceWorld({ server }: { server: Server }) {
     const watch = watchReplace(server.org, server.name, server.spec.displayName || server.name);
     try {
       const path = serverPath(server.org, server.name);
-      if (from === "library" && picked) await api.put<Server>(`${path}/import?${qs({ world: "true", replace: "true", library: picked.id, ...(picked.resourcePack && withPack ? { pack: "true" } : {}) })}`, undefined);
-      else if (file && world) await sendParts<Server>(file.name, path, file, (upload) => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", from: "upload", upload, size: file.size })}`, {}));
+      if (from === "library" && picked) await api.put<Server>(`${path}/import?${qs({ world: "true", replace: "true", library: picked.id, ...(picked.resourcePack && withPack ? { pack: "true" } : {}), ...meant })}`, undefined);
+      else if (file && world) await sendParts<Server>(file.name, path, file, (upload) => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", version: world.version, ...meant, from: "upload", upload, size: file.size })}`, {}));
       watch.taken();
       setBusy(false);
       close(false);
@@ -94,7 +101,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
   const version = server.spec.version === "LATEST" ? (versions.data?.latest ?? "") : server.spec.version;
   const order = versions.data?.ordered ?? [];
   const given = from === "library" ? picked?.version : world?.version;
-  const newer = !!given && order.includes(given) && order.includes(version) && order.indexOf(given) < order.indexOf(version);
+  const newer = !server.spec.modpack && newerThan(order, given, version);
   const segment = (on: boolean) => cx("h-7 rounded-sm px-3 text-xs font-medium", on ? "bg-hover text-fg" : "text-muted hover:text-fg");
   return (
     <>
@@ -168,7 +175,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
               hint={`${packTitle(picked.resourcePack)}.${server.spec.resourcePack?.url ? " Replaces the server's resource pack." : ""}`}
             />
           )}
-          {newer && <Notice>This server runs {version}, older than the version this world was last opened in. The game cannot open the world.</Notice>}
+          {newer && given && <Notice tone="warn">{newerWorldWarning(given, version)}</Notice>}
           {error && <Notice tone="danger">{error}</Notice>}
           {sending && <UploadProgress sending={sending} onCancel={cancel} />}
           <div className="flex justify-end gap-2">
@@ -181,6 +188,15 @@ export function ReplaceWorld({ server }: { server: Server }) {
           </div>
         </form>
       </Modal>
+      <NewerWorldConfirm
+        open={asking}
+        onOpenChange={setAsking}
+        world={given ?? ""}
+        version={version}
+        action="Replace the world anyway"
+        loading={busy}
+        onConfirm={() => void replace(true)}
+      />
     </>
   );
 }

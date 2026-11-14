@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -393,4 +394,57 @@ func (s *Server) checkVersion(ctx context.Context, spec *avsysv1.MinecraftServer
 		return errBadRequest("%s has no build for Minecraft %s.", name, spec.Version)
 	}
 	return errBadRequest("%s has no build for Minecraft %s. The newest it has one for is %s.", name, spec.Version, sup.releases[0].ID)
+}
+
+// checkWorldVersion refuses to give a server a world last opened in a newer
+// game version than the one the server is to run: that version cannot open
+// the world, and the server would not start. A request says that it is
+// meant with ?newerWorld=true, as the panel's pages do once they have asked.
+// It is the same everywhere a server is given a world or a version: made
+// with one, made from a template, a snapshot or another server, its world
+// replaced, or its version changed. What cannot be told, as a version not
+// in the list or a modpack's, is let through.
+func (s *Server) checkWorldVersion(r *http.Request, world string, spec *avsysv1.MinecraftServerSpec) error {
+	if r.URL.Query().Get("newerWorld") == "true" || spec.Modpack != nil || !s.newerThan(r.Context(), world, spec.Version) {
+		return nil
+	}
+	return &Error{Status: http.StatusConflict, Code: "newer_world", Message: fmt.Sprintf("The world was last opened in %s. %s cannot open the world, so the server will not start.", world, spec.Version)}
+}
+
+// newerThan is whether game version a came out after b. Either one not in
+// the list, or no list to be had, is not.
+func (s *Server) newerThan(ctx context.Context, a, b string) bool {
+	if a == "" || b == "" || a == b {
+		return false
+	}
+	m, err := s.manifest(ctx)
+	if err != nil {
+		return false
+	}
+	// The list is newest first.
+	i, j := -1, -1
+	for k, v := range m.Versions {
+		switch v.ID {
+		case a:
+			i = k
+		case b:
+			j = k
+		}
+	}
+	return i >= 0 && j >= 0 && i < j
+}
+
+// ranOn is the game version a server's world was last opened in, as far as
+// it is known: the one the game says it runs, or else the one it was set to.
+func (s *Server) ranOn(ctx context.Context, mc *avsysv1.MinecraftServer, was *avsysv1.MinecraftServerSpec) string {
+	if ran := controller.RanVersion(mc.Status.Version); ran != "" {
+		if m, err := s.manifest(ctx); err == nil {
+			for _, v := range m.Versions {
+				if v.ID == ran {
+					return ran
+				}
+			}
+		}
+	}
+	return was.Version
 }

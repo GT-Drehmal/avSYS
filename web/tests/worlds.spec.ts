@@ -267,9 +267,43 @@ test("a world from the library newer than the game picked is warned of, and one 
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page.getByText("Pick a world from the library.")).toBeVisible();
   await picker.getByRole("button", { name: /Island/ }).click();
-  await expect(page.getByText("This world was last opened in 1.21.5, which is newer than 1.21.4.")).toBeVisible();
+  await expect(page.getByText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
   await page.getByRole("button", { name: "Change" }).last().click();
   await expect(page.getByRole("searchbox", { name: "Search worlds" })).toBeVisible();
+});
+
+test("a new server with a world from the library newer than the game picked is asked about first, and the world sent saying so", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await library(page, [world("w1", "Island", { version: "1.21.5" })], slug);
+  let sent: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/island`) });
+  });
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Island");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  const ask = page.getByRole("dialog", { name: "Open a 1.21.5 world in 1.21.4?" });
+  await expect(ask).toContainText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.");
+  // Nothing is made unless asked to.
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
+  // On the version it was last opened in, there is nothing to ask.
+  await page.getByLabel("Game version").selectOption("1.21.5");
+  await expect(page.getByText(/cannot open the world/)).toHaveCount(0);
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("button", { name: "Create server" }).click();
+  await ask.getByRole("button", { name: "Create server anyway" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", library: "w1", newerWorld: "true" });
 });
 
 test("a template is given a world from the library, kept with it", async ({ page, as, org }) => {
@@ -311,6 +345,32 @@ test("a stopped server's world is replaced with one from the library", async ({ 
   await replace.click();
   await expect(dialog).toHaveCount(0);
   expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", replace: "true", library: "w1" });
+  expect(sent!.get("newerWorld")).toBeNull();
+});
+
+test("a stopped server's world replaced with one from the library from a newer game is asked about first", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island", { version: "26.3" })]);
+  let sent: URLSearchParams | null = null;
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+  });
+  await page.goto("/o/friends/s/creative/settings");
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await dialog.getByRole("button", { name: "Library", exact: true }).click();
+  await dialog.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect(dialog.getByText("The world was last opened in 26.3. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  const ask = page.getByRole("dialog", { name: "Open a 26.3 world in 1.21.4?" });
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  expect(sent).toBeNull();
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  await ask.getByRole("button", { name: "Replace the world anyway" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", replace: "true", library: "w1", newerWorld: "true" });
 });
 
 test("a server's world is saved to the library from its Backups tab, named after it unless named otherwise", async ({ page, as }) => {

@@ -276,10 +276,17 @@ export function useServerAction(org: string, name: string) {
   });
 }
 
+/** A change that puts a server on an older version than its world, said to be meant once that was asked. */
+export interface NewerWorldMeant {
+  spec: SpecPatch;
+  newerWorld: true;
+}
+
 export function useUpdateServer(org: string, name: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (spec: SpecPatch) => api.patch<Server>(serverPath(org, name), { spec }),
+    mutationFn: (change: SpecPatch | NewerWorldMeant) =>
+      "newerWorld" in change ? api.patch<Server>(`${serverPath(org, name)}?newerWorld=true`, { spec: change.spec }) : api.patch<Server>(serverPath(org, name), { spec: change }),
     onSuccess: (server) => applyServer(qc, server),
     onError,
   });

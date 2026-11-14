@@ -385,6 +385,12 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err := leaveWorld(&spec, &record.Spec, &requested, newWorld); err != nil {
 		return err
 	}
+	// The world it keeps was last opened in the version it was taken of.
+	if !newWorld {
+		if err := s.checkWorldVersion(r, record.Spec.Version, &spec); err != nil {
+			return err
+		}
+	}
 	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
 		return err
 	}
@@ -518,6 +524,11 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	}
 	if err := leaveWorld(&spec, &mc.Spec, &requested, newWorld); err != nil {
 		return err
+	}
+	if !newWorld {
+		if err := s.checkWorldVersion(r, s.ranOn(ctx, mc, &mc.Spec), &spec); err != nil {
+			return err
+		}
 	}
 	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
 		return err

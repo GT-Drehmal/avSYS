@@ -695,6 +695,13 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if previous, err = s.mergeSpec(r.Context(), a, mc, in.Spec); err != nil {
 			return err
 		}
+		// Made older than its world, which it then cannot open: only when
+		// the request says that is meant.
+		if mc.Spec.Version != previous.Version {
+			if err := s.checkWorldVersion(r, s.ranOn(r.Context(), mc, previous), &mc.Spec); err != nil {
+				return err
+			}
+		}
 		// A pack uploaded before, given another address now, has its file
 		// removed, which a snapshot under way may be copying: not while one is.
 		if was := previous.ResourcePack; dropPack == nil && was != nil && was.Uploaded != nil && (mc.Spec.ResourcePack == nil || mc.Spec.ResourcePack.Uploaded == nil) {

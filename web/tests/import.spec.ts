@@ -370,17 +370,72 @@ test("a world from a newer game than the one picked is warned of", async ({ page
   await page.getByRole("button", { name: "Upload world" }).click();
   await page.getByLabel("World archive").setInputFiles({ name: "new.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("26.3") }) });
   await expect(page.getByLabel("Game version")).toHaveValue("26.3");
-  await expect(page.getByText(/newer than/)).toHaveCount(0);
+  await expect(page.getByText(/cannot open the world/)).toHaveCount(0);
   await page.getByLabel("Game version").selectOption("1.21.4");
-  await expect(page.getByText("This world was last opened in 26.3, which is newer than 1.21.4. Pick 26.3 or newer.")).toBeVisible();
+  await expect(page.getByText("The world was last opened in 26.3. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
   // Removed, it is no longer used, and without one it says so.
   await page.getByRole("button", { name: "Remove the world" }).click();
   await expect(page.getByTestId("world-summary")).toHaveCount(0);
-  await expect(page.getByText(/newer than/)).toHaveCount(0);
+  await expect(page.getByText(/cannot open the world/)).toHaveCount(0);
   await page.getByLabel("Display name").fill("Later");
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page.getByText("Choose a world, or make a new one.")).toBeVisible();
+});
+
+test("a world uploaded from a newer game than the one picked is asked about first, and sent saying so", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Island");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByRole("button", { name: "Upload world" }).click();
+  await page.getByLabel("World archive").setInputFiles({ name: "new.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("26.3") }) });
+  await expect(page.getByLabel("Game version")).toHaveValue("26.3");
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  let sent: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/island`) });
+  });
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  const dialog = page.getByRole("dialog", { name: "Open a 26.3 world in 1.21.4?" });
+  await expect(dialog).toContainText("The world was last opened in 26.3. 1.21.4 cannot open the world, so the server will not start.");
+  // Nothing is made unless asked to.
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect((await api("owner").get(`/orgs/${slug}/servers`)).map((s: { name: string }) => s.name)).toEqual([]);
+  await page.getByRole("button", { name: "Create server" }).click();
+  await dialog.getByRole("button", { name: "Create server anyway" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(sent!.get("version")).toBe("26.3");
+  expect(sent!.get("newerWorld")).toBe("true");
+  expect((await api("owner").get(`/orgs/${slug}/servers/island`)).spec.version).toBe("1.21.4");
+});
+
+test("a world uploaded from the game picked or an older one is not asked about", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Island");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByRole("button", { name: "Upload world" }).click();
+  await page.getByLabel("World archive").setInputFiles({ name: "old.zip", mimeType: "application/zip", buffer: zip({ "level.dat": levelDat("1.21.4") }) });
+  await expect(page.getByLabel("Game version")).toHaveValue("1.21.4");
+  await page.getByLabel("Game version").selectOption("26.3");
+  let sent: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/island`) });
+  });
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(sent!.get("version")).toBe("1.21.4");
+  expect(sent!.get("newerWorld")).toBeNull();
 });
 
 test("an archive with no world in it says so", async ({ page, as, org }) => {
@@ -467,18 +522,28 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
 
   await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip({ "Map/level.dat": levelDat("1.21.5", "Adventure Map"), "Map/region/r.0.0.mca": "x" }) });
   await expect(dialog.getByTestId("world-summary")).toContainText('World "Adventure Map" · last opened in 1.21.5');
-  await expect(dialog.getByText("This server runs 1.21.4, older than the version this world was last opened in. The game cannot open the world.")).toBeVisible();
+  await expect(dialog.getByText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
   let sent: URL | null = null;
   await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
     sent = new URL(route.request().url());
     await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
   });
+  // Asked first, as the server's version cannot open it: nothing is sent unless asked to.
   await replace.click();
+  const ask = page.getByRole("dialog", { name: "Open a 1.21.5 world in 1.21.4?" });
+  await expect(ask).toContainText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.");
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  expect(sent).toBeNull();
+  await replace.click();
+  await ask.getByRole("button", { name: "Replace the world anyway" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText(/Replaced the world/)).toHaveCount(0);
   expect(sent).not.toBeNull();
   const params = (sent as unknown as URL).searchParams;
   expect([params.get("root"), params.get("world"), params.get("replace"), params.get("wait")]).toEqual(["Map", "true", "true", null]);
+  expect([params.get("version"), params.get("newerWorld")]).toEqual(["1.21.5", "true"]);
   ended = JSON.stringify({ kind: "import", org: "friends", server: "creative" });
   await expect(page.getByText("Replaced the world of Creative")).toBeVisible({ timeout: 15_000 });
 });
