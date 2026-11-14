@@ -4,6 +4,8 @@ go 1.27.4
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-logr/logr v1.4.4
 	github.com/pkg/sftp v1.13.11
 	github.com/restic/rest-server v0.14.0

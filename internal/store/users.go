@@ -40,9 +40,14 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	return err
 }
 
-// ErrNotFirst is what SignUp says when the account was to be the panel's
-// first and another was made before it.
-var ErrNotFirst = errors.New("there is an account already")
+var (
+	// ErrNotFirst is what SignUp says when the account was to be the
+	// panel's first and another was made before it.
+	ErrNotFirst = errors.New("there is an account already")
+	// ErrIdentityTaken is its answer when the provider account is linked
+	// to a user already.
+	ErrIdentityTaken = errors.New("identity already linked")
+)
 
 // Signup is what a new account is made on the strength of.
 type Signup struct {
@@ -50,12 +55,24 @@ type Signup struct {
 	FirstOnly bool
 	// Invite is accepted with it. If it cannot be, no account is made.
 	Invite string
+	// Identity is a provider account linked to it: both or neither, so
+	// that no user is made for a provider account another user has. An
+	// empty one links nothing.
+	Identity Identity
+}
+
+// CreateUserWithIdentity inserts u, as CreateUser does, with a provider
+// account linked to it: see Signup.Identity.
+func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity) error {
+	_, err := s.SignUp(ctx, u, Signup{Identity: id})
+	return err
 }
 
 // SignUp inserts u, as CreateUser does, together with what lets it be made:
 // being the first account, or an invite, which it accepts and whose
-// organization it returns. Two people setting up an empty panel at once,
-// or taking the last use of an invite, cannot both get in.
+// organization it returns; and the provider account it signed up with,
+// linked to it. Two people setting up an empty panel at once, or taking
+// the last use of an invite, cannot both get in.
 func (s *Store) SignUp(ctx context.Context, u *User, how Signup) (*Org, error) {
 	u.ID = NewID(10)
 	u.CreatedAt = unix(now())
@@ -78,6 +95,15 @@ func (s *Store) SignUp(ctx context.Context, u *User, how Signup) (*Org, error) {
 		u.ID, u.Username, u.DisplayName, u.Email, u.AvatarURL, u.PasswordHash, u.IsAdmin, u.CreatedAt.Unix())
 	if err != nil {
 		return nil, mapErr(err)
+	}
+	if id := how.Identity; id.Provider != "" {
+		_, err = tx.ExecContext(ctx, `INSERT INTO identities (provider, subject, user_id, login) VALUES (?, ?, ?, ?)`,
+			id.Provider, id.Subject, u.ID, id.Login)
+		if err = mapErr(err); errors.Is(err, ErrConflict) {
+			return nil, ErrIdentityTaken
+		} else if err != nil {
+			return nil, err
+		}
 	}
 	var org *Org
 	if how.Invite != "" {
@@ -126,12 +152,23 @@ func (s *Store) UserByIdentity(ctx context.Context, provider, subject string) (*
 		provider, subject))
 }
 
+// LinkIdentity links a provider account to a user, or updates the login of
+// a link that is there. It is ErrConflict when the provider account is
+// linked to another user: a link never moves.
 func (s *Store) LinkIdentity(ctx context.Context, id Identity) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO identities (provider, subject, user_id, login) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(provider, subject) DO UPDATE SET login = excluded.login`,
+		 ON CONFLICT(provider, subject) DO UPDATE SET login = excluded.login WHERE user_id = excluded.user_id`,
 		id.Provider, id.Subject, id.UserID, id.Login)
-	return mapErr(err)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *Store) Identities(ctx context.Context, userID string) ([]Identity, error) {

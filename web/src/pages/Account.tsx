@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { PicturePicker } from "../components/Picture";
 import { Button, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
@@ -296,8 +297,16 @@ function SignIn() {
   const [next, setNext] = useState("");
   const change = useAction(() => api.post("/me/password", { current, new: next }));
   const linked = new Map(me.identities.map((i) => [i.provider, i.login]));
+  // Linking an account that could not be linked comes back here with why.
+  const [params] = useSearchParams();
+  const linkError = params.get("error");
   return (
     <Section title="Sign-in">
+      {linkError && (
+        <div ref={(el) => el?.scrollIntoView({ block: "center" })}>
+          <Notice tone="danger">{linkError}</Notice>
+        </div>
+      )}
       {meta && meta.providers.length > 0 && (
         <ul className="overflow-hidden rounded-md border border-line bg-surface">
           {meta.providers.map((p) => (

@@ -46,6 +46,7 @@ import (
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/api"
 	"github.com/GT-Drehmal/avSYS/internal/auth"
+	"github.com/GT-Drehmal/avSYS/internal/auth/fakeidp"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/release"
 	"github.com/GT-Drehmal/avSYS/internal/router"
@@ -134,12 +135,25 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 	}
 	srv.Config.PublicURL = "http://" + ln.Addr().String()
 
+	// An OpenID Connect provider of its own, which signs in whoever is typed
+	// on its page. "outsider" there is the outsider here.
+	idp, err := fakeidp.Start("avsys-uitest", "uitest-secret", srv.Config.PublicURL+"/api/v1/auth/oidc/callback")
+	if err != nil {
+		return err
+	}
+	defer idp.Close()
+	provider, err := auth.NewOIDCProvider(auth.OIDCConfig{Issuer: idp.URL, ClientID: idp.ClientID, ClientSecret: idp.ClientSecret, Name: "Test ID"}, srv.Config.PublicURL)
+	if err != nil {
+		return err
+	}
+	srv.Config.Providers = map[string]*auth.Provider{provider.ID: provider}
+
 	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
 	srv.Metrics = metrics
 	srv.GameCommand = metrics.gameCommand
 	tokens := map[string]string{}
 	if !fresh {
-		if tokens, err = populate(ctx, srv, cluster, dir, withOffsite); err != nil {
+		if tokens, err = populate(ctx, srv, cluster, dir, withOffsite, provider.ID, idp.URL); err != nil {
 			return err
 		}
 		if withMetrics {
@@ -174,8 +188,10 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 
 // populate fills the panel with people, organizations, servers and
 // snapshots, and returns an API token for each person. With offsite, the
-// panel copies snapshots offsite, and the older ones are there already.
-func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir string, offsite bool) (map[string]string, error) {
+// panel copies snapshots offsite, and the older ones are there already. The
+// outsider is linked to "outsider" at the OpenID Connect provider (oidc,
+// whose issuer is issuer).
+func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir string, offsite bool, oidc, issuer string) (map[string]string, error) {
 	db := srv.Store
 	// People, one for each role in the first organization, and one who is
 	// in neither.
@@ -195,6 +211,9 @@ func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir s
 			return nil, err
 		}
 		users[name], tokens[name] = u, secret
+	}
+	if err := db.LinkIdentity(ctx, store.Identity{Provider: oidc, Subject: auth.OIDCSubject(issuer, "outsider"), UserID: users["outsider"].ID, Login: "outsider"}); err != nil {
+		return nil, err
 	}
 	friends := &store.Org{Name: "Friends", Slug: "friends"}
 	if err := db.CreateOrg(ctx, friends, users["owner"].ID); err != nil {
