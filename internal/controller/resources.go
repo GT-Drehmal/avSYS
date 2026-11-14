@@ -754,6 +754,7 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 			}}},
 		}}
 	}
+	spec.Tolerations = readingForMove(mc)
 	if v := mc.Annotations[avsysv1.AnnotationRestart]; v != "" {
 		annotations[avsysv1.AnnotationRestart] = v
 	}
@@ -766,6 +767,25 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 		},
 		Spec: spec,
 	}
+}
+
+// cordoned is the taint a node takes when it is cordoned, as before
+// maintenance: it takes no new pods.
+var cordoned = corev1.Taint{Key: corev1.TaintNodeUnschedulable, Effect: corev1.TaintEffectNoSchedule}
+
+// readingForMove is what a server's pod tolerates while a move stops it to
+// snapshot its files where they are: its node being cordoned, which is when
+// servers are moved off it. Its pod is made again there to end every session
+// to its files, and the move reads them through it. That is all: the game
+// never starts on a cordoned node, and once the move lets go of the files,
+// or is put back, the server's pods tolerate nothing again.
+//
+// Set after the spec is hashed, so that it asks for no restart.
+func readingForMove(mc *avsysv1.MinecraftServer) []corev1.Toleration {
+	if mc.Annotations[avsysv1.AnnotationMoveWas] == "" || mc.Annotations[avsysv1.AnnotationMoving] != "" || wantsMinecraft(mc) {
+		return nil
+	}
+	return []corev1.Toleration{{Key: cordoned.Key, Operator: corev1.TolerationOpExists, Effect: cordoned.Effect}}
 }
 
 func hashOf(v any) string {

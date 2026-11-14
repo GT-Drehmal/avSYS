@@ -128,9 +128,9 @@ export function Nodes() {
             <li key={n.name} className="rounded-lg border border-line bg-surface px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <span className={cx("inline-block size-2 shrink-0 rounded-full", n.ready ? "bg-accent" : "bg-danger")} />
+                  <span className={cx("inline-block size-2 shrink-0 rounded-full", n.ready ? "bg-accent" : n.cordoned ? "bg-warn" : "bg-danger")} />
                   <span className="font-mono text-[13px] font-medium">{n.name}</span>
-                  {!n.ready && <span className="text-xs text-muted">down</span>}
+                  {!n.ready && <span className="text-xs text-muted">{n.cordoned ? "cordoned" : "down"}</span>}
                 </div>
                 <div className="flex items-center gap-4 text-xs text-muted">
                   <span>{n.score > 0 ? `speed ${n.score}` : "speed not measured"}</span>

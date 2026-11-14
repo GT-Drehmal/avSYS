@@ -789,6 +789,8 @@ export interface NodeInfo {
   name: string;
   /** Up and taking pods. */
   ready: boolean;
+  /** Kept from taking new pods, as before maintenance. Servers on it can still be moved off. */
+  cordoned?: boolean;
   /** New servers may be placed on it without asking. */
   automatic: boolean;
   /** It is set to take new servers, whether or not it is up. */
