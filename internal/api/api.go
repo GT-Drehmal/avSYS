@@ -14,6 +14,7 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/GT-Drehmal/avSYS/internal/auth"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/kube"
+	"github.com/GT-Drehmal/avSYS/internal/release"
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
@@ -52,6 +54,10 @@ type Config struct {
 	// zero is no limit. Over it, the least recently served of those that
 	// servers have are let go of, to be read out of their files again.
 	PackCache int64
+	// RouterService is the panel's own Service, which says how the panel
+	// was installed, for the command that upgrades it. Empty where the
+	// panel runs outside the cluster.
+	RouterService types.NamespacedName
 }
 
 type Server struct {
@@ -107,6 +113,9 @@ type Server struct {
 	// Nil is the internet. The browser tests answer from files instead, so
 	// that they neither depend on those services nor load them.
 	Upstream http.RoundTripper
+	// Updates is whether a newer release is out, for the instance
+	// administrator. Nil never says so.
+	Updates *release.Checker
 
 	catalog    *catalog
 	workspaces *workspacePool

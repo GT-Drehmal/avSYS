@@ -112,6 +112,8 @@ spec:
               value: {{ .Values.namespacePrefix | quote }}
             - name: AVSYS_INSTALL_CRDS
               value: {{ .Values.installCRDs | toString | quote }}
+            - name: AVSYS_UPDATE_CHECK
+              value: {{ .Values.updateCheck | toString | quote }}
             {{- with .Values.workspaceImage }}
             - name: AVSYS_WORKSPACE_IMAGE
               value: {{ . | quote }}

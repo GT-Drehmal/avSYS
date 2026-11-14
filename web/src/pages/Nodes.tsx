@@ -3,8 +3,8 @@ import { Gauge } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { Chart } from "../components/Chart";
-import { Button, cx, Empty, Loading, Notice, PageHeader, Toggle } from "../components/ui";
-import { api, ApiError, type NodeInfo, type NodeList } from "../lib/api";
+import { Button, CopyText, cx, Empty, Loading, Notice, PageHeader, Toggle } from "../components/ui";
+import { api, ApiError, type NodeInfo, type NodeList, type ReleaseUpdate } from "../lib/api";
 import { ago } from "../lib/format";
 import { useMe } from "../lib/queries";
 import { toast } from "../lib/toast";
@@ -38,6 +38,40 @@ function NodeCharts({ node, samples, every }: { node: NodeInfo; samples: NodeSam
       <Chart title="Memory" label={`Memory on ${node.name}`} {...charts} value={(s) => s.memory} format={gb} limit={node.memory} />
       <Chart title="CPU" label={`CPU on ${node.name}`} {...charts} value={(s) => s.cpu} format={(m) => `${cores(m)} cores`} limit={node.cores} />
     </div>
+  );
+}
+
+/** A newer release of avSYS than the one running, and the command that upgrades to it. */
+function NewRelease({ update }: { update: ReleaseUpdate }) {
+  return (
+    <section aria-label="New release" className="mb-4 rounded-md border border-line-strong bg-raised px-3 py-2.5 text-[13px]">
+      <p>
+        avSYS <span className="font-mono">{update.version}</span> is out.{" "}
+        <a href={update.notes} target="_blank" rel="noreferrer" className="font-medium text-accent hover:underline">
+          What's new
+        </a>
+      </p>
+      {update.command && (
+        <>
+          <p className="mt-1.5 text-muted">
+            {update.manifest ? (
+              <>
+                Copy your changes into the new{" "}
+                <a href={update.manifest} className="font-medium text-accent hover:underline">
+                  install.yaml
+                </a>
+                , then run:
+              </>
+            ) : (
+              "To upgrade, run:"
+            )}
+          </p>
+          <div className="mt-1 rounded-md border border-line bg-bg px-3 py-2">
+            <CopyText value={update.command} className="text-xs" wrap />
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -101,6 +135,7 @@ export function Nodes() {
           </Button>
         }
       />
+      {nodes.data.update && <NewRelease update={nodes.data.update} />}
       {measuring ? (
         <p className="mb-4 text-xs text-muted" role="status">
           Measuring every node. This takes a few minutes.

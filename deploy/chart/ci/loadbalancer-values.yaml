@@ -67,3 +67,4 @@ podAnnotations:
 serviceAccount:
   annotations:
     example.org/role: panel
+updateCheck: false

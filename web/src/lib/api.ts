@@ -753,4 +753,17 @@ export interface NodeList {
   automatic?: string;
   measuring?: boolean;
   measured?: { at: string; failed?: string[]; error?: string };
+  /** A newer release than the one running, for the panel's administrator. */
+  update?: ReleaseUpdate;
+}
+
+export interface ReleaseUpdate {
+  /** Its tag, as v1.2.3. */
+  version: string;
+  /** The page that says what changed. */
+  notes: string;
+  /** What upgrades the panel, as it was installed, where that is known. */
+  command?: string;
+  /** The release's install.yaml, for a panel installed from one. */
+  manifest?: string;
 }

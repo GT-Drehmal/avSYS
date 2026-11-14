@@ -243,6 +243,8 @@ spec:
               value: "mc-"
             - name: AVSYS_INSTALL_CRDS
               value: "true"
+            - name: AVSYS_UPDATE_CHECK
+              value: "true"
           ports:
             - name: http
               containerPort: 8080

@@ -234,6 +234,8 @@ spec:
               value: "games-"
             - name: AVSYS_INSTALL_CRDS
               value: "false"
+            - name: AVSYS_UPDATE_CHECK
+              value: "false"
             - name: AVSYS_WORKSPACE_IMAGE
               value: "registry.example.org/avsys-workspace:sha-1234567"
             - name: AVSYS_GOOGLE_CLIENT_ID

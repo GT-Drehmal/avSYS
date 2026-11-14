@@ -8,6 +8,7 @@ require (
 	github.com/pkg/sftp v1.13.11
 	github.com/restic/rest-server v0.14.0
 	golang.org/x/crypto v0.58.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/oauth2 v0.37.0
 	gopkg.in/evanphx/json-patch.v4 v4.13.0
 	k8s.io/api v0.37.1

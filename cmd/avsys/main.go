@@ -43,6 +43,7 @@ import (
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/kube"
+	"github.com/GT-Drehmal/avSYS/internal/release"
 	"github.com/GT-Drehmal/avSYS/internal/router"
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
@@ -80,6 +81,7 @@ type options struct {
 	podDial             string
 	allowSignups        bool
 	installCRDs         bool
+	updateCheck         bool
 }
 
 // env returns the value of AVSYS_<NAME> for a flag called name, or fallback.
@@ -127,6 +129,7 @@ func parseFlags() options {
 	str(&o.podDial, "pod-dial", "auto", "how to reach pods: direct, forward (through the API server), or auto")
 	flag.BoolVar(&o.allowSignups, "allow-signups", env("allow-signups", "") == "true", "let anyone create an account without an invite")
 	flag.BoolVar(&o.installCRDs, "install-crds", env("install-crds", "true") == "true", "install or upgrade the MinecraftServer CRD on startup")
+	flag.BoolVar(&o.updateCheck, "update-check", env("update-check", "true") == "true", "ask GitHub every few hours whether a newer release is out, to tell the instance administrator (a build of a commit never asks)")
 	flag.Parse()
 	o.publicURL = strings.TrimRight(o.publicURL, "/")
 	o.packURL = strings.TrimRight(o.packURL, "/")
@@ -322,6 +325,7 @@ func run(opts options, log *slog.Logger) error {
 			PackDir:         filepath.Join(opts.dataDir, "packs"),
 			PackURL:         opts.packURL,
 			PackCache:       int64(opts.packCache) << 20,
+			RouterService:   routerService(),
 		},
 		Store:   st,
 		Client:  mgr.GetClient(),
@@ -335,6 +339,15 @@ func run(opts options, log *slog.Logger) error {
 		Static:  staticFiles(opts.webDir, log),
 	}
 	gateway.Authz = server
+	if opts.updateCheck {
+		server.Updates = &release.Checker{Current: version, Log: log.With("component", "release")}
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			server.Updates.Run(ctx)
+			return nil
+		})); err != nil {
+			return err
+		}
+	}
 
 	informer, err := mgr.GetCache().GetInformer(ctx, &avsysv1.MinecraftServer{})
 	if err != nil {

@@ -256,6 +256,8 @@ spec:
               value: "mc-"
             - name: AVSYS_INSTALL_CRDS
               value: "true"
+            - name: AVSYS_UPDATE_CHECK
+              value: "true"
             - name: AVSYS_GITHUB_CLIENT_ID
               value: "github-id"
             - name: AVSYS_GITHUB_CLIENT_SECRET
