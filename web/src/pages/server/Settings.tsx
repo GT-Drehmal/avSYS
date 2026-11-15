@@ -443,7 +443,7 @@ export function Settings() {
         </Field>
       </Section>
 
-      <Section title="World" description="Replace the world with one you have, as a .zip or .tar.gz.">
+      <Section title="World" description="Replace the world with a new one, one from the library, or one you upload.">
         <ReplaceWorld server={server} />
       </Section>
 

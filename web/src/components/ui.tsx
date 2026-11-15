@@ -321,6 +321,8 @@ export function Confirm({ open, onOpenChange, title, description, action, typeTo
         className="flex flex-col gap-4"
         onSubmit={(e) => {
           e.preventDefault();
+          // Opened from within another form, as React sees it: that one is not sent with it.
+          e.stopPropagation();
           if (ready) onConfirm();
         }}
       >

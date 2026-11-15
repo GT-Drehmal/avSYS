@@ -60,6 +60,8 @@ async function packServer(page: Page, api: Api, org: string, name: string, game:
   await page.route(`**/api/v1/orgs/${org}/servers/${name}`, async (route) =>
     route.request().method() === "GET" ? route.fulfill({ json: withPack(await (await route.fetch()).json()) }) : route.fallback(),
   );
+  // The panel's own word of it, which knows nothing of the pack, is not heard.
+  await page.route("**/api/v1/events?*", (route) => route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: "event: waiting\ndata: null\n\n" }));
 }
 
 /** Picks the fixtures' Adventure Pack as the modpack of a new server or template. */
@@ -69,8 +71,14 @@ async function pickPack(page: Page) {
   await expect(page.getByText("modrinth:adventure-pack")).toBeVisible();
 }
 
-test.beforeEach(async ({ as }) => {
+test.beforeEach(async ({ as, page }) => {
   await as("owner");
+  // Archives are sent in parts, which the panel would keep: all of each is taken.
+  await page.route(/\/api\/v1\/orgs\/[^/]+\/servers\/[^/]+\/import\/upload/, (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === "GET") return route.fulfill({ json: { received: 0 } });
+    return route.fulfill({ json: { received: Number(url.searchParams.get("offset")) + Number(url.searchParams.get("length")) } });
+  });
 });
 
 test("a new modpack server starts with a world from the library, checked against the pack's game, with the world's picture", async ({ page, org, api }) => {
@@ -127,6 +135,8 @@ test("a server's archive keeps the world in it, unless given a new one or anothe
   await library(page, slug);
   const archive = zip({ "MyServer/server.properties": "motd=Old\nlevel-seed=5\n", "MyServer/world/level.dat": levelDat("1.21.4"), "MyServer/paper-1.21.4-151.jar": "jar" });
   const imports: URLSearchParams[] = [];
+  // A world's picture goes on once its files are in, and starts it.
+  await page.route(`**/api/v1/orgs/${slug}/servers/*/icon?*`, (route) => route.fulfill({ status: 204 }));
   await page.route(`**/api/v1/orgs/${slug}/servers/*/import?*`, async (route) => {
     const url = new URL(route.request().url());
     imports.push(url.searchParams);
@@ -245,6 +255,8 @@ test("a stopped server's world is replaced with a new one, made as asked", async
     sent = { query: Object.fromEntries(new URL(route.request().url()).searchParams), body: route.request().postDataJSON() };
     await route.fulfill({ status: 202, json: await api("owner").get(`/orgs/${slug}/servers/pack`) });
   });
+  const patched: string[] = [];
+  page.on("request", (r) => r.method() === "PATCH" && patched.push(r.url()));
   await page.goto(`/o/${slug}/s/pack/settings`);
   await page.getByRole("button", { name: "Replace the world" }).click();
   const dialog = page.getByRole("dialog", { name: "Replace the world?" });
@@ -259,6 +271,8 @@ test("a stopped server's world is replaced with a new one, made as asked", async
     query: { world: "new", replace: "true" },
     body: { properties: { "level-seed": "42", "level-type": "amplified", "generate-structures": "false", hardcore: null } },
   });
+  // The server's settings around it are not saved with it.
+  expect(patched).toEqual([]);
 });
 
 test("a modpack server's world replaced with one newer than the pack's game is asked about first", async ({ page, org, api }) => {
@@ -270,6 +284,8 @@ test("a modpack server's world replaced with one newer than the pack's game is a
     sent = new URL(route.request().url()).searchParams;
     await route.fulfill({ status: 202, json: await api("owner").get(`/orgs/${slug}/servers/pack`) });
   });
+  const patched: string[] = [];
+  page.on("request", (r) => r.method() === "PATCH" && patched.push(r.url()));
   await page.goto(`/o/${slug}/s/pack/settings`);
   await page.getByRole("button", { name: "Replace the world" }).click();
   const dialog = page.getByRole("dialog", { name: "Replace the world?" });
@@ -280,6 +296,7 @@ test("a modpack server's world replaced with one newer than the pack's game is a
   await page.getByRole("dialog", { name: "Open a 1.21.5 world in 1.21.4?" }).getByRole("button", { name: "Replace the world anyway" }).click();
   await expect(dialog).toHaveCount(0);
   expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", replace: "true", library: "w1", newerWorld: "true" });
+  expect(patched).toEqual([]);
 });
 
 test("a modpack put on a version built for an older game than its world is asked about first", async ({ page, org, api }) => {

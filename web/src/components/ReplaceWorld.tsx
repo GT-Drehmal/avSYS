@@ -136,6 +136,9 @@ export function ReplaceWorld({ server }: { server: Server }) {
           className="flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
+            // Shown over the server's settings, whose own form it is within
+            // as React sees it: those are not saved with it.
+            e.stopPropagation();
             void replace();
           }}
         >
