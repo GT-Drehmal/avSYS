@@ -42,6 +42,9 @@ for module in $MODULES; do
 done
 # shellcheck disable=SC2086 # one argument each
 [ -z "$raise" ] || go get $raise
+# go get records the sums only of what it loaded itself; the build needs
+# them for every package it compiles, under its own tags.
+[ -z "$raise" ] || go mod tidy
 
 # As restic's releases are built (helpers/build-release-binaries), but
 # without its self-update command, which has no place in an image. The
