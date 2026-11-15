@@ -50,9 +50,11 @@ func pngOf(t *testing.T, side int) string {
 // (in parts, as asked, unless whole is set), and its projects. It counts
 // what it is asked.
 type modrinthStandIn struct {
-	mu       sync.Mutex
-	pack     []byte
-	whole    bool
+	mu    sync.Mutex
+	pack  []byte
+	whole bool
+	// broken fails each part of the pack asked for after its end.
+	broken   bool
 	asked    map[string]int
 	sent     int
 	versions map[string]string
@@ -78,6 +80,10 @@ func (m *modrinthStandIn) RoundTrip(r *http.Request) (*http.Response, error) {
 	case strings.HasPrefix(u, "https://cdn.modrinth.com/") && strings.HasSuffix(u, ".mrpack"):
 		if m.whole {
 			r.Header.Del("Range")
+		}
+		if m.broken && !strings.HasPrefix(r.Header.Get("Range"), "bytes=-") {
+			rec.WriteHeader(http.StatusBadGateway)
+			break
 		}
 		http.ServeContent(rec, r, "", time.Time{}, bytes.NewReader(m.pack))
 		m.sent += rec.Body.Len()
@@ -135,7 +141,8 @@ func TestUploadedModpackContents(t *testing.T) {
 	p := newPanel(t)
 	standIn := &modrinthStandIn{asked: map[string]int{}}
 	p.srv.catalog.http.Transport = standIn
-	sc, file := packedServer(p, "packed", mrpack(t, packedIndex, map[string]string{"overrides/icon.png": pngOf(t, 128), "overrides/config/a.toml": "x"}))
+	pack := mrpack(t, packedIndex, map[string]string{"overrides/icon.png": pngOf(t, 128), "overrides/config/a.toml": "x"})
+	sc, file := packedServer(p, "packed", pack)
 
 	code, files := contentsOf(p, "viewer", "packed")
 	if code != 200 {
@@ -160,6 +167,25 @@ func TestUploadedModpackContents(t *testing.T) {
 	}
 	if rec := p.send("viewer", "GET", "/orgs/alpha/servers/packed/modpack/icon", nil); rec.Code != 200 {
 		t.Errorf("icon not kept: %d", rec.Code)
+	}
+
+	// Another server's file of the same name is read for itself: anyone
+	// with that server's files can change it.
+	other, otherFile := packedServer(p, "other", pack)
+	if err := other.Remove(otherFile); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := other.Create(otherFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = changed.Write(mrpack(t, strings.Replace(packedIndex, "resourcepacks/faithful.zip", "resourcepacks/other.zip", 1), nil))
+	changed.Close()
+	if _, files := contentsOf(p, "viewer", "other"); len(files) != 3 || files[2].Path != "resourcepacks/other.zip" {
+		t.Errorf("another server's: %+v", files)
+	}
+	if rec := p.send("viewer", "GET", "/orgs/alpha/servers/other/modpack/icon", nil); rec.Code != 404 {
+		t.Errorf("another server's icon: %d", rec.Code)
 	}
 
 	// Only to those who may see the server.
@@ -192,7 +218,6 @@ func TestUnreadableModpackContents(t *testing.T) {
 		t.Errorf("no picture: %d", rec.Code)
 	}
 
-	// Another pack: what is read is kept by the file.
 	pack := mrpack(t, packedIndex, map[string]string{"later": "1"})
 	sc, file := packedServer(p, "later", pack)
 	if err := sc.Remove(file); err != nil {
@@ -295,10 +320,28 @@ func TestModrinthModpackContents(t *testing.T) {
 		}
 	}
 
+	// A part of the pack that cannot be fetched lists nothing for now,
+	// and is fetched again next time.
+	p := newPanel(t)
+	standIn := &modrinthStandIn{asked: map[string]int{}, pack: pack, broken: true, versions: map[string]string{
+		"VERSION1": `{"id":"VERSION1","files":[{"url":"https://cdn.modrinth.com/data/PACKPROJ/versions/VERSION1/probe.mrpack","primary":true}]}`,
+	}}
+	p.srv.catalog.http.Transport = standIn
+	modrinthPacked(p, "pack", "VERSION1")
+	if code, files := contentsOf(p, "viewer", "pack"); code != 200 || len(files) != 0 {
+		t.Errorf("broken: %d %+v", code, files)
+	}
+	standIn.mu.Lock()
+	standIn.broken = false
+	standIn.mu.Unlock()
+	if _, files := contentsOf(p, "viewer", "pack"); len(files) != 3 {
+		t.Errorf("not fetched again: %+v", files)
+	}
+
 	// A version Modrinth does not have, or whose file is elsewhere, lists
 	// nothing.
-	p := newPanel(t)
-	standIn := &modrinthStandIn{asked: map[string]int{}, pack: pack, versions: map[string]string{
+	p = newPanel(t)
+	standIn = &modrinthStandIn{asked: map[string]int{}, pack: pack, versions: map[string]string{
 		"ELSEWHER": `{"id":"ELSEWHER","files":[{"url":"https://example.com/probe.mrpack","primary":true}]}`,
 	}}
 	p.srv.catalog.http.Transport = standIn

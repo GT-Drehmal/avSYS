@@ -117,7 +117,6 @@ export function PackContents({ server }: { server: Server }) {
     queryKey: ["modpack-contents", server.org, server.name, pack?.source, pack?.version],
     queryFn: () => api.get<{ files: Omit<PackFile, "name">[] }>(`${serverPath(server.org, server.name)}/modpack/contents`),
     enabled: !!pack?.version,
-    staleTime: Infinity,
     retry: false,
   });
   const files = (contents.data?.files ?? []).map((f) => ({ ...f, name: f.path.slice(f.path.lastIndexOf("/") + 1) }));

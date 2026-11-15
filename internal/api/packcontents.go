@@ -56,9 +56,33 @@ var packIcons = []string{"server-overrides/server-icon.png", "overrides/server-i
 // first part.
 var modrinthCDNFile = regexp.MustCompile(`^https://cdn\.modrinth\.com/data/([A-Za-z0-9]{8})/`)
 
-// readPackZip reads a pack's index and picture. A pack that cannot be read
-// lists nothing.
-func readPackZip(r io.ReaderAt, size int64) *modpackRead {
+// readPackZip reads a pack's index and picture. A pack that is not one
+// lists nothing. A failure to read the file itself, as of the connection it
+// is read over, is said, so that what was read is not kept.
+func readPackZip(r io.ReaderAt, size int64) (*modpackRead, error) {
+	watched := &watchedReader{r: r}
+	read := readPackFrom(watched, size)
+	if watched.err != nil {
+		return nil, watched.err
+	}
+	return read, nil
+}
+
+// watchedReader keeps the first failure of its reader other than its end.
+type watchedReader struct {
+	r   io.ReaderAt
+	err error
+}
+
+func (w *watchedReader) ReadAt(p []byte, off int64) (int, error) {
+	n, err := w.r.ReadAt(p, off)
+	if err != nil && err != io.EOF && w.err == nil {
+		w.err = err
+	}
+	return n, err
+}
+
+func readPackFrom(r io.ReaderAt, size int64) *modpackRead {
 	out := &modpackRead{files: []packEntry{}}
 	zr, err := zip.NewReader(r, size)
 	if err != nil {
@@ -116,8 +140,9 @@ func readPackZip(r io.ReaderAt, size int64) *modpackRead {
 	return out
 }
 
-// packReads holds what was read of each pack, by the pack: its SHA-1 or its
-// Modrinth version.
+// packReads holds what was read of each pack, by the pack: an uploaded one
+// by its server and SHA-1, as anyone with the server's files can change the
+// file; one from Modrinth by its version.
 type packReads struct {
 	mu    sync.Mutex
 	packs map[string]*modpackRead
@@ -155,7 +180,7 @@ func (s *Server) readModpack(ctx context.Context, mc *avsysv1.MinecraftServer) (
 	var key string
 	switch {
 	case p.UploadedFile() != "":
-		key = "upload:" + p.Version
+		key = "upload:" + mc.Namespace + "/" + mc.Name + ":" + p.Version
 	case p.Source == avsysv1.SourceModrinth && p.Version != "":
 		key = "modrinth:" + p.Version
 	default:
@@ -206,7 +231,8 @@ func (s *Server) readUploadedPack(ctx context.Context, mc *avsysv1.MinecraftServ
 			done <- result{err: err}
 			return
 		}
-		done <- result{read: readPackZip(f, info.Size())}
+		read, err := readPackZip(f, info.Size())
+		done <- result{read: read, err: err}
 	}()
 	select {
 	case r := <-done:
@@ -232,7 +258,7 @@ func (s *Server) readModrinthPack(ctx context.Context, version string) (*modpack
 		return nil, err
 	}
 	defer done()
-	return readPackZip(r, size), nil
+	return readPackZip(r, size)
 }
 
 // remoteZipBlock is the least fetched at a time, and remoteZipMost the most
