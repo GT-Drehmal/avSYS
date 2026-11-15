@@ -34,7 +34,10 @@ type Config struct {
 	WorkspaceAuthorizedKeys string
 	// RouterPublicPort is the port players reach the router on, when not 25565.
 	RouterPublicPort int
-	CurseForgeAPIKey string
+	// CurseForgeKey is the CurseForge API key servers that install from
+	// CurseForge are given, as it is now: it can change while the panel
+	// runs. Nil, or "", is none.
+	CurseForgeKey func(context.Context) string
 	// PortRange is the public ports given out to the extra ports of
 	// servers that share the router's address.
 	PortRange PortRange
@@ -98,6 +101,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	if err := r.ensureRCONSecret(ctx, mc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("rcon secret: %w", err)
+	}
+	if UsesCurseForge(&mc.Spec) {
+		key := ""
+		if r.Config.CurseForgeKey != nil {
+			key = r.Config.CurseForgeKey(ctx)
+		}
+		if err := EnsureCurseForgeSecret(ctx, r.Client, mc.Namespace, key); err != nil {
+			return ctrl.Result{}, fmt.Errorf("curseforge secret: %w", err)
+		}
 	}
 	if target := mc.Annotations[avsysv1.AnnotationMoving]; target != "" {
 		waiting, err := r.moveVolume(ctx, mc, target)

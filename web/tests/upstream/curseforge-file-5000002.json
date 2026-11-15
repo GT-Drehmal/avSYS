@@ -1,0 +1,30 @@
+{
+ "data": {
+  "id": 5000002,
+  "gameId": 432,
+  "modId": 715572,
+  "isAvailable": true,
+  "displayName": "Server Files 1.0.0",
+  "fileName": "Server Files 1.0.0",
+  "releaseType": 1,
+  "fileStatus": 4,
+  "hashes": [
+   {
+    "value": "00000000000000000000000000000000004c4b42",
+    "algo": 1
+   }
+  ],
+  "fileDate": "2026-09-02T00:00:00Z",
+  "fileLength": 123456,
+  "downloadCount": 10,
+  "downloadUrl": "https://edge.forgecdn.net/files/5000/2/server.zip",
+  "gameVersions": [
+   "1.21.4"
+  ],
+  "sortableGameVersions": [],
+  "dependencies": [],
+  "alternateFileId": 0,
+  "isServerPack": true,
+  "fileFingerprint": 5000002
+ }
+}

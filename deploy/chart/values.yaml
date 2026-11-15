@@ -140,8 +140,10 @@ signups: false
 # administrator.
 passwords: true
 
-# Passed to servers for CurseForge downloads: here, or as the key api-key in
-# an existing Secret.
+# CurseForge's API key, for finding and installing mods and modpacks from
+# CurseForge: as the key api-key in an existing Secret, or here. With
+# neither, it is read from the Secret avsys-curseforge if there is one, or
+# can be entered in the panel, under Nodes.
 curseforge:
   apiKey: ""
   existingSecret: ""

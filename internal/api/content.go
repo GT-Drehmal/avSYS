@@ -409,10 +409,14 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	if pack := spec.Modpack; pack != nil && pack.Source == avsysv1.SourceModrinth {
-		unchanged := previous != nil && previous.Modpack != nil && previous.Modpack.Project == pack.Project && previous.Modpack.Version == pack.Version
+	if pack := spec.Modpack; pack != nil && (pack.Source == avsysv1.SourceModrinth || pack.Source == avsysv1.SourceCurseForge) {
+		unchanged := previous != nil && previous.Modpack != nil && previous.Modpack.Source == pack.Source && previous.Modpack.Project == pack.Project && previous.Modpack.Version == pack.Version
 		if !unchanged || pack.GameVersion == "" || pack.Version == "" {
-			if err := s.pinModpack(ctx, pack); err != nil {
+			pin := s.pinModpack
+			if pack.Source == avsysv1.SourceCurseForge {
+				pin = s.pinCurseForgeModpack
+			}
+			if err := pin(ctx, pack); err != nil {
 				return err
 			}
 		}
@@ -440,8 +444,8 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		switch m.Source {
 		case avsysv1.SourceURL:
 			return "url:" + m.Project
-		case avsysv1.SourceModrinth:
-			return "modrinth:" + m.Project + "@" + m.Version
+		case avsysv1.SourceModrinth, avsysv1.SourceCurseForge:
+			return string(m.Source) + ":" + m.Project + "@" + m.Version
 		}
 		return ""
 	}
@@ -464,7 +468,7 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 			continue
 		}
 		switch m.Source {
-		case avsysv1.SourceModrinth:
+		case avsysv1.SourceModrinth, avsysv1.SourceCurseForge:
 			if retarget {
 				m.Version, m.VersionName, m.Java, m.File = "", "", 0, ""
 			}
@@ -496,6 +500,8 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 				if java, ierr := javaOfURL(ctx, m.Project); ierr == nil {
 					m.Java = int32(java)
 				}
+			} else if m.Source == avsysv1.SourceCurseForge {
+				err = s.pinCurseForge(ctx, m, t)
 			} else {
 				err = s.pin(ctx, m, t)
 			}
@@ -904,8 +910,10 @@ func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 		if asDatapack[key] {
 			continue
 		}
-		// The image removes what it installed from Modrinth itself.
-		if m.Source != avsysv1.SourceURL && m.Source != avsysv1.SourceUpload {
+		// The image removes what it installed from Modrinth itself; a
+		// datapack from CurseForge it was given the address of, as one
+		// from a URL.
+		if m.Source != avsysv1.SourceURL && m.Source != avsysv1.SourceUpload && m.Source != avsysv1.SourceCurseForge {
 			continue
 		}
 		if name := installedDatapack(m); name != "" && was != "" && now != "" {
@@ -928,7 +936,7 @@ func installedDatapack(m avsysv1.ContentRef) string {
 	switch m.Source {
 	case avsysv1.SourceUpload:
 		return path.Base(m.Project)
-	case avsysv1.SourceModrinth:
+	case avsysv1.SourceModrinth, avsysv1.SourceCurseForge:
 		if plainName(m.File) {
 			return m.File
 		}

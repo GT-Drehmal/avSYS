@@ -27,13 +27,15 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"], channel: process.env.CI ? undefined : "chrome" } },
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
   ],
-  // Three panels: one on a cluster with no metrics API and no offsite copy,
-  // which most tests use, one with a metrics API and two nodes, and one that
-  // copies snapshots offsite (tests/panel.ts, withMetrics and withOffsite).
+  // Four panels: one on a cluster with no metrics API, no offsite copy and
+  // no CurseForge key, which most tests use, one with a metrics API and two
+  // nodes, one that copies snapshots offsite, and one installed with a
+  // CurseForge key (tests/panel.ts, withMetrics, withOffsite and withCurseForge).
   webServer: [
     { port, ready: ".panel.json", flags: "" },
     { port: port - 1, ready: ".panel-metrics.json", flags: " --metrics" },
     { port: port - 2, ready: ".panel-offsite.json", flags: " --offsite" },
+    { port: port - 3, ready: ".panel-curseforge.json", flags: " --curseforge-key uitest-curseforge-key" },
   ].map((p) => ({
     // CI builds the panel first and names it here; otherwise it is compiled on the way.
     command: `${process.env.AVSYS_UITEST ?? "go run ../cmd/avsys-uitest"} --listen 127.0.0.1:${p.port} --web-dir dist --upstream tests/upstream --ready tests/${p.ready}${p.flags}`,

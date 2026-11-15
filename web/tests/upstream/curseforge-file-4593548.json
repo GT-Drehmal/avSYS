@@ -1,0 +1,31 @@
+{
+ "data": {
+  "id": 4593548,
+  "gameId": 432,
+  "modId": 238222,
+  "isAvailable": true,
+  "displayName": "jei-1.20.1-forge-15.2.0.27.jar",
+  "fileName": "jei-1.20.1-forge-15.2.0.27.jar",
+  "releaseType": 1,
+  "fileStatus": 4,
+  "hashes": [
+   {
+    "value": "000000000000000000000000000000000046178c",
+    "algo": 1
+   }
+  ],
+  "fileDate": "2023-06-24T10:00:00Z",
+  "fileLength": 123456,
+  "downloadCount": 10,
+  "downloadUrl": "https://files.invalid/4593548/jei-1.20.1-forge-15.2.0.27.jar",
+  "gameVersions": [
+   "1.20.1",
+   "Forge"
+  ],
+  "sortableGameVersions": [],
+  "dependencies": [],
+  "alternateFileId": 0,
+  "isServerPack": false,
+  "fileFingerprint": 4593548
+ }
+}

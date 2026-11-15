@@ -63,8 +63,9 @@ func main() {
 	metrics := flag.Bool("metrics", false, "stand in a metrics API, and two nodes for it to answer for")
 	offsite := flag.Bool("offsite", false, "copy snapshots offsite, with the older ones of the first organization there already")
 	fresh := flag.Bool("fresh", false, "seed nothing: a panel just installed, waiting for its first account")
+	curseForge := flag.String("curseforge-key", "", "a CurseForge API key the panel is installed with: CurseForge is offered, and answered from --upstream")
 	flag.Parse()
-	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *offsite, *fresh); err != nil {
+	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *offsite, *fresh, *curseForge); err != nil {
 		fmt.Fprintln(os.Stderr, "avsys-uitest:", err)
 		os.Exit(1)
 	}
@@ -73,7 +74,7 @@ func main() {
 // password is the one every seeded person signs in with.
 const password = "correct horse battery staple"
 
-func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite, fresh bool) error {
+func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite, fresh bool, curseForgeKey string) error {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	dir, err := os.MkdirTemp("", "avsys-uitest-")
@@ -116,7 +117,8 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 			// Installed with the chart: see the Service below.
 			RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"},
 			// Its own Deployment, which it can move to a newer release.
-			Deployment: types.NamespacedName{Namespace: "avsys", Name: "avsys"}},
+			Deployment:    types.NamespacedName{Namespace: "avsys", Name: "avsys"},
+			CurseForgeKey: curseForgeKey},
 		Store:  db,
 		Client: cluster,
 		Reader: cluster,

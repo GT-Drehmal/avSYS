@@ -1,0 +1,26 @@
+{
+  "data": [
+    {
+      "id": 5100001,
+      "gameId": 432,
+      "modId": 900001,
+      "isAvailable": true,
+      "displayName": "Hand Only 1.0",
+      "fileName": "handonly-1.0.jar",
+      "releaseType": 1,
+      "fileStatus": 4,
+      "hashes": [{"value": "5555555555555555555555555555555555555555", "algo": 1}],
+      "fileDate": "2024-01-01T00:00:00Z",
+      "fileLength": 50000,
+      "downloadCount": 10,
+      "downloadUrl": null,
+      "gameVersions": ["1.20.1", "Forge"],
+      "sortableGameVersions": [],
+      "dependencies": [],
+      "alternateFileId": 0,
+      "isServerPack": false,
+      "fileFingerprint": 1
+    }
+  ],
+  "pagination": {"index": 0, "pageSize": 50, "resultCount": 1, "totalCount": 1}
+}

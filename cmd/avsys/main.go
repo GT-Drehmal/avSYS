@@ -345,6 +345,8 @@ func run(opts options, log *slog.Logger) error {
 		}
 		standIn = &router.StandIn{Client: mgr.GetClient(), Log: log.With("component", "stand-in"), IP: opts.podIP}
 	}
+	// The install's CurseForge API key. One entered in the panel goes before it.
+	curseForgeKey := strings.TrimSpace(os.Getenv("AVSYS_CURSEFORGE_API_KEY"))
 	if err := (&controller.Reconciler{
 		Client: mgr.GetClient(),
 		Reader: mgr.GetAPIReader(),
@@ -354,7 +356,7 @@ func run(opts options, log *slog.Logger) error {
 			WorkspaceImagePullPolicy: corev1.PullPolicy(opts.workspacePull),
 			WorkspaceAuthorizedKeys:  string(ssh.MarshalAuthorizedKey(workspaceKey.PublicKey())),
 			RouterPublicPort:         opts.routerPort,
-			CurseForgeAPIKey:         os.Getenv("AVSYS_CURSEFORGE_API_KEY"),
+			CurseForgeKey:            func(ctx context.Context) string { return api.CurseForgeKey(ctx, st, curseForgeKey) },
 			PortRange:                portRange,
 			PortsServiceAnnotations:  annotationsOf(opts.extraPortsNotes),
 			RouterService:            routerService(),
@@ -420,6 +422,7 @@ func run(opts options, log *slog.Logger) error {
 			PackDir:         filepath.Join(opts.dataDir, "packs"),
 			PackURL:         opts.packURL,
 			PackCache:       int64(opts.packCache) << 20,
+			CurseForgeKey:   curseForgeKey,
 			RouterService:   routerService(),
 			Deployment:      selfDeployment(),
 		},

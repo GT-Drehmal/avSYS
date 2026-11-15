@@ -11,6 +11,7 @@ import { ArchiveError } from "../../lib/archive";
 import { softwareWords } from "../../lib/format";
 import { inspectPack } from "../../lib/mrpack";
 import { newerThan, pinnedOf } from "../../lib/worlds";
+import { isCatalog, useSources, versionsKey } from "../../lib/catalog";
 import { applyServer, keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
@@ -21,6 +22,8 @@ export function Mods() {
   const { server, role } = useServerContext();
   const update = useUpdateServer(server.org, server.name);
   const qc = useQueryClient();
+  // Versions are looked up where the content is from, while the panel can.
+  const sources = useSources();
   const [adding, setAdding] = useState<PickKind | null>(null);
   // The pack there is being replaced, rather than another put on top of it.
   const [replacing, setReplacing] = useState(false);
@@ -96,7 +99,7 @@ export function Mods() {
     if (!modpack) return;
     // The best fit is the version the panel pins for none picked, from the
     // list the picker showed.
-    const pinned = v ?? pinnedOf(qc.getQueryData<ModrinthVersion[]>(["modrinth-versions", modpack.project, {}]), undefined);
+    const pinned = v ?? (isCatalog(modpack.source) ? pinnedOf(qc.getQueryData<ModrinthVersion[]>(versionsKey(modpack.source, modpack.project, {})), undefined) : undefined);
     const game = pinned?.game_versions.at(-1);
     if (pinned && game && !sure && newerThan(order, ranOn, game)) return setOlderPack({ version: v, game, name: pinned.version_number });
     setOlderPack(null);
@@ -119,7 +122,7 @@ export function Mods() {
                 </p>
               )}
             </div>
-            {modpack.source === "modrinth" && (
+            {isCatalog(modpack.source) && sources.includes(modpack.source) && (
               <Button size="sm" disabled={!canEdit} onClick={() => setVersioning("modpack")}>
                 {modpack.versionName || "Newest release"}
               </Button>
@@ -184,7 +187,7 @@ export function Mods() {
                 note={(m) => modPortsNote(m, server.spec.ports)}
                 onRemove={canEdit ? (j) => update.mutate({ mods: mods.filter((_, i) => i !== at[j]) }) : undefined}
                 extra={(m, j) =>
-                  m.source === "modrinth" && (
+                  isCatalog(m.source) && sources.includes(m.source) && (
                     <Button size="sm" disabled={!canEdit} onClick={() => setVersioning(at[j])} className="max-w-40">
                       <span className="truncate">{m.versionName || "Newest"}</span>
                     </Button>
@@ -238,6 +241,7 @@ export function Mods() {
       )}
       {versioning === "pack" && server.spec.resourcePack?.project && (
         <VersionDialog
+          source={server.spec.resourcePack.project.source}
           title={server.spec.resourcePack.project.title || server.spec.resourcePack.project.id}
           project={server.spec.resourcePack.project.id}
           current={server.spec.resourcePack.project.version}
@@ -264,6 +268,7 @@ export function Mods() {
       )}
       {versionTarget && typeof versioning === "number" && (
         <VersionDialog
+          source={isCatalog(versionTarget.source) ? versionTarget.source : undefined}
           title={versionTarget.title || versionTarget.project}
           project={versionTarget.project}
           current={versionTarget.version}
@@ -277,6 +282,7 @@ export function Mods() {
       )}
       {versioning === "modpack" && modpack && (
         <VersionDialog
+          source={isCatalog(modpack.source) ? modpack.source : undefined}
           title={modpack.title || modpack.project}
           project={modpack.project}
           current={modpack.version}
@@ -320,6 +326,7 @@ function PackSection({
 }: { quiet: boolean; server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void; suggest?: ReactNode }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
+  const sources = useSources();
   // An uploaded one takes its file with it, which only this does.
   const remove = useAction(() => api.del<Server>(`${serverPath(server.org, server.name)}/resource-pack`));
   const stack = pack?.stack?.length ? pack.stack : null;
@@ -361,7 +368,7 @@ function PackSection({
             />
           ) : (
           <PackCard pack={pack} showKind={false}>
-            {pack.project && (
+            {pack.project && sources.includes(pack.project.source) && (
               <Button size="sm" disabled={!canEdit || busy} onClick={onVersion} className="max-w-40">
                 <span className="truncate">{pack.project.versionName || "Version"}</span>
               </Button>

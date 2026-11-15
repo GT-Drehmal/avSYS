@@ -1,0 +1,49 @@
+{
+ "data": [
+  {
+   "id": 300001,
+   "gameId": 432,
+   "name": "Stay True",
+   "slug": "stay-true",
+   "links": {
+    "websiteUrl": "https://www.curseforge.com/minecraft/texture-packs/stay-true",
+    "wikiUrl": "",
+    "issuesUrl": "",
+    "sourceUrl": ""
+   },
+   "summary": "A vanilla-like resource pack",
+   "status": 4,
+   "downloadCount": 800000,
+   "isFeatured": false,
+   "primaryCategoryId": 0,
+   "categories": [],
+   "classId": 12,
+   "authors": [
+    {
+     "id": 1,
+     "name": "haysay",
+     "url": ""
+    }
+   ],
+   "logo": null,
+   "screenshots": [],
+   "mainFileId": 0,
+   "latestFiles": [],
+   "latestFilesIndexes": [],
+   "latestEarlyAccessFilesIndexes": [],
+   "dateCreated": "2020-01-01T00:00:00Z",
+   "dateModified": "2026-09-01T10:00:00Z",
+   "dateReleased": "2026-09-01T10:00:00Z",
+   "allowModDistribution": true,
+   "gamePopularityRank": 1,
+   "isAvailable": true,
+   "thumbsUpCount": 0
+  }
+ ],
+ "pagination": {
+  "index": 0,
+  "pageSize": 24,
+  "resultCount": 1,
+  "totalCount": 1
+ }
+}

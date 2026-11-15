@@ -18,6 +18,11 @@ export interface PackFile {
   slug?: string;
   title?: string;
   iconUrl?: string;
+  /** "curseforge" for a file of a pack from CurseForge: project and version are its IDs there, and page its project's page. */
+  source?: "curseforge";
+  page?: string;
+  /** Its author allows downloads only on CurseForge itself, so it is put in by hand. */
+  manual?: boolean;
 }
 
 export interface FoundPack {

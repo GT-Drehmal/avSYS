@@ -172,6 +172,15 @@ spec:
                 secretKeyRef:
                   name: {{ include "avsys.secretName" . }}
                   key: curseforge-api-key
+            {{- else }}
+            # A key put in this Secret later is used from the next start;
+            # one can also be entered in the panel.
+            - name: AVSYS_CURSEFORGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: avsys-curseforge
+                  key: api-key
+                  optional: true
             {{- end }}
             {{- with .Values.offsite }}
             {{- if .repository }}

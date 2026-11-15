@@ -44,6 +44,13 @@ type packEntry struct {
 	Slug    string `json:"slug,omitempty"`
 	Title   string `json:"title,omitempty"`
 	IconURL string `json:"iconUrl,omitempty"`
+	// Source is "curseforge" for a file of a pack from CurseForge, whose
+	// Project and Version are CurseForge's IDs, and Page its project's page.
+	Source string `json:"source,omitempty"`
+	Page   string `json:"page,omitempty"`
+	// Manual is set for a file whose author allows downloads of it only on
+	// CurseForge itself: it has to be put in by hand.
+	Manual bool `json:"manual,omitempty"`
 }
 
 // modpackRead is what is read of a pack: the files it lists and its picture.
@@ -186,6 +193,8 @@ func (s *Server) readModpack(ctx context.Context, mc *avsysv1.MinecraftServer) (
 		key = "upload:" + mc.Namespace + "/" + mc.Name + ":" + p.Version
 	case p.Source == avsysv1.SourceModrinth && p.Version != "":
 		key = "modrinth:" + p.Version
+	case p.Source == avsysv1.SourceCurseForge && p.Version != "":
+		key = "curseforge:" + p.Version
 	default:
 		return &modpackRead{files: []packEntry{}}, nil
 	}
@@ -196,9 +205,12 @@ func (s *Server) readModpack(ctx context.Context, mc *avsysv1.MinecraftServer) (
 	defer cancel()
 	var read *modpackRead
 	var err error
-	if p.Source == avsysv1.SourceUpload {
+	switch p.Source {
+	case avsysv1.SourceUpload:
 		read, err = s.readUploadedPack(ctx, mc)
-	} else {
+	case avsysv1.SourceCurseForge:
+		read, err = s.readCurseForgePack(ctx, p)
+	default:
 		read, err = s.readModrinthPack(ctx, p.Version)
 	}
 	if err != nil {
@@ -409,7 +421,7 @@ func (s *Server) modrinthProjectsOf(ctx context.Context, files []packEntry) map[
 	seen := map[string]bool{}
 	var ids []string
 	for _, f := range files {
-		if f.Project != "" && !seen[f.Project] {
+		if f.Source == "" && f.Project != "" && !seen[f.Project] {
 			seen[f.Project] = true
 			ids = append(ids, f.Project)
 		}
@@ -456,7 +468,7 @@ func (s *Server) getModpackContents(w http.ResponseWriter, r *http.Request, u *s
 	} else {
 		projects := s.modrinthProjectsOf(r.Context(), read.files)
 		for _, f := range read.files {
-			if p, ok := projects[f.Project]; ok {
+			if p, ok := projects[f.Project]; ok && f.Source == "" {
 				f.Slug, f.Title, f.IconURL = p.slug, p.title, p.icon
 			}
 			files = append(files, f)

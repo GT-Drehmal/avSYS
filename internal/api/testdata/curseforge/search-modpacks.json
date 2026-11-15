@@ -1,0 +1,33 @@
+{
+  "data": [
+    {
+      "id": 715572,
+      "gameId": 432,
+      "name": "All the Mods 9 - ATM9",
+      "slug": "all-the-mods-9",
+      "links": {"websiteUrl": "https://www.curseforge.com/minecraft/modpacks/all-the-mods-9", "wikiUrl": "", "issuesUrl": "", "sourceUrl": ""},
+      "summary": "All the mods 9 is the next in the All the Mods series",
+      "status": 4,
+      "downloadCount": 5600000,
+      "isFeatured": false,
+      "primaryCategoryId": 4472,
+      "categories": [{"id": 4472, "gameId": 432, "name": "Tech", "slug": "tech", "url": "", "iconUrl": "", "dateModified": "2014-05-08T17:44:39.433Z", "isClass": false, "classId": 4471, "parentCategoryId": 4471}],
+      "classId": 4471,
+      "authors": [{"id": 2, "name": "ATMTeam", "url": ""}],
+      "logo": {"id": 1, "modId": 715572, "title": "logo.png", "description": "", "thumbnailUrl": "https://media.forgecdn.net/avatars/thumbnails/1/1/256/256/atm9.png", "url": "https://media.forgecdn.net/avatars/1/1/atm9.png"},
+      "screenshots": [],
+      "mainFileId": 5000001,
+      "latestFiles": [],
+      "latestFilesIndexes": [],
+      "latestEarlyAccessFilesIndexes": [],
+      "dateCreated": "2023-07-01T00:00:00Z",
+      "dateModified": "2024-03-01T00:00:00Z",
+      "dateReleased": "2024-03-01T00:00:00Z",
+      "allowModDistribution": true,
+      "gamePopularityRank": 10,
+      "isAvailable": true,
+      "thumbsUpCount": 0
+    }
+  ],
+  "pagination": {"index": 0, "pageSize": 24, "resultCount": 1, "totalCount": 1}
+}

@@ -4,7 +4,7 @@ A Minecraft server panel that is native to Kubernetes. Built for GT Drehmal; not
 
 Each server is a `MinecraftServer` resource. avSYS turns it into a pod running [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server) with its own volume, and gives you a web UI, an API and SSH on top.
 
-- **Servers in a minute.** Pick a game version and loader (Vanilla, Paper, Fabric, Forge, NeoForge, Purpur, Quilt, Folia) or a Modrinth modpack. Set the game mode, difficulty, world type and seed before the world is generated. Add mods, plugins and datapacks from Modrinth, a URL, or a file on your computer.
+- **Servers in a minute.** Pick a game version and loader (Vanilla, Paper, Fabric, Forge, NeoForge, Purpur, Quilt, Folia) or a modpack from Modrinth or CurseForge. Set the game mode, difficulty, world type and seed before the world is generated. Add mods, plugins and datapacks from Modrinth, CurseForge, a URL, or a file on your computer.
 - **Your own tools.** `ssh <server>.<org>@panel` drops you in the server directory, authenticated by the SSH keys on your account. scp, sftp, rsync and VS Code Remote SSH work. There is also a terminal and a simple file editor in the browser.
 - **Organizations.** Each has its own members, roles, servers and namespace. People can belong to several. Sign in with a password, GitHub, Discord or Google; join by invite link. A password can have two-factor codes from an authenticator app, which an administrator can require of administrators. The Account page lists where you are signed in and signs any of it out; changing the password signs out the rest. Someone who forgot their password gets a one-time link from an administrator, from the organization's Members page.
 - **One address, many servers.** The built-in router sends players to the right server by the hostname they connect with, and can put idle servers to sleep and wake them when someone joins.
@@ -37,7 +37,7 @@ mc-gt-drehmal   drehmal    Sleeping  1.20.1    fabric             mc.example.com
 
 Content is resolved when you add it, not when the server starts:
 
-- Each Modrinth entry is **pinned** to one version. Restarts never change what is installed; you change a version from the server's Mods tab.
+- Each Modrinth or CurseForge entry is **pinned** to one version. Restarts never change what is installed; you change a version from the server's Mods tab.
 - The panel reads each file to see which **Java** it was compiled for, and picks the newest release that runs on the Java the game version ships with. A plugin can list a game version as supported and still need a newer Java; such a build downloads fine and then fails to load.
 - If nothing fits, or you pin a newer build yourself, the server's Java is raised to match. The server page shows the Java it runs on.
 - If a project has no build for the server's loader and game version, adding it fails with that message instead of a broken start.
@@ -137,7 +137,7 @@ The chart's values are in [`deploy/chart/values.yaml`](deploy/chart/values.yaml)
 | `persistence.data`, `persistence.backups` | Size and storage class of the database and snapshot volumes, or a claim of your own. |
 | `offsite.repository`, `offsite.existingSecret` | A second place every organization's snapshots are copied to, and the Secret with the password that opens them there. See [Offsite copy](#offsite-copy). |
 | `sshPublicHost` | Hostname shown in SSH instructions, if not the panel's. |
-| `curseforge.apiKey` | Passed to servers for CurseForge downloads. |
+| `curseforge.existingSecret`, `curseforge.apiKey` | A CurseForge API key, which finding and installing from CurseForge needs, as the key `api-key` in a Secret of your own (or the value itself). Without either, the Secret `avsys-curseforge` is read if there is one, and the instance administrator can enter a key on the Nodes page. With no key, CurseForge is not offered. |
 
 The panel itself takes flags, each of which can also be set as an environment variable: `--public-url` is `AVSYS_PUBLIC_URL`. Run `avsys --help` for the full list; the chart sets them from its values, and `extraEnv` passes any other.
 

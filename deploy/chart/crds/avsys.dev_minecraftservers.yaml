@@ -607,7 +607,7 @@ spec:
                     type: object
                   project:
                     description: |-
-                      Project is set for a pack picked from Modrinth: URL and SHA1 are of
+                      Project is set for a pack picked from Modrinth or CurseForge: URL and SHA1 are of
                       the file of the version picked.
                     properties:
                       iconUrl:
@@ -618,6 +618,7 @@ spec:
                       source:
                         enum:
                         - modrinth
+                        - curseforge
                         type: string
                       title:
                         type: string
@@ -687,6 +688,7 @@ spec:
                             source:
                               enum:
                               - modrinth
+                              - curseforge
                               type: string
                             title:
                               type: string
