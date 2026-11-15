@@ -278,3 +278,17 @@ export function SectionHead({ title, count, addLabel, onAdd, addDisabled, sub }:
     </div>
   );
 }
+
+/** A section with nothing in it, in one line beside its Add. */
+export function EmptySection({ text, addLabel, onAdd, addDisabled }: { text: string; addLabel: string; onAdd?: () => void; addDisabled?: boolean }) {
+  return (
+    <div className="flex min-h-8 items-center justify-between gap-3">
+      <p className="text-[13px] text-muted">{text}</p>
+      {onAdd && (
+        <Button size="sm" icon={<Plus className="size-4" />} onClick={onAdd} disabled={addDisabled} aria-label={addLabel}>
+          Add
+        </Button>
+      )}
+    </div>
+  );
+}
