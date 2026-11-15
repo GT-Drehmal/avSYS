@@ -15,6 +15,7 @@ import { PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
+import { LoaderBuildField } from "../../components/LoaderBuild";
 import { ReplaceWorld } from "../../components/ReplaceWorld";
 import { useServerContext } from "./ServerPage";
 
@@ -26,6 +27,8 @@ interface Draft {
   displayName: string;
   version: string;
   loader: Loader;
+  /** The loader build it is pinned to; empty for the newest. */
+  loaderVersion: string;
   memory: string;
   storage: string;
   exposeType: ExposeType;
@@ -69,6 +72,7 @@ function toDraft(spec: ServerSpec): Draft {
     displayName: spec.displayName ?? "",
     version: spec.version,
     loader: spec.loader,
+    loaderVersion: spec.loaderVersion ?? "",
     memory: toGigabytes(spec.resources.memory),
     storage: toGigabytes(spec.storage.size),
     exposeType: spec.expose.type,
@@ -124,10 +128,14 @@ function toPatch(d: Draft, current: ServerSpec, latest: string | undefined): Spe
   };
   for (const [k, v] of Object.entries(typed)) if (v !== "") properties[k] = v;
   Object.assign(properties, parseProperties(d.otherProperties));
+  const softwareChanged = d.version !== current.version || d.loader !== current.loader;
+  // A build is for one type and version: another of either drops it.
+  const build = d.loaderVersion.trim();
   return {
     displayName: d.displayName,
-    ...(d.version !== current.version || d.loader !== current.loader ? { version: d.version === "LATEST" && latest ? latest : d.version } : {}),
+    ...(softwareChanged ? { version: d.version === "LATEST" && latest ? latest : d.version } : {}),
     loader: d.loader,
+    ...(softwareChanged || build !== (current.loaderVersion ?? "") ? { loaderVersion: build || null } : {}),
     resources: { ...current.resources, memory: fromGigabytes(d.memory) },
     storage: { ...current.storage, size: fromGigabytes(d.storage) },
     expose: { type: d.exposeType, hostname: d.hostname.trim(), loadBalancerIP: d.loadBalancerIP.trim() },
@@ -187,6 +195,12 @@ export function Settings() {
   }, [saved]);
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
+  // The pinned build goes with the type and version it is for, and comes back with them.
+  const setSoftware = (change: Partial<Pick<Draft, "loader" | "version">>) =>
+    setDraft((d) => {
+      const next = { ...d, ...change };
+      return { ...next, loaderVersion: next.loader === saved.loader && next.version === saved.version ? saved.loaderVersion : "" };
+    });
   const text = (key: keyof Draft) => ({ value: draft[key] as string, onChange: (e: { target: { value: string } }) => set(key, e.target.value as never) });
 
   const meta = useMeta();
@@ -255,7 +269,7 @@ export function Settings() {
           <div className="grid grid-cols-2 gap-4">
             <Field label="Type">
               {(id) => (
-                <Select id={id} value={draft.loader} onChange={(e) => set("loader", e.target.value as Loader)}>
+                <Select id={id} value={draft.loader} onChange={(e) => setSoftware({ loader: e.target.value as Loader })}>
                   {loaders.map((l) => (
                     <option key={l.id} value={l.id}>
                       {l.name}
@@ -278,7 +292,7 @@ export function Settings() {
             >
               {(id) => (
                 <div className="flex flex-col gap-1">
-                  <Select id={id} {...text("version")}>
+                  <Select id={id} value={draft.version} onChange={(e) => setSoftware({ version: e.target.value })}>
                     {/* Keeps the version it has selectable when the list could not be loaded, or does not have it. */}
                     <VersionOptions
                       versions={versions.data}
@@ -291,7 +305,7 @@ export function Settings() {
                   {newer && draft.loader === saved.loader && draft.version === saved.version && (
                     <p className="text-xs text-muted">
                       {softwareWords(server.spec.loader, newer)} is out.{" "}
-                      <button type="button" onClick={() => set("version", newer)} className="text-accent hover:underline">
+                      <button type="button" onClick={() => setSoftware({ version: newer })} className="text-accent hover:underline">
                         Use {newer}
                       </button>
                     </p>
@@ -299,6 +313,7 @@ export function Settings() {
                 </div>
               )}
             </Field>
+            <LoaderBuildField loader={draft.loader} value={draft.loaderVersion} onChange={(value) => set("loaderVersion", value)} />
           </div>
         )}
         {/* What a change of version does to the pack it offers. */}
