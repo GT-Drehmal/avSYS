@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -441,11 +442,24 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(path.Base(full)))
 	}
 	// Never let a file from a game server be interpreted as a web page on
-	// the panel's origin.
+	// the panel's origin: not as what it says it is, and, opened in a tab of
+	// its own, with no script and an origin of its own.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", fileCSP)
 	// The game and others change these files: always looked at again.
 	w.Header().Set("Cache-Control", "no-cache")
+	// An image asked for to be looked at is said to be one. Asked for as it
+	// is now, by its time and size, it is kept: once changed, the panel asks
+	// for it by another version.
+	if kind := imageType(full); kind != "" && !download && r.URL.Query().Has("view") {
+		w.Header().Set("Content-Type", kind)
+		if r.URL.Query().Get("v") == fileVersion(fi) {
+			w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+		}
+		http.ServeContent(w, r, "", fi.ModTime(), f)
+		return nil
+	}
 	// One that can be edited is said by its hash, which a save sends back
 	// so as not to write over a change made since it was read.
 	if !download && fi.Size() <= maxEditable {
@@ -459,6 +473,35 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 	}
 	http.ServeContent(w, r, "", fi.ModTime(), f)
 	return nil
+}
+
+// fileCSP is what a server's file may do as a page: nothing. An SVG drawn
+// as an image keeps its styles and the pictures within it.
+const fileCSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"
+
+// imageTypes are the images the panel shows, by their ending.
+var imageTypes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".avif": "image/avif",
+	".bmp":  "image/bmp",
+	".ico":  "image/x-icon",
+	".svg":  "image/svg+xml",
+}
+
+// imageType is the type of image a file is by its name, or "" for one that
+// is not.
+func imageType(name string) string {
+	return imageTypes[strings.ToLower(path.Ext(name))]
+}
+
+// fileVersion is a file as it is now, as the panel lists it: when it was
+// changed, to the second, and its size.
+func fileVersion(fi fs.FileInfo) string {
+	return strconv.FormatInt(fi.ModTime().Unix(), 10) + "-" + strconv.FormatInt(fi.Size(), 10)
 }
 
 // maxEditable is the biggest file the editor opens.

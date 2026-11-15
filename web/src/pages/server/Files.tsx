@@ -12,6 +12,7 @@ import { vscodeURL } from "../../lib/ssh";
 import { others, usePresence } from "../../lib/presence";
 import { toast } from "../../lib/toast";
 import { Editor } from "./Editor";
+import { image, ImageView } from "./ImageView";
 import { useServerContext } from "./ServerPage";
 
 const join = (dir: string, name: string) => (dir === "/" ? `/${name}` : `${dir}/${name}`);
@@ -26,7 +27,7 @@ const within = (path: string, dir: string) => path === dir || path.startsWith(`$
 
 // Editing is for configuration, not for worlds and jars.
 const maxEditable = 2 * 1024 * 1024;
-const binary = /\.(jar|zip|gz|tgz|tar|7z|rar|png|jpe?g|gif|webp|ico|dat|dat_old|mca|mcr|nbt|db|sqlite|lock|ogg|mp3|wav|class|so|bin)$/i;
+const binary = /\.(jar|zip|gz|tgz|tar|7z|rar|dat|dat_old|mca|mcr|nbt|db|sqlite|lock|ogg|mp3|wav|class|so|bin)$/i;
 
 /** What an editor has: the file as it opened it, and what was typed since. */
 type EditorState = { basis: EditedFile | null; draft: string | null };
@@ -259,7 +260,7 @@ function store(key: string, value: unknown) {
 // What the panel can open in place, as the workspace's bsdtar reads.
 const archive = /\.(zip|tar|tar\.gz|tgz|tar\.xz|txz|tar\.bz2|tbz2|7z|rar)$/i;
 
-const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name);
+const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name) && !image.test(entry.name);
 
 type Found = FileEntry & { path: string };
 
@@ -494,9 +495,15 @@ export default function Files() {
         return next;
       });
       anchor.current = row.path;
-    } else return press(row);
+    } else {
+      press(row);
+      // A picture clicked takes the keys, for the ones beside it.
+      if (!row.entry.dir && image.test(row.entry.name)) requestAnimationFrame(() => viewer.current?.focus({ preventScroll: true }));
+      return;
+    }
     setFocused(row.path);
   };
+  const viewer = useRef<HTMLDivElement>(null);
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
   // A row's menu opened by a right click, where it was clicked.
@@ -1020,6 +1027,21 @@ export default function Files() {
             onState={onState}
             onClose={() => guard(() => openFile(null))}
           />
+        ) : openEntry && image.test(openEntry.entry.name) ? (
+          <ImageView
+            ref={viewer}
+            base={base}
+            path={openEntry.path}
+            entry={openEntry.entry}
+            pictures={(byDir.get(parentOf(openEntry.path))?.data?.entries ?? []).filter((e) => !e.dir && image.test(e.name)).map((e) => join(parentOf(openEntry.path), e.name))}
+            onGo={(path) => {
+              unpick();
+              anchor.current = path;
+              setSelected({ path, dir: false });
+              setFocused(path);
+            }}
+            onClose={() => setSelected({ path: parentOf(openEntry.path), dir: true })}
+          />
         ) : openEntry ? (
           <div className="relative flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
             {/* On a phone, where it takes the screen. */}
@@ -1038,7 +1060,7 @@ export default function Files() {
                 {bytes(openEntry.entry.size)} · changed {ago(openEntry.entry.modTime)}
               </p>
             </div>
-            <p className="text-xs text-muted">{openEntry.entry.size > maxEditable ? "Files over 2 MB can't be edited here." : "This kind of file can't be edited here."}</p>
+            <p className="text-xs text-muted">{binary.test(openEntry.entry.name) ? "This file can't be shown here." : "Files over 2 MB can't be edited here."}</p>
             <Button size="sm" icon={<Download className="size-3.5" />} onClick={() => window.location.assign(`/api/v1${base}/content?${qs({ path: openEntry.path })}&download`)}>
               Download
             </Button>

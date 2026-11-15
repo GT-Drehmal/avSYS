@@ -489,6 +489,13 @@ tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-editor.txt" | tr -d '
 big=$(head -c 2200000 /dev/zero | tr '\0' x | call -o /dev/null -w '%{http_code}' -X PUT -H "If-Match: $tag" --data-binary @- "$SRV/files/content?path=/e2e-editor.txt")
 expect "a save from the editor over 2 MB is refused" "$big" 413
 expect "and the file is as it was" "$(call "$SRV/files/content?path=/e2e-editor.txt")" "saved from the editor"
+# A picture to look at is served as one, and never runs as a page.
+printf '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><script>alert(1)</script></svg>' | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e-icon.svg" >/dev/null
+heads=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-icon.svg&view" | tr -d '\r')
+expect "a picture to look at is one" "$heads" "Content-Type: image/svg+xml"
+expect "that runs no script" "$heads" "sandbox"
+expect "a picture read is only bytes" "$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-icon.svg" | tr -d '\r')" "Content-Type: application/octet-stream"
+call -X DELETE "$SRV/files?path=/e2e-icon.svg" >/dev/null
 
 step "archives"
 # A zip with all in one folder, as a world is, and one with what a Mac adds:
