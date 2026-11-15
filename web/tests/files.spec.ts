@@ -462,6 +462,16 @@ test("a picture that is not text has no Edit as text", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Edit as text" })).toHaveCount(0);
 });
 
+test("a picture is listed like a file that opens, not dimmed like one that can't", async ({ page }) => {
+  await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  const name = (n: string) => item(page, n).locator("span.font-mono");
+  await expect(name("server-icon.png")).not.toHaveClass(/text-muted/);
+  await expect(name("logo.svg")).not.toHaveClass(/text-muted/);
+  await expect(name("eula.txt")).not.toHaveClass(/text-muted/);
+  await expect(name("server.jar")).toHaveClass(/text-muted/);
+});
+
 test("a big picture fits, and is shown at its own size when asked", async ({ page }) => {
   await pictures(page);
   await page.goto("/o/friends/s/survival/files");
