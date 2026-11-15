@@ -159,11 +159,12 @@ case $level in
 esac
 if [ "$listed" = listed ]; then rm -f mods/*.jar plugins/*.jar world/datapacks/*.zip datapacks/*.zip; fi
 # Its world not taken, for another or a new one: its datapacks are content,
-# and stay. A new one is not made with the seed of the one left out.
+# and stay. A new one is made as the server's settings say, or as the game
+# does by itself, not as the one left out was.
 if [ "$without" = without ]; then
   rm -rf world_nether world_the_end
   if [ -d world ]; then find world -mindepth 1 -maxdepth 1 ! -name datapacks -exec rm -rf {} +; fi
-  if [ -f server.properties ]; then sed -i -E '/^level-seed=/d' server.properties; fi
+  if [ -f server.properties ]; then sed -i -E '/^(level-seed|level-type|generate-structures|hardcore)=/d' server.properties; fi
 fi
 if [ -f server.properties ]; then
   sed -i -E '/^(server-ip|server-port|query\.port|enable-query|enable-rcon|rcon\.port|rcon\.password|level-name)=/d' server.properties
@@ -586,6 +587,16 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	} else if fill {
 		again, level = "fill", levelOf(&mc.Spec)
 	}
+	// For a new world, the settings it is made with that are the game's own.
+	if fresh {
+		var defaults []string
+		for _, k := range worldSettings {
+			if v, given := made[k]; given && (v == nil || *v == "") {
+				defaults = append(defaults, k)
+			}
+		}
+		without = strings.Join(defaults, " ")
+	}
 	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n" + level + "\n" + without + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
@@ -623,14 +634,22 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 
 // newWorldScript takes a server's world away, for the game to make a new one
 // as it next starts. Its datapacks are content, and stay. It reads stdin as
-// unpacked does, for the world's folder.
+// unpacked does, for the world's folder, and then the settings of the new
+// world that are the game's own: those are taken out of server.properties,
+// where the old world's would otherwise stay.
 var newWorldScript = `set -eu
 IFS= read -r root || true
 IFS= read -r split || true
 IFS= read -r listed || true
 IFS= read -r replace || true
 IFS= read -r level || true
+IFS= read -r defaults || true
 lv=${level:-world}
+p=` + dataRoot + `/server.properties
+for key in $defaults; do
+  case $key in level-seed | level-type | generate-structures | hardcore) ;; *) continue ;; esac
+  if [ -f "$p" ]; then sed -i -E "/^$key=/d" "$p"; fi
+done
 w=` + dataRoot + `/$lv
 k=` + importStaging + `.datapacks
 rm -rf "$k"

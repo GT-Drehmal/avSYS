@@ -578,6 +578,8 @@ export function ServerForm({
   const archiveInput = useRef<HTMLInputElement>(null);
   // The archive read last: one read earlier that ends later is not used.
   const reads = useRef(0);
+  // The world archive read last, apart from the server archive: one does not cancel the other.
+  const worldReads = useRef(0);
 
   const name = v.customName ?? slugify(v.displayName);
   const bringingBack = !!source && !copying && name === source.name;
@@ -688,7 +690,7 @@ export function ServerForm({
     if (next === world) return;
     if (next !== "mine") {
       // A world still being read is not used.
-      reads.current++;
+      worldReads.current++;
       setReadingWorld(false);
       set("myWorld", null);
     }
@@ -708,10 +710,10 @@ export function ServerForm({
   const pickWorld = async (file: File) => {
     setError(null);
     setReadingWorld(true);
-    const read = ++reads.current;
+    const read = ++worldReads.current;
     try {
       const w = await inspectWorld(file);
-      if (read !== reads.current) return;
+      if (read !== worldReads.current) return;
       setValues((was) => ({
         ...was,
         myWorld: { file, found: w },
@@ -723,9 +725,9 @@ export function ServerForm({
       }));
       pictureFromWorld(iconOf(w));
     } catch (err) {
-      if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
+      if (read === worldReads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
     } finally {
-      if (read === reads.current) setReadingWorld(false);
+      if (read === worldReads.current) setReadingWorld(false);
     }
   };
 

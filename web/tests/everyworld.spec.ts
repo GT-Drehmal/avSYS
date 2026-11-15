@@ -302,8 +302,9 @@ test("a modpack server's world replaced with one newer than the pack's game is a
 test("a modpack put on a version built for an older game than its world is asked about first", async ({ page, org, api }) => {
   const slug = await org([]);
   await packServer(page, api("owner"), slug, "pack", "26.3");
-  const version = (id: string, number: string, game: string) => ({ id, name: number, version_number: number, version_type: "release", game_versions: [game], loaders: ["fabric"], date_published: "2026-09-20T10:00:00Z" });
-  await page.route("**/api/v1/catalog/modrinth/projects/adventure-pack/versions*", (route) => route.fulfill({ json: [version("pv2", "2.0.0", "26.3"), version("pv1", "1.0.0", "1.21.4")] }));
+  const version = (id: string, number: string, game: string, type = "release") => ({ id, name: number, version_number: number, version_type: type, game_versions: [game], loaders: ["fabric"], date_published: "2026-09-20T10:00:00Z" });
+  // Its newest is a beta for 26.3; its newest release, the one the panel picks for the best fit, is for 1.21.4.
+  await page.route("**/api/v1/catalog/modrinth/projects/adventure-pack/versions*", (route) => route.fulfill({ json: [version("pv3", "3.0.0-beta", "26.3", "beta"), version("pv1", "1.0.0", "1.21.4")] }));
   const patched: { query: string; body: unknown }[] = [];
   await page.route(`**/api/v1/orgs/${slug}/servers/pack?*`, async (route) => {
     patched.push({ query: new URL(route.request().url()).search, body: route.request().postDataJSON() });
@@ -321,10 +322,11 @@ test("a modpack put on a version built for an older game than its world is asked
   await ask.getByRole("button", { name: "Cancel" }).click();
   await expect(ask).toHaveCount(0);
   expect(patched).toEqual([]);
+  // The best fit is the same version, and asked about the same.
   await page.getByRole("button", { name: "2.0.0" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: /1\.0\.0/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /Update to the best fit/ }).click();
   await ask.getByRole("button", { name: "Change to 1.0.0 anyway" }).click();
   await expect.poll(() => patched.length).toBe(1);
   expect(patched[0].query).toBe("?newerWorld=true");
-  expect(patched[0].body).toMatchObject({ spec: { modpack: { project: "adventure-pack", version: "pv1", versionName: "1.0.0" } } });
+  expect(patched[0].body).toMatchObject({ spec: { modpack: { project: "adventure-pack", version: "" } } });
 });

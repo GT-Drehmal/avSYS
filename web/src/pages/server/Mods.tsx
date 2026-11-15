@@ -4,7 +4,7 @@ import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestP
 import { ProjectIcon } from "../../components/ModrinthSearch";
 import { Button, Field, Input, Notice, Toggle } from "../../components/ui";
 import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
-import { newerThan } from "../../lib/worlds";
+import { newerThan, pinnedOf } from "../../lib/worlds";
 import { NewerWorldConfirm } from "../../components/NewerWorld";
 import { applyServer, keys, useAction, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
@@ -50,11 +50,14 @@ export function Mods() {
   const order = useGameVersions().data?.ordered ?? [];
   const reported = server.status.version?.split(" ").at(-1);
   const ranOn = reported && order.includes(reported) ? reported : modpack?.gameVersion;
-  const [olderPack, setOlderPack] = useState<{ version: ModrinthVersion; game: string } | null>(null);
+  const [olderPack, setOlderPack] = useState<{ version: ModrinthVersion | null; game: string; name: string } | null>(null);
   const pickPack = (v: ModrinthVersion | null, sure = false) => {
     if (!modpack) return;
-    const game = v?.game_versions.at(-1);
-    if (v && game && !sure && newerThan(order, ranOn, game)) return setOlderPack({ version: v, game });
+    // The best fit is the version the panel pins for none picked, from the
+    // list the picker showed.
+    const pinned = v ?? pinnedOf(qc.getQueryData<ModrinthVersion[]>(["modrinth-versions", modpack.project, {}]), undefined);
+    const game = pinned?.game_versions.at(-1);
+    if (pinned && game && !sure && newerThan(order, ranOn, game)) return setOlderPack({ version: v, game, name: pinned.version_number });
     setOlderPack(null);
     const spec = { modpack: { ...modpack, version: v?.id ?? "", versionName: v?.version_number ?? "" } };
     update.mutate(sure ? { spec, newerWorld: true } : spec);
@@ -207,7 +210,7 @@ export function Mods() {
         onOpenChange={(o) => !o && setOlderPack(null)}
         world={ranOn ?? ""}
         version={olderPack?.game ?? ""}
-        action={`Change to ${olderPack?.version.version_number ?? "it"} anyway`}
+        action={`Change to ${olderPack?.name ?? "it"} anyway`}
         loading={update.isPending}
         onConfirm={() => olderPack && pickPack(olderPack.version, true)}
       />

@@ -233,7 +233,7 @@ func TestServerArchiveWithoutItsWorld(t *testing.T) {
 			}
 		}
 		src := filepath.Join(root, "src")
-		write(filepath.Join(src, "srv", "server.properties"), "motd=hi\nlevel-name=lobby\nlevel-seed=5\n")
+		write(filepath.Join(src, "srv", "server.properties"), "motd=hi\nlevel-name=lobby\nlevel-seed=5\nlevel-type=flat\n")
 		write(filepath.Join(src, "srv", "mods", "a.jar"), "a mod")
 		write(filepath.Join(src, "srv", "lobby", "level.dat"), "its world")
 		write(filepath.Join(src, "srv", "lobby", "region", "r.0.0.mca"), "its world")
@@ -256,8 +256,8 @@ func TestServerArchiveWithoutItsWorld(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("script: %v: %s", err, out)
 		}
-		// Without its world, a new one is not made with its seed.
-		properties := "motd=hi\nlevel-seed=5\n"
+		// Without its world, a new one is not made as it was.
+		properties := "motd=hi\nlevel-seed=5\nlevel-type=flat\n"
 		if without {
 			properties = "motd=hi\n"
 		}
@@ -297,7 +297,7 @@ func TestNewWorldScript(t *testing.T) {
 		data := filepath.Join(t.TempDir(), "data")
 		for path, content := range map[string]string{
 			"mods/a.jar":                    "a mod",
-			"server.properties":             "motd=hi\n",
+			"server.properties":             "motd=hi\nlevel-seed=5\nlevel-type=flat\ngenerate-structures=false\n",
 			lv + "/level.dat":               "the old world",
 			lv + "/region/r.0.0.mca":        "the old world",
 			lv + "/datapacks/a.zip":         "a datapack",
@@ -315,11 +315,12 @@ func TestNewWorldScript(t *testing.T) {
 		}
 		script := regexp.MustCompile(regexp.QuoteMeta(dataRoot)+`\b`).ReplaceAllString(newWorldScript, data)
 		cmd := exec.Command("sh", "-c", script)
-		cmd.Stdin = strings.NewReader("\n\n\nreplace\n" + level + "\n")
+		// The seed and type are left to the game; structures as they were set.
+		cmd.Stdin = strings.NewReader("\n\n\nreplace\n" + level + "\nlevel-seed level-type motd\n")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("script: %v: %s", err, out)
 		}
-		for path, want := range map[string]string{"mods/a.jar": "a mod", "server.properties": "motd=hi\n", lv + "/datapacks/a.zip": "a datapack", "other/level.dat": "another folder"} {
+		for path, want := range map[string]string{"mods/a.jar": "a mod", "server.properties": "motd=hi\ngenerate-structures=false\n", lv + "/datapacks/a.zip": "a datapack", "other/level.dat": "another folder"} {
 			if got, err := os.ReadFile(filepath.Join(data, path)); err != nil || string(got) != want {
 				t.Errorf("%s: %q, %v; want %q", path, got, err, want)
 			}
