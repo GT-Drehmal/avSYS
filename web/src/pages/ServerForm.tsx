@@ -3,6 +3,7 @@ import { Archive as ArchiveIcon, ChevronLeft, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { Link, useNavigate } from "react-router";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, PackFit, packTitle, type PickKind, type Software } from "../components/Content";
+import { LoaderBuildField } from "../components/LoaderBuild";
 import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedule";
 import { ExtraPorts, fitModPorts, modPortsNote, type PortDraft, portDrafts, portsOf, touchesKnownMods } from "../components/ExtraPorts";
 import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
@@ -267,7 +268,7 @@ interface Values {
   kind: "game" | "modpack" | "import";
   loader: Loader | null;
   version: string;
-  /** The loader's own version, as an imported server had it; empty for the newest. */
+  /** The loader build, as the server it starts from has it; empty for the newest. */
   loaderVersion: string;
   /** The server to import, for kind "import". */
   archive: Archive | null;
@@ -391,7 +392,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     kind: spec.modpack ? "modpack" : "game",
     loader: spec.loader,
     version: spec.version,
-    loaderVersion: "",
+    loaderVersion: spec.loaderVersion ?? "",
     archive: null,
     myWorld: null,
     modpack: spec.modpack ?? null,
@@ -803,15 +804,20 @@ export function ServerForm({
     try {
       const w = await inspectWorld(file);
       if (read !== reads.current) return;
-      setValues((was) => ({
-        ...was,
-        myWorld: { file, found: w },
+      setValues((was) => {
         // Opened in the version it was last opened in, where there is one.
         // A copy keeps its original's, which its content was picked for: a
         // world too new for it is said.
-        version: !source && w.version && versions.data?.all.has(w.version) ? w.version : was.version,
-        storage: String(Math.max(Number(was.storage) || 10, Math.ceil((w.size * 1.5 + file.size) / GiB))),
-      }));
+        const version = !source && w.version && versions.data?.all.has(w.version) ? w.version : was.version;
+        return {
+          ...was,
+          myWorld: { file, found: w },
+          version,
+          // A loader build is for the version it was picked with.
+          ...(version !== was.version ? { loaderVersion: "" } : {}),
+          storage: String(Math.max(Number(was.storage) || 10, Math.ceil((w.size * 1.5 + file.size) / GiB))),
+        };
+      });
       pictureFromWorld(iconOf(w));
     } catch (err) {
       if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this archive.");
@@ -986,7 +992,7 @@ export function ServerForm({
       // The game looks for its picture and its files when it starts, so a
       // server given any is made stopped and started once they are there.
       ...(v.picture.kind === "file" || toUpload ? { state: "Stopped" as const } : {}),
-      ...(v.kind === "modpack" ? { modpack: v.modpack ?? undefined } : { loader: v.loader ?? undefined, version: saved(v.version), ...(v.loaderVersion ? { loaderVersion: v.loaderVersion } : {}) }),
+      ...(v.kind === "modpack" ? { modpack: v.modpack ?? undefined } : { loader: v.loader ?? undefined, version: saved(v.version), ...(v.loaderVersion.trim() ? { loaderVersion: v.loaderVersion.trim() } : {}) }),
     };
   };
 
@@ -998,6 +1004,7 @@ export function ServerForm({
   const copyRequest = (): Partial<ServerSpec> => {
     const changes: Partial<ServerSpec> = {};
     if (versionChanged) changes.version = saved(v.version);
+    if (v.loaderVersion.trim() !== start.loaderVersion) changes.loaderVersion = v.loaderVersion.trim();
     // A setting put back on "Server default", or taken out of the other
     // properties, is sent as null: the panel stops setting it, and the copied
     // server.properties keeps what it has.
@@ -1445,7 +1452,9 @@ export function ServerForm({
             value={v.version}
             onChange={(e) => {
               const version = e.target.value;
-              setValues((was) => ({ ...was, version, loaderVersion: found && version === found.version && was.loader === found.loader ? found.loaderVersion : "" }));
+              // The build goes with the version it is for, and comes back with it.
+              const from = found ?? start;
+              setValues((was) => ({ ...was, version, loaderVersion: version === from.version && was.loader === from.loader ? from.loaderVersion : "" }));
             }}
             className="w-64"
           >
@@ -1461,6 +1470,7 @@ export function ServerForm({
       )}
     </Field>
   );
+  const buildField = <LoaderBuildField loader={v.loader} value={v.loaderVersion} onChange={(value) => set("loaderVersion", value)} className="w-64" />;
   const option = (list: readonly (readonly [string, string])[], hide?: string) =>
     list
       .filter(([value]) => value !== hide)
@@ -1601,7 +1611,12 @@ export function ServerForm({
             )}
             </>
           )}
-          {source && v.kind === "game" && versionField}
+          {source && v.kind === "game" && (
+            <>
+              {versionField}
+              {buildField}
+            </>
+          )}
         </Section>
       )}
 
@@ -1644,6 +1659,7 @@ export function ServerForm({
                 )}
               </div>
               {versionField}
+              {buildField}
             </>
           ) : importing ? null : v.modpack ? (
             <>

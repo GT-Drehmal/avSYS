@@ -662,6 +662,9 @@ func errNameHasHistory(name string) error {
 
 // updateServer applies a JSON merge patch to the server's spec: fields left
 // out keep their value, null clears a field, and lists are replaced whole.
+// The one exception is a pinned loader build, which is for the type and game
+// version it was pinned with: a patch that changes either and does not name
+// a build drops the old one, and the server gets the newest build instead.
 func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, mc, err := s.server(r, u, store.RoleAdmin)
 	if err != nil {
@@ -779,13 +782,17 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	if err := json.Unmarshal(merged, &spec); err != nil {
 		return nil, errBadRequest("Invalid spec: %v", err)
 	}
+	var named map[string]json.RawMessage
+	_ = json.Unmarshal(patch, &named)
+	// A loader build goes with the type and game version it is for.
+	if _, given := named["loaderVersion"]; !given && (spec.Loader != mc.Spec.Loader || spec.Version != mc.Spec.Version) {
+		spec.LoaderVersion = ""
+	}
 	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
 	// "Latest" picked is the newest there is now, kept from then on. A
 	// server still on "Latest" from before, whose version and software are
 	// not touched, is left to be settled on the version it runs (see
 	// PinLatest).
-	var named map[string]json.RawMessage
-	_ = json.Unmarshal(patch, &named)
 	_, picked := named["version"]
 	fitModPorts(&spec, mc.Spec.Mods, named)
 	stillLatest := !picked && mc.Spec.Version == "LATEST" && mc.Spec.Modpack == nil && spec.Loader == mc.Spec.Loader
