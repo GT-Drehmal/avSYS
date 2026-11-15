@@ -755,6 +755,19 @@ export interface NodeList {
   measured?: { at: string; failed?: string[]; error?: string };
   /** A newer release than the one running, for the panel's administrator. */
   update?: ReleaseUpdate;
+  /** The panel itself, for its administrator. */
+  panel?: PanelInfo;
+}
+
+export interface PanelInfo {
+  /** The version running. */
+  version: string;
+  /** Whether it can move itself to a newer release. */
+  canUpdate: boolean;
+  /** Whether it takes fix releases by itself. */
+  autoUpdate: boolean;
+  /** The release it is moving to, while it does. */
+  updating?: string;
 }
 
 export interface ReleaseUpdate {

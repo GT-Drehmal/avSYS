@@ -326,6 +326,7 @@ func run(opts options, log *slog.Logger) error {
 			PackURL:         opts.packURL,
 			PackCache:       int64(opts.packCache) << 20,
 			RouterService:   routerService(),
+			Deployment:      selfDeployment(),
 		},
 		Store:   st,
 		Client:  mgr.GetClient(),
@@ -343,6 +344,12 @@ func run(opts options, log *slog.Logger) error {
 		server.Updates = &release.Checker{Current: version, Log: log.With("component", "release")}
 		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 			server.Updates.Run(ctx)
+			return nil
+		})); err != nil {
+			return err
+		}
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			server.RunAutoUpdates(ctx)
 			return nil
 		})); err != nil {
 			return err
@@ -571,6 +578,16 @@ func annotationsOf(s string) map[string]string {
 // routerService is the panel's own Service, which carries the router: in the
 // namespace the panel runs in, named avsys or as AVSYS_ROUTER_SERVICE says
 // (the chart sets it to the name of the Service it makes).
+// selfDeployment is the panel's own Deployment, which it changes to update
+// itself: named as its Service is unless AVSYS_DEPLOYMENT says otherwise.
+func selfDeployment() types.NamespacedName {
+	at := routerService()
+	if at.Namespace == "" {
+		return at
+	}
+	return types.NamespacedName{Namespace: at.Namespace, Name: env("deployment", at.Name)}
+}
+
 func routerService() types.NamespacedName {
 	ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {

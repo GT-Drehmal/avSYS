@@ -121,6 +121,15 @@ k -n avsys rollout status deploy/avsys --timeout=180s >/dev/null || fail "the pa
 restarts=$(k -n avsys get pods -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}')
 [ "$restarts" = 0 ] || fail "the panel restarted $restarts time(s) during its first start"
 echo "ok: installed with the chart, first start was clean"
+# Updating itself from the Nodes page: the panel may change the image of its
+# own Deployment (tried, not made), and no other Deployment anywhere.
+panel_sa=system:serviceaccount:avsys:avsys
+k -n avsys patch deployment avsys --as "$panel_sa" --dry-run=server --type strategic \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"avsys","image":"ghcr.io/gt-drehmal/avsys:v9.9.9"}]}}}}' >/dev/null ||
+  fail "the panel may not move its own Deployment to a new release"
+[ "$(k -n avsys auth can-i patch deployments/another --as "$panel_sa")" = no ] || fail "the panel may change another Deployment beside it"
+[ "$(k -n default auth can-i patch deployments --as "$panel_sa")" = no ] || fail "the panel may change Deployments elsewhere"
+echo "ok: the panel may update its own Deployment, and no other"
 for _ in $(seq 1 60); do
   curl -fsS -o /dev/null "$URL/api/v1/meta" 2>/dev/null && break
   sleep 2
