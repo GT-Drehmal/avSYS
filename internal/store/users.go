@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"time"
 )
 
@@ -35,16 +36,78 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 // CreateUser inserts u, assigning its ID. The first user ever created becomes
 // the instance admin.
 func (s *Store) CreateUser(ctx context.Context, u *User) error {
+	_, err := s.SignUp(ctx, u, Signup{})
+	return err
+}
+
+var (
+	// ErrNotFirst is what SignUp says when the account was to be the
+	// panel's first and another was made before it.
+	ErrNotFirst = errors.New("there is an account already")
+	// ErrFirst is its answer when the account was to be any but the
+	// first, and there is none yet.
+	ErrFirst = errors.New("would be the first user")
+	// ErrIdentityTaken is its answer when the provider account is linked
+	// to a user already.
+	ErrIdentityTaken = errors.New("identity already linked")
+)
+
+// Signup is what a new account is made on the strength of.
+type Signup struct {
+	// FirstOnly makes it only as the panel's very first account, who is
+	// the administrator.
+	FirstOnly bool
+	// LaterOnly makes it only as any but the first.
+	LaterOnly bool
+	// Invite is accepted with it. If it cannot be, no account is made.
+	Invite string
+	// Identity is a provider account linked to it: both or neither, so
+	// that no user is made for a provider account another user has. An
+	// empty one links nothing.
+	Identity Identity
+}
+
+// Which says which user CreateUserWithIdentity may make: any, only the
+// first (who is the administrator), or any but the first.
+type Which int
+
+const (
+	AnyUser Which = iota
+	FirstUser
+	LaterUser
+)
+
+// CreateUserWithIdentity inserts u, as CreateUser does, with a provider
+// account linked to it (see Signup.Identity), which limits it to the first
+// user or to any but the first.
+func (s *Store) CreateUserWithIdentity(ctx context.Context, u *User, id Identity, which Which) error {
+	_, err := s.SignUp(ctx, u, Signup{Identity: id, FirstOnly: which == FirstUser, LaterOnly: which == LaterUser})
+	return err
+}
+
+// SignUp inserts u, as CreateUser does, together with what lets it be made:
+// being the first account (or not), or an invite, which it accepts and
+// whose organization it returns; and the provider account it signed up
+// with, linked to it. The checks and the inserts are one transaction: two
+// people setting up an empty panel at once, or taking the last use of an
+// invite, cannot both get in.
+func (s *Store) SignUp(ctx context.Context, u *User, how Signup) (*Org, error) {
 	u.ID = NewID(10)
 	u.CreatedAt = unix(now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
-		return err
+		return nil, err
+	}
+	switch {
+	case count > 0 && how.FirstOnly:
+		return nil, ErrNotFirst
+	case count == 0 && how.LaterOnly:
+		return nil, ErrFirst
 	}
 	if count == 0 {
 		u.IsAdmin = true
@@ -52,9 +115,42 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	_, err = tx.ExecContext(ctx, `INSERT INTO users (`+userColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Username, u.DisplayName, u.Email, u.AvatarURL, u.PasswordHash, u.IsAdmin, u.CreatedAt.Unix())
 	if err != nil {
-		return mapErr(err)
+		return nil, mapErr(err)
 	}
-	return tx.Commit()
+	if id := how.Identity; id.Provider != "" {
+		_, err = tx.ExecContext(ctx, `INSERT INTO identities (provider, subject, user_id, login) VALUES (?, ?, ?, ?)`,
+			id.Provider, id.Subject, u.ID, id.Login)
+		if err = mapErr(err); errors.Is(err, ErrConflict) {
+			return nil, ErrIdentityTaken
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	var org *Org
+	if how.Invite != "" {
+		if org, err = acceptInvite(ctx, tx, how.Invite, u.ID); err != nil {
+			return nil, err
+		}
+	}
+	return org, tx.Commit()
+}
+
+// Admins lists the instance administrators.
+func (s *Store) Admins(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+userColumns+` FROM users WHERE is_admin ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
@@ -95,12 +191,23 @@ func (s *Store) UserByIdentity(ctx context.Context, provider, subject string) (*
 		provider, subject))
 }
 
+// LinkIdentity links a provider account to a user, or updates the login of
+// a link that is there. It is ErrConflict when the provider account is
+// linked to another user: a link never moves.
 func (s *Store) LinkIdentity(ctx context.Context, id Identity) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO identities (provider, subject, user_id, login) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(provider, subject) DO UPDATE SET login = excluded.login`,
+		 ON CONFLICT(provider, subject) DO UPDATE SET login = excluded.login WHERE user_id = excluded.user_id`,
 		id.Provider, id.Subject, id.UserID, id.Login)
-	return mapErr(err)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *Store) Identities(ctx context.Context, userID string) ([]Identity, error) {
@@ -127,13 +234,10 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// CreateSession returns a new opaque session token for the user.
+// CreateSession returns a new opaque session token for the user. See
+// OpenSession for one that says where it is for.
 func (s *Store) CreateSession(ctx context.Context, userID string, ttl time.Duration) (string, error) {
-	token := NewID(32)
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		hashToken(token), userID, now(), time.Now().Add(ttl).Unix())
-	return token, err
+	return s.OpenSession(ctx, userID, ttl, SessionInfo{})
 }
 
 func (s *Store) SessionUser(ctx context.Context, token string) (*User, error) {
@@ -147,7 +251,12 @@ func (s *Store) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
+// DeleteExpiredSessions clears out sessions that have expired, and reset
+// links.
 func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM reset_links WHERE expires_at <= ?`, now()); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, now())
 	return err
 }

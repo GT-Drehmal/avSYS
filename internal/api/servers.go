@@ -186,6 +186,73 @@ func (s *Server) tidyPicks(ctx context.Context, namespace string, spec *avsysv1.
 	return nil
 }
 
+// maxSavedLists is how many saved lists one of a server's lists can use.
+const maxSavedLists = 50
+
+// tidySavedLists keeps, of the saved lists a server's whitelist and
+// operators use, those its organization has now, each once. A list deleted
+// since, as one named in a template or snapshot may have been, is dropped,
+// as is one of another organization's, for a server copied across.
+func (s *Server) tidySavedLists(ctx context.Context, namespace string, spec *avsysv1.MinecraftServerSpec) error {
+	if len(spec.WhitelistLists) == 0 && len(spec.OpLists) == 0 {
+		spec.WhitelistLists, spec.OpLists = nil, nil
+		return nil
+	}
+	if len(spec.WhitelistLists) > maxSavedLists || len(spec.OpLists) > maxSavedLists {
+		return errBadRequest("A server can use up to %d saved lists for each.", maxSavedLists)
+	}
+	slug, _ := s.orgOfNamespace(namespace)
+	org, err := s.Store.OrgBySlug(ctx, slug)
+	if err != nil {
+		return err
+	}
+	saved, err := s.savedLists(ctx, org.ID)
+	if err != nil {
+		return err
+	}
+	keep := func(ids []string) []string {
+		var out []string
+		for _, id := range ids {
+			if saved[id] != nil && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+		return out
+	}
+	spec.WhitelistLists, spec.OpLists = keep(spec.WhitelistLists), keep(spec.OpLists)
+	for what, ids := range map[string][]string{"whitelist": spec.WhitelistLists, "operators": spec.OpLists} {
+		if n := savedPlayerCount(ids, saved, nil); n > maxFromSavedLists {
+			return errBadRequest("The saved lists chosen for the %s have %d players. A server can have up to %d from saved lists.", what, n, maxFromSavedLists)
+		}
+	}
+	return nil
+}
+
+// maxFromSavedLists is how many players a server's whitelist, and its
+// operators, can have from saved lists: as many as a list can have. The
+// note of who the panel put on each is kept on the server, which holds
+// only so much.
+const maxFromSavedLists = store.MaxListPlayers
+
+// savedPlayerCount is how many players the saved lists named have between
+// them, with more added to them.
+func savedPlayerCount(ids []string, saved map[string]*store.PlayerList, more []store.ListPlayer) int {
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if l := saved[id]; l != nil {
+			for _, p := range l.Players {
+				seen[p.UUID] = true
+			}
+		}
+	}
+	if len(ids) > 0 {
+		for _, p := range more {
+			seen[p.UUID] = true
+		}
+	}
+	return len(seen)
+}
+
 func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec *avsysv1.MinecraftServerSpec) error {
 	if !spec.EULA {
 		return errBadRequest("Accept the Minecraft EULA to run a server.")
@@ -197,6 +264,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		return errBadRequest("A server needs at least 1Gi of storage.")
 	}
 	if err := checkJVM(&spec.JVM); err != nil {
+		return err
+	}
+	if err := checkUploadedModpack(spec.Modpack); err != nil {
 		return err
 	}
 	if err := packFits(spec); err != nil {
@@ -270,6 +340,9 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		return errBadRequest("The whitelist goes by role: viewer for every member, operator, admin, owner, or off. %q is none of those.", spec.AutoWhitelist)
 	}
 	if err := s.tidyPicks(ctx, namespace, spec); err != nil {
+		return err
+	}
+	if err := s.tidySavedLists(ctx, namespace, spec); err != nil {
 		return err
 	}
 	if spec.Backups != nil {
@@ -459,7 +532,23 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given a picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once the server is made.")
 	}
+	// Its modpack file comes once it is made, before it first starts.
+	if p := in.Spec.Modpack; p != nil && p.Source == avsysv1.SourceUpload {
+		if in.Spec.State != avsysv1.StateStopped {
+			return errBadRequest("A new server with an uploaded modpack is made stopped, given the file with PUT /orgs/{org}/servers/{server}/modpack?wait=true, then started.")
+		}
+		p.Version = ""
+		// Named as the upload will name it, from the name the file has.
+		name, err := modpackFilename(p.Project)
+		if err != nil {
+			return err
+		}
+		p.Project = name
+	}
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
+	var named map[string]json.RawMessage
+	_ = json.Unmarshal(raw.Spec, &named)
+	fitModPorts(&in.Spec, nil, named)
 	// A new server has Aikar's flags unless asked not to. Only here: one
 	// made before they were offered keeps starting as it always has.
 	if in.Spec.JVM.AikarFlags == nil {
@@ -573,6 +662,9 @@ func errNameHasHistory(name string) error {
 
 // updateServer applies a JSON merge patch to the server's spec: fields left
 // out keep their value, null clears a field, and lists are replaced whole.
+// The one exception is a pinned loader build, which is for the type and game
+// version it was pinned with: a patch that changes either and does not name
+// a build drops the old one, and the server gets the newest build instead.
 func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, mc, err := s.server(r, u, store.RoleAdmin)
 	if err != nil {
@@ -591,7 +683,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return errBadRequest("Nothing to change: send {\"spec\": {...}}.")
 	}
 	var previous *avsysv1.MinecraftServerSpec
-	var unlock, dropPack func()
+	var unlock, dropPack, dropModpack func()
 	defer func() {
 		if unlock != nil {
 			unlock()
@@ -609,6 +701,13 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if previous, err = s.mergeSpec(r.Context(), a, mc, in.Spec); err != nil {
 			return err
 		}
+		// Made older than its world, which it then cannot open, a modpack by
+		// another version of it too: only when the request says that is meant.
+		if controller.GameVersionOf(&mc.Spec) != controller.GameVersionOf(previous) {
+			if err := s.checkWorldVersion(r, s.ranOn(r.Context(), mc, previous), &mc.Spec); err != nil {
+				return err
+			}
+		}
 		// A pack uploaded before, given another address now, has its file
 		// removed, which a snapshot under way may be copying: not while one is.
 		if was := previous.ResourcePack; dropPack == nil && was != nil && was.Uploaded != nil && (mc.Spec.ResourcePack == nil || mc.Spec.ResourcePack.Uploaded == nil) {
@@ -616,6 +715,13 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 				return err
 			}
 			defer dropPack()
+		}
+		// So is an uploaded modpack's file, once another modpack, or none, is the server's.
+		if was := previous.Modpack.UploadedFile(); dropModpack == nil && was != "" && was != mc.Spec.Modpack.UploadedFile() {
+			if dropModpack, err = s.changing(mc, true); err != nil {
+				return err
+			}
+			defer dropModpack()
 		}
 		// The server's content is held still from here until what was taken
 		// off it is removed.
@@ -652,7 +758,8 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	// Who is on its lists in game, acted on now and not with the next look.
 	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist ||
 		!equality.Semantic.DeepEqual(previous.OpMembers, mc.Spec.OpMembers) || !equality.Semantic.DeepEqual(previous.WhitelistMembers, mc.Spec.WhitelistMembers) ||
-		!slices.Equal(previous.Ops, mc.Spec.Ops) || !slices.Equal(previous.Whitelist, mc.Spec.Whitelist) {
+		!slices.Equal(previous.Ops, mc.Spec.Ops) || !slices.Equal(previous.Whitelist, mc.Spec.Whitelist) ||
+		!slices.Equal(previous.OpLists, mc.Spec.OpLists) || !slices.Equal(previous.WhitelistLists, mc.Spec.WhitelistLists) {
 		s.syncOpsFor(a.Org, mc)
 	}
 	writeJSON(w, http.StatusOK, s.view(mc))
@@ -675,14 +782,19 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	if err := json.Unmarshal(merged, &spec); err != nil {
 		return nil, errBadRequest("Invalid spec: %v", err)
 	}
+	var named map[string]json.RawMessage
+	_ = json.Unmarshal(patch, &named)
+	// A loader build goes with the type and game version it is for.
+	if _, given := named["loaderVersion"]; !given && (spec.Loader != mc.Spec.Loader || spec.Version != mc.Spec.Version) {
+		spec.LoaderVersion = ""
+	}
 	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
 	// "Latest" picked is the newest there is now, kept from then on. A
 	// server still on "Latest" from before, whose version and software are
 	// not touched, is left to be settled on the version it runs (see
 	// PinLatest).
-	var named map[string]json.RawMessage
-	_ = json.Unmarshal(patch, &named)
 	_, picked := named["version"]
+	fitModPorts(&spec, mc.Spec.Mods, named)
 	stillLatest := !picked && mc.Spec.Version == "LATEST" && mc.Spec.Modpack == nil && spec.Loader == mc.Spec.Loader
 	if !stillLatest {
 		if err := s.settleLatest(ctx, &spec); err != nil {
@@ -716,6 +828,14 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	previous := mc.Spec.DeepCopy()
 	if err := keepUploadedPack(&spec, previous); err != nil {
 		return nil, err
+	}
+	if err := keepUploadedModpack(&spec, previous); err != nil {
+		return nil, err
+	}
+	if spec.State == avsysv1.StateRunning && mc.Spec.State != avsysv1.StateRunning {
+		if err := modpackMissing(&spec); err != nil {
+			return nil, err
+		}
 	}
 	if err := checkPackSHA1(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return nil, err
@@ -861,6 +981,9 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 		if err := unfinished(mc); err != nil {
 			return err
 		}
+		if err := modpackMissing(&mc.Spec); err != nil {
+			return err
+		}
 	}
 	orig := mc.DeepCopy()
 	switch action {
@@ -989,6 +1112,18 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 	return nil
 }
 
+// fitModPorts opens the ports of known mods added to a server, and closes
+// those opened for mods taken off, in the same change (see
+// controller.FitModPorts). A request that says the ports itself, as the
+// panel's forms do, has them as it says.
+func fitModPorts(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef, given map[string]json.RawMessage) {
+	_, mods := given["mods"]
+	_, ports := given["ports"]
+	if mods && !ports {
+		spec.Ports = controller.FitModPorts(before, spec.Mods, spec.Ports)
+	}
+}
+
 // checkPorts checks a server's extra ports beyond what the CRD says: each
 // name and each number and protocol once, and not the game's own.
 func checkPorts(ports []avsysv1.ExtraPort) error {
@@ -1021,6 +1156,9 @@ func checkPorts(ports []avsysv1.ExtraPort) error {
 			return errBadRequest("%s (%s) is listed twice.", p.Name, key)
 		}
 		names[p.Name], numbers[key] = true, true
+		if p.For != "" && !controller.IsKnownMod(p.For) {
+			return errBadRequest("%q is not a mod the panel opens ports for.", p.For)
+		}
 	}
 	if len(ports) > 8 {
 		return errBadRequest("A server has up to 8 extra ports.")

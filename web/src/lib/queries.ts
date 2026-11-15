@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
+import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type PlayerList, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
 import { presenceKey, tab, tellAgain, type Present } from "./presence";
 import { toast } from "./toast";
 
@@ -30,11 +30,15 @@ export const keys = {
   backupPolicy: (org: string) => ["backup-policy", org] as const,
   offsite: (org: string) => ["offsite", org] as const,
   activity: (org: string, server: string) => ["activity", org, server] as const,
+  /** Who is on a server's whitelist and operators in game other than by the panel. */
+  gameLists: (org: string, server: string) => ["game-lists", org, server] as const,
   /** An organization's templates, and under it each one asked for alone. */
   templates: (org: string) => ["templates", org] as const,
   template: (org: string, id: string) => ["templates", org, id] as const,
   /** An organization's library of worlds. */
   worlds: (org: string) => ["worlds", org] as const,
+  /** An organization's saved lists of players. */
+  playerLists: (org: string) => ["player-lists", org] as const,
 };
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
@@ -97,31 +101,40 @@ export const useCluster = () => useQuery<Cluster>({ queryKey: keys.cluster, quer
 export function useLiveServers() {
   const qc = useQueryClient();
   useEffect(() => {
-    // Everything the stream keeps current: servers, and snapshots with the
-    // operations running on them.
-    const refetchAll = () => {
+    // What the cluster says, and nothing else: servers, and where they run.
+    const refetchCluster = () => {
+      qc.invalidateQueries({ queryKey: ["servers"] });
+      // A move may have finished unheard, and with it what each node has left.
+      qc.invalidateQueries({ queryKey: ["placement"] });
+      qc.invalidateQueries({ queryKey: ["nodes"] });
+    };
+    // Everything events keep current, for when any of them may have been
+    // missed. Each is only asked for again if a page shows it now; the rest
+    // are asked for when one does. Which organization a missed event was of
+    // is not known, so all of them are.
+    const refetchHeard = () => {
+      refetchCluster();
       // What was running may have finished unheard: it is asked for again.
       qc.invalidateQueries({ queryKey: ["running"] });
       // Lists kept from a page left earlier are not asked for again until
       // it is opened; what they say is running may have finished too.
       qc.setQueriesData<SnapshotList>({ queryKey: ["snapshots"] }, (list) => list && { ...list, operations: [] });
-      qc.invalidateQueries({ queryKey: ["servers"] });
+      // A snapshot taken or deleted, and so one to copy offsite, or not.
       qc.invalidateQueries({ queryKey: ["snapshots"] });
       qc.invalidateQueries({ queryKey: ["offsite"] });
-      // A move may have finished unheard.
-      qc.invalidateQueries({ queryKey: ["placement"] });
+      // A sync may have finished unheard, copying the snapshot whose details are open.
+      qc.invalidateQueries({ queryKey: ["snapshot"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
       // A template's version may have been saved unheard.
       qc.invalidateQueries({ queryKey: ["templates"] });
-      // Who came and went.
-      qc.invalidateQueries({ queryKey: ["presence"] });
-      qc.invalidateQueries({ queryKey: ["nodes"] });
     };
     const source = new EventSource(`/api/v1/events?tab=${tab}`);
     let opened = false;
     source.onopen = () => {
-      // Anything that changed while disconnected was missed, so refetch.
-      if (opened) refetchAll();
+      // Anything that changed while disconnected was missed, so refetch. Who
+      // is where, and whether the cluster can be reached, come first thing
+      // on a new stream, and need not be asked for.
+      if (opened) refetchHeard();
       opened = true;
       // A panel that restarted, or forgot this tab, is told where it is.
       tellAgain();
@@ -140,7 +153,14 @@ export function useLiveServers() {
       const gone: Server = JSON.parse(e.data);
       qc.setQueryData<Server[]>(keys.servers(gone.org), (list) => list?.filter((s) => s.name !== gone.name));
     });
-    source.addEventListener("resync", refetchAll);
+    source.addEventListener("resync", (e) => {
+      // The cluster can be reached again: only what it says was missed.
+      const v: { cluster?: boolean } | null = JSON.parse(e.data);
+      if (v?.cluster) return refetchCluster();
+      // Events were dropped, this tab having fallen behind: any of them.
+      refetchHeard();
+      qc.invalidateQueries({ queryKey: ["presence"] });
+    });
     source.addEventListener("operation.progress", (e) => applyOperation(qc, JSON.parse(e.data)));
     source.addEventListener("operation.done", (e) => {
       const done: OperationDone = JSON.parse(e.data);
@@ -188,6 +208,8 @@ export function useLiveServers() {
       qc.invalidateQueries({ queryKey: keys.offsite(done.org) });
       // After snapshots were brought back there are some where there were none.
       qc.invalidateQueries({ queryKey: keys.snapshots(done.org) });
+      // And those copied are now offsite, also in a snapshot's details.
+      qc.invalidateQueries({ queryKey: ["snapshot", done.org] });
     });
     return () => source.close();
   }, [qc]);
@@ -229,6 +251,8 @@ export const useWorlds = (org: string, enabled = true) =>
     refetchInterval: (q) => (q.state.data?.some((w) => w.saving) ? 3000 : false),
   });
 export const useTemplates = (org: string, enabled = true) => useQuery({ queryKey: keys.templates(org), queryFn: () => api.get<Template[]>(`/orgs/${org}/templates`), enabled });
+/** An organization's saved lists of players, each with its players and the servers that use it. */
+export const usePlayerLists = (org: string, enabled = true) => useQuery({ queryKey: keys.playerLists(org), queryFn: () => api.get<PlayerList[]>(`/orgs/${org}/player-lists`), enabled });
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });
@@ -252,10 +276,17 @@ export function useServerAction(org: string, name: string) {
   });
 }
 
+/** A change that puts a server on an older version than its world, said to be meant once that was asked. */
+export interface NewerWorldMeant {
+  spec: SpecPatch;
+  newerWorld: true;
+}
+
 export function useUpdateServer(org: string, name: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (spec: SpecPatch) => api.patch<Server>(serverPath(org, name), { spec }),
+    mutationFn: (change: SpecPatch | NewerWorldMeant) =>
+      "newerWorld" in change ? api.patch<Server>(`${serverPath(org, name)}?newerWorld=true`, { spec: change.spec }) : api.patch<Server>(serverPath(org, name), { spec: change }),
     onSuccess: (server) => applyServer(qc, server),
     onError,
   });

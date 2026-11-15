@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, serverPath, type NodeInfo, type Placement, type Server } from "../lib/api";
+import { ago } from "../lib/format";
 import { keys, useAction } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
 import { toast } from "../lib/toast";
@@ -11,7 +12,9 @@ const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 /**
  * Where a server runs, and moving it to another node. Files on the node's
  * own disk go with it in a snapshot; a server kept to nodes by labels set
- * outside the panel follows those instead.
+ * outside the panel follows those instead. When the node its files are on is
+ * down, they cannot be carried over, and the server is made again on another
+ * node from its newest snapshot instead, losing what changed since.
  */
 export function NodeMove({ server }: { server: Server }) {
   const path = serverPath(server.org, server.name);
@@ -20,7 +23,8 @@ export function NodeMove({ server }: { server: Server }) {
   const nodes = useQuery({ queryKey: ["nodes", memory], queryFn: () => api.get<{ nodes: NodeInfo[] }>(`/nodes?memory=${encodeURIComponent(memory)}`) });
   const [target, setTarget] = useState("");
   const [asking, setAsking] = useState(false);
-  const move = useAction(() => api.post(`${path}/move`, { node: target }), [keys.servers(server.org), keys.serverSnapshots(server.org, server.name)]);
+  const newest = placement.data?.down ? placement.data.newest : undefined;
+  const move = useAction(() => api.post(`${path}/move`, newest ? { node: target, fromSnapshot: newest.id } : { node: target }), [keys.servers(server.org), keys.serverSnapshots(server.org, server.name)]);
 
   const here = placement.data?.node || server.status.node;
   if (placement.isPending || nodes.isPending) return <p className="text-[13px] text-muted">Loading…</p>;
@@ -39,18 +43,28 @@ export function NodeMove({ server }: { server: Server }) {
   const need = (Number(toGigabytes(memory)) || 0) * 1024 ** 3 + 32 * 1024 ** 2;
   const fits = (n: NodeInfo) => n.ready && n.free >= need;
   const local = placement.data?.local ?? true;
+  const down = placement.data?.down ?? false;
+  const when = newest ? `${ago(newest.time)}, on ${new Date(newest.time).toLocaleString()}` : "";
   return (
     <div className="flex flex-col gap-3">
       <p className="text-[13px]">
         {here ? (
           <>
-            Runs on <span className="font-medium">{here}</span>.
+            Runs on <span className="font-medium">{here}</span>
+            {down ? ", which is down." : "."}
           </>
         ) : (
           "Not placed on a node yet."
         )}
       </p>
-      {others.length === 0 ? (
+      {down && (
+        <p className="text-xs text-muted" data-testid="node-down">
+          {newest
+            ? `The server's files on ${here} can't be reached. Move the server from its newest snapshot, taken ${when}. Changes since then are lost.`
+            : `The server's files on ${here} can't be reached. ${placement.data?.unable ?? ""}`}
+        </p>
+      )}
+      {down && !newest ? null : others.length === 0 ? (
         <p className="text-xs text-muted">No other node to move the server to.</p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
@@ -59,25 +73,27 @@ export function NodeMove({ server }: { server: Server }) {
             {others.map((n) => (
               <option key={n.name} value={n.name} disabled={!fits(n)}>
                 {n.name} · {n.score > 0 ? `speed ${n.score.toFixed(2)}` : "speed not measured"} · {gb(n.free)} free
-                {!n.ready ? " · down" : n.free < need ? " · too little memory" : ""}
+                {n.cordoned ? " · cordoned" : !n.ready ? " · down" : n.free < need ? " · too little memory" : ""}
               </option>
             ))}
           </Select>
           <Button disabled={!target} onClick={() => setAsking(true)}>
-            Move
+            {newest ? "Move from snapshot" : "Move"}
           </Button>
         </div>
       )}
       <Confirm
         open={asking}
         onOpenChange={setAsking}
-        title={`Move ${server.name} to ${target}?`}
+        title={newest ? `Move ${server.name} to ${target} from a snapshot?` : `Move ${server.name} to ${target}?`}
         description={
-          local
-            ? `The server stops, its files move to ${target}, and it starts again if it was running. Big worlds take longer.`
-            : `The server starts again on ${target}.`
+          newest
+            ? `The server is made again on ${target} from its snapshot taken ${when}. Changes since then are lost. The files on ${here} are not used again.`
+            : local
+              ? `The server stops, its files move to ${target}, and it starts again if it was running. Big worlds take longer.`
+              : `The server starts again on ${target}.`
         }
-        action="Move"
+        action={newest ? "Move from snapshot" : "Move"}
         loading={move.isPending}
         onConfirm={() =>
           move.mutate(undefined, {

@@ -44,6 +44,10 @@ type Config struct {
 	// RouterService is the panel's own Service, whose address extra ports
 	// are compared with: where theirs is another, it is the one shown.
 	RouterService types.NamespacedName
+	// StandIn answers on the extra ports of servers that share the
+	// router's address while their games are not running, and wakes a
+	// sleeping one when they are reached. Without it, nothing answers then.
+	StandIn StandIn
 	// PackURL is where the panel serves uploaded resource packs, at
 	// /packs/<sha1>.zip under it.
 	PackURL string
@@ -69,10 +73,14 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	mc := &avsysv1.MinecraftServer{}
 	if err := r.Get(ctx, req.NamespacedName, mc); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.closeStandIn(req.NamespacedName)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !mc.DeletionTimestamp.IsZero() {
 		// Everything is owned by the server and garbage collected with it.
+		r.closeStandIn(req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 	// A server made under the name of one that was just deleted finds that
@@ -114,7 +122,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ports: %w", err)
 	}
-	pod, pending, wait, err := r.ensurePod(ctx, mc)
+	// The pod is made knowing where its extra ports are reached, which the
+	// mods they were opened for tell players (see modConfig).
+	reached := mc.DeepCopy()
+	reached.Status.Ports = ports
+	pod, pending, wait, err := r.ensurePod(ctx, reached)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("pod: %w", err)
 	}
@@ -214,11 +226,30 @@ func (r *Reconciler) moveVolume(ctx context.Context, mc *avsysv1.MinecraftServer
 	}
 	pod := &corev1.Pod{}
 	switch err := r.Get(ctx, client.ObjectKeyFromObject(mc), pod); {
-	case err == nil && pod.DeletionTimestamp.IsZero():
-		if err := r.Delete(ctx, pod); client.IgnoreNotFound(err) != nil {
-			return true, err
+	case err == nil:
+		// A pod on a node that is down never finishes stopping: the node is
+		// not there to say it has, and its volume is not let go of until
+		// it has. Its files are not wanted, the move carrying them in a
+		// snapshot, so it is removed at once. Should the node come back, it
+		// finds the pod gone and stops what it still runs of it.
+		down := false
+		if pod.Spec.NodeName != "" {
+			if down, err = nodeDownByName(ctx, r.Reader, pod.Spec.NodeName); err != nil {
+				return true, err
+			}
 		}
-	case err != nil && !apierrors.IsNotFound(err):
+		switch {
+		case down:
+			log.FromContext(ctx).Info("removing the pod on a node that is down", "node", pod.Spec.NodeName, "to", target)
+			if err := r.Delete(ctx, pod, client.GracePeriodSeconds(0)); client.IgnoreNotFound(err) != nil {
+				return true, err
+			}
+		case pod.DeletionTimestamp.IsZero():
+			if err := r.Delete(ctx, pod); client.IgnoreNotFound(err) != nil {
+				return true, err
+			}
+		}
+	case !apierrors.IsNotFound(err):
 		return true, err
 	}
 	if pvc.DeletionTimestamp.IsZero() {

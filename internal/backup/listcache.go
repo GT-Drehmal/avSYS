@@ -42,6 +42,41 @@ func (m *Manager) repoState(org string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// Present is the IDs of the snapshots in an organization's repository now,
+// read in the time it takes to list a folder, rejected ones among them.
+// known is false where that cannot be told, as for a repository of another
+// kind. An organization with no repository has none.
+func (m *Manager) Present(org string) (ids map[string]bool, known bool) {
+	if !m.exists(org) {
+		return map[string]bool{}, true
+	}
+	entries, err := os.ReadDir(filepath.Join(m.repoDir(org), "snapshots"))
+	if err != nil {
+		return nil, false
+	}
+	ids = make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if len(e.Name()) == 64 {
+			ids[e.Name()] = true
+		}
+	}
+	return ids, true
+}
+
+// there says whether a snapshot, by its full ID, is in an organization's
+// repository and not rejected, where that can be told without restic.
+func (m *Manager) there(org, id string) bool {
+	if len(id) != 64 || !idPattern.MatchString(id) {
+		return false
+	}
+	ids, known := m.Present(org)
+	if !known || !ids[id] {
+		return false
+	}
+	rejected, err := m.rejected(org)
+	return err == nil && !rejected[id]
+}
+
 // kept is what is kept of a repository in the state given, if that is the
 // state it was read in.
 func (m *Manager) kept(org, state string) (repoAnswers, bool) {

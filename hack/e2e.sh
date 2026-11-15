@@ -15,12 +15,21 @@
 # it last exited, given the organization and the server as $1 and $2. The
 # panel's console shows the game that is running, which after an exit is the
 # next one; why the last one stopped is only in its own log.
+# AVSYS_E2E_PYTHON_ON_NODE (python3) is a python3 that runs a script it is
+# given on its input from where AVSYS_E2E_NODE_IP can be reached, which
+# reaches servers' extra ports as players' programs do.
 # AVSYS_E2E_PART runs one part of it: content, lifecycle, history or servers. Each
 # makes its own server, so that the parts can run side by side, each on a
 # cluster of its own, as CI runs them. Unset, all of them run, one after
 # another, on one server.
-# AVSYS_E2E_LIST_BUDGET_MS (2000) is how long the panel may take over a read
-# of a list, such as the servers or the snapshots, before the run fails.
+# AVSYS_E2E_DOWN_NODE names a node that AVSYS_E2E_NODE_DOWN takes down and
+# AVSYS_E2E_NODE_UP brings back, commands run with sh -c, for moving a server
+# off a node that is down; AVSYS_E2E_ON_DOWN_NODE runs a command on that node.
+# The panel must not be on it. Unset, that is skipped.
+# AVSYS_E2E_LIST_BUDGET_MS (200) is how long the panel may take over a read
+# of a list, such as the servers or the templates, before the run fails. The
+# few that read the repository's snapshots have budgets of their own; see
+# timings.
 set -eu
 
 : "${AVSYS_URL:?set AVSYS_URL to the panel address}"
@@ -68,9 +77,9 @@ timed() {
   printf '%s\t%s\t%s\n' "$_method" "${_url#"$API"}" "$_took" >> "$TIMES"
 }
 # A read of a list is answered within this. Anything over it is far off the
-# few milliseconds most take; it is set loose, so that a slow runner does
+# few milliseconds most take; it is set loose enough that a slow runner does
 # not fail the run for nothing.
-LIST_BUDGET_MS=${AVSYS_E2E_LIST_BUDGET_MS:-2000}
+LIST_BUDGET_MS=${AVSYS_E2E_LIST_BUDGET_MS:-200}
 # timings: the slowest routes of the run, and every read of a list that took
 # longer than the budget, failing if there was one.
 timings() {
@@ -82,12 +91,13 @@ import re, statistics, sys
 PLACEHOLDER = {"orgs": "{org}", "servers": "{server}", "templates": "{template}",
                "worlds": "{world}", "snapshots": "{id}", "members": "{user}",
                "invites": "{token}", "ssh-keys": "{id}", "tokens": "{id}",
-               "minecraft-accounts": "{uuid}", "nodes": "{node}", "users": "{user}"}
+               "minecraft-accounts": "{uuid}", "nodes": "{node}", "users": "{user}",
+               "player-lists": "{list}", "players": "{uuid}"}
 # Reads of lists, and of one thing in them, that a page waits on. Not
 # streams, downloads, uploads, the files and logs of a server (read from its
 # volume), nor what is fetched from elsewhere (Modrinth, an offsite copy).
 LISTS = re.compile(r"^(/orgs(/\{org\}(/(servers(/\{server\}(/snapshots)?)?|members|invites|"
-                   r"templates(/\{template\})?|worlds(/\{world\})?|snapshots(/\{id\})?|"
+                   r"templates(/\{template\})?|worlds(/\{world\})?|player-lists(/\{list\})?|snapshots(/\{id\})?|"
                    r"backup-policy|domains))?)?|/me(/(ssh-keys|tokens|minecraft-accounts))?|/nodes)$")
 
 def route(url):
@@ -99,7 +109,14 @@ def route(url):
     return "/".join(parts), query
 
 budget = float(sys.argv[2])
-by_route, over, lists, slowest = {}, [], 0, (0.0, "")
+# Reads that list the repository's snapshots run restic the first time after
+# the repository changed; those of one snapshot, or of a template, read its
+# record out of it the first time it is asked for. On a runner that takes up
+# to half a second, and the organization's list, which also measures the
+# repository, a second: they have budgets of their own, twice that.
+OWN = {"/orgs/{org}/snapshots": 2000, "/orgs/{org}/servers/{server}/snapshots": 1000,
+       "/orgs/{org}/snapshots/{id}": 1000, "/orgs/{org}/templates/{template}": 1000}
+by_route, over, lists, slowest, list_routes = {}, [], 0, (0.0, ""), {}
 for line in open(sys.argv[1]):
     try:
         method, url, took = line.rstrip("\n").split("\t")
@@ -113,18 +130,22 @@ for line in open(sys.argv[1]):
     if method == "GET" and LISTS.match(path) and not waits:
         lists += 1
         slowest = max(slowest, (took, f"{method} {path}"))
-        if took > budget:
-            over.append((took, f"{method} {url}"))
+        list_routes.setdefault(path, []).append(took)
+        if took > OWN.get(path, budget):
+            over.append((took, f"{method} {url}", OWN.get(path, budget)))
 
 print("slowest routes (requests, median, slowest):")
 for name, times in sorted(by_route.items(), key=lambda kv: -max(kv[1]))[:12]:
     print(f"  {name:<68} {len(times):>4} {statistics.median(times):>9.1f} ms {max(times):>9.1f} ms")
+print("reads of lists (requests, slowest, budget):")
+for path, times in sorted(list_routes.items(), key=lambda kv: -max(kv[1])):
+    print(f"  GET {path:<64} {len(times):>4} {max(times):>9.1f} ms {OWN.get(path, budget):>6.0f} ms")
 sys.stdout.flush()
-for took, what in sorted(over, reverse=True):
-    print(f"FAIL: {what} took {took:.0f} ms, over the {budget:.0f} ms a list may take", file=sys.stderr)
+for took, what, allowed in sorted(over, reverse=True):
+    print(f"FAIL: {what} took {took:.0f} ms, over the {allowed:.0f} ms it may take", file=sys.stderr)
 if over:
     sys.exit(1)
-print(f"ok: every read of a list answered within {budget:.0f} ms ({lists} of them; slowest {slowest[1]}, {slowest[0]:.1f} ms)")
+print(f"ok: every read of a list answered within its budget, {budget:.0f} ms but for {len(OWN)} routes ({lists} of them; slowest {slowest[1]}, {slowest[0]:.1f} ms)")
 PY
 }
 field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1], {'d': d}))" "$1"; }
@@ -163,6 +184,8 @@ set_spec() {
 
 cleanup() {
   status=$?
+  # A node cordoned for a check that failed takes servers again.
+  [ -n "${CORDONED:-}" ] && sh -c "$AVSYS_E2E_ON_NODE kubectl uncordon $CORDONED" >/dev/null 2>&1 || true
   if [ $status -ne 0 ] && [ -n "${AVSYS_E2E_KEEP_ON_FAILURE:-}" ]; then
     # Whoever started this wants to look at what is left, and will remove it.
     # The key goes regardless: its private half is deleted with $WORK, so it
@@ -366,6 +389,35 @@ stays() {
   done
 }
 
+# public_port NAME: the public port the probe's extra port of that name was
+# given, once it has one.
+public_port() {
+  for _ in $(seq 1 60); do
+    n=$(call "$SRV" | field "next((p.get('publicPort', 0) for p in d['status'].get('ports', []) if p['name'] == '$1'), 0)")
+    [ "$n" != 0 ] && echo "$n" && return 0
+    sleep 2
+  done
+  fail "its port $1 was not opened: $(call "$SRV" | field "d['status'].get('ports')")"
+}
+
+# probe_port WHAT PORT: reaches a public port of the node once, as a player's
+# program does (see portping.py). It is run by AVSYS_E2E_PYTHON_ON_NODE, a
+# python3 that reads the script from its input, from where the node's
+# address can be reached: the machine running this may not reach it.
+probe_port() {
+  ${AVSYS_E2E_PYTHON_ON_NODE:-python3} - "$1" "$AVSYS_E2E_NODE_IP" "$2" < "$HERE/portping.py"
+}
+
+# portping WHAT PORT: probe_port, retrying while the port is not yet
+# answered.
+portping() {
+  for _ in $(seq 1 20); do
+    out=$(probe_port "$1" "$2" 2>&1) && [ "$out" != unreachable ] && echo "$out" && return 0
+    sleep 2
+  done
+  echo "$out"
+}
+
 step "organization and server"
 call -d "{\"name\":\"E2E $ORG\",\"slug\":\"$ORG\"}" "$API/orgs" >/dev/null
 POLICY=$API/orgs/$ORG/backup-policy
@@ -445,6 +497,20 @@ expect "and so is their main one" "$(whitelisted)" "$PLAYER"
 call -X DELETE "$API/me/minecraft-accounts/$ALT" >/dev/null
 for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" || break; sleep 1; done
 case "$(whitelisted)" in *jeb_*) fail "an alt unlinked stays on the whitelist" ;; *) echo "ok: an alt unlinked is taken off" ;; esac
+# Anyone at the console can change the whitelist too. A member taken off
+# there is put back at the next look at the lists; a player added there is
+# left on, and shown in Settings, from where they can be taken off.
+call -d '{"command":"whitelist add Grumm"}' "$SRV/console" >/dev/null
+expect "a member is taken off at the console" "$(call -d '{"command":"whitelist remove '"$PLAYER"'"}' "$SRV/console" | field "d['output']")" "Removed"
+# A change to who is picked is such a look, at once.
+set_spec '{"spec":{"whitelistMembers":{"also":["'"$ME"'"]}}}'
+for _ in $(seq 1 20); do whitelisted | grep -q "$PLAYER" && break; sleep 1; done
+expect "a member taken off at the console is put back" "$(whitelisted)" "$PLAYER"
+expect "a player added at the console is left on" "$(whitelisted)" "Grumm"
+expect "and shown in Settings as added in game" "$(call "$SRV/lists" | field "[p['name'] for p in d['whitelist']['inGame']]")" "Grumm"
+expect "and taken off from there" "$(call -X DELETE -o /dev/null -w '%{http_code}' "$SRV/lists/whitelist/Grumm")" 204
+case "$(whitelisted)" in *Grumm*) fail "a player taken off from Settings stays on the whitelist" ;; *) echo "ok: and is then off the whitelist" ;; esac
+expect "and the member is still on" "$(whitelisted)" "$PLAYER"
 set_spec '{"spec":{"autoWhitelist":"off","whitelistMembers":null}}'
 # One typed in its settings is put on at once, and taken off when it is
 # taken out: the image only ever adds to the list.
@@ -455,6 +521,67 @@ set_spec '{"spec":{"whitelist":null}}'
 for _ in $(seq 1 20); do whitelisted | grep -qi "Dinnerbone" || break; sleep 1; done
 case "$(whitelisted)" in *Dinnerbone*) fail "a player taken out of the settings stays on the whitelist" ;; *) echo "ok: and taken off when taken out" ;; esac
 if [ -n "$linked_here" ]; then call -X DELETE "$API/me/minecraft" >/dev/null; fi
+
+step "saved lists of players"
+# Two saved lists, one of them used for the whitelist from the start: their
+# players are on it, and it follows each list as it is changed.
+LISTS=$API/orgs/$ORG/player-lists
+CLUB=""
+EVENT=""
+for _ in $(seq 1 6); do
+  # Looked up with Mojang, which turns requests down now and then: then
+  # no list is made, and it is asked again.
+  CLUB=$(call -d '{"name":"Club","names":["Dinnerbone","jeb_"]}' "$LISTS" | field "d['id']" 2>/dev/null) && break
+  sleep 10
+done
+[ -n "$CLUB" ] || fail "a list of players could not be made"
+for _ in $(seq 1 6); do
+  EVENT=$(call -d '{"name":"Event","names":["Grumm"]}' "$LISTS" | field "d['id']" 2>/dev/null) && break
+  sleep 10
+done
+[ -n "$EVENT" ] || fail "a second list of players could not be made"
+set_spec '{"spec":{"whitelistLists":["'"$CLUB"'","'"$EVENT"'"]}}'
+for _ in $(seq 1 20); do whitelisted | grep -qi "Grumm" && whitelisted | grep -qi "Dinnerbone" && break; sleep 1; done
+expect "a saved list's players are put on the whitelist" "$(whitelisted)" "Dinnerbone"
+expect "and the other list's too" "$(whitelisted)" "Grumm"
+expect "both lists say the server uses them" "$(call "$LISTS" | field "sorted(len(l['servers']) for l in d)")" "[1, 1]"
+case "$(call "$SRV/lists" | field "[p['name'] for p in d['whitelist']['inGame']]")" in *jeb_*|*Grumm*) fail "a list's players are shown as added in game" ;; *) echo "ok: and are not shown as added in game" ;; esac
+# A change to the list reaches the server.
+call -d '{"names":["Notch"]}' "$LISTS/$CLUB/players" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -qi "Notch" && break; sleep 1; done
+expect "a player added to a list is put on the whitelist" "$(whitelisted)" "Notch"
+DINNERBONE=$(call "$LISTS/$CLUB" | field "[p['uuid'] for p in d['players'] if p['name'] == 'Dinnerbone'][0]")
+call -X DELETE "$LISTS/$CLUB/players/$DINNERBONE" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -qi "Dinnerbone" || break; sleep 1; done
+case "$(whitelisted)" in *Dinnerbone*) fail "a player taken off a list stays on the whitelist" ;; *) echo "ok: a player taken off a list is taken off the whitelist" ;; esac
+# A list deleted is dropped from the server, and its players taken off.
+expect "a list is deleted" "$(call -X DELETE -o /dev/null -w '%{http_code}' "$LISTS/$CLUB")" 204
+for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" || break; sleep 1; done
+case "$(whitelisted)" in *jeb_*|*Notch*) fail "a deleted list's players stay on the whitelist" ;; *) echo "ok: a deleted list's players are taken off" ;; esac
+expect "and the other list's stay on" "$(whitelisted)" "Grumm"
+expect "the server no longer names it" "$(call "$SRV" | field "d['spec'].get('whitelistLists')")" "['$EVENT']"
+# A Bedrock player, looked up by gamertag with GeyserMC: the game cannot
+# look up his name, so he goes on by whitelist.json, with the UUID Floodgate
+# gives him, and the game reads it again. The probe has no Floodgate: his
+# name has Floodgate's prefix as it comes.
+TIM=""
+for _ in $(seq 1 6); do
+  TIM=$(call -d '{"bedrock":["Tim203"]}' "$LISTS/$EVENT/players" | field "[p['uuid'] for p in d['players'] if p['kind'] == 'bedrock'][0]" 2>/dev/null) && break
+  sleep 10
+done
+[ -n "$TIM" ] || fail "a Bedrock player could not be put on a list"
+expect "a Bedrock player is kept by the UUID Floodgate gives him" "$TIM" "0000000000000000000901f64f65c7c3"
+for _ in $(seq 1 20); do whitelisted | grep -q "\.Tim203" && break; sleep 1; done
+expect "a Bedrock player on a list is put on the whitelist" "$(whitelisted)" ".Tim203"
+expect "by his UUID" "$(call "$SRV/files/content?path=/whitelist.json")" "00000000-0000-0000-0009-01f64f65c7c3"
+expect "and the Java players stay on" "$(whitelisted)" "Grumm"
+case "$(call "$SRV/lists" | field "[p['name'] for p in d['whitelist']['inGame']]")" in *Tim203*) fail "a list's Bedrock player is shown as added in game" ;; *) echo "ok: and is not shown as added in game" ;; esac
+call -X DELETE "$LISTS/$EVENT/players/$TIM" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -q "\.Tim203" || break; sleep 1; done
+case "$(whitelisted)" in *Tim203*) fail "a Bedrock player taken off a list stays on the whitelist" ;; *) echo "ok: a Bedrock player taken off a list is taken off the whitelist" ;; esac
+expect "and the Java players stay on still" "$(whitelisted)" "Grumm"
+set_spec '{"spec":{"whitelistLists":null}}'
+call -X DELETE "$LISTS/$EVENT" >/dev/null
 
 step "files"
 echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
@@ -489,6 +616,13 @@ tag=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-editor.txt" | tr -d '
 big=$(head -c 2200000 /dev/zero | tr '\0' x | call -o /dev/null -w '%{http_code}' -X PUT -H "If-Match: $tag" --data-binary @- "$SRV/files/content?path=/e2e-editor.txt")
 expect "a save from the editor over 2 MB is refused" "$big" 413
 expect "and the file is as it was" "$(call "$SRV/files/content?path=/e2e-editor.txt")" "saved from the editor"
+# A picture to look at is served as one, and never runs as a page.
+printf '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><script>alert(1)</script></svg>' | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e-icon.svg" >/dev/null
+heads=$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-icon.svg&view" | tr -d '\r')
+expect "a picture to look at is one" "$heads" "Content-Type: image/svg+xml"
+expect "that runs no script" "$heads" "sandbox"
+expect "a picture read is only bytes" "$(call -D - -o /dev/null "$SRV/files/content?path=/e2e-icon.svg" | tr -d '\r')" "Content-Type: application/octet-stream"
+call -X DELETE "$SRV/files?path=/e2e-icon.svg" >/dev/null
 
 step "archives"
 # A zip with all in one folder, as a world is, and one with what a Mac adds:
@@ -623,6 +757,31 @@ picked=$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://cdn.modrinth.
 expect "a pack picked from Modrinth says which" "$(echo "$picked" | field "(d['spec']['resourcePack']['project']['id'], d['spec']['resourcePack']['project']['versionName'])")" "('e2e-pack', '1.0')"
 expect "given another address, it is no longer the project's" "$(call -X PATCH -d '{"spec":{"resourcePack":{"url":"https://example.org/pack.zip"}}}' "$SRV" | field "d['spec']['resourcePack'].get('project')")" None
 call -X DELETE "$SRV/resource-pack" >/dev/null
+
+step "a sleeping server's map"
+# While a server sleeps, the panel answers on its extra ports in the game's
+# place: a browser opening a map is told the server is starting, and that
+# wakes it. Once its game runs, the port reaches the game's pod again.
+if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
+  set_spec '{"spec":{"ports":[{"name":"map","port":8100,"protocol":"TCP"}],"sleep":{"enabled":true,"idleMinutes":1}}}'
+  MAP=$(public_port map)
+  wait_phase Sleeping
+  echo "ok: idle for a minute, it sleeps"
+  expect "a browser opening its map is told it is starting" "$(portping http "$MAP")" "Starting up. This page reloads in a moment."
+  wait_until Starting
+  echo "ok: and that wakes it"
+  set_spec '{"spec":{"sleep":{"enabled":false}}}'
+  wait_phase Running
+  for _ in $(seq 1 30); do
+    case "$(probe_port http "$MAP")" in *"Starting up"*) sleep 1 ;; *) break ;; esac
+  done
+  # Nothing in the game's pod listens on it.
+  case "$(probe_port http "$MAP")" in *"Starting up"*) fail "running, its map's port is still answered for it" ;; esac
+  echo "ok: running, its port reaches its pod again"
+  set_spec '{"spec":{"ports":[]}}'
+else
+  echo "skip: reaching an extra port needs a node's address"
+fi
 
 fi
 
@@ -876,7 +1035,7 @@ import gzip, io, sys, tarfile
 def add(t, name, data=b"x"):
     i = tarfile.TarInfo(name); i.size = len(data); t.addfile(i, io.BytesIO(data))
 with tarfile.open(sys.argv[1] + "/import.tar.gz", "w:gz") as t:
-    add(t, "Old/server.properties", b"motd=From elsewhere\nlevel-name=Drehmal\nserver-port=25599\nserver-ip=10.0.0.5\nenable-rcon=true\n")
+    add(t, "Old/server.properties", b"motd=From elsewhere\nlevel-name=Drehmal\nlevel-seed=5\nserver-port=25599\nserver-ip=10.0.0.5\nenable-rcon=true\n")
     add(t, "Old/Drehmal/level.dat"); add(t, "Old/Drehmal/session.lock"); add(t, "Old/Drehmal_nether/level.dat")
     add(t, "Old/plugins/Foo.jar"); add(t, "Old/logs/2026-01-02-1.log.gz", gzip.compress(b"[12:00:00] [Server thread/INFO]: Done (1.0s)!\n")); add(t, "Old/crash-reports/crash-2026-01-02_12.00.00-server.txt", b"---- Minecraft Crash Report ----\n"); add(t, "Old/start.sh")
     add(t, "Old/ops.json", b'[{"uuid":"853c80ef-3c37-49fd-aa49-938b674adae6","name":"jeb_","level":2,"bypassesPlayerLimit":false}]')
@@ -915,6 +1074,16 @@ case "$props" in *server-port*|*server-ip*|*enable-rcon*|*level-name*) fail "the
 expect "and it is let start" "$(call "$IMPORTED" | field "d['status'].get('message', '')")" ""
 expect "a server with files is not imported into" "$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old" | field "d['code']")" has_files
 call -X DELETE "$IMPORTED?snapshot=false" >/dev/null
+# Without its world, for a new one or another: the rest of it comes, and
+# its world does not, nor the seed that world was made with.
+BARE=$API/orgs/$ORG/servers/imported-bare
+call -d '{"name":"imported-bare","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
+call -X PUT --data-binary "@$WORK/import.tar.gz" "$BARE/import?root=Old&world=none&players=listed&wait=true" >/dev/null
+expect "a server's folder is imported without its world" "$(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world/level.dat") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world_nether/level.dat") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/plugins/Foo.jar")" "404 404 200"
+case "$(call "$BARE/files/content?path=/server.properties")" in *level-seed*) fail "the seed of the world left out was kept" ;; *) echo "ok: not with the seed of the world left out" ;; esac
+call -X PUT --data-binary "@$WORK/save.tar.gz" "$BARE/import?root=saves%2FMy%20World&world=true&wait=true" >/dev/null
+expect "and is given another" "$(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/plugins/Foo.jar")" "200 200"
+call -X DELETE "$BARE?snapshot=false" >/dev/null
 # A world of one's own, a single-player save here, becomes a new server's:
 # with its Nether beside it, where Paper keeps one.
 OWN=$API/orgs/$ORG/servers/own-world
@@ -942,18 +1111,32 @@ expect "a world of one's own is the server's" "$(call -o /dev/null -w '%{http_co
 expect "with its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" 200
 expect "and not locked" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/session.lock")" 404
 # Saved to the organization's library from the server, a snapshot of it
-# taken first: its world and its Nether, and nothing else. Given to a
-# server of another kind, the Nether goes where that one keeps it.
+# taken first: its world and its Nether, and nothing else, and the resource
+# pack it was given. Downloaded, it is a zip of a single-player save. Given
+# to a server of another kind, the Nether goes where that one keeps it, and
+# the pack comes with it.
+[ -n "${PACK_SHA:-}" ] || make_packs
+expect "the server is given a resource pack" "$(call -X PUT --data-binary @"$WORK/pack.zip" "$OWN/resource-pack?name=e2e-pack.zip" | field "d['spec']['resourcePack']['sha1']")" "$PACK_SHA"
 lib=$(call -d '{"name":"E2E island","server":"own-world"}' "$API/orgs/$ORG/worlds?wait=true")
 LIB=$(echo "$lib" | field "d['id']") || fail "the world was not saved to the library: $lib"
 expect "a world is saved to the library" "$(echo "$lib" | field "(d['ready'], d['root'], d['source'])")" "(True, 'world', 'server:own-world')"
 expect "with a snapshot of the server taken first" "$(call "$OWN/snapshots" | field "[s['trigger'] for s in d['snapshots']]")" manual
-call -o "$WORK/library.tar" "$API/orgs/$ORG/worlds/$LIB/archive"
-expect "its archive holds its world and its Nether, and nothing else" "$(tar -tf "$WORK/library.tar" | cut -d/ -f1 | sort -u | tr '\n' ' ')" "world world_nether "
+expect "and with the server's resource pack" "$(echo "$lib" | field "(d['resourcePack']['sha1'], d['resourcePack']['uploaded']['name'])")" "('$PACK_SHA', 'e2e-pack.zip')"
+call -o "$WORK/library.zip" "$API/orgs/$ORG/worlds/$LIB/archive"
+expect "its download is a zip of its world, its Nether in it, and its pack" "$(python3 - "$WORK/library.zip" <<'PY'
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+bad = z.testzip()
+names = set(z.namelist())
+print(bad, sorted({n.split("/")[0] for n in names}), "E2E island/level.dat" in names, "E2E island/DIM-1/region/r.0.0.mca" in names, "E2E island/resources.zip" in names)
+PY
+)" "None ['E2E island'] True True True"
 call -d '{"name":"from-library","spec":{"eula":true,"loader":"vanilla","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
-call -X PUT "$API/orgs/$ORG/servers/from-library/import?world=true&library=$LIB&wait=true" >/dev/null
+call -X PUT "$API/orgs/$ORG/servers/from-library/import?world=true&library=$LIB&pack=true&wait=true" >/dev/null
 expect "a world from the library is a new server's" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/from-library/files/content?path=/world/level.dat")" 200
 expect "with its Nether where the game itself keeps it" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/from-library/files/content?path=/world/DIM-1/region/r.0.0.mca")" 200
+expect "and its resource pack" "$(call "$API/orgs/$ORG/servers/from-library" | field "(d['spec']['resourcePack']['sha1'], d['spec']['resourcePack']['uploaded']['name'])")" "('$PACK_SHA', 'e2e-pack.zip')"
+expect "kept in the server's files" "$(call "$API/orgs/$ORG/servers/from-library/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
 call -X DELETE "$API/orgs/$ORG/servers/from-library?snapshot=false" >/dev/null
 expect "a world is taken out of the library" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/worlds/$LIB")" 204
 # Its world replaced by another: a snapshot is taken first, only the world's
@@ -970,6 +1153,14 @@ expect "and the server can start" "$(call "$OWN" | field "d['status'].get('messa
 before=$(call "$OWN/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'pre-replace'][0]") || fail "no snapshot was taken before the world was replaced"
 call -X POST "$OWN/snapshots/$before/restore?wait=true" >/dev/null
 expect "the snapshot before it puts the old world back" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca")" "200 404"
+# Or by a new one, which the game makes as the server next starts, with the
+# settings asked for.
+expect "a new world takes the place of another" "$(call -o /dev/null -w '%{http_code}' -X PUT -d '{"properties":{"level-seed":"42"}}' "$OWN/import?world=new&replace=true")" 202
+for _ in $(seq 1 120); do [ "$(call "$OWN/operation")" = null ] && break; sleep 1; done
+expect "its world is gone, for the game to make" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" "404 404"
+expect "the rest is kept" "$(call "$OWN/files/content?path=/kept.txt")" kept
+expect "and the new one is made with the seed asked for" "$(call "$OWN" | field "d['spec']['properties'].get('level-seed')")" 42
+expect "with a snapshot of the old one taken first" "$(call "$OWN/snapshots" | field "len([s for s in d['snapshots'] if s['trigger'] == 'pre-replace'])")" 2
 ids=$(call "$OWN/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
 call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
 call -X DELETE "$OWN?snapshot=false" >/dev/null
@@ -1016,6 +1207,73 @@ else
 fi
 expect "and the port is closed again" "$(call -X PATCH -d '{"spec":{"ports":[]}}' "$SRV" | field "d['spec'].get('ports') or []")" "[]"
 
+step "a mod's port"
+# A mod that listens on a port of its own has it opened as it is added, and
+# set in its config as the game starts, with where players reach it.
+mods=$(call "$SRV" | field "__import__('json').dumps(d['spec']['mods'])")
+with=$(python3 -c 'import json, sys; m = json.loads(sys.argv[1]); m.append({"source": "modrinth", "kind": "plugin", "project": "simple-voice-chat"}); print(json.dumps({"spec": {"mods": m}}))' "$mods")
+added=$(call -X PATCH -d "$with" "$SRV")
+expect "Simple Voice Chat added opens its port" "$(echo "$added" | field "[(p['name'], p['port'], p['protocol'], p.get('for')) for p in d['spec'].get('ports', [])]")" "[('voice-chat', 24454, 'UDP', 'simple-voice-chat')]"
+VOICE=0
+for _ in $(seq 1 60); do
+  VOICE=$(call "$SRV" | field "next((p['address'] for p in d['status'].get('ports', []) if p['name'] == 'voice-chat' and p.get('address')), 0)")
+  [ "$VOICE" != 0 ] && break
+  sleep 2
+done
+[ "$VOICE" != 0 ] || fail "its port was not opened: $(call "$SRV" | field "d['status'].get('ports')")"
+echo "ok: it is reached at $VOICE"
+call -X POST "$SRV/restart" >/dev/null
+for _ in $(seq 1 90); do
+  [ "$(phase_now)" != Running ] && break
+  sleep 1
+done
+wait_phase Running
+voice=$(call -f "$SRV/files/content?path=/plugins/voicechat/voicechat-server.properties") || fail "its config could not be read"
+expect "it listens on that port" "$voice" "
+port=24454
+"
+expect "and tells players where it is reached" "$voice" "
+voice_host=$VOICE
+"
+expect "its voice server started" "$(call -f "$SRV/files/content?path=/logs/latest.log")" "Voice chat server started at port 24454"
+game_clean "and the game's log is clean"
+expect "taken off, its port is closed" "$(call -X PATCH -d "{\"spec\":{\"mods\":$mods}}" "$SRV" | field "d['spec'].get('ports') or []")" "[]"
+step "a sleeping server's Bedrock port"
+# While a server sleeps, the panel answers on its extra ports in the game's
+# place. Bedrock players, through Geyser, see it in their server list as
+# asleep, which does not wake it; joining does. Once its game runs, its
+# ports reach the game's pod again: a web server in the workspace stands in
+# for a map.
+if [ -n "${AVSYS_E2E_NODE_IP:-}" ]; then
+  set_spec '{"spec":{"ports":[{"name":"geyser","port":19132,"protocol":"UDP"},{"name":"map","port":8100,"protocol":"TCP"}],"sleep":{"enabled":true,"idleMinutes":1}}}'
+  GEYSER=$(public_port geyser)
+  MAP=$(public_port map)
+  wait_phase Sleeping
+  echo "ok: idle for a minute, it sleeps"
+  expect "Bedrock's server list is told it is asleep" "$(portping bedrock "$GEYSER")" "MCPE;Asleep. Join to wake it up.;"
+  stays Sleeping 5
+  echo "ok: and that does not wake it"
+  probe_port join "$GEYSER" >/dev/null
+  wait_until Starting
+  echo "ok: a Bedrock player joining wakes it"
+  set_spec '{"spec":{"sleep":{"enabled":false}}}'
+  expect "and the list is told it is starting" "$(portping bedrock "$GEYSER")" "MCPE;Starting up. Try again in a moment.;"
+  wait_phase Running
+  ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p "$SSH_PORT" "probe.$ORG@$ssh_host" \
+    'echo reached its pod > /tmp/port.txt; cd /tmp && exec timeout 120 python3 -m http.server 8100' >/dev/null 2>&1 &
+  serving=$!
+  reached=""
+  for _ in $(seq 1 30); do
+    reached=$(${AVSYS_E2E_ON_NODE:-} wget -q -T 3 -O - "http://$AVSYS_E2E_NODE_IP:$MAP/port.txt" 2>/dev/null) && break
+    sleep 2
+  done
+  kill "$serving" 2>/dev/null || true
+  expect "running, its ports reach its pod again" "$reached" "reached its pod"
+  set_spec '{"spec":{"ports":[]}}'
+else
+  echo "skip: reaching an extra port needs a node's address"
+fi
+
 step "router"
 expect "status is proxied by hostname" "$(python3 "$HERE/mcping.py" "$HOST" status "$ROUTER_HOST" "$ROUTER_PORT")" "e2e probe"
 expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.test" status "$ROUTER_HOST" "$ROUTER_PORT")" "Unknown server"
@@ -1023,6 +1281,31 @@ expect "unknown hostnames are answered" "$(python3 "$HERE/mcping.py" "nope.$ORG.
 fi
 
 if part servers; then
+
+step "invites"
+# Someone new joins with an invite link, as the invite page does it: with a
+# cookie, not a token. The panel cannot delete accounts, so theirs is left
+# behind, in no organization once they leave.
+INVITE=$(call -d '{"role":"viewer","maxUses":1,"expiresInHours":1}' "$API/orgs/$ORG/invites" | field "d['token']") || fail "no invite was made"
+expect "an invite says what it is for to whoever has the link" "$(curl -sS "$API/invites/$INVITE" | field "(d['org']['slug'], d['role'], d['usable'])")" "('$ORG', 'viewer', True)"
+GUEST=guest-$(date +%s)
+guest() { curl -sS -b "$WORK/guest.jar" -c "$WORK/guest.jar" -H 'X-Avsys: 1' "$@"; }
+expect "someone new makes an account with it" "$(guest -o /dev/null -w '%{http_code}' -d "{\"username\":\"$GUEST\",\"password\":\"e2e guest password\",\"invite\":\"$INVITE\"}" "$API/auth/register")" 201
+expect "and is a member, with the role it gave" "$(call "$API/orgs/$ORG/members" | field "[m['role'] for m in d if m['username'] == '$GUEST']")" "['viewer']"
+expect "in that organization only, and not an administrator" "$(guest "$API/me" | field "(d['user']['isAdmin'], [o['slug'] for o in d['orgs']])")" "(False, ['$ORG'])"
+expect "they see its servers" "$(guest -o /dev/null -w '%{http_code}' "$SRV")" 200
+expect "but as a viewer cannot stop one" "$(guest -o /dev/null -w '%{http_code}' -X POST "$SRV/stop")" 403
+expect "the invite was for one person" "$(call "$API/orgs/$ORG/invites" | field "[(i['uses'], i['maxUses']) for i in d if i['token'] == '$INVITE']")" "[(1, 1)]"
+expect "and its link says so" "$(curl -sS "$API/invites/$INVITE" | field "d['usable']")" False
+expect "the next to follow it is told so, and no account is made" "$(curl -sS -H 'X-Avsys: 1' -d "{\"username\":\"$GUEST-2\",\"password\":\"e2e guest password\",\"invite\":\"$INVITE\"}" "$API/auth/register" | field "d['code']")" invite_unusable
+expect "nor can they sign in" "$(curl -sS -o /dev/null -w '%{http_code}' -H 'X-Avsys: 1' -d "{\"username\":\"$GUEST-2\",\"password\":\"e2e guest password\"}" "$API/auth/login")" 401
+GUEST_ID=$(guest "$API/me" | field "d['user']['id']")
+expect "a member can leave" "$(guest -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/members/$GUEST_ID")" 204
+expect "and then sees nothing of it" "$(guest -o /dev/null -w '%{http_code}' "$SRV")" 404
+expect "an invite can be revoked" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/invites/$INVITE")" 204
+expect "and its link is then gone" "$(curl -sS -o /dev/null -w '%{http_code}' "$API/invites/$INVITE")" 404
+guest -o /dev/null -X POST "$API/auth/logout"
+expect "their session ends on signing out" "$(guest -o /dev/null -w '%{http_code}' "$API/me")" 401
 
 step "nodes"
 # Measuring every node's speed goes on while the rest of this step runs.
@@ -1059,6 +1342,25 @@ if [ -n "$OTHER_NODE" ]; then
   expect "and is as it was, stopped" "$(call "$PLACED" | field "(d['spec']['state'], d['status']['phase'])")" "('Stopped', 'Stopped')"
   expect "the snapshot that carried them is kept" "$(call "$PLACED/snapshots" | field "[s['trigger'] for s in d['snapshots']]")" "'move'"
   expect "and it cannot be moved to where it is" "$(call -X POST -d "{\"node\":\"$OTHER_NODE\"}" "$PLACED/move" | field "d['message']")" "on $OTHER_NODE already"
+  # Its node is cordoned, as before maintenance: the server is moved off it,
+  # its files read where they are, and none is moved to it. Cordoning is
+  # done on the cluster, through AVSYS_E2E_ON_NODE.
+  if [ -n "${AVSYS_E2E_ON_NODE:-}" ]; then
+    echo "written on a cordoned node" | call -X PUT --data-binary @- "$PLACED/files/content?path=/cordoned.txt" >/dev/null
+    CORDONED=$OTHER_NODE
+    sh -c "$AVSYS_E2E_ON_NODE kubectl cordon $CORDONED" >/dev/null
+    expect "a cordoned node says so" "$(call "$API/nodes" | field "[(n['ready'], n.get('cordoned', False)) for n in d['nodes'] if n['name'] == '$CORDONED']")" "[(False, True)]"
+    moved=$(call -X POST -d "{\"node\":\"$NODE\"}" "$PLACED/move?wait=true")
+    case "$moved" in *'"code"'*) fail "moving the server off a cordoned node: $moved" ;; esac
+    expect "a server is moved off a cordoned node" "$(call "$PLACED" | field "d['status'].get('node')")" "$NODE"
+    expect "with its files" "$(call "$PLACED/files/content?path=/cordoned.txt") $(call "$PLACED/files/content?path=/moved.txt")" "written on a cordoned node moved with it"
+    expect "and is as it was, stopped" "$(call "$PLACED" | field "(d['spec']['state'], d['status']['phase'])")" "('Stopped', 'Stopped')"
+    expect "a server is not moved to a cordoned node" "$(call -X POST -d "{\"node\":\"$CORDONED\"}" "$PLACED/move" | field "d['message']")" "$CORDONED is cordoned"
+    sh -c "$AVSYS_E2E_ON_NODE kubectl uncordon $CORDONED" >/dev/null
+    CORDONED=
+  else
+    echo "skip: cordoning a node needs AVSYS_E2E_ON_NODE"
+  fi
   # Its snapshot is let go of, so that the organization's are the probe's.
   ids=$(call "$PLACED/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
   call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
@@ -1375,6 +1677,52 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
+step "a new server from a .mrpack"
+# A Modrinth pack file made here: Fabric on 1.21.4, one mod for the server
+# and one for players only, and files of its own for both and for the
+# server alone. As the form does it: made stopped, the file sent in parts
+# to the organization, then taken as its modpack, then started.
+python3 - "$WORK/probe.mrpack" <<'PY'
+import json, sys, zipfile
+cdn = "https://cdn.modrinth.com/data"
+index = {
+    "formatVersion": 1, "game": "minecraft", "versionId": "1.0.0", "name": "E2E Pack",
+    "files": [
+        {"path": "mods/lithium-fabric-0.15.3+mc1.21.4.jar", "env": {"client": "required", "server": "required"},
+         "hashes": {"sha1": "b7100505d1178b0f9a1dac4a24472ad1293b890c"}, "fileSize": 797555,
+         "downloads": [cdn + "/gvQqBUqZ/versions/u8pHPXJl/lithium-fabric-0.15.3%2Bmc1.21.4.jar"]},
+        {"path": "mods/sodium-fabric-0.6.13+mc1.21.4.jar", "env": {"client": "required", "server": "unsupported"},
+         "hashes": {"sha1": "c881d2db971207c396b5629632437f1520c0c478"}, "fileSize": 1306799,
+         "downloads": [cdn + "/AANobbMI/versions/c3YkZvne/sodium-fabric-0.6.13%2Bmc1.21.4.jar"]},
+    ],
+    "dependencies": {"minecraft": "1.21.4", "fabric-loader": "0.16.10"},
+}
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("modrinth.index.json", json.dumps(index))
+    z.writestr("overrides/config/e2e.txt", "from the pack\n")
+    z.writestr("server-overrides/e2e-server.txt", "for the server\n")
+PY
+MRPACK_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/probe.mrpack")
+MRPACK_SIZE=$(wc -c <"$WORK/probe.mrpack" | tr -d ' ')
+PACKED=$API/orgs/$ORG/servers/packed
+made=$(call -d '{"name":"packed","spec":{"eula":true,"state":"Stopped","modpack":{"source":"upload","project":"probe.mrpack","title":"E2E Pack","gameVersion":"1.21.4","loader":"fabric"},"resources":{"memory":"2Gi"},"storage":{"size":"2Gi"}}}' "$API/orgs/$ORG/servers")
+case "$made" in *'"spec"'*) ;; *) fail "the server was not made: $made" ;; esac
+expect "it is not started before its file is there" "$(call -X POST "$PACKED/start" | field "d['code']")" no_modpack
+call -X PUT --data-binary @"$WORK/probe.mrpack" "$API/orgs/$ORG/uploads?upload=e2e-mrpack-upload&offset=0&length=$MRPACK_SIZE&size=$MRPACK_SIZE" >/dev/null
+sent=$(call -X PUT "$PACKED/modpack?name=probe.mrpack&upload=e2e-mrpack-upload&size=$MRPACK_SIZE&wait=true")
+expect "the file is read, and kept by its SHA-1" "$(echo "$sent" | field "(d['spec']['modpack']['version'], d['spec']['modpack']['title'], d['spec']['modpack']['versionName'], d['spec']['modpack']['loader'], d['spec']['modpack']['gameVersion'])")" "('$MRPACK_SHA', 'E2E Pack', '1.0.0', 'fabric', '1.21.4')"
+expect "in the server's files" "$(call -o /dev/null -w '%{http_code}' "$PACKED/files/content?path=/.avsys/content/$MRPACK_SHA.mrpack")" 200
+call -X POST "$PACKED/start" >/dev/null
+wait_phase Running "$PACKED"
+expect "started, it has the pack's mod for the server and not the one for players" "$(call "$PACKED/files?path=/mods" | field "sorted(e['name'] for e in d['entries'])")" "['lithium-fabric-0.15.3+mc1.21.4.jar']"
+expect "and the game loaded it" "$(call "$PACKED/files/content?path=/logs/latest.log" | grep -q -- '- lithium ' && echo loaded)" loaded
+expect "and the pack's own files" "$(call "$PACKED/files/content?path=/config/e2e.txt") / $(call "$PACKED/files/content?path=/e2e-server.txt")" "from the pack / for the server"
+call -o /dev/null -X DELETE "$PACKED?snapshot=false"
+for _ in $(seq 1 30); do
+  [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
+  sleep 2
+done
+
 fi
 
 if part history; then
@@ -1411,7 +1759,88 @@ wait_phase Running
 expect "brought back straight after a delete, it keeps its files once it runs" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "and its plugins" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit
 
+step "a node that is down"
+# A server whose files are on a node that stops answering is made again on
+# another node from its newest snapshot, as the same server. Every request
+# here has a limit: a panel waiting on that node is what is being tested.
+if [ -n "${AVSYS_E2E_DOWN_NODE:-}" ]; then
+  DOWN=$AVSYS_E2E_DOWN_NODE
+  STRANDED="$API/orgs/$ORG/servers/stranded"
+  dcall() { call -m 60 "$@"; }
+  # What the panel and the cluster say of the server, for a failure here.
+  down_dump() {
+    printf '\n--- stranded, as the panel has it\n'
+    call -m 20 "$STRANDED" 2>&1 || true
+    printf '\n'
+    call -m 20 "$STRANDED/placement" 2>&1 || true
+    printf '\n'
+    if [ -n "${AVSYS_E2E_ON_NODE:-}" ]; then
+      sh -c "$AVSYS_E2E_ON_NODE kubectl get nodes" 2>&1 || true
+      sh -c "$AVSYS_E2E_ON_NODE kubectl -n mc-$ORG get pods,pvc -o wide" 2>&1 || true
+      sh -c "$AVSYS_E2E_ON_NODE kubectl get pv -o wide" 2>&1 || true
+      sh -c "$AVSYS_E2E_ON_NODE kubectl -n mc-$ORG get events --sort-by=.lastTimestamp" 2>&1 | tail -30 || true
+      sh -c "$AVSYS_E2E_ON_NODE kubectl -n avsys logs deploy/avsys --tail=40" 2>&1 || true
+    fi
+  }
+  down_fail() { down_dump; fail "$1"; }
+  dexpect() { case "$2" in *"$3"*) printf 'ok: %s\n' "$1" ;; *) down_fail "$1: expected to find '$3' in: $2" ;; esac; }
+  # ready_is STATE: waits, three minutes at most, for the node to say so.
+  ready_is() {
+    for _ in $(seq 1 60); do
+      [ "$(dcall "$API/nodes" | field "[n['ready'] for n in d['nodes'] if n['name'] == '$DOWN']")" = "[$1]" ] && return 0
+      sleep 3
+    done
+    return 1
+  }
+
+  UP=$(dcall "$API/nodes?memory=1Gi" | field "next((n['name'] for n in d['nodes'] if n['ready'] and n['name'] != '$DOWN'), '')")
+  [ -n "$UP" ] || fail "there is no other node to move a server to"
+  made=$(dcall -d "{\"name\":\"stranded\",\"node\":\"$DOWN\",\"spec\":{\"eula\":true,\"loader\":\"vanilla\",\"version\":\"1.21.4\",\"state\":\"Stopped\",\"resources\":{\"memory\":\"1Gi\"},\"storage\":{\"size\":\"1Gi\"}}}" "$API/orgs/$ORG/servers")
+  case "$made" in *'"spec"'*) ;; *) fail "a server was not made on $DOWN: $made" ;; esac
+  written=
+  for _ in $(seq 1 60); do
+    echo "in the snapshot" | dcall -f -X PUT --data-binary @- "$STRANDED/files/content?path=/kept.txt" >/dev/null 2>&1 && { written=1; break; }
+    sleep 3
+  done
+  [ -n "$written" ] || down_fail "the files of a server on $DOWN could not be written"
+  taken=$(call -m 300 -X POST "$STRANDED/snapshots?wait=true")
+  TAKEN=$(echo "$taken" | field "d['id']") || down_fail "no snapshot of it was taken: $taken"
+  echo "after the snapshot" | dcall -X PUT --data-binary @- "$STRANDED/files/content?path=/after.txt" >/dev/null
+  dexpect "its files are on $DOWN" "$(dcall "$STRANDED/placement" | field "(d.get('node'), d.get('local'), d.get('down', False))")" "('$DOWN', True, False)"
+  ADDRESS=$(dcall "$STRANDED" | field "d['spec'].get('expose')")
+
+  sh -c "$AVSYS_E2E_NODE_DOWN"
+  ready_is False || down_fail "$DOWN did not go down"
+  echo "ok: a node that stops answering is down"
+  placement=$(dcall "$STRANDED/placement")
+  dexpect "a server on it is offered its newest snapshot" "$(echo "$placement" | field "(d.get('down'), d.get('newest', {}).get('id'))" 2>/dev/null) $placement" "(True, '$TAKEN')"
+  dexpect "and is not moved as usual" "$(dcall -X POST -d "{\"node\":\"$UP\"}" "$STRANDED/move" | field "d['code']")" node_down
+  moved=$(call -m 600 -X POST -d "{\"node\":\"$UP\",\"fromSnapshot\":\"$TAKEN\"}" "$STRANDED/move?wait=true") || down_fail "moving the server from its snapshot did not end: $moved"
+  case "$moved" in *'"code"'*) down_fail "moving the server from its snapshot: $moved" ;; esac
+  dexpect "it is moved off it from that snapshot" "$(dcall "$STRANDED" | field "(d['status'].get('node'), d['spec']['state'])")" "('$UP', 'Stopped')"
+  dexpect "with the files the snapshot has" "$(dcall "$STRANDED/files/content?path=/kept.txt")" "in the snapshot"
+  dexpect "and not those written after it" "$(dcall -o /dev/null -w '%{http_code}' "$STRANDED/files/content?path=/after.txt")" 404
+  dexpect "on a volume of its own there" "$(dcall "$STRANDED/placement" | field "(d.get('node'), d.get('local'), d.get('down', False))")" "('$UP', True, False)"
+  dexpect "under its own address" "$(dcall "$STRANDED" | field "d['spec'].get('expose')")" "$ADDRESS"
+
+  # Back, the node stops what it ran of the server: nothing of it runs there.
+  sh -c "$AVSYS_E2E_NODE_UP"
+  ready_is True || down_fail "$DOWN did not come back"
+  echo "ok: the node comes back"
+  left=unknown
+  for _ in $(seq 1 40); do
+    left=$(sh -c "$AVSYS_E2E_ON_DOWN_NODE crictl ps -q --label io.kubernetes.pod.namespace=mc-$ORG --label io.kubernetes.pod.name=stranded" 2>&1) && [ -z "$left" ] && break
+    sleep 3
+  done
+  [ -z "$left" ] || down_fail "the server's old pod still runs on $DOWN once it is back: $left"
+  echo "ok: once back, nothing of the server runs on $DOWN"
+  dexpect "and the server stays where it was moved, with its files" "$(dcall "$STRANDED/placement" | field "d.get('node')") $(dcall "$STRANDED/files/content?path=/kept.txt")" "$UP in the snapshot"
+  dcall -X DELETE "$STRANDED?snapshot=false" >/dev/null
+else
+  echo "skip: taking a node down needs the cluster to say how"
+fi
+
 fi
 
 step "how long the panel took"
-timings || fail "a read of a list took longer than $LIST_BUDGET_MS ms"
+timings || fail "a read of a list took longer than its budget"

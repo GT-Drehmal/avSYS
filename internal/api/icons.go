@@ -898,6 +898,9 @@ func (s *Server) startAfterIcon(ctx context.Context, mc *avsysv1.MinecraftServer
 	if now.Spec.State == avsysv1.StateRunning {
 		return nil
 	}
+	if err := modpackMissing(&now.Spec); err != nil {
+		return err
+	}
 	orig := now.DeepCopy()
 	now.Spec.State = avsysv1.StateRunning
 	return s.Client.Patch(ctx, now, client.MergeFrom(orig))

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -36,7 +38,8 @@ func (s *Server) minecraftProfile(ctx context.Context, name string) (*store.Mine
 	if !minecraftNamePattern.MatchString(name) {
 		return nil, errBadRequest("%q is not a Minecraft username.", name)
 	}
-	body, err := s.catalog.get(ctx, "https://api.mojang.com/users/profiles/minecraft/"+url.PathEscape(name), 5*time.Minute)
+	// Asked in one case, so that a name typed in another is not asked again.
+	body, err := s.catalog.get(ctx, "https://api.mojang.com/users/profiles/minecraft/"+url.PathEscape(strings.ToLower(name)), 5*time.Minute)
 	if errors.Is(err, errNotFound) {
 		return nil, &Error{Status: http.StatusNotFound, Code: "no_such_player", Message: "There is no Minecraft account named " + name + "."}
 	}
@@ -141,6 +144,26 @@ type autoOps struct {
 	// locks holds one lock per server, so that two looks at the same server
 	// do not interleave their commands.
 	locks sync.Map
+	// missing is when the game last said it knows no player of a name the
+	// panel put on a list, by server, list and name: not asked again for a
+	// while, since the next look would find them still not on it.
+	missing sync.Map
+}
+
+// missingFor is how long a name the game knows no player of is left before
+// it is tried again.
+const missingFor = time.Hour
+
+// notMissing is the names to add less those the game lately knew no player of.
+func (o *autoOps) notMissing(list string, names []string) []string {
+	var out []string
+	for _, name := range names {
+		if at, ok := o.missing.Load(list + "/" + strings.ToLower(name)); ok && time.Since(at.(time.Time)) < missingFor {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 // A roleList is one of the lists of players a server keeps that the panel
@@ -148,6 +171,12 @@ type autoOps struct {
 type roleList struct {
 	// what names it in the log.
 	what string
+	// key is what the API calls it, as the server's settings do.
+	key string
+	// file is where the game keeps it, in the server's folder.
+	file string
+	// query asks the game who is on it, where it can be asked.
+	query string
 	// note is the annotation recording which players the panel put on it.
 	note string
 	// add and remove are the commands, less the player's name.
@@ -158,18 +187,23 @@ type roleList struct {
 	picks func(*avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks
 	// kept is who is on it by the server's own settings.
 	kept func(*avsysv1.MinecraftServerSpec) []string
+	// saved are the organization's saved lists of players whose players are
+	// on it, by ID.
+	saved func(*avsysv1.MinecraftServerSpec) []string
 }
 
 var roleLists = []roleList{
 	{
-		what: "operators", note: avsysv1.AnnotationAutoOps, add: "op ", remove: "deop ", from: opRole,
+		what: "operators", key: "ops", file: "ops.json", note: avsysv1.AnnotationAutoOps, add: "op ", remove: "deop ", from: opRole,
 		picks: func(spec *avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks { return spec.OpMembers },
 		kept:  func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Ops },
+		saved: func(spec *avsysv1.MinecraftServerSpec) []string { return spec.OpLists },
 	},
 	{
-		what: "whitelist", note: avsysv1.AnnotationAutoWhitelist, add: "whitelist add ", remove: "whitelist remove ", from: whitelistRole,
+		what: "whitelist", key: "whitelist", file: "whitelist.json", query: "whitelist list", note: avsysv1.AnnotationAutoWhitelist, add: "whitelist add ", remove: "whitelist remove ", from: whitelistRole,
 		picks: func(spec *avsysv1.MinecraftServerSpec) *avsysv1.MemberPicks { return spec.WhitelistMembers },
 		kept:  func(spec *avsysv1.MinecraftServerSpec) []string { return spec.Whitelist },
+		saved: func(spec *avsysv1.MinecraftServerSpec) []string { return spec.WhitelistLists },
 	},
 }
 
@@ -254,6 +288,80 @@ func accountNames(m store.Member, trusted bool) []string {
 	return out
 }
 
+// savedPlayers is the players of the saved lists named, each once. A list
+// that is not there any more, deleted since, is nobody.
+func savedPlayers(ids []string, saved map[string]*store.PlayerList) []store.ListPlayer {
+	var out []store.ListPlayer
+	seen := map[string]bool{}
+	for _, id := range ids {
+		l := saved[id]
+		if l == nil {
+			continue
+		}
+		for _, p := range l.Players {
+			if !seen[p.UUID] {
+				seen[p.UUID] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// fromSaved is the players of the saved lists named, by their names in
+// game, each once: a Bedrock player's as the server's Floodgate makes it.
+func fromSaved(ids []string, saved map[string]*store.PlayerList, fg floodgate) []string {
+	var out []string
+	for _, p := range savedPlayers(ids, saved) {
+		if name := fg.inGame(p); listedNamePattern.MatchString(name) && !hasName(out, name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// savedBedrock is the Bedrock players of the saved lists named, by their
+// names in game, lowercased. Two gamertags can make one name in game, cut
+// to 16 characters: each is kept.
+func savedBedrock(ids []string, saved map[string]*store.PlayerList, fg floodgate) map[string][]store.ListPlayer {
+	out := map[string][]store.ListPlayer{}
+	for _, p := range savedPlayers(ids, saved) {
+		if p.Bedrock() {
+			name := strings.ToLower(fg.inGame(p))
+			out[name] = append(out[name], p)
+		}
+	}
+	return out
+}
+
+// wantedOn is who the panel should have on one of a server's lists, but for
+// the names in its settings: members, by role and picked, and the players of
+// the saved lists it uses.
+func wantedOn(list roleList, spec *avsysv1.MinecraftServerSpec, members []store.Member, saved map[string]*store.PlayerList, fg floodgate) []string {
+	out := wantedFrom(list.from(spec), list.picks(spec), members)
+	for _, name := range fromSaved(list.saved(spec), saved, fg) {
+		if !hasName(out, name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// savedLists is an organization's saved lists of players by ID.
+func (s *Server) savedLists(ctx context.Context, orgID string) (map[string]*store.PlayerList, error) {
+	lists, err := s.Store.PlayerLists(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*store.PlayerList, len(lists))
+	for i := range lists {
+		out[lists[i].ID] = &lists[i]
+	}
+	return out, nil
+}
+
 // wantedOps is who should be an operator on a server for their role.
 func wantedOps(spec *avsysv1.MinecraftServerSpec, members []store.Member) []string {
 	return wantedFrom(opRole(spec), spec.OpMembers, members)
@@ -299,24 +407,61 @@ func hasName(list []string, name string) bool {
 	return false
 }
 
-// opChanges is what to do to get from the players the panel has put on a
-// list on a server to the ones it should have.
-func opChanges(made, wanted []string) (add, remove []string) {
+// listChanges is what to do to a list on a server to get the players the
+// panel should have put on it there, from those it has (made).
+//
+// With who is on it in game known (on), that is gone by: a player it should
+// have who is not on it, taken off by hand, is put back, and one it put
+// there that is gone already needs nothing done. Without, the note is
+// taken to be true of the game. Either way only players the panel put on
+// it are ever taken off: one added by hand is not its to remove.
+func listChanges(made, wanted, on []string, known bool) (add, remove []string) {
+	if !known {
+		on = made
+	}
 	for _, name := range wanted {
-		if !hasName(made, name) {
+		if !hasName(on, name) {
 			add = append(add, name)
 		}
 	}
 	for _, name := range made {
-		if !hasName(wanted, name) {
+		if !hasName(wanted, name) && hasName(on, name) {
 			remove = append(remove, name)
 		}
 	}
 	return add, remove
 }
 
-// syncOps makes one running server's operators what its organization's
-// roles say. It does nothing, and costs nothing, when they already are.
+// stillOn is who of the players the panel has put on a list, or should
+// have, are on it in game: the note as it is true of the game now.
+func stillOn(made, wanted, on []string) []string {
+	var out []string
+	for _, name := range on {
+		if (hasName(made, name) || hasName(wanted, name)) && !hasName(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// sameNames is whether two lists have the same players, in any order.
+func sameNames(a, b []string) bool {
+	for _, n := range a {
+		if !hasName(b, n) {
+			return false
+		}
+	}
+	for _, n := range b {
+		if !hasName(a, n) {
+			return false
+		}
+	}
+	return true
+}
+
+// syncOps makes one running server's operators and whitelist what its
+// organization's roles and its settings say, as they are in game. It runs
+// no command when they already are.
 func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, members []store.Member) error {
 	if mc.Status.Phase != avsysv1.PhaseRunning {
 		// One that is not running is put right when it next is: the note
@@ -324,9 +469,9 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 		return nil
 	}
 	key := client.ObjectKeyFromObject(mc)
-	lock, _ := s.autoOps.locks.LoadOrStore(key.String(), &sync.Mutex{})
-	lock.(*sync.Mutex).Lock()
-	defer lock.(*sync.Mutex).Unlock()
+	lock := s.autoOps.lock(key)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// As it is now that the lock is held: another look may have changed
 	// the note of who was made an operator while this one waited. Read from
@@ -343,13 +488,17 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	}
 	// The members too: a look that read them before an account was linked
 	// or unlinked, and got the lock after one that read them since, would
-	// otherwise undo it.
+	// otherwise undo it. And the saved lists, for the same reason.
+	var saved map[string]*store.PlayerList
 	if slug, ok := s.orgOfNamespace(fresh.Namespace); ok {
 		org, err := s.Store.OrgBySlug(ctx, slug)
 		if err != nil {
 			return err
 		}
 		if members, err = s.Store.Members(ctx, org.ID); err != nil {
+			return err
+		}
+		if saved, err = s.savedLists(ctx, org.ID); err != nil {
 			return err
 		}
 	}
@@ -359,20 +508,96 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	}
 	changed := false
 	var failed error
+	fg := s.floodgateOf(ctx, fresh)
 	for _, list := range roleLists {
 		made := splitNames(fresh.Annotations[list.note])
-		wanted := withKept(wantedFrom(list.from(&fresh.Spec), list.picks(&fresh.Spec), members), list.kept(&fresh.Spec))
-		add, remove := opChanges(made, wanted)
-		if len(add) == 0 && len(remove) == 0 {
+		wanted := withKept(wantedOn(list, &fresh.Spec, members, saved, fg), list.kept(&fresh.Spec))
+		bedrock := savedBedrock(list.saved(&fresh.Spec), saved, fg)
+		// Who is on it in game: anyone at the console may have changed it.
+		// Where that cannot be read, the note is gone by as it is.
+		players, err := s.readList(ctx, fresh, list)
+		known := err == nil
+		if !known {
+			s.Log.Debug("could not read a server's list", "server", key.String(), "list", list.what, "error", err)
+		}
+		on := playerNames(players)
+		add, remove := listChanges(made, wanted, on, known)
+		listKey := key.String() + "/" + list.key
+		add = s.autoOps.notMissing(listKey, add)
+		from := made
+		if known {
+			from = stillOn(made, wanted, on)
+		}
+		isBedrock := func(name string) bool {
+			if i := slices.IndexFunc(players, func(p listedPlayer) bool { return strings.EqualFold(p.Name, name) }); i >= 0 {
+				return players[i].Bedrock
+			}
+			return bedrockListed(listedPlayer{Name: name})
+		}
+		// Bedrock players of saved lists go on a whitelist by its file, with
+		// the UUID Floodgate gives them, and come off it so: the game cannot
+		// look up their names (see bedrock.go).
+		var fileAdd, fileRemove []listedPlayer
+		if list.key == "whitelist" {
+			add = slices.DeleteFunc(add, func(name string) bool {
+				ps, ok := bedrock[strings.ToLower(name)]
+				for _, p := range ps {
+					fileAdd = append(fileAdd, listedPlayer{Name: name, UUID: dashedUUID(p.UUID)})
+				}
+				return ok
+			})
+			remove = slices.DeleteFunc(remove, func(name string) bool {
+				if isBedrock(name) {
+					fileRemove = append(fileRemove, listedPlayer{Name: name})
+					return true
+				}
+				return false
+			})
+			if known {
+				more, gone := bedrockByUUID(bedrock, players, made)
+				fileAdd, fileRemove = append(fileAdd, more...), append(fileRemove, gone...)
+			}
+		}
+		if len(add) == 0 && len(remove) == 0 && len(fileAdd) == 0 && len(fileRemove) == 0 && sameNames(from, made) {
 			continue
 		}
 		// The note follows each command as it is carried out, so that a
 		// failure part of the way leaves it true of the game. A player put
 		// on a list and not noted would never be taken off again.
-		done, err := applyNames(made, add, remove, wanted, func(command string) error {
-			_, err := s.rcon(ctx, fresh, command)
+		done, missing, err := applyNames(from, add, remove, func(command string) error {
+			out, err := s.listCommand(ctx, fresh, command)
+			if err == nil && noSuchPlayer.MatchString(plain(out)) {
+				return errNoSuchPlayer
+			}
 			return err
-		}, list.add, list.remove)
+		}, list.add, list.remove, isBedrock)
+		if err == nil && (len(fileAdd) > 0 || len(fileRemove) > 0) {
+			if err = s.changeBedrockWhitelist(ctx, fresh, fileAdd, fileRemove); err == nil {
+				for _, p := range fileAdd {
+					if !hasName(done, p.Name) {
+						done = append(done, p.Name)
+					}
+				}
+				for _, p := range fileRemove {
+					// One taken off by UUID leaves the name to another.
+					if p.Name != "" {
+						done = slices.DeleteFunc(done, func(n string) bool { return strings.EqualFold(n, p.Name) })
+					}
+				}
+				sort.Strings(done)
+				add = append(add, playerNames(fileAdd)...)
+				remove = append(remove, playerNames(fileRemove)...)
+			}
+		}
+		for _, name := range missing {
+			// The game knows a Bedrock player once they have joined: one
+			// to be made an operator is tried again at the next look.
+			if _, ok := bedrock[strings.ToLower(name)]; ok {
+				continue
+			}
+			s.autoOps.missing.Store(listKey+"/"+strings.ToLower(name), time.Now())
+			s.Log.Warn("the game knows no player of a name for its "+list.what, "server", key.String(), "player", name)
+		}
 		if note := strings.Join(done, ","); note == "" {
 			delete(fresh.Annotations, list.note)
 		} else {
@@ -383,7 +608,9 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			failed = err
 			break
 		}
-		s.Log.Info(list.what+" brought in step with roles", "server", key.String(), "added", add, "removed", remove)
+		if len(add) > 0 || len(remove) > 0 {
+			s.Log.Info(list.what+" brought in step with roles", "server", key.String(), "added", add, "removed", remove)
+		}
 	}
 	if changed {
 		if err := s.Client.Patch(ctx, fresh, client.MergeFrom(orig)); err != nil {
@@ -393,30 +620,69 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	return failed
 }
 
-// applyNames carries out the additions and removals of one list with run,
-// and returns who the panel has put on it afterwards: wanted, if everything
-// went through, and otherwise made as changed by the commands that did.
-func applyNames(made, add, remove, wanted []string, run func(command string) error, adding, removing string) ([]string, error) {
-	now := append([]string{}, made...)
-	for _, name := range add {
-		if err := run(adding + name); err != nil {
-			return now, err
+// bedrockByUUID is who of a list's Bedrock players are on a whitelist by
+// their name in game but not by their UUID, as when two gamertags cut to 16
+// characters make one name, or one account has taken another's place on a
+// list: those to put on (more), and the entries of that name the panel put
+// there that are no list's player now (gone), by UUID.
+func bedrockByUUID(bedrock map[string][]store.ListPlayer, on []listedPlayer, made []string) (more, gone []listedPlayer) {
+	for _, entry := range on {
+		ps := bedrock[strings.ToLower(entry.Name)]
+		if len(ps) == 0 || xuidOf(entry.UUID) == "" || !hasName(made, entry.Name) {
+			continue
 		}
-		now = append(now, name)
+		if !slices.ContainsFunc(ps, func(p store.ListPlayer) bool { return p.UUID == bareUUID(entry.UUID) }) {
+			gone = append(gone, listedPlayer{UUID: entry.UUID})
+		}
 	}
-	for _, name := range remove {
-		if err := run(removing + name); err != nil {
-			return now, err
+	for name, ps := range bedrock {
+		i := slices.IndexFunc(on, func(e listedPlayer) bool { return strings.ToLower(e.Name) == name })
+		if i < 0 {
+			// Not on by name: put on as any other.
+			continue
 		}
-		kept := now[:0]
-		for _, n := range now {
-			if !strings.EqualFold(n, name) {
-				kept = append(kept, n)
+		for _, p := range ps {
+			if !slices.ContainsFunc(on, func(e listedPlayer) bool { return bareUUID(e.UUID) == p.UUID }) {
+				more = append(more, listedPlayer{Name: on[i].Name, UUID: dashedUUID(p.UUID)})
 			}
 		}
-		now = kept
 	}
-	return wanted, nil
+	slices.SortFunc(more, func(a, b listedPlayer) int { return strings.Compare(a.UUID, b.UUID) })
+	return more, gone
+}
+
+// applyNames carries out the additions and removals of one list with run,
+// and returns who the panel has put on it afterwards: from, as changed by
+// the commands that went through, in order if all did. A player the game
+// says it knows nothing of is not noted as added, but is among missing; one
+// it cannot take off for that reason is not on it to take off, unless the
+// game may just not know them yet (unknown), as it does not know a Bedrock
+// player who has not joined: they stay noted, to be taken off later.
+func applyNames(from, add, remove []string, run func(command string) error, adding, removing string, unknown func(name string) bool) (noted, missing []string, err error) {
+	now := append([]string{}, from...)
+	for _, name := range add {
+		if err := run(adding + name); errors.Is(err, errNoSuchPlayer) {
+			missing = append(missing, name)
+			continue
+		} else if err != nil {
+			return now, missing, err
+		}
+		if !hasName(now, name) {
+			now = append(now, name)
+		}
+	}
+	for _, name := range remove {
+		err := run(removing + name)
+		if errors.Is(err, errNoSuchPlayer) && unknown != nil && unknown(name) {
+			continue
+		}
+		if err != nil && !errors.Is(err, errNoSuchPlayer) {
+			return now, missing, err
+		}
+		now = slices.DeleteFunc(now, func(n string) bool { return strings.EqualFold(n, name) })
+	}
+	sort.Strings(now)
+	return now, missing, nil
 }
 
 // syncOrgOps does syncOps for every server of an organization.
@@ -471,6 +737,75 @@ func (s *Server) refreshNames(ctx context.Context, members []store.Member) {
 			a.Name = profile.Name
 		}
 	}
+}
+
+// listNamesEvery is how often each player on a saved list is looked up for
+// a new name, and listNamesPerLook how many are looked up at most in one
+// look, over every organization: a list can have a thousand players, and
+// Mojang can be slow or away.
+const (
+	listNamesEvery   = 6 * time.Hour
+	listNamesPerLook = 30
+)
+
+// refreshListNames brings players on an organization's saved lists up to
+// their current name, as refreshNames does for members, and for the same
+// reason: those not looked up for a while, as many as budget has left.
+// Each is asked of Mojang on its own, not through the catalog's cache,
+// which a thousand of them would empty: a Bedrock player's gamertag of
+// GeyserMC.
+func (s *Server) refreshListNames(ctx context.Context, orgID string, budget *int) {
+	lists, err := s.Store.PlayerLists(ctx, orgID)
+	if err != nil {
+		return
+	}
+	for _, l := range lists {
+		for _, p := range l.Players {
+			if *budget <= 0 {
+				return
+			}
+			if at, ok := s.listNameChecks.Load(p.UUID); ok && time.Since(at.(time.Time)) < listNamesEvery {
+				continue
+			}
+			s.listNameChecks.Store(p.UUID, time.Now())
+			*budget--
+			current := s.currentName
+			if p.Bedrock() {
+				current = func(ctx context.Context, _ string) (string, error) { return s.currentGamertag(ctx, p.XUID) }
+			}
+			name, err := current(ctx, p.UUID)
+			if err != nil || name == p.Name {
+				continue
+			}
+			if err := s.Store.RenameListPlayer(ctx, p.UUID, name); err == nil {
+				s.Log.Info("a player on a saved list was renamed", "from", p.Name, "to", name)
+			}
+		}
+	}
+}
+
+// currentName asks Mojang what an account is called now.
+func (s *Server) currentName(ctx context.Context, uuid string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(uuid), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", s.catalog.userAgent)
+	resp, err := s.catalog.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", errNotFound
+	}
+	var profile struct{ Name string }
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&profile); err != nil || !minecraftNamePattern.MatchString(profile.Name) {
+		return "", errNotFound
+	}
+	return profile.Name, nil
 }
 
 // syncOpsFor brings one server in step, as it is in mc, without making
@@ -562,6 +897,7 @@ func (s *Server) opsTick(ctx context.Context) {
 			running[all.Items[i].Namespace] = true
 		}
 	}
+	names := listNamesPerLook
 	for ns := range running {
 		slug, ok := s.orgOfNamespace(ns)
 		if !ok {
@@ -572,6 +908,10 @@ func (s *Server) opsTick(ctx context.Context) {
 			continue
 		}
 		s.syncOrgOps(ctx, org)
+		// Players on its saved lists who were renamed: looked at once its
+		// servers are in step, a few at a time, and not each time a list is
+		// changed. A name changed here is acted on with the next look.
+		s.refreshListNames(ctx, org.ID, &names)
 	}
 }
 

@@ -53,6 +53,12 @@ const catalogCacheSize = 512
 
 // get fetches a URL as JSON, serving repeats from memory for ttl.
 func (c *catalog) get(ctx context.Context, u string, ttl time.Duration) ([]byte, error) {
+	return c.getOr(ctx, u, ttl, nil)
+}
+
+// getOr is get where an answer other than 404 can also say there is no such
+// thing: one that notFound says so of. It is errNotFound, as 404 is.
+func (c *catalog) getOr(ctx context.Context, u string, ttl time.Duration, notFound func(status int, body []byte) bool) ([]byte, error) {
 	c.mu.Lock()
 	if e, ok := c.entries[u]; ok && time.Now().Before(e.expires) {
 		c.mu.Unlock()
@@ -74,6 +80,12 @@ func (c *catalog) get(ctx context.Context, u string, ttl time.Duration) ([]byte,
 		return nil, errNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
+		if notFound != nil {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			if notFound(resp.StatusCode, body) {
+				return nil, errNotFound
+			}
+		}
 		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: fmt.Sprintf("%s answered %s.", req.URL.Host, resp.Status)}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))

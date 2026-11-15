@@ -52,3 +52,17 @@ func TestStaticFallsBackOnlyForPages(t *testing.T) {
 		}
 	}
 }
+
+// The page is not shown in another site's frame, and a link out of it does
+// not hand on its address, which can hold a reset link or an invite.
+func TestThePageIsNotFramedNorHandsOnItsAddress(t *testing.T) {
+	s := &Server{Static: fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}}
+	for _, path := range []string{"/", "/reset/sometoken", "/invite/sometoken"} {
+		w := httptest.NewRecorder()
+		s.staticHandler().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		h := w.Header()
+		if h.Get("X-Frame-Options") != "DENY" || h.Get("Content-Security-Policy") != "frame-ancestors 'none'" || h.Get("Referrer-Policy") != "same-origin" {
+			t.Errorf("%s: headers %v", path, h)
+		}
+	}
+}

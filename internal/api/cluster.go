@@ -100,7 +100,8 @@ func (s *Server) noteReach(err error, now time.Time) {
 	}
 	s.Events.Publish(Event{Type: "cluster", Data: r.view()})
 	if err == nil {
-		// What changed meanwhile was not heard: browsers ask again.
-		s.Events.Publish(Event{Type: "resync"})
+		// What changed meanwhile was not heard: browsers ask again for what
+		// the cluster says. All else the panel did meanwhile was told.
+		s.Events.Publish(Event{Type: "resync", Data: map[string]bool{"cluster": true}})
 	}
 }

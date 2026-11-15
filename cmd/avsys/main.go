@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/go-logr/logr"
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,6 +45,7 @@ import (
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/kube"
+	"github.com/GT-Drehmal/avSYS/internal/release"
 	"github.com/GT-Drehmal/avSYS/internal/router"
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
@@ -78,8 +81,21 @@ type options struct {
 	workspacePull       string
 	webDir              string
 	podDial             string
+	podIP               string
 	allowSignups        bool
 	installCRDs         bool
+	updateCheck         bool
+	// An install's own OpenID Connect provider. Its client secret is read
+	// from oidcSecretFile or AVSYS_OIDC_CLIENT_SECRET, never from a flag.
+	oidcIssuer        string
+	oidcClientID      string
+	oidcSecretFile    string
+	oidcName          string
+	oidcScopes        string
+	oidcAllowedGroups string
+	oidcGroupsClaim   string
+	// passwords, when false, has everyone sign in through a provider.
+	passwords bool
 }
 
 // env returns the value of AVSYS_<NAME> for a flag called name, or fallback.
@@ -125,8 +141,18 @@ func parseFlags() options {
 	str(&o.workspacePull, "workspace-image-pull-policy", "", "pull policy for the workspace image (default: Kubernetes' own)")
 	str(&o.webDir, "web-dir", "", "serve the web UI from this directory instead of the built-in copy")
 	str(&o.podDial, "pod-dial", "auto", "how to reach pods: direct, forward (through the API server), or auto")
+	str(&o.podIP, "pod-ip", "", "the panel's own address in the cluster: while a server's game is not running, the extra ports of servers that share the router's address are pointed here, to say so and to wake a sleeping one (empty: nothing answers on them then)")
 	flag.BoolVar(&o.allowSignups, "allow-signups", env("allow-signups", "") == "true", "let anyone create an account without an invite")
 	flag.BoolVar(&o.installCRDs, "install-crds", env("install-crds", "true") == "true", "install or upgrade the MinecraftServer CRD on startup")
+	flag.BoolVar(&o.updateCheck, "update-check", env("update-check", "true") == "true", "ask GitHub every few hours whether a newer release is out, to tell the instance administrator (a build of a commit never asks)")
+	str(&o.oidcIssuer, "oidc-issuer", "", "issuer URL of an OpenID Connect provider to sign in with (Authentik, Keycloak, Authelia, Google Workspace, Entra ID); the callback to register is <public-url>/api/v1/auth/oidc/callback")
+	str(&o.oidcClientID, "oidc-client-id", "", "client ID registered with the OpenID Connect provider")
+	str(&o.oidcSecretFile, "oidc-client-secret-file", "", "file holding the OpenID Connect client secret (or set AVSYS_OIDC_CLIENT_SECRET)")
+	str(&o.oidcName, "oidc-name", "SSO", "what the sign-in button calls the OpenID Connect provider")
+	str(&o.oidcScopes, "oidc-scopes", "openid profile email", "scopes asked of the OpenID Connect provider, separated by spaces")
+	str(&o.oidcAllowedGroups, "oidc-allowed-groups", "", "groups, separated by commas, one of which a person must be in to sign in through the OpenID Connect provider (empty: anyone it signs in)")
+	str(&o.oidcGroupsClaim, "oidc-groups-claim", "groups", "claim of the ID token (or user info) that lists a person's groups")
+	flag.BoolVar(&o.passwords, "passwords", env("passwords", "true") != "false", "let people sign in with a password; false has everyone sign in through a provider, and the panel does not start if no administrator could")
 	flag.Parse()
 	o.publicURL = strings.TrimRight(o.publicURL, "/")
 	o.packURL = strings.TrimRight(o.packURL, "/")
@@ -167,6 +193,35 @@ func providers(publicURL string) (map[string]*auth.Provider, error) {
 	return out, nil
 }
 
+// oidcProvider configures the install's OpenID Connect provider, if one is
+// given.
+func oidcProvider(opts options) (*auth.Provider, error) {
+	secret := os.Getenv("AVSYS_OIDC_CLIENT_SECRET")
+	if opts.oidcSecretFile != "" {
+		data, err := os.ReadFile(opts.oidcSecretFile)
+		if err != nil {
+			return nil, fmt.Errorf("reading the OpenID Connect client secret: %w", err)
+		}
+		secret = strings.TrimSpace(string(data))
+	}
+	if opts.oidcIssuer == "" {
+		if opts.oidcClientID != "" || secret != "" {
+			return nil, errors.New("OpenID Connect sign-in needs --oidc-issuer")
+		}
+		return nil, nil
+	}
+	var groups []string
+	for _, g := range strings.Split(opts.oidcAllowedGroups, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			groups = append(groups, g)
+		}
+	}
+	return auth.NewOIDCProvider(auth.OIDCConfig{
+		Issuer: opts.oidcIssuer, ClientID: opts.oidcClientID, ClientSecret: secret, Name: opts.oidcName,
+		Scopes: strings.Fields(opts.oidcScopes), AllowedGroups: groups, GroupsClaim: opts.oidcGroupsClaim,
+	}, opts.publicURL)
+}
+
 func run(opts options, log *slog.Logger) error {
 	ctx := ctrl.SetupSignalHandler()
 
@@ -191,6 +246,36 @@ func run(opts options, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if p, err := oidcProvider(opts); err != nil {
+		return err
+	} else if p != nil {
+		oauth[p.ID] = p
+		// Looked up now, to say early what is wrong; one that cannot be
+		// reached is looked up again when someone signs in.
+		if err := p.Discover(ctx); err != nil {
+			log.Warn("the OpenID Connect provider could not be reached; it is tried again at the next sign-in", "error", err)
+		} else {
+			log.Info("signing in through OpenID Connect is on")
+		}
+	}
+	var setupCode string
+	if !opts.passwords {
+		lockedOut, err := api.CheckSignIn(ctx, st, oauth)
+		for _, name := range lockedOut {
+			log.Warn("passwords are off and this administrator has no linked account at a configured provider, so cannot sign in", "user", name)
+		}
+		if err != nil {
+			return err
+		}
+		if count, err := st.CountUsers(ctx); err != nil {
+			return err
+		} else if count == 0 {
+			// The first account is made through a provider by whoever opens
+			// this link, which only someone who reads this log has.
+			setupCode = rand.Text()
+			log.Warn("no account yet: open the panel at /login?setup=" + setupCode + " and sign in to become its administrator")
+		}
+	}
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -212,8 +297,9 @@ func run(opts options, log *slog.Logger) error {
 		Scheme:  scheme,
 		Metrics: metricsserver.Options{BindAddress: "0"},
 		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
-			&corev1.Pod{}:     {Label: managed},
-			&corev1.Service{}: {Label: managed},
+			&corev1.Pod{}:                {Label: managed},
+			&corev1.Service{}:            {Label: managed},
+			&discoveryv1.EndpointSlice{}: {Label: managed},
 		}},
 		Client: client.Options{Cache: &client.CacheOptions{
 			DisableFor: []client.Object{&corev1.Secret{}, &corev1.PersistentVolumeClaim{}, &corev1.Namespace{}},
@@ -250,6 +336,15 @@ func run(opts options, log *slog.Logger) error {
 	if portRange.First != 0 && int(portRange.First) <= opts.routerPort && opts.routerPort <= int(portRange.Last) {
 		return fmt.Errorf("extra-ports: %s includes %d, the router's own port (--router-public-port); give a range beside it, as 25600-25699", opts.extraPorts, opts.routerPort)
 	}
+	// Where the panel runs in the cluster, it answers on servers' extra
+	// ports while their games are not running.
+	var standIn controller.StandIn
+	if opts.podIP != "" {
+		if net.ParseIP(opts.podIP) == nil {
+			return fmt.Errorf("pod-ip: %q is not an address", opts.podIP)
+		}
+		standIn = &router.StandIn{Client: mgr.GetClient(), Log: log.With("component", "stand-in"), IP: opts.podIP}
+	}
 	if err := (&controller.Reconciler{
 		Client: mgr.GetClient(),
 		Reader: mgr.GetAPIReader(),
@@ -264,6 +359,7 @@ func run(opts options, log *slog.Logger) error {
 			PortsServiceAnnotations:  annotationsOf(opts.extraPortsNotes),
 			RouterService:            routerService(),
 			PackURL:                  opts.packURL,
+			StandIn:                  standIn,
 		},
 	}).SetupWithManager(mgr); err != nil {
 		return err
@@ -317,11 +413,15 @@ func run(opts options, log *slog.Logger) error {
 			RouterDomain:    opts.routerDomain,
 			NamespacePrefix: opts.namespacePrefix,
 			AllowSignups:    opts.allowSignups,
+			NoPasswords:     !opts.passwords,
+			SetupCode:       setupCode,
 			Providers:       oauth,
 			Version:         version,
 			PackDir:         filepath.Join(opts.dataDir, "packs"),
 			PackURL:         opts.packURL,
 			PackCache:       int64(opts.packCache) << 20,
+			RouterService:   routerService(),
+			Deployment:      selfDeployment(),
 		},
 		Store:   st,
 		Client:  mgr.GetClient(),
@@ -335,6 +435,21 @@ func run(opts options, log *slog.Logger) error {
 		Static:  staticFiles(opts.webDir, log),
 	}
 	gateway.Authz = server
+	if opts.updateCheck {
+		server.Updates = &release.Checker{Current: version, Log: log.With("component", "release")}
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			server.Updates.Run(ctx)
+			return nil
+		})); err != nil {
+			return err
+		}
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			server.RunAutoUpdates(ctx)
+			return nil
+		})); err != nil {
+			return err
+		}
+	}
 
 	informer, err := mgr.GetCache().GetInformer(ctx, &avsysv1.MinecraftServer{})
 	if err != nil {
@@ -365,6 +480,12 @@ func run(opts options, log *slog.Logger) error {
 	}
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		server.RunOffsite(ctx)
+		return nil
+	})); err != nil {
+		return err
+	}
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		server.ReadTemplateSnapshots(ctx)
 		return nil
 	})); err != nil {
 		return err
@@ -555,8 +676,19 @@ func annotationsOf(s string) map[string]string {
 	return out
 }
 
-// routerService is the panel's own Service, which carries the router: avsys
-// in the namespace the panel runs in, as deploy/install.yaml makes it.
+// routerService is the panel's own Service, which carries the router: in the
+// namespace the panel runs in, named avsys or as AVSYS_ROUTER_SERVICE says
+// (the chart sets it to the name of the Service it makes).
+// selfDeployment is the panel's own Deployment, which it changes to update
+// itself: named as its Service is unless AVSYS_DEPLOYMENT says otherwise.
+func selfDeployment() types.NamespacedName {
+	at := routerService()
+	if at.Namespace == "" {
+		return at
+	}
+	return types.NamespacedName{Namespace: at.Namespace, Name: env("deployment", at.Name)}
+}
+
 func routerService() types.NamespacedName {
 	ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {

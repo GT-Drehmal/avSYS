@@ -2,7 +2,7 @@ VERSION ?= dev
 IMAGE ?= ghcr.io/gt-drehmal/avsys
 WORKSPACE_IMAGE ?= ghcr.io/gt-drehmal/avsys-workspace
 
-.PHONY: dev web generate test test-snapshots test-browser e2e e2e-cluster images
+.PHONY: dev web generate chart chart-check test test-snapshots test-browser e2e e2e-cluster images
 
 # Run the panel on this machine against the current kubectl context.
 dev: web
@@ -15,8 +15,20 @@ web:
 # a fixed version: CI checks that what is committed is what it produces, and
 # a new release of it must not be what fails that.
 CONTROLLER_GEN_VERSION ?= v0.22.0
+# The chart carries its own copy of the CRD, which Helm installs on the
+# first install; the panel's, embedded from deploy/crds, upgrades it.
 generate:
 	go run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) object crd paths=./api/... output:crd:dir=deploy/crds
+	cp deploy/crds/*.yaml deploy/chart/crds/
+
+# deploy/install.yaml and the chart's test renders, after changing the chart.
+# Needs Docker, or HELM=helm.
+chart:
+	./hack/chart.sh render
+
+# helm lint, and values the chart must refuse.
+chart-check:
+	./hack/chart.sh check
 
 STATICCHECK_VERSION ?= v0.8.2
 test:
@@ -43,7 +55,7 @@ e2e:
 	./hack/e2e.sh
 
 # The same check from nothing: an empty k3s in Docker, the panel installed
-# from deploy/install.yaml, its first account, then e2e. Needs only Docker.
+# with the chart, its first account, then e2e. Needs only Docker.
 e2e-cluster:
 	./hack/e2e-cluster.sh
 

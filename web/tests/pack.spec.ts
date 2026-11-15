@@ -33,9 +33,9 @@ function merge(into: any, patch: any): any {
  * survival with this resource pack. Changes sent to it are kept, as the
  * panel would, and listed; an upload or removal is answered as one too.
  */
-async function survival(page: Page, pack: object | null) {
+async function survival(page: Page, pack: object | null, spec: object = {}) {
   const state = { pack: pack as any, sent: [] as any[], asked: [] as string[] };
-  const withPack = (s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, resourcePack: state.pack } } : s);
+  const withPack = (s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, ...spec, resourcePack: state.pack } } : s);
   const server = async () => withPack(await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json());
   await page.route("**/api/v1/orgs/friends/servers", async (route) => route.fulfill({ json: (await (await route.fetch()).json()).map(withPack) }));
   await page.route("**/api/v1/orgs/friends/servers/survival", async (route) => {
@@ -301,7 +301,7 @@ test("settings no longer have the pack, and saving them says nothing of it", asy
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByRole("heading", { name: "Resource pack" })).toHaveCount(0);
   await page.getByLabel("Display name").fill("Survival, renamed");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => state.sent.length).toBe(1);
   expect(state.sent[0].displayName).toBe("Survival, renamed");
   expect(state.sent[0]).not.toHaveProperty("resourcePack");
@@ -540,4 +540,68 @@ test("a new server is given several packs in the order picked, each put on top o
   await expect(page.getByText("Layered is set up")).toBeVisible();
   // The lowest first, then the one over it: in that order already, so not put in order again.
   expect(asked).toEqual(["create Stopped null", "PUT /resource-pack mine.zip", "POST /resource-packs/url faithful-32x", "POST /start"]);
+});
+
+/** survival on a modpack that lists these files. */
+async function onModpack(page: Page, pack: object | null, files: object[]) {
+  const state = await survival(page, pack, { loader: "fabric", modpack: { source: "modrinth", project: "fabulously-optimized", version: "fo1", versionName: "6.4.0", title: "Fabulously Optimized", gameVersion: "1.21.4", loader: "fabric" } });
+  await page.route("**/api/v1/orgs/friends/servers/survival/modpack/contents", (route) => route.fulfill({ json: { files } }));
+  return state;
+}
+
+// Faithful 32x as a modpack lists it, at a version older than its newest.
+const inPack = { path: "resourcepacks/faithful-1.21.3.zip", server: false, project: "P0000032", version: "r0000001", slug: "faithful-32x", title: "Faithful 32x" };
+const ownPack = { path: "resourcepacks/our-pack.zip", server: false };
+const aMod = { path: "mods/lithium.jar", server: true, project: "gvQqBUqZ", version: "ZRR9yqHD", slug: "lithium", title: "Lithium" };
+
+test("a resource pack in the modpack from Modrinth can be made the server's in one press, at the pack's version", async ({ page }) => {
+  const state = await onModpack(page, null, [aMod, inPack, ownPack]);
+  await page.goto("/o/friends/s/survival/content");
+  const section = page.getByRole("region", { name: "Resource packs" });
+  // Only the one from Modrinth; not the mod, nor the pack from elsewhere.
+  await expect(section.getByRole("button", { name: /from the pack$/ })).toHaveText(["Use Faithful 32x from the pack"]);
+  expect(state.sent).toEqual([]);
+  await section.getByRole("button", { name: "Use Faithful 32x from the pack" }).click();
+  // The pack's own version, not the newest.
+  await expect.poll(() => state.sent.length).toBe(1);
+  expect(state.sent[0]).toMatchObject({
+    resourcePack: { url: "https://files.invalid/faithful-1.21.3.zip", sha1: "1".repeat(40), uploaded: null, enforce: false, prompt: "", project: { source: "modrinth", id: "faithful-32x", title: "Faithful 32x", version: "r0000001", versionName: "1.21.3" } },
+  });
+  await expect(section.getByText("Faithful 32x", { exact: true })).toBeVisible();
+  await expect(section.getByRole("button", { name: "1.21.3" })).toBeVisible();
+  // Once it is, it is not offered again.
+  await expect(section.getByRole("button", { name: /from the pack$/ })).toHaveCount(0);
+});
+
+test("with another resource pack there, the one from the modpack goes on top of it", async ({ page }) => {
+  await onModpack(page, uploaded, [inPack]);
+  let added: any = null;
+  await page.route("**/api/v1/orgs/friends/servers/survival/resource-packs/url", async (route) => {
+    added = route.request().postDataJSON();
+    return route.fulfill({ json: await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json() });
+  });
+  await page.goto("/o/friends/s/survival/content");
+  await page.getByRole("button", { name: "Use Faithful 32x from the pack" }).click();
+  await expect.poll(() => added).toMatchObject({ url: "https://files.invalid/faithful-1.21.3.zip", sha1: "1".repeat(40), project: { id: "faithful-32x", version: "r0000001" } });
+});
+
+test("no resource pack is offered from a modpack that has none from Modrinth, nor the one the server has already, nor to someone who cannot change it", async ({ page, as }) => {
+  await onModpack(page, null, [aMod, ownPack]);
+  await page.goto("/o/friends/s/survival/content");
+  // Once what the pack lists is known.
+  await expect(page.getByRole("button", { name: "In this pack (2)" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /from the pack$/ })).toHaveCount(0);
+
+  await page.unrouteAll({ behavior: "wait" });
+  await onModpack(page, picked, [inPack]);
+  await page.goto("/o/friends/s/survival/content");
+  await expect(page.getByRole("button", { name: "In this pack (1)" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /from the pack$/ })).toHaveCount(0);
+
+  await as("operator");
+  await page.unrouteAll({ behavior: "wait" });
+  await onModpack(page, null, [inPack]);
+  await page.goto("/o/friends/s/survival/content");
+  await expect(page.getByRole("button", { name: "In this pack (1)" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /from the pack$/ })).toHaveCount(0);
 });

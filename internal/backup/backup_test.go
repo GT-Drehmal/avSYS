@@ -1133,3 +1133,87 @@ func TestListKeptUntilTheRepositoryChanges(t *testing.T) {
 		t.Errorf("after a copy and its deletion: %v, %v", list, err)
 	}
 }
+
+// Which snapshots a repository has is told from its folder, without restic;
+// and the record of one named in full is read without listing them all, or
+// once read, without restic at all, for as long as it is there.
+func TestPresentAndARecordNamedInFull(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if ids, known := m.Present("alpha"); !known || len(ids) != 0 {
+		t.Errorf("with no repository: %v %v", ids, known)
+	}
+	if err := m.ensure(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "data", ".avsys"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "data", ".avsys", "snapshot.json"), []byte(`{"format":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	take := func(host string) {
+		t.Helper()
+		cmd := exec.Command("restic", "--repo", m.repoDir("alpha"), "--password-file", m.keyFile("alpha"),
+			"backup", "data", "--host", host, "--tag", "avsys", "--tag", "trigger=manual")
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("taking a snapshot: %v: %s", err, out)
+		}
+	}
+	take("survival")
+	list, err := m.List(ctx, "alpha")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("snapshots: %v, %v", list, err)
+	}
+	id := list[0].ID
+	if ids, known := m.Present("alpha"); !known || len(ids) != 1 || !ids[id] {
+		t.Errorf("present: %v %v", ids, known)
+	}
+	// The repository changed: listing it would need restic.
+	take("creative")
+	// Read straight away: restic is asked for the record, and nothing else.
+	runs := filepath.Join(t.TempDir(), "runs")
+	stand := filepath.Join(t.TempDir(), "restic")
+	real, _ := exec.LookPath("restic")
+	if err := os.WriteFile(stand, []byte("#!/bin/sh\necho \"$*\" >> "+runs+"\nexec "+real+" \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.Restic = stand
+	if got, err := m.Record(ctx, "alpha", id); err != nil || string(got) != `{"format":1}` {
+		t.Fatalf("record: %q %v", got, err)
+	}
+	if ran, _ := os.ReadFile(runs); strings.Count(string(ran), "\n") != 1 || !strings.Contains(string(ran), " dump ") {
+		t.Errorf("restic ran for the record: %s", ran)
+	}
+	// Once read, not again.
+	m.Restic = "restic-is-not-here"
+	if got, err := m.Record(ctx, "alpha", id); err != nil || string(got) != `{"format":1}` {
+		t.Errorf("record kept: %q %v", got, err)
+	}
+	// One rejected is not there, nor is one that is gone.
+	m.Restic = "restic"
+	if err := m.reject("alpha", id, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Record(ctx, "alpha", id); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the record of a rejected snapshot: %v", err)
+	}
+	if err := m.reject("alpha", id, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(ctx, "alpha", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Record(ctx, "alpha", id); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the record of one deleted: %v", err)
+	}
+	if ids, _ := m.Present("alpha"); len(ids) != 1 || ids[id] {
+		t.Errorf("present after a deletion: %v", ids)
+	}
+}

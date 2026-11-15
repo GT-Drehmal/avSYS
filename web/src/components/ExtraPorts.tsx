@@ -7,29 +7,113 @@ export interface PortDraft {
   name: string;
   port: string;
   protocol: "TCP" | "UDP";
+  /** The mod it was opened for, by its Modrinth slug. */
+  for?: string;
 }
 
 /** A server's ports, to edit. */
-export const portDrafts = (ports: ExtraPort[] | null | undefined): PortDraft[] => (ports ?? []).map((p) => ({ name: p.name, port: String(p.port), protocol: p.protocol ?? "TCP" }));
+export const portDrafts = (ports: ExtraPort[] | null | undefined): PortDraft[] =>
+  (ports ?? []).map((p) => ({ name: p.name, port: String(p.port), protocol: p.protocol ?? "TCP", ...(p.for ? { for: p.for } : {}) }));
 
 /** The ports edited, as a server is given them: rows left empty are none. */
 export const portsOf = (drafts: PortDraft[]): ExtraPort[] =>
-  drafts.filter((p) => p.name.trim() || p.port.trim()).map((p) => ({ name: p.name.trim(), port: Number(p.port), protocol: p.protocol }));
+  drafts.filter((p) => p.name.trim() || p.port.trim()).map((p) => ({ name: p.name.trim(), port: Number(p.port), protocol: p.protocol, ...(p.for ? { for: p.for } : {}) }));
 
-/** What well-known mods and plugins listen on, by their Modrinth slug. */
-const known: { slugs: string[]; label: string; port: PortDraft }[] = [
-  { slugs: ["simple-voice-chat"], label: "Simple Voice Chat", port: { name: "voice-chat", port: "24454", protocol: "UDP" } },
-  { slugs: ["plasmo-voice"], label: "Plasmo Voice", port: { name: "plasmo-voice", port: "60606", protocol: "UDP" } },
-  { slugs: ["geyser"], label: "Geyser", port: { name: "geyser", port: "19132", protocol: "UDP" } },
-  { slugs: ["bluemap"], label: "BlueMap", port: { name: "bluemap", port: "8100", protocol: "TCP" } },
-  { slugs: ["dynmap"], label: "Dynmap", port: { name: "dynmap", port: "8123", protocol: "TCP" } },
-  { slugs: ["squaremap"], label: "squaremap", port: { name: "squaremap", port: "8080", protocol: "TCP" } },
+/** A mod or plugin that listens on ports of its own. */
+export interface KnownMod {
+  /** Its Modrinth slug, which ports opened for it name. */
+  slug: string;
+  /** Its Modrinth project ID, which content found in an imported server's files is listed by. */
+  id: string;
+  label: string;
+  ports: PortDraft[];
+  /** It serves a web map on its port. */
+  map?: boolean;
+}
+
+/**
+ * The mods and plugins the panel opens ports for, as the panel's own list
+ * has them (internal/controller/mods.go).
+ */
+export const knownMods: KnownMod[] = [
+  {
+    slug: "geyser",
+    id: "wKkoqHrH",
+    label: "Geyser",
+    ports: [
+      { name: "geyser", port: "19132", protocol: "UDP" },
+      { name: "geyser-tcp", port: "19132", protocol: "TCP" },
+    ],
+  },
+  { slug: "simple-voice-chat", id: "9eGKb6K1", label: "Simple Voice Chat", ports: [{ name: "voice-chat", port: "24454", protocol: "UDP" }] },
+  { slug: "plasmo-voice", id: "1bZhdhsH", label: "Plasmo Voice", ports: [{ name: "plasmo-voice", port: "60606", protocol: "UDP" }] },
+  { slug: "bluemap", id: "swbUV1cr", label: "BlueMap", ports: [{ name: "bluemap", port: "8100", protocol: "TCP" }], map: true },
+  { slug: "dynmap", id: "fRQREgAc", label: "Dynmap", ports: [{ name: "dynmap", port: "8123", protocol: "TCP" }], map: true },
+  { slug: "squaremap", id: "PFb7ZqK6", label: "squaremap", ports: [{ name: "squaremap", port: "8080", protocol: "TCP" }], map: true },
 ];
+
+/** The known mod an entry of a server's content is, if it is one. */
+export const knownModOf = (m: ContentRef): KnownMod | undefined => (m.source === "modrinth" ? knownMods.find((k) => m.project === k.slug || m.project === k.id) : undefined);
+
+const knownIn = (mods: ContentRef[]) => new Set(mods.flatMap((m) => knownModOf(m)?.slug ?? []));
+
+/** A mod's ports, as opened for it. */
+const portsFor = (k: KnownMod): PortDraft[] => k.ports.map((p) => ({ ...p, for: k.slug }));
+
+/**
+ * A server's ports once its content goes from before to after, as the
+ * panel fits them: a known mod added gets its ports, each unless one of
+ * that name or number is there or there are 8 already, and ports opened
+ * for a mod go with it. Ports of the server's own stay as they are.
+ */
+export function fitModPorts(before: ContentRef[], after: ContentRef[], ports: PortDraft[]): PortDraft[] {
+  const had = knownIn(before);
+  const has = knownIn(after);
+  const out = ports.filter((p) => !p.for || has.has(p.for) || !knownMods.some((k) => k.slug === p.for));
+  for (const k of knownMods) {
+    if (!has.has(k.slug) || had.has(k.slug)) continue;
+    for (const p of portsFor(k)) {
+      if (out.length < 8 && !out.some((q) => q.name === p.name || (q.port === p.port && q.protocol === p.protocol))) out.push(p);
+    }
+  }
+  return out;
+}
+
+/** Whether a change of content touches a mod the panel opens ports for. */
+export const touchesKnownMods = (before: ContentRef[], after: ContentRef[]) => knownIn(before).size + knownIn(after).size > 0;
+
+/** "UDP 24454", or "UDP and TCP 19132" for a mod's ports on one number. */
+export function describePorts(ports: { port: string | number; protocol?: string }[]): string {
+  const numbers = [...new Set(ports.map((p) => String(p.port)))];
+  if (numbers.length === 1) return `${[...new Set(ports.map((p) => p.protocol ?? "TCP"))].join(" and ")} ${numbers[0]}`;
+  return ports.map((p) => `${p.protocol ?? "TCP"} ${p.port}`).join(", ");
+}
+
+/** What is said under a known mod in a list of content: the ports open for it. */
+export function modPortsNote(m: ContentRef, ports: ExtraPort[] | null | undefined): string | undefined {
+  const k = knownModOf(m);
+  const open = k ? (ports ?? []).filter((p) => p.for === k.slug) : [];
+  return open.length > 0 ? `${open.length === 1 ? "Port" : "Ports"} open: ${describePorts(open)}` : undefined;
+}
+
+/**
+ * Where players reach a port opened for a known mod that is one of these,
+ * once it is open: the first such, by the server's list of ports.
+ */
+export function modReached(ports: ExtraPort[] | null | undefined, status: PortStatus[] | null | undefined, which: (k: KnownMod, p: ExtraPort) => boolean): { mod: KnownMod; address: string } | undefined {
+  for (const p of ports ?? []) {
+    const mod = knownMods.find((k) => k.slug === p.for);
+    if (!mod || !which(mod, p)) continue;
+    const st = (status ?? []).find((s) => s.name === p.name && s.port === p.port && s.protocol === (p.protocol ?? "TCP"));
+    if (st?.address && !st.message) return { mod, address: st.address };
+  }
+  return undefined;
+}
 
 /**
  * The ports a server's mods and plugins listen on, opened to players beside
- * the game's. Installed ones that need a port are said, with a button that
- * adds it; where each is reached is shown once it is open.
+ * the game's. Installed ones that need a port and have none are said, with
+ * a button that adds them; where each is reached is shown once it is open.
  */
 export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { ports: PortDraft[]; onChange: (ports: PortDraft[]) => void; mods: ContentRef[]; status: PortStatus[]; expose: ExposeType; sleeps?: boolean }) {
   // As many as a server may have: presets too stop there.
@@ -37,18 +121,20 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
   const set = (i: number, change: Partial<PortDraft>) => onChange(ports.map((p, j) => (j === i ? { ...p, ...change } : p)));
   // Had already: that port, or one by its name, as one set to another number.
   const has = (p: PortDraft) => ports.some((q) => (q.port === p.port && q.protocol === p.protocol) || q.name === p.name);
-  const installed = new Set(mods.map((m) => m.project));
-  const needed = known.filter((k) => k.slugs.some((s) => installed.has(s)) && !has(k.port));
+  const installed = knownIn(mods);
+  const needed = knownMods.filter((k) => installed.has(k.slug) && !ports.some((p) => p.for === k.slug) && !k.ports.some(has));
+  const add = (opened: PortDraft[]) => onChange([...ports, ...opened.filter((p) => !has(p))].slice(0, Math.max(8, ports.length)));
   const where = (p: PortDraft) => status.find((s) => s.name === p.name && String(s.port) === p.port && s.protocol === p.protocol);
+  const labelOf = (slug: string) => knownMods.find((k) => k.slug === slug)?.label ?? slug;
   if (expose === "None") return <p className="text-xs text-muted">Not reachable from outside.</p>;
   return (
     <div className="flex flex-col gap-2.5">
       {needed.map((k) => (
         <div key={k.label} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-accent/40 bg-accent-wash px-3 py-2 text-[13px]">
           <span>
-            {k.label} is installed and listens on {k.port.protocol} {k.port.port}.
+            {k.label} is installed and listens on {describePorts(k.ports)}.
           </span>
-          <Button size="sm" disabled={full} title={full ? "A server has up to 8 extra ports." : undefined} onClick={() => onChange([...ports, k.port])}>
+          <Button size="sm" disabled={full} title={full ? "A server has up to 8 extra ports." : undefined} onClick={() => add(portsFor(k))}>
             Open it
           </Button>
         </div>
@@ -66,17 +152,22 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
               </Select>
               <Button size="sm" aria-label={`Remove ${p.name || "this port"}`} icon={<X className="size-3.5" />} onClick={() => onChange(ports.filter((_, j) => j !== i))} />
             </div>
-            {open?.message ? (
-              <span className="text-xs text-warn">{open.message}</span>
-            ) : open?.address ? (
-              <span className="flex items-center gap-1.5 text-xs text-muted">
-                Reached at <CopyText value={open.address} />
-              </span>
-            ) : open?.publicPort ? (
-              <span className="text-xs text-muted">Reached on port {open.publicPort} of the server's address.</span>
-            ) : open ? (
-              <span className="text-xs text-muted">Being opened.</span>
-            ) : null}
+            {(p.for || open) && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                {p.for && <span className="text-muted">For {labelOf(p.for)}.</span>}
+                {open?.message ? (
+                  <span className="text-warn">{open.message}</span>
+                ) : open?.address ? (
+                  <span className="flex items-center gap-1.5 text-muted">
+                    Reached at <CopyText value={open.address} />
+                  </span>
+                ) : open?.publicPort ? (
+                  <span className="text-muted">Reached on port {open.publicPort} of the server's address.</span>
+                ) : open ? (
+                  <span className="text-muted">Being opened.</span>
+                ) : null}
+              </div>
+            )}
           </div>
         );
       })}
@@ -85,17 +176,17 @@ export function ExtraPorts({ ports, onChange, mods, status, expose, sleeps }: { 
           Add a port
         </Button>
         {!full &&
-          known
-          .filter((k) => !has(k.port) && !needed.includes(k))
-          .slice(0, 3)
-          .map((k) => (
-            <button key={k.label} type="button" className="text-xs text-accent hover:underline" onClick={() => onChange([...ports, k.port])}>
-              {k.label}
-            </button>
-          ))}
+          knownMods
+            .filter((k) => !k.ports.some(has) && !needed.includes(k))
+            .slice(0, 3)
+            .map((k) => (
+              <button key={k.label} type="button" className="text-xs text-accent hover:underline" onClick={() => add(k.ports)}>
+                {k.label}
+              </button>
+            ))}
       </div>
       {ports.length > 0 && sleeps && (
-        <p className="text-xs text-warn">These ports do not work while the server sleeps. Bedrock players through Geyser cannot wake the server.</p>
+        <p className="text-xs text-muted">While the server sleeps, these ports still answer: a Bedrock player joining, or a visit to a map, wakes the server.</p>
       )}
       {ports.length > 0 && (
         <p className="text-xs text-muted">

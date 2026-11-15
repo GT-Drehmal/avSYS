@@ -75,7 +75,7 @@ func TestPickedMembers(t *testing.T) {
 
 // Only players the panel put on a list are taken off by it: by role, or by
 // being set by hand in the server's settings and then taken out.
-func TestOpChanges(t *testing.T) {
+func TestListChanges(t *testing.T) {
 	for name, c := range map[string]struct {
 		made, wanted, kept []string
 		add, remove        []string
@@ -93,7 +93,8 @@ func TestOpChanges(t *testing.T) {
 		"a UUID is left to the image": {nil, nil, []string{"069a79f4-44e9-4726-a5be-fca90e38aaf5"}, nil, nil},
 		"a new one beside the kept":   {[]string{"Ada", "Steve"}, []string{"Ada", "Otto"}, []string{"Steve"}, []string{"Otto"}, nil},
 	} {
-		add, remove := opChanges(c.made, withKept(c.wanted, c.kept))
+		// Not knowing who is on it in game, the note is gone by.
+		add, remove := listChanges(c.made, withKept(c.wanted, c.kept), nil, false)
 		if !reflect.DeepEqual(add, c.add) || !reflect.DeepEqual(remove, c.remove) {
 			t.Errorf("%s: add %v remove %v, want add %v remove %v", name, add, remove, c.add, c.remove)
 		}
@@ -304,7 +305,7 @@ func TestWhitelistByRole(t *testing.T) {
 		}
 	}
 	// A friend added by hand stays when a member who gave the same name leaves.
-	if _, remove := opChanges([]string{"Friend", "Vera"}, withKept(nil, spec.Whitelist)); len(remove) != 1 || remove[0] != "Vera" {
+	if _, remove := listChanges([]string{"Friend", "Vera"}, withKept(nil, spec.Whitelist), nil, false); len(remove) != 1 || remove[0] != "Vera" {
 		t.Errorf("taken off the whitelist: %v, want only Vera", remove)
 	}
 }
@@ -357,9 +358,9 @@ func TestApplyNamesNotesWhatWentThrough(t *testing.T) {
 			return nil
 		}
 	}
-	made, add, remove, wanted := []string{"Ada", "Otto"}, []string{"Vera", "Olive"}, []string{"Otto"}, []string{"Ada", "Olive", "Vera"}
+	made, add, remove := []string{"Ada", "Otto"}, []string{"Vera", "Olive"}, []string{"Otto"}
 
-	got, err := applyNames(made, add, remove, wanted, failAt(0), "whitelist add ", "whitelist remove ")
+	got, _, err := applyNames(made, add, remove, failAt(0), "whitelist add ", "whitelist remove ", nil)
 	if err != nil || strings.Join(got, " ") != "Ada Olive Vera" {
 		t.Errorf("all through: %v, %v", got, err)
 	}
@@ -367,23 +368,37 @@ func TestApplyNamesNotesWhatWentThrough(t *testing.T) {
 		t.Errorf("commands: %v", ran)
 	}
 	// The second addition fails: the first is noted, the removal not made.
-	got, err = applyNames(made, add, remove, wanted, failAt(2), "whitelist add ", "whitelist remove ")
+	got, _, err = applyNames(made, add, remove, failAt(2), "whitelist add ", "whitelist remove ", nil)
 	if err == nil || strings.Join(got, " ") != "Ada Otto Vera" {
 		t.Errorf("failing at the second command: %v, %v; want Ada Otto Vera noted", got, err)
 	}
 	// The removal fails: both additions are noted, and Otto still is.
-	got, err = applyNames(made, add, remove, wanted, failAt(3), "whitelist add ", "whitelist remove ")
+	got, _, err = applyNames(made, add, remove, failAt(3), "whitelist add ", "whitelist remove ", nil)
 	if err == nil || strings.Join(got, " ") != "Ada Otto Vera Olive" {
 		t.Errorf("failing at the removal: %v, %v", got, err)
 	}
 	// The very first fails: nothing has changed.
-	got, err = applyNames(made, add, remove, wanted, failAt(1), "whitelist add ", "whitelist remove ")
+	got, _, err = applyNames(made, add, remove, failAt(1), "whitelist add ", "whitelist remove ", nil)
 	if err == nil || strings.Join(got, " ") != "Ada Otto" {
 		t.Errorf("failing at once: %v, %v", got, err)
 	}
 	// What it was handed is not written over.
 	if strings.Join(made, " ") != "Ada Otto" {
 		t.Errorf("the note it started from was changed: %v", made)
+	}
+	// A player the game knows nothing of is not noted, and the rest go on.
+	got, missing, err := applyNames(made, add, remove, func(command string) error {
+		if command == "whitelist add Vera" {
+			return errNoSuchPlayer
+		}
+		return nil
+	}, "whitelist add ", "whitelist remove ", nil)
+	if err != nil || strings.Join(got, " ") != "Ada Olive" || strings.Join(missing, " ") != "Vera" {
+		t.Errorf("with a name the game does not know: noted %v, missing %v, %v", got, missing, err)
+	}
+	// One put back that is in the note already is noted once.
+	if got, _, _ := applyNames([]string{"Ada"}, []string{"ada"}, nil, failAt(0), "op ", "deop ", nil); strings.Join(got, " ") != "Ada" {
+		t.Errorf("put back: noted %v", got)
 	}
 }
 

@@ -53,8 +53,9 @@ func TestReach(t *testing.T) {
 	if e := next(t, events); e.Type != "cluster" || !e.Data.(clusterView).Reachable {
 		t.Errorf("told %+v, want the cluster back", e)
 	}
-	if e := next(t, events); e.Type != "resync" {
-		t.Errorf("told %+v, want a resync", e)
+	// Of what the cluster says alone: nothing else was missed.
+	if e := next(t, events); e.Type != "resync" || e.Data == nil || !e.Data.(map[string]bool)["cluster"] {
+		t.Errorf("told %+v, want a resync of what the cluster says", e)
 	}
 	select {
 	case e := <-events:

@@ -1,25 +1,90 @@
 # Installs avSYS into the `avsys` namespace.
 #
-#   kubectl apply -f deploy/install.yaml
+#   kubectl apply -f install.yaml
 #
-# Before applying, set AVSYS_PUBLIC_URL below to the address you will open the
-# panel at, and pick how the three ports are exposed (see the Service at the
-# bottom). The MinecraftServer CRD is installed by the panel itself on startup.
+# Before applying, set AVSYS_PUBLIC_URL below to the address you will open
+# the panel at. The three ports are exposed by a LoadBalancer Service, at the
+# bottom. The MinecraftServer CRD is installed by the panel itself on startup.
+#
+# This is the Helm chart in deploy/chart with its default values, made by
+# ./hack/chart.sh render; do not edit it in the repository. For anything
+# the defaults do not cover, install the chart instead (see the README).
 apiVersion: v1
 kind: Namespace
 metadata:
   name: avsys
 ---
+# Source: avsys/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: avsys
   namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+
 ---
+# Source: avsys/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: avsys-data
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+  annotations:
+    # Kept when the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# Source: avsys/templates/pvc.yaml
+# Snapshots of every organization's servers. Size it for the worlds you host,
+# on storage you would be sorry to lose.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: avsys-backups
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+  annotations:
+    # Kept when the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# Source: avsys/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
 rules:
   # The panel's own resource.
   - apiGroups: ["avsys.dev"]
@@ -62,15 +127,28 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "create", "update"]
+  # The extra ports of a server whose game is not running are pointed at
+  # the panel, which answers in its place, by endpoints of its own.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Console output, and reaching pods when the panel runs outside the cluster.
   - apiGroups: [""]
     resources: ["pods/log", "pods/portforward"]
     verbs: ["get", "create"]
+
 ---
+# Source: avsys/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -79,39 +157,93 @@ subjects:
   - kind: ServiceAccount
     name: avsys
     namespace: avsys
+
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
+# Source: avsys/templates/rbac.yaml
+# Updating itself to a newer release, when the instance administrator presses
+# Update: the panel's own Deployment, read and changed, and no other.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata:
-  name: avsys-data
+  name: avsys
   namespace: avsys
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 1Gi
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["avsys"]
+    verbs: ["get", "patch"]
+
 ---
-# Snapshots of every organization's servers are kept here. Size it for the
-# worlds you host: a snapshot only stores what changed since the last, but the
-# first one of each server is about the size of that server. Put it on storage
-# you would be sorry to lose, since this is the only copy until an offsite one
-# is set up.
-apiVersion: v1
-kind: PersistentVolumeClaim
+# Source: avsys/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata:
-  name: avsys-backups
+  name: avsys
   namespace: avsys
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 50Gi
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: avsys
+subjects:
+  - kind: ServiceAccount
+    name: avsys
+    namespace: avsys
+
 ---
+# Source: avsys/templates/service.yaml
+# The panel, SSH and the Minecraft router. Players and SSH need plain TCP;
+# put the panel's http port behind an ingress for TLS if you prefer.
+apiVersion: v1
+kind: Service
+metadata:
+  name: avsys
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: avsys
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+    - name: ssh
+      port: 2222
+      targetPort: ssh
+    - name: minecraft
+      port: 25565
+      targetPort: minecraft
+
+---
+# Source: avsys/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: avsys
   namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
 spec:
   replicas: 1
   # The database is a single file on a ReadWriteOnce volume, so the old pod
@@ -125,6 +257,10 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: avsys
+        app.kubernetes.io/instance: avsys
+        app.kubernetes.io/version: "edge"
+        app.kubernetes.io/managed-by: Helm
+        helm.sh/chart: avsys-0.0.0-dev
     spec:
       serviceAccountName: avsys
       securityContext:
@@ -134,55 +270,61 @@ spec:
         fsGroup: 65532
       containers:
         - name: avsys
-          # :edge follows the main branch. For a fixed version use a release
-          # tag such as :v0.1.0 and drop imagePullPolicy.
-          image: ghcr.io/gt-drehmal/avsys:edge
+          image: "ghcr.io/gt-drehmal/avsys:edge"
           imagePullPolicy: Always
           env:
             - name: AVSYS_PUBLIC_URL
-              value: https://panel.example.com
+              value: "https://panel.example.com"
             - name: AVSYS_BACKUP_DIR
               value: /backups
-            # An offsite copy of every organization's snapshots, in any place
-            # restic can reach without ssh: S3 and what speaks it (Backblaze
-            # B2, Cloudflare R2, Wasabi), Azure, Google Cloud, a rest-server.
-            # The bucket has to exist. Keep a copy of the password somewhere
-            # else: it is what opens the copy once this cluster is gone.
-            # - name: AVSYS_OFFSITE_REPOSITORY
-            #   value: s3:https://s3.us-west-004.backblazeb2.com/my-bucket/avsys
-            # - name: AVSYS_OFFSITE_PASSWORD
-            #   valueFrom: { secretKeyRef: { name: avsys-offsite, key: password } }
-            # - name: AWS_ACCESS_KEY_ID
-            #   valueFrom: { secretKeyRef: { name: avsys-offsite, key: access-key-id } }
-            # - name: AWS_SECRET_ACCESS_KEY
-            #   valueFrom: { secretKeyRef: { name: avsys-offsite, key: secret-access-key } }
-            # Hostname shown in SSH instructions, if it differs from the panel's.
-            # - name: AVSYS_SSH_PUBLIC_HOST
-            #   value: ssh.example.com
-            # A domain with a wildcard DNS record pointing at the router: new
-            # servers then default to <server>.<org>.<domain>.
-            # - name: AVSYS_ROUTER_DOMAIN
-            #   value: mc.example.com
-            # Sign-in providers: add the client ID and secret of each you want.
-            # - name: AVSYS_GITHUB_CLIENT_ID
-            # - name: AVSYS_GITHUB_CLIENT_SECRET
-            # - name: AVSYS_DISCORD_CLIENT_ID
-            # - name: AVSYS_DISCORD_CLIENT_SECRET
-            # - name: AVSYS_GOOGLE_CLIENT_ID
-            # - name: AVSYS_GOOGLE_CLIENT_SECRET
+            # Servers' extra ports are pointed at the panel while their games
+            # are not running, so that reaching one wakes a sleeping server.
+            - name: AVSYS_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # The Service that carries the router, whose address servers'
+            # extra ports share.
+            - name: AVSYS_ROUTER_SERVICE
+              value: avsys
+            - name: AVSYS_ROUTER_PUBLIC_PORT
+              value: "25565"
+            - name: AVSYS_SSH_PUBLIC_PORT
+              value: "2222"
+            - name: AVSYS_PACK_CACHE
+              value: "512"
+            - name: AVSYS_ALLOW_SIGNUPS
+              value: "false"
+            - name: AVSYS_PASSWORDS
+              value: "true"
+            - name: AVSYS_NAMESPACE_PREFIX
+              value: "mc-"
+            - name: AVSYS_INSTALL_CRDS
+              value: "true"
+            - name: AVSYS_UPDATE_CHECK
+              value: "true"
           ports:
-            - { name: http, containerPort: 8080 }
-            - { name: ssh, containerPort: 2222 }
-            - { name: minecraft, containerPort: 25565 }
+            - name: http
+              containerPort: 8080
+            - name: ssh
+              containerPort: 2222
+            - name: minecraft
+              containerPort: 25565
           readinessProbe:
-            httpGet: { path: /api/v1/meta, port: http }
+            httpGet:
+              path: /api/v1/meta
+              port: http
           resources:
-            requests: { cpu: 50m, memory: 128Mi }
-            # Pruning a large snapshot repository is what needs the room.
-            limits: { memory: 1Gi }
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 50m
+              memory: 128Mi
           volumeMounts:
-            - { name: data, mountPath: /data }
-            - { name: backups, mountPath: /backups }
+            - name: data
+              mountPath: /data
+            - name: backups
+              mountPath: /backups
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -190,20 +332,3 @@ spec:
         - name: backups
           persistentVolumeClaim:
             claimName: avsys-backups
----
-# Players and SSH need plain TCP, so this is a LoadBalancer (k3s ServiceLB and
-# MetalLB both work). Put the panel's HTTP port behind your ingress for TLS if
-# you prefer; it is included here so a fresh install is reachable.
-apiVersion: v1
-kind: Service
-metadata:
-  name: avsys
-  namespace: avsys
-spec:
-  type: LoadBalancer
-  selector:
-    app.kubernetes.io/name: avsys
-  ports:
-    - { name: http, port: 80, targetPort: http }
-    - { name: ssh, port: 2222, targetPort: ssh }
-    - { name: minecraft, port: 25565, targetPort: minecraft }

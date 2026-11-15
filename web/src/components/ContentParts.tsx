@@ -1,9 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, ExternalLink, GripVertical, Plus, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, qs, type ModrinthVersion, type StackedPack } from "../lib/api";
+import { api, ApiError, qs, serverPath, type ModrinthVersion, type Server, type StackedPack } from "../lib/api";
 import { ago, bytes } from "../lib/format";
-import { stackedTitle } from "./Content";
+import type { PackFile } from "../lib/mrpack";
+import { applyServer, type useUpdateServer } from "../lib/queries";
+import { toast } from "../lib/toast";
+import { packOfVersion, stackedTitle } from "./Content";
+import { usePackFiles } from "./Modpack";
 import { ProjectIcon } from "./ModrinthSearch";
 import { Button, Chip, cx, Modal, Spinner } from "./ui";
 
@@ -277,4 +281,55 @@ export function SectionHead({ title, count, addLabel, onAdd, addDisabled, sub }:
       )}
     </div>
   );
+}
+
+/** A section with nothing in it, in one line beside its Add. */
+export function EmptySection({ text, addLabel, onAdd, addDisabled }: { text: string; addLabel: string; onAdd?: () => void; addDisabled?: boolean }) {
+  return (
+    <div className="flex min-h-8 items-center justify-between gap-3">
+      <p className="text-[13px] text-muted">{text}</p>
+      {onAdd && (
+        <Button size="sm" icon={<Plus className="size-4" />} onClick={onAdd} disabled={addDisabled} aria-label={addLabel}>
+          Add
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** What a file in a modpack is called: its project's name, or its file's. */
+const packFileName = (f: PackFile) => f.title || f.name.replace(/\.(jar|zip)$/i, "");
+
+/**
+ * The resource packs a server's modpack lists from Modrinth, each to be made
+ * the server's in one press, at the version the modpack lists; not one the
+ * server has already. With one there, it goes on top, as one picked does.
+ */
+export function PackFromModpack({ server, update, disabled, onLooking }: { server: Server; update: ReturnType<typeof useUpdateServer>; disabled: boolean; onLooking: (looking: boolean) => void }) {
+  const qc = useQueryClient();
+  const files = usePackFiles(server);
+  const rp = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
+  const has = new Set([rp?.project?.id, ...(rp?.stack ?? []).map((p) => p.project?.id)].filter(Boolean));
+  const offered = files.filter((f) => f.path.startsWith("resourcepacks/") && f.project && f.version && !has.has(f.project) && !(f.slug && has.has(f.slug)));
+  const take = async (f: PackFile) => {
+    const project = { source: "modrinth" as const, id: f.slug || f.project || "", title: f.title, iconUrl: f.iconUrl };
+    onLooking(true);
+    try {
+      const versions = await api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(project.id)}/versions?${qs({ loader: "resourcepack" })}`);
+      const v = versions.find((v) => v.id === f.version);
+      if (!v) throw new Error(`The pack's version of ${packFileName(f)} is no longer on Modrinth.`);
+      const next = await packOfVersion(v, project);
+      if (rp) applyServer(qc, await api.post<Server>(`${serverPath(server.org, server.name)}/resource-packs/url`, { url: next.url, sha1: next.sha1, project: next.project, formats: next.formats }));
+      else await update.mutateAsync({ resourcePack: { ...next, enforce: false, prompt: "" } });
+    } catch (err) {
+      if (!(err instanceof ApiError)) toast.error(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      onLooking(false);
+    }
+  };
+  return offered.map((f) => (
+    <Button key={f.path} size="sm" disabled={disabled} onClick={() => take(f)} className="self-start">
+      Use {packFileName(f)} from the pack
+    </Button>
+  ));
 }

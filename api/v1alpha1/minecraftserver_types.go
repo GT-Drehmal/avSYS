@@ -153,10 +153,16 @@ type MemberPicks struct {
 
 // ModpackSpec installs a whole modpack. The pack decides the loader and game version.
 type ModpackSpec struct {
-	// +kubebuilder:validation:Enum=modrinth;curseforge
-	Source  ContentSource `json:"source"`
-	Project string        `json:"project"`
-	// Version pins a Modrinth version ID or CurseForge file ID.
+	// Source "upload" is a Modrinth pack file (.mrpack) uploaded through the
+	// panel and kept on the server's own volume.
+	// +kubebuilder:validation:Enum=modrinth;curseforge;upload
+	Source ContentSource `json:"source"`
+	// Project is the Modrinth/CurseForge slug or ID, or for source "upload"
+	// the name the file was uploaded as.
+	Project string `json:"project"`
+	// Version pins a Modrinth version ID or CurseForge file ID. For source
+	// "upload" it is the SHA-1 of the file, which it is kept under; empty
+	// until the file is uploaded.
 	Version string `json:"version,omitempty"`
 	// GameVersion and Loader are what the pinned pack version is built for,
 	// recorded by the panel. They decide the Java the server runs on and
@@ -166,6 +172,28 @@ type ModpackSpec struct {
 	Title       string `json:"title,omitempty"`
 	VersionName string `json:"versionName,omitempty"`
 	IconURL     string `json:"iconUrl,omitempty"`
+}
+
+// UploadedFile is the name an uploaded modpack is kept under in its
+// server's content folder, its SHA-1, or "" for a modpack that is not an
+// upload or not uploaded yet.
+func (p *ModpackSpec) UploadedFile() string {
+	if p == nil || p.Source != SourceUpload || !isSHA1(p.Version) {
+		return ""
+	}
+	return p.Version + ".mrpack"
+}
+
+func isSHA1(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ResourcePackSpec is the server resource pack offered to joining players.
@@ -360,6 +388,13 @@ type ExtraPort struct {
 	// +kubebuilder:validation:Enum=TCP;UDP
 	// +kubebuilder:default=TCP
 	Protocol corev1.Protocol `json:"protocol,omitempty"`
+	// For is the mod the panel opened it for, by its Modrinth slug, as
+	// geyser. The mod is set up to listen on it, and to tell players where
+	// it is reached, and it is closed again when the mod is taken off. Empty
+	// is a port of the server's own, which the panel leaves alone.
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z0-9_-]*$`
+	For string `json:"for,omitempty"`
 }
 
 // PortStatus is where players reach an extra port.
@@ -446,6 +481,14 @@ type MinecraftServerSpec struct {
 	// leave the organization.
 	OpMembers        *MemberPicks `json:"opMembers,omitempty"`
 	WhitelistMembers *MemberPicks `json:"whitelistMembers,omitempty"`
+	// WhitelistLists and OpLists are saved lists of players of the
+	// organization, by their ID in the panel, whose players are on the
+	// whitelist and operators. The server follows each list as it is
+	// changed; a list deleted is dropped.
+	// +kubebuilder:validation:MaxItems=50
+	WhitelistLists []string `json:"whitelistLists,omitempty"`
+	// +kubebuilder:validation:MaxItems=50
+	OpLists []string `json:"opLists,omitempty"`
 
 	// Image overrides the server image. By default a tag of itzg/minecraft-server
 	// with the right Java for the game version is chosen.

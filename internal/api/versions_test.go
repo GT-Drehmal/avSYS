@@ -237,7 +237,8 @@ func TestUpdateChecksAChangeOfSoftware(t *testing.T) {
 	if got, code := patch(`"loader":"folia"`); got != 400 || code != "invalid" {
 		t.Errorf("moving back: %d %s, want 400 invalid", got, code)
 	}
-	if got, code := patch(`"loader":"folia","version":"26.2"`); got != 200 {
+	// Older than its world, which is meant.
+	if got, code := p.do("owner", "PATCH", "/orgs/alpha/servers/folia?newerWorld=true", `{"spec":{"loader":"folia","version":"26.2"}}`); got != 200 {
 		t.Errorf("moving to a supported pair: %d %s, want 200", got, code)
 	}
 }
@@ -339,8 +340,9 @@ func TestVersionsCarryTheirJava(t *testing.T) {
 			t.Errorf("%s: noted Java %v and runs on %v, want %v and %v", c.version, noted, runs, c.noted, c.runsWith)
 		}
 	}
-	// Moved to another version, the note moves with it.
-	if code, _ := p.do("owner", "PATCH", "/orgs/alpha/servers/weekly", `{"spec":{"version":"20w14infinite"}}`); code != 200 {
+	// Moved to another version, the note moves with it. An older one, as is
+	// meant here.
+	if code, _ := p.do("owner", "PATCH", "/orgs/alpha/servers/weekly?newerWorld=true", `{"spec":{"version":"20w14infinite"}}`); code != 200 {
 		t.Fatalf("changing version: %d", code)
 	}
 	if noted, runs := java("weekly"); noted != 8 || runs != 8 {

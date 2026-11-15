@@ -1,0 +1,107 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "avsys.fullname" . }}
+  labels:
+    {{- include "avsys.labels" . | nindent 4 }}
+rules:
+  # The panel's own resource.
+  - apiGroups: ["avsys.dev"]
+    resources: ["minecraftservers", "minecraftservers/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Installing and upgrading the CRD on startup.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "create", "patch"]
+  # One namespace per organization, and one for a while to measure nodes'
+  # speed in; those are listed to remove any a restart left behind.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "delete"]
+  # What each server is made of.
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Deleted only when a server is moved off a node its volume is tied to,
+  # its files then being in a snapshot.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "create", "patch", "delete"]
+  # Choosing a node for a new server: node speed scores and free memory,
+  # and which node an existing volume is tied to.
+  - apiGroups: [""]
+    resources: ["nodes", "persistentvolumes"]
+    verbs: ["get", "list"]
+  # What servers' games and nodes use of memory and CPU, for the graphs and
+  # the Nodes page, where the cluster has a metrics API. Read only.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  # Setting a node's speed score, and whether it takes new servers, from
+  # the Nodes page. Only labels are changed.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch"]
+  # RCON passwords and the workspace key. Read one at a time, never listed.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update"]
+  # The extra ports of a server whose game is not running are pointed at
+  # the panel, which answers in its place, by endpoints of its own.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Console output, and reaching pods when the panel runs outside the cluster.
+  - apiGroups: [""]
+    resources: ["pods/log", "pods/portforward"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "avsys.fullname" . }}
+  labels:
+    {{- include "avsys.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "avsys.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "avsys.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.selfUpdate }}
+---
+# Updating itself to a newer release, when the instance administrator presses
+# Update: the panel's own Deployment, read and changed, and no other.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "avsys.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "avsys.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ include "avsys.fullname" . | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "avsys.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "avsys.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "avsys.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "avsys.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

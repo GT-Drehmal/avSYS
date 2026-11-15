@@ -18,6 +18,7 @@ import (
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -193,8 +194,12 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	}
 	// What its mods listen on goes with them. The public ports given out
 	// to the original are its own, and the copy gets ports of its own.
+	// Mods chosen again open and close theirs, unless the ports are said.
 	if !said("ports") {
 		spec.Ports = recorded.Ports
+		if said("mods") {
+			spec.Ports = controller.FitModPorts(recorded.Mods, spec.Mods, recorded.Ports)
+		}
 	}
 	spec.Properties = mergeProperties(recorded.Properties, given["properties"])
 	if !said("ops") {
@@ -216,6 +221,14 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 	}
 	if !said("whitelistMembers") {
 		spec.WhitelistMembers = recorded.WhitelistMembers
+	}
+	// Saved lists, of the same organization: one deleted since, or of
+	// another, is dropped as the copy is checked.
+	if !said("whitelistLists") {
+		spec.WhitelistLists = recorded.WhitelistLists
+	}
+	if !said("opLists") {
+		spec.OpLists = recorded.OpLists
 	}
 
 	spec.EULA = spec.EULA || recorded.EULA
@@ -377,6 +390,12 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err := leaveWorld(&spec, &record.Spec, &requested, newWorld); err != nil {
 		return err
 	}
+	// The world it keeps was last opened in the version it was taken of.
+	if !newWorld {
+		if err := s.checkWorldVersion(r, controller.GameVersionOf(&record.Spec), &spec); err != nil {
+			return err
+		}
+	}
 	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
 		return err
 	}
@@ -510,6 +529,11 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	}
 	if err := leaveWorld(&spec, &mc.Spec, &requested, newWorld); err != nil {
 		return err
+	}
+	if !newWorld {
+		if err := s.checkWorldVersion(r, s.ranOn(ctx, mc, &mc.Spec), &spec); err != nil {
+			return err
+		}
 	}
 	if err := s.checkHostnameOwner(ctx, a.Org, spec.Expose.Hostname); err != nil {
 		return err
@@ -790,7 +814,7 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 		return err
 	}
 	orig := mc.DeepCopy()
-	mc.Spec.State = final
+	mc.Spec.State = finalState(&mc.Spec, final)
 	delete(mc.Annotations, avsysv1.AnnotationRestoring)
 	delete(mc.Annotations, avsysv1.AnnotationCreating)
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))

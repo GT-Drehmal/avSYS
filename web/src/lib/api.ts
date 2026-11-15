@@ -222,6 +222,8 @@ export interface Meta {
   setupRequired: boolean;
   allowSignups: boolean;
   providers: { id: string; name: string }[];
+  /** Whether people may sign in with a password; off, only through providers. */
+  passwords: boolean;
   ssh: { host: string; port: number };
   /** Whether this panel can take snapshots at all. */
   snapshots: boolean;
@@ -274,6 +276,26 @@ export interface Me {
   minecraft?: MinecraftAccount;
   /** Every Minecraft account they have linked, the main one first. */
   minecraftAccounts?: MinecraftAccount[];
+  /** Whether signing in with their password also takes a code. */
+  twoFactor: boolean;
+  /** Recovery codes they have left. */
+  recoveryCodes: number;
+  /** An administrator who has to set up two-factor before anything else. */
+  mustSetUpTwoFactor: boolean;
+  /** Whether administrators here have to use two-factor. */
+  adminTwoFactor: boolean;
+}
+
+/** A browser signed in as someone. */
+export interface Session {
+  id: string;
+  userAgent: string;
+  address: string;
+  method: "password" | "provider" | "";
+  createdAt: string;
+  lastUsedAt: string;
+  /** The one this page is open in. */
+  current: boolean;
 }
 
 /** A Minecraft account a person has linked. */
@@ -305,8 +327,11 @@ export interface ContentRef {
 }
 
 export interface Modpack {
-  source: "modrinth" | "curseforge";
+  /** "upload" is a .mrpack uploaded to the panel. */
+  source: "modrinth" | "curseforge" | "upload";
+  /** The Modrinth project, or the name an uploaded file had. */
   project: string;
+  /** The pinned version; for an upload, its file's SHA-1, empty until it is uploaded. */
   version?: string;
   /** What the pinned pack version is built for, filled in by the panel. */
   gameVersion?: string;
@@ -391,6 +416,9 @@ export interface ServerSpec {
   /** Members put on, or left off, the operators and the whitelist whatever their role, by user ID. */
   opMembers?: { also?: string[]; except?: string[] } | null;
   whitelistMembers?: { also?: string[]; except?: string[] } | null;
+  /** Saved lists of the organization, by ID, whose players are on the whitelist, and operators. */
+  whitelistLists?: string[] | null;
+  opLists?: string[] | null;
   /** Where the server's scheduled snapshots depart from its organization's. Absent, it follows them. */
   backups?: BackupOverride | null;
   image?: string;
@@ -402,6 +430,8 @@ export interface ExtraPort {
   name: string;
   port: number;
   protocol?: "TCP" | "UDP";
+  /** The mod the panel opened it for, by its Modrinth slug: closed again with the mod. */
+  for?: string;
 }
 
 /** Where an extra port is reached from outside. */
@@ -447,6 +477,8 @@ export interface Snapshot {
   /** What this snapshot added to the repository. */
   added: number;
   files: number;
+  /** In the offsite copy, as of its last sync. Absent when there is none, or this one is not in it yet. */
+  offsite?: boolean;
 }
 
 /** A snapshot with the settings its server had when it was taken. */
@@ -473,6 +505,8 @@ export interface OwnWorld {
   version?: string;
   file?: string;
   size: number;
+  /** The resource pack uploaded to the library world it was given, kept with it. */
+  resourcePack?: ResourcePack | null;
 }
 
 export interface Template {
@@ -523,6 +557,8 @@ export interface LibraryWorld {
   ready: boolean;
   /** Why it could not be saved, for one that was not. */
   error?: string;
+  /** The resource pack it is played with: one from an address, or one uploaded, with no address. */
+  resourcePack?: ResourcePack | null;
 }
 
 /** Where a library world's picture is. */
@@ -588,6 +624,64 @@ export interface SnapshotList {
   snapshots: Snapshot[];
   operations: Operation[];
   usage?: { bytes: number; snapshots: number };
+}
+
+/**
+ * A player on a saved list: of Java, by their account, or of Bedrock, by
+ * their Xbox account, with their gamertag as the name.
+ */
+export interface ListPlayer {
+  uuid: string;
+  name: string;
+  kind: "java" | "bedrock";
+  xuid?: string;
+}
+
+/** A server that uses a saved list, and for which of its lists. */
+export interface ListUse {
+  name: string;
+  displayName?: string;
+  whitelist?: boolean;
+  ops?: boolean;
+}
+
+/** A saved list of players of an organization. */
+export interface PlayerList {
+  id: string;
+  name: string;
+  createdBy?: string;
+  updatedAt: string;
+  players: ListPlayer[];
+  servers: ListUse[];
+}
+
+/** A list as a change to it answers: with the names asked for that no Minecraft account has, and the gamertags no Bedrock player was found for. */
+export interface PlayerListChange extends PlayerList {
+  missing: string[];
+  missingBedrock: string[];
+}
+
+/** Where a player's head is drawn from. */
+export const playerHead = (uuid: string) => `/api/v1/players/${uuid}/head`;
+
+/** A player on one of a server's lists in game. */
+export interface ListedPlayer {
+  name: string;
+  uuid?: string;
+  /** Of Bedrock, through Floodgate: the name has Floodgate's prefix. */
+  bedrock?: boolean;
+}
+
+/** One of a server's lists as the game has it: who is on it other than by the panel. */
+export interface GameList {
+  /** Whether it could be read. */
+  known: boolean;
+  inGame: ListedPlayer[];
+}
+
+export interface GameLists {
+  whitelist: GameList;
+  ops: GameList;
 }
 
 export interface Server {
@@ -722,12 +816,20 @@ export interface Placement {
   local: boolean;
   /** Node labels it is kept to, set outside the panel. */
   labels?: Record<string, string>;
+  /** The node its files are on is down: it can only be made again on another node from its newest snapshot. */
+  down?: boolean;
+  /** That snapshot, when there is one that can be read. */
+  newest?: Snapshot;
+  /** Why it cannot be made again from a snapshot, when it cannot. */
+  unable?: string;
 }
 
 export interface NodeInfo {
   name: string;
   /** Up and taking pods. */
   ready: boolean;
+  /** Kept from taking new pods, as before maintenance. Servers on it can still be moved off. */
+  cordoned?: boolean;
   /** New servers may be placed on it without asking. */
   automatic: boolean;
   /** It is set to take new servers, whether or not it is up. */
@@ -753,4 +855,30 @@ export interface NodeList {
   automatic?: string;
   measuring?: boolean;
   measured?: { at: string; failed?: string[]; error?: string };
+  /** A newer release than the one running, for the panel's administrator. */
+  update?: ReleaseUpdate;
+  /** The panel itself, for its administrator. */
+  panel?: PanelInfo;
+}
+
+export interface PanelInfo {
+  /** The version running. */
+  version: string;
+  /** Whether it can move itself to a newer release. */
+  canUpdate: boolean;
+  /** Whether it takes fix releases by itself. */
+  autoUpdate: boolean;
+  /** The release it is moving to, while it does. */
+  updating?: string;
+}
+
+export interface ReleaseUpdate {
+  /** Its tag, as v1.2.3. */
+  version: string;
+  /** The page that says what changed. */
+  notes: string;
+  /** What upgrades the panel, as it was installed, where that is known. */
+  command?: string;
+  /** The release's install.yaml, for a panel installed from one. */
+  manifest?: string;
 }

@@ -1,0 +1,13 @@
+apiVersion: v2
+name: avsys
+description: A Kubernetes-native Minecraft server panel
+type: application
+home: https://github.com/GT-Drehmal/avSYS
+sources:
+  - https://github.com/GT-Drehmal/avSYS
+# What is in the repository between releases. A release sets both from its
+# tag when it publishes the chart: v1.2.3 is chart version 1.2.3 running the
+# image :v1.2.3. appVersion is the image tag used when image.tag is empty, so
+# the chart as committed runs :edge, which follows the main branch.
+version: 0.0.0-dev
+appVersion: edge

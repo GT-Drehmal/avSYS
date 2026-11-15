@@ -56,6 +56,31 @@ CREATE TABLE IF NOT EXISTS sessions (
 	created_at INTEGER NOT NULL,
 	expires_at INTEGER NOT NULL
 );
+-- The columns sessions have had since they could be listed and ended one
+-- by one are added by addSessionDetails, to old tables and new alike.
+-- A second factor, by user: the secret of the codes, the one being set up,
+-- and the last time step a code was used for, which is not taken again.
+CREATE TABLE IF NOT EXISTS two_factor (
+	user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	secret     TEXT NOT NULL DEFAULT '',
+	pending    TEXT NOT NULL DEFAULT '',
+	last_step  INTEGER NOT NULL DEFAULT 0,
+	enabled_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS recovery_codes (
+	user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	code_hash TEXT NOT NULL,
+	PRIMARY KEY (user_id, code_hash)
+);
+-- Links an administrator makes for someone to set a new password with.
+CREATE TABLE IF NOT EXISTS reset_links (
+	token_hash     TEXT PRIMARY KEY,
+	user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_by     TEXT NOT NULL,
+	created_at     INTEGER NOT NULL,
+	expires_at     INTEGER NOT NULL,
+	two_factor_off INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS ssh_keys (
 	id           TEXT PRIMARY KEY,
 	user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -147,9 +172,51 @@ CREATE TABLE IF NOT EXISTS worlds (
 	size        INTEGER NOT NULL DEFAULT 0,
 	unpacked    INTEGER NOT NULL DEFAULT 0,
 	source      TEXT NOT NULL DEFAULT '',
-	failed      TEXT NOT NULL DEFAULT ''
+	failed      TEXT NOT NULL DEFAULT '',
+	pack        TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS worlds_name ON worlds(org_id, name);
+CREATE TABLE IF NOT EXISTS player_lists (
+	id         TEXT PRIMARY KEY,
+	org_id     TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+	name       TEXT NOT NULL COLLATE NOCASE,
+	created_by TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS player_lists_name ON player_lists(org_id, name);
+CREATE TABLE IF NOT EXISTS player_list_entries (
+	list_id  TEXT NOT NULL REFERENCES player_lists(id) ON DELETE CASCADE,
+	uuid     TEXT NOT NULL,
+	name     TEXT NOT NULL,
+	kind     TEXT NOT NULL DEFAULT 'java',
+	xuid     TEXT NOT NULL DEFAULT '',
+	added_at INTEGER NOT NULL,
+	PRIMARY KEY (list_id, uuid)
+);
+CREATE INDEX IF NOT EXISTS player_list_entries_uuid ON player_list_entries(uuid);
+-- The snapshots templates and the library are made of; see
+-- templatesnapshots.go. time is as the repository says it, RFC 3339.
+CREATE TABLE IF NOT EXISTS template_snapshots (
+	org_id  TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+	id      TEXT NOT NULL,
+	host    TEXT NOT NULL,
+	time    TEXT NOT NULL,
+	by_user TEXT NOT NULL DEFAULT '',
+	version TEXT NOT NULL DEFAULT '',
+	loader  TEXT NOT NULL DEFAULT '',
+	size    INTEGER NOT NULL DEFAULT 0,
+	added   INTEGER NOT NULL DEFAULT 0,
+	files   INTEGER NOT NULL DEFAULT 0,
+	lineage TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (org_id, id)
+);
+-- The organizations whose template snapshots have been read from their
+-- repository at least once.
+CREATE TABLE IF NOT EXISTS template_snapshots_read (
+	org_id TEXT PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+	at     INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);
 CREATE INDEX IF NOT EXISTS audit_target ON audit(org_id, target, id);
 `
@@ -166,6 +233,10 @@ func Open(path string) (*Store, error) {
 	// and is plenty for a panel's worth of traffic.
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
+	if err := addSessionDetails(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
@@ -189,6 +260,14 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
+	if err := addWorldPack(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
+	if err := addListPlayerKinds(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -208,6 +287,28 @@ func addVerifiedAt(db *sql.DB) error {
 	return err
 }
 
+// addListPlayerKinds gives a table of players on saved lists from before a
+// list could have Bedrock players the columns for their kind and XUID, with
+// every player in it one of Java.
+// Each column is looked for on its own, so that one added before a stop
+// part of the way is not taken for both.
+func addListPlayerKinds(db *sql.DB) error {
+	for _, column := range []string{"kind TEXT NOT NULL DEFAULT 'java'", "xuid TEXT NOT NULL DEFAULT ''"} {
+		name, _, _ := strings.Cut(column, " ")
+		var n int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('player_list_entries') WHERE name = ?`, name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE player_list_entries ADD COLUMN ` + column); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // addTemplateWorld gives a table of templates from before a template could
 // have a world of its own the column for it.
 func addTemplateWorld(db *sql.DB) error {
@@ -216,6 +317,17 @@ func addTemplateWorld(db *sql.DB) error {
 		return err
 	}
 	_, err := db.Exec(`ALTER TABLE templates ADD COLUMN world TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// addWorldPack gives a table of worlds from before a world could name a
+// resource pack the column for it.
+func addWorldPack(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('worlds') WHERE name = 'pack'`).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE worlds ADD COLUMN pack TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
@@ -32,6 +33,10 @@ type ownWorld struct {
 	// File is the archive's name as it was sent.
 	File string `json:"file,omitempty"`
 	Size int64  `json:"size"`
+	// Pack is the resource pack uploaded to the world of the library it was
+	// given, kept with it, for each server made from the template. One
+	// from an address is in the template's settings instead.
+	Pack *avsysv1.ResourcePackSpec `json:"resourcePack,omitempty"`
 }
 
 // worldsOf are a template's own world's snapshots, newest first: one, but
@@ -55,7 +60,7 @@ func (s *Server) ownWorldOf(ctx context.Context, a *access, id string) (*backup.
 	} else if err != nil {
 		return nil, info, err
 	}
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+	list, err := s.templateSnapshots(ctx, a.Org)
 	if err != nil {
 		return nil, info, err
 	}
@@ -68,7 +73,8 @@ func (s *Server) ownWorldOf(ctx context.Context, a *access, id string) (*backup.
 
 // putTemplateWorld gives a template a world of its own: the archive sent,
 // or sent in parts as ?upload= of ?size=, with ?root= its world's folder in it, with ?from= another template's, or
-// with ?library= one of the organization's library.
+// with ?library= one of the organization's library. With ?pack=true, the
+// resource pack uploaded to the world given that way comes with it.
 // The one it had before goes.
 func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleAdmin)
@@ -92,7 +98,11 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 	ctx := context.WithoutCancel(r.Context())
 	q := r.URL.Query()
 	var info ownWorld
-	var kept *backup.Snapshot
+	var kept, keptPack *backup.Snapshot
+	// The pack uploaded to the world it is given, kept under host, if it
+	// is to come too.
+	var pack *avsysv1.ResourcePackSpec
+	var packFrom string
 	if from := q.Get("from"); from != "" {
 		snap, theirs, err := s.ownWorldOf(r.Context(), a, from)
 		if err != nil {
@@ -102,6 +112,8 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 			return snapshotError(err)
 		}
 		info = theirs
+		info.Pack = nil
+		pack, packFrom = theirs.Pack, worldHost(from)
 	} else if lib := q.Get("library"); lib != "" {
 		// One of the library's, copied: changing or deleting it there
 		// leaves the template's as it is.
@@ -113,6 +125,7 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 			return snapshotError(err)
 		}
 		info = ownWorld{Root: world.Root, Name: world.Name, Version: world.Version, File: world.File}
+		pack, packFrom = worldPackOf(world), libraryHost(world.ID)
 	} else {
 		root, err := archiveRoot(q.Get("root"))
 		if err != nil {
@@ -139,21 +152,52 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 		}
 	}
 	info.Size = kept.Size
+	// Only an uploaded one: one from an address is in its settings.
+	if q.Get("pack") == "true" && pack != nil && pack.Uploaded != nil {
+		src, err := s.keptPack(ctx, a.Org, packFrom)
+		if err == nil {
+			keptPack, err = s.Backups.CopyAs(ctx, a.Org.Slug, src.ID, packHost(worldHost(t.ID)), u.Username)
+		}
+		if err != nil {
+			if derr := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); derr != nil {
+				s.Log.Error("could not remove a template's world kept for nothing", "template", t.ID, "snapshot", kept.ID, "error", derr)
+			}
+			return snapshotError(err)
+		}
+		info.Pack = pack.DeepCopy()
+	}
 	raw, err := json.Marshal(info)
 	if err != nil {
 		return err
 	}
-	if err := s.Store.SetTemplateWorld(ctx, a.Org.ID, t.ID, string(raw)); err != nil {
+	err = s.noteTemplateSnapshot(ctx, a.Org, kept)
+	if err == nil && keptPack != nil {
+		err = s.noteTemplateSnapshot(ctx, a.Org, keptPack)
+	}
+	if err == nil {
+		err = s.Store.SetTemplateWorld(ctx, a.Org.ID, t.ID, string(raw))
+	}
+	if err != nil {
 		// Kept for a template that is not there: not left behind.
-		if derr := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); derr != nil {
+		ids := []string{kept.ID}
+		if keptPack != nil {
+			ids = append(ids, keptPack.ID)
+		}
+		if derr := s.Backups.DeleteMany(ctx, a.Org.Slug, ids); derr != nil {
 			s.Log.Error("could not remove a template's world kept for nothing", "template", t.ID, "snapshot", kept.ID, "error", derr)
+		} else {
+			s.forgetTemplateSnapshots(ctx, a.Org, ids...)
 		}
 		if errors.Is(err, store.ErrNotFound) {
 			return &Error{Status: http.StatusNotFound, Code: "not_found", Message: "There is no such template."}
 		}
 		return err
 	}
-	s.dropOtherWorlds(ctx, a, t.ID, kept.ID)
+	keepPack := ""
+	if keptPack != nil {
+		keepPack = keptPack.ID
+	}
+	s.dropOtherWorlds(ctx, a, t.ID, kept.ID, keepPack)
 	s.audit(ctx, u, a.Org, "template.world", t.Name, kept.ID)
 	_, v, err := s.template(ctx, a, t.ID)
 	if err != nil {
@@ -163,9 +207,11 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 	return nil
 }
 
-// dropOtherWorlds removes a template's own worlds but the one it has now.
-func (s *Server) dropOtherWorlds(ctx context.Context, a *access, id, keep string) {
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+// dropOtherWorlds removes a template's own worlds but the one it has now,
+// and the packs kept with them but its own (keepPack), as the repository
+// has them: any it has that were not noted go too.
+func (s *Server) dropOtherWorlds(ctx context.Context, a *access, id, keep, keepPack string) {
+	list, err := s.repoSnapshots(ctx, a.Org.Slug)
 	if err != nil {
 		s.Log.Warn("could not list a template's worlds to remove the one before", "template", id, "error", err)
 		return
@@ -176,9 +222,16 @@ func (s *Server) dropOtherWorlds(ctx context.Context, a *access, id, keep string
 			old = append(old, snap.ID)
 		}
 	}
+	for _, snap := range keptPackSnapshots(list, worldHost(id)) {
+		if snap.ID != keepPack {
+			old = append(old, snap.ID)
+		}
+	}
 	if err := s.Backups.DeleteMany(ctx, a.Org.Slug, old); err != nil {
 		s.Log.Warn("could not remove a template's world before", "template", id, "error", err)
+		return
 	}
+	s.forgetTemplateSnapshots(ctx, a.Org, old...)
 }
 
 // deleteTemplateWorld takes a template's own world away: servers made from it
@@ -201,8 +254,67 @@ func (s *Server) deleteTemplateWorld(w http.ResponseWriter, r *http.Request, u *
 	if err := s.Store.SetTemplateWorld(ctx, a.Org.ID, t.ID, ""); err != nil {
 		return err
 	}
-	s.dropOtherWorlds(ctx, a, t.ID, "")
+	s.dropOtherWorlds(ctx, a, t.ID, "", "")
 	s.audit(ctx, u, a.Org, "template.world-delete", t.Name, "")
+	_, v, err := s.template(ctx, a, t.ID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, templateFor(a.Role, v))
+	return nil
+}
+
+// patchTemplateWorld changes the resource pack kept with a template's own
+// world: resourcePack null takes it away, and one with enforce or prompt
+// says whether players must take it and what they are asked.
+func (s *Server) patchTemplateWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	a, err := s.org(r, u, store.RoleAdmin)
+	if err != nil {
+		return err
+	}
+	t, _, err := s.template(r.Context(), a, r.PathValue("template"))
+	if err != nil {
+		return err
+	}
+	var in struct {
+		ResourcePack json.RawMessage `json:"resourcePack"`
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	if in.ResourcePack == nil {
+		return errBadRequest("Say what to change: resourcePack.")
+	}
+	unclaim, err := claimTemplate(a, worldHost(t.ID))
+	if err != nil {
+		return err
+	}
+	defer unclaim()
+	_, info, err := s.ownWorldOf(r.Context(), a, t.ID)
+	if err != nil {
+		return err
+	}
+	var in2 packChange
+	if string(in.ResourcePack) != "null" {
+		if err := json.Unmarshal(in.ResourcePack, &in2); err != nil || in2.URL != "" {
+			return errBadRequest("A template's world keeps only a pack uploaded to the world it was given. One from an address goes in its settings.")
+		}
+	}
+	if info.Pack, err = changedPack(info.Pack, in.ResourcePack); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	ctx := context.WithoutCancel(r.Context())
+	if err := s.Store.SetTemplateWorld(ctx, a.Org.ID, t.ID, string(raw)); err != nil {
+		return err
+	}
+	if info.Pack == nil {
+		s.dropKeptPacks(ctx, a, worldHost(t.ID), "")
+	}
+	s.audit(ctx, u, a.Org, "template.world-pack", t.Name, packAudit(info.Pack))
 	_, v, err := s.template(ctx, a, t.ID)
 	if err != nil {
 		return err

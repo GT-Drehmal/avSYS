@@ -1,0 +1,37 @@
+== VANILLA 1.16.5
+[20:45:20] [Server thread/INFO]: Starting minecraft server version 1.16.5
+whitelist list => "There are no whitelisted players" err=<nil>
+whitelist add Notch => "Added Notch to the whitelist" err=<nil>
+whitelist list => "There are 1 whitelisted players: Notch" err=<nil>
+whitelist add jeb_ => "Added jeb_ to the whitelist" err=<nil>
+whitelist add Dinnerbone => "Added Dinnerbone to the whitelist" err=<nil>
+whitelist list => "There are 3 whitelisted players: Dinnerbone, jeb_, Notch" err=<nil>
+whitelist remove Notch => "Removed Notch from the whitelist" err=<nil>
+whitelist list => "There are 2 whitelisted players: Dinnerbone, jeb_" err=<nil>
+op jeb_ => "Made jeb_ a server operator" err=<nil>
+deop jeb_ => "Made jeb_ no longer a server operator" err=<nil>
+op Dinnerbone => "Made Dinnerbone a server operator" err=<nil>
+whitelist remove jeb_ => "Removed jeb_ from the whitelist" err=<nil>
+whitelist remove Dinnerbone => "Removed Dinnerbone from the whitelist" err=<nil>
+whitelist list => "There are no whitelisted players" err=<nil>
+whitelist add jeb_ => "Added jeb_ to the whitelist" err=<nil>
+deop Nobody_here_1 => "That player does not exist" err=<nil>
+whitelist add Zq9xk2vw8j1qz => "That player does not exist" err=<nil>
+op Zq9xk2vw8j1qz => "That player does not exist" err=<nil>
+whitelist list => "There are 1 whitelisted players: jeb_" err=<nil>
+-- whitelist.json
+[
+  {
+    "uuid": "853c80ef-3c37-49fd-aa49-938b674adae6",
+    "name": "jeb_"
+  }
+]
+-- ops.json
+[
+  {
+    "uuid": "61699b2e-d327-4a01-9f1e-0ea8c3f06bc6",
+    "name": "Dinnerbone",
+    "level": 4,
+    "bypassesPlayerLimit": false
+  }
+]

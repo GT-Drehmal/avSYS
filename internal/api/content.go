@@ -857,6 +857,10 @@ func installedFiles(spec *avsysv1.MinecraftServerSpec) map[string]bool {
 	for _, sha := range keptPacks(spec.ResourcePack) {
 		out[packFile(sha)] = true
 	}
+	// Its uploaded modpack.
+	if file := spec.Modpack.UploadedFile(); file != "" {
+		out[path.Join(controller.ContentDir, file)] = true
+	}
 	level := levelOf(spec)
 	for _, m := range spec.Mods {
 		if m.Source == avsysv1.SourceUpload {
@@ -888,6 +892,10 @@ func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 	was, now := levelOf(before), levelOf(spec)
 	inUse := installedFiles(spec)
 	var gone []string
+	// An uploaded modpack's file, once another is the server's or none is.
+	if file := before.Modpack.UploadedFile(); file != "" && !inUse[path.Join(controller.ContentDir, file)] {
+		gone = append(gone, path.Join(controller.ContentDir, file))
+	}
 	for _, m := range before.Mods {
 		key := string(m.Source) + ":" + m.Project
 		if m.Source == avsysv1.SourceUpload && !listed[key] {

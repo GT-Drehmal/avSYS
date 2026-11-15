@@ -192,7 +192,7 @@ func newWorkspacePool(g *sshgw.Gateway) *workspacePool {
 			p.mu.Lock()
 			for key, c := range p.conns {
 				if c.idle() > sftpIdle {
-					c.close()
+					go c.close()
 					delete(p.conns, key)
 				}
 			}
@@ -202,9 +202,50 @@ func newWorkspacePool(g *sshgw.Gateway) *workspacePool {
 	return p
 }
 
+// close ends the connection. The transport goes first: a pod on a node that
+// stopped answering never answers the SFTP session's goodbye, and anything
+// still waiting on it is let go by the transport closing under it.
 func (c *pooledSFTP) close() {
+	if c.ssh != nil {
+		c.ssh.Close()
+	}
 	c.sftp.Close()
-	c.ssh.Close()
+}
+
+// drop forgets the kept connection to a server's workspace, as for one
+// whose pod was made again on another node.
+func (p *workspacePool) drop(namespace, server string) {
+	if p == nil {
+		return
+	}
+	key := namespace + "/" + server
+	p.mu.Lock()
+	c := p.conns[key]
+	delete(p.conns, key)
+	p.mu.Unlock()
+	if c != nil {
+		go c.close()
+	}
+}
+
+// probeWait is how long a kept connection has to answer before it is taken
+// to be to a pod that is gone. A pod on a node that stopped answering does
+// not say so: without a limit, the look would wait for it for ever.
+var probeWait = 5 * time.Second
+
+// answers says whether a kept connection still reaches its workspace.
+func (c *pooledSFTP) answers() bool {
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.sftp.Getwd()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err == nil
+	case <-time.After(probeWait):
+		return false
+	}
 }
 
 var errNoWorkspaces = errors.New("this panel has no SSH gateway to reach server files through")
@@ -221,17 +262,23 @@ func (p *workspacePool) getNow(ctx context.Context, namespace, server string) (*
 func (p *workspacePool) connect(ctx context.Context, namespace, server string, dial func(context.Context, string, string) (*ssh.Client, error)) (*sftp.Client, error) {
 	key := namespace + "/" + server
 	p.mu.Lock()
-	if c := p.conns[key]; c != nil {
-		// A cheap round trip tells a live connection from one whose pod is gone.
-		if _, err := c.sftp.Getwd(); err == nil {
+	c := p.conns[key]
+	p.mu.Unlock()
+	if c != nil {
+		// A cheap round trip tells a live connection from one whose pod is
+		// gone. It is made without holding the pool, so that one server's
+		// pod that does not answer holds up no other server's files.
+		if c.answers() {
 			c.lastUsed.Store(time.Now().UnixNano())
-			p.mu.Unlock()
 			return c.sftp, nil
 		}
-		c.close()
-		delete(p.conns, key)
+		p.mu.Lock()
+		if p.conns[key] == c {
+			delete(p.conns, key)
+		}
+		p.mu.Unlock()
+		go c.close()
 	}
-	p.mu.Unlock()
 
 	// A panel run without its SSH gateway, as in tests, reaches no workspace.
 	if p.gateway == nil {
@@ -441,11 +488,30 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(path.Base(full)))
 	}
 	// Never let a file from a game server be interpreted as a web page on
-	// the panel's origin.
+	// the panel's origin: not as what it says it is, and, opened in a tab of
+	// its own, with no script and an origin of its own.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", fileCSP)
 	// The game and others change these files: always looked at again.
 	w.Header().Set("Cache-Control", "no-cache")
+	// An image asked for to be looked at is said to be one. It is known by
+	// its hash, as one that can be edited is, whatever its size: looked at
+	// again, it is sent only if what it holds has changed. Its time is not
+	// enough: a file can change twice in a second, or keep its time.
+	if kind := imageType(full); kind != "" && !download && r.URL.Query().Has("view") {
+		sum := sha256.New()
+		if _, err := io.Copy(sum, f); err != nil {
+			return fileFailed(sc, err, "open", full)
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return fileFailed(sc, err, "open", full)
+		}
+		w.Header().Set("Content-Type", kind)
+		w.Header().Set("ETag", `"`+hex.EncodeToString(sum.Sum(nil)[:16])+`"`)
+		http.ServeContent(w, r, "", fi.ModTime(), f)
+		return nil
+	}
 	// One that can be edited is said by its hash, which a save sends back
 	// so as not to write over a change made since it was read.
 	if !download && fi.Size() <= maxEditable {
@@ -459,6 +525,29 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 	}
 	http.ServeContent(w, r, "", fi.ModTime(), f)
 	return nil
+}
+
+// fileCSP is what a server's file may do as a page: nothing. An SVG drawn
+// as an image keeps its styles and the pictures within it.
+const fileCSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"
+
+// imageTypes are the images the panel shows, by their ending.
+var imageTypes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".avif": "image/avif",
+	".bmp":  "image/bmp",
+	".ico":  "image/x-icon",
+	".svg":  "image/svg+xml",
+}
+
+// imageType is the type of image a file is by its name, or "" for one that
+// is not.
+func imageType(name string) string {
+	return imageTypes[strings.ToLower(path.Ext(name))]
 }
 
 // maxEditable is the biggest file the editor opens.

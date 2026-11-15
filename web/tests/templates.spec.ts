@@ -560,3 +560,129 @@ test("only admins select templates", async ({ page, as }) => {
   await expect(page.getByRole("listitem", { name: "Lobby" })).toBeVisible();
   await expect(page.getByLabel("Select Lobby")).toHaveCount(0);
 });
+
+test("a server made from a template on an older version than its world is asked about first, and asked for saying so", async ({ page, as }) => {
+  await as("owner");
+  await lobby(page);
+  const sent: { url: string; body: Record<string, unknown> }[] = [];
+  await page.route(/\/api\/v1\/orgs\/friends\/servers(\?.*)?$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    sent.push({ url: route.request().url(), body: route.request().postDataJSON() });
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+  });
+  await page.goto("/o/friends/new?from=template:t1");
+  await expect(page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByLabel("Game version").selectOption("1.21");
+  await expect(page.getByText("The world was last opened in 1.21.4. 1.21 cannot open the world, so the server will not start.")).toBeVisible();
+  // As it would be open to anyone, that is asked next.
+  const create = async () => {
+    await page.getByRole("button", { name: "Create server" }).click();
+    const ask = page.getByRole("dialog", { name: "Open a 1.21.4 world in 1.21?" });
+    await expect(ask).toContainText("The world was last opened in 1.21.4. 1.21 cannot open the world, so the server will not start.");
+    return ask;
+  };
+  // Nothing is asked for unless asked to.
+  await (await create()).getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(sent).toEqual([]);
+  await (await create()).getByRole("button", { name: "Create server anyway" }).click();
+  await page.getByRole("button", { name: "Create without a whitelist" }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(new URL(sent[0].url).searchParams.get("newerWorld")).toBe("true");
+  expect(sent[0].body).toMatchObject({ fromTemplate: "t1", spec: { version: "1.21" } });
+
+  // With a new world, there is nothing to ask.
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "New world" }).click();
+  await expect(page.getByText(/cannot open the world/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Create server" }).click();
+  await page.getByRole("button", { name: "Create without a whitelist" }).click();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(new URL(sent[1].url).searchParams.get("newerWorld")).toBeNull();
+  expect(sent[1].body).toMatchObject({ fromTemplate: "t1", world: "new" });
+});
+
+test("a server made from a template with a world of its own newer than the template's version is asked about first, and the world sent saying so", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  const made = await api("owner").post(`/orgs/${slug}/templates`, { name: "Island", description: "", spec: { loader: "paper", version: "1.21.4", resources: { memory: "2Gi" }, storage: { size: "2Gi" } } });
+  // Kept with a world from 26.3.
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/templates/${made.id}$`), async (route) => {
+    const template = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...template, world: "own", ownWorld: { root: "Island", name: "Island", version: "26.3", file: "island.zip", size: 4096 } } });
+  });
+  let sent: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/island`) });
+  });
+  await as("owner");
+  await page.goto(`/o/${slug}/new?from=template:${made.id}`);
+  await expect(page.getByTestId("world-summary")).toContainText("Last opened in 26.3");
+  await expect(page.getByText("The world was last opened in 26.3. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  const ask = page.getByRole("dialog", { name: "Open a 26.3 world in 1.21.4?" });
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
+  await page.getByRole("button", { name: "Create server" }).click();
+  await ask.getByRole("button", { name: "Create server anyway" }).click();
+  // With no whitelist in its settings, that is asked next.
+  await page.getByRole("button", { name: "Create without a whitelist" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", template: made.id, newerWorld: "true" });
+});
+
+test("a server made from a template with another world says that plugin data may not fit it", async ({ page, as, org, api }) => {
+  await as("owner");
+  const { template } = await lobby(page);
+  const note = page.getByText("Plugin data from the template, such as claims and warps, may point at places this world does not have.");
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
+  await page.goto("/o/friends/new?from=template:t1");
+  // Its own world, the one in its files: nothing to say.
+  await expect(worldChoice.getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
+  await expect(note).toHaveCount(0);
+  for (const other of ["New world", "Library world", "Upload world"]) {
+    await worldChoice.getByRole("button", { name: other }).click();
+    await expect(note).toBeVisible();
+  }
+  await worldChoice.getByRole("button", { name: "Keep world" }).click();
+  await expect(note).toHaveCount(0);
+
+  // One whose servers start a new world: that one is its own.
+  await page.route("**/api/v1/orgs/friends/templates/t1", async (route) => {
+    const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+    return route.fulfill({ json: { ...template, world: "new", spec: survival.spec } });
+  });
+  await page.goto("/o/friends/new?from=template:t1");
+  await expect(worldChoice.getByRole("button", { name: "New world" })).toHaveAttribute("aria-pressed", "true");
+  await expect(note).toHaveCount(0);
+  await worldChoice.getByRole("button", { name: "Keep world" }).click();
+  await expect(note).toHaveCount(0);
+  await worldChoice.getByRole("button", { name: "Upload world" }).click();
+  await expect(note).toBeVisible();
+
+  // One with a world kept with it: that one, until it is taken away.
+  await page.route("**/api/v1/orgs/friends/templates/t1", async (route) => {
+    const survival = await (await page.request.get("/api/v1/orgs/friends/servers/survival")).json();
+    return route.fulfill({ json: { ...template, world: "own", ownWorld: { root: "Island", name: "Island", version: "1.21.4", file: "island.zip", size: 4096 }, spec: survival.spec } });
+  });
+  await page.goto("/o/friends/new?from=template:t1");
+  await expect(worldChoice.getByRole("button", { name: "Upload world" })).toHaveAttribute("aria-pressed", "true");
+  await expect(note).toHaveCount(0);
+  await page.getByRole("button", { name: "Remove the world" }).click();
+  await expect(note).toBeVisible();
+  await worldChoice.getByRole("button", { name: "New world" }).click();
+  await expect(note).toBeVisible();
+
+  // Nor for a copy of a server, or a template of settings alone, which has no files.
+  await page.goto("/o/friends/new?from=server:survival");
+  await worldChoice.getByRole("button", { name: "New world" }).click();
+  await expect(note).toHaveCount(0);
+  const slug = await org([]);
+  const settings = await api("owner").post(`/orgs/${slug}/templates`, { name: "Plain", description: "", spec: { loader: "paper", version: "1.21.4", resources: { memory: "2Gi" }, storage: { size: "2Gi" } } });
+  await page.goto(`/o/${slug}/new?from=template:${settings.id}`);
+  await expect(page.getByRole("heading", { name: "New server from Plain" })).toBeVisible();
+  await worldChoice.getByRole("button", { name: "Upload world" }).click();
+  await expect(note).toHaveCount(0);
+});

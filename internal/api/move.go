@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -30,6 +31,13 @@ type placementView struct {
 	// Labels are the node labels it is kept to, set outside the panel; such
 	// a server is not moved by the panel.
 	Labels map[string]string `json:"labels,omitempty"`
+	// Down says that the node its files are on cannot be reached, so that
+	// they cannot be carried to another. It can be made again on another
+	// node from its newest snapshot instead, which Newest is; Unable says
+	// why it cannot be, when it cannot.
+	Down   bool             `json:"down,omitempty"`
+	Newest *backup.Snapshot `json:"newest,omitempty"`
+	Unable string           `json:"unable,omitempty"`
 }
 
 func nodeOf(mc *avsysv1.MinecraftServer) string {
@@ -40,7 +48,7 @@ func nodeOf(mc *avsysv1.MinecraftServer) string {
 }
 
 func (s *Server) getPlacement(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	_, mc, err := s.server(r, u, store.RoleAdmin)
+	a, mc, err := s.server(r, u, store.RoleAdmin)
 	if err != nil {
 		return err
 	}
@@ -48,8 +56,86 @@ func (s *Server) getPlacement(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, placementView{Node: nodeOf(mc), Local: local != "", Labels: mc.Spec.NodeSelector})
+	v := placementView{Node: nodeOf(mc), Local: local != "", Labels: mc.Spec.NodeSelector}
+	if local != "" && len(mc.Spec.NodeSelector) == 0 {
+		if v.Down, err = controller.NodeDownByName(r.Context(), s.nodeReader(), local); err != nil {
+			return err
+		}
+		if v.Down {
+			v.Node = local
+			snap, _, err := s.newestToMoveFrom(r.Context(), a.Org.Slug, mc.Name)
+			if err != nil {
+				var refused *Error
+				if !errors.As(err, &refused) {
+					return err
+				}
+				v.Unable = refused.Message
+			}
+			v.Newest = snap
+		}
+	}
+	writeJSON(w, http.StatusOK, v)
 	return nil
+}
+
+// repositoryWait is how long reading an organization's snapshots may take
+// before they are taken to be out of reach, as they are on storage that
+// went down with a node.
+var repositoryWait = 20 * time.Second
+
+var errSnapshotsUnreachable = &Error{Status: http.StatusServiceUnavailable, Code: "snapshots_unreachable", Message: "Snapshots cannot be read right now."}
+
+// newestToMoveFrom returns a server's newest snapshot and what it recorded
+// of the server, to make it again from on another node; or, as an *Error,
+// why there is none to: snapshots are not set up, there is none of the
+// server, or they cannot be read now.
+func (s *Server) newestToMoveFrom(ctx context.Context, org, server string) (*backup.Snapshot, *snapshotRecord, error) {
+	if !s.Backups.Available() {
+		return nil, nil, errNoBackups
+	}
+	ctx, cancel := context.WithTimeout(ctx, repositoryWait)
+	defer cancel()
+	type answer struct {
+		snap   *backup.Snapshot
+		record *snapshotRecord
+		err    error
+	}
+	// Storage that is gone can leave a read hanging past any deadline: it is
+	// waited for here only as long as that.
+	got := make(chan answer, 1)
+	go func() {
+		if err := s.Backups.Reachable(org); err != nil {
+			got <- answer{err: err}
+			return
+		}
+		list, err := s.Backups.List(ctx, org)
+		if err != nil {
+			got <- answer{err: err}
+			return
+		}
+		for i := range list {
+			if list[i].Server == server {
+				record, err := s.recordOf(ctx, org, list[i].ID)
+				got <- answer{snap: &list[i], record: record, err: err}
+				return
+			}
+		}
+		got <- answer{}
+	}()
+	select {
+	case <-ctx.Done():
+		s.Log.Warn("snapshots took too long to read", "org", org, "server", server)
+		return nil, nil, errSnapshotsUnreachable
+	case a := <-got:
+		switch {
+		case a.err != nil:
+			s.Log.Warn("snapshots could not be read", "org", org, "server", server, "error", a.err)
+			return nil, nil, errSnapshotsUnreachable
+		case a.snap == nil:
+			return nil, nil, &Error{Status: http.StatusConflict, Code: "no_snapshot", Message: fmt.Sprintf("There is no snapshot of %s to make it again from.", server)}
+		}
+		return a.snap, a.record, nil
+	}
 }
 
 // moveServer moves a server to another node. Files on the node's own disk
@@ -64,6 +150,9 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 	}
 	var in struct {
 		Node string `json:"node"`
+		// FromSnapshot is the snapshot to make the server again from, its
+		// node being down: its newest, as its placement named it.
+		FromSnapshot string `json:"fromSnapshot"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
@@ -94,6 +183,20 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 	// Files on a node's own disk that are on that node already.
 	if from == in.Node {
 		return errBadRequest("It is on %s already.", in.Node)
+	}
+	down := false
+	if from != "" {
+		if down, err = controller.NodeDownByName(r.Context(), s.nodeReader(), from); err != nil {
+			return err
+		}
+	}
+	switch {
+	case down && in.FromSnapshot == "":
+		return &Error{Status: http.StatusConflict, Code: "node_down", Message: fmt.Sprintf("%s is down, so the server's files cannot be copied from it. Move the server from its newest snapshot instead.", from)}
+	case down:
+		return s.moveFromSnapshot(w, r, u, a, mc, in.Node, from, in.FromSnapshot)
+	case in.FromSnapshot != "":
+		return errBadRequest("Only a server on a node that is down is moved from a snapshot. Move it as usual.")
 	}
 	// Files not on the node's own disk stay where they are, and the new node
 	// has to be one their volume can be used on.
@@ -217,23 +320,9 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 	if err := s.waitPodOn(ctx, key, target, 10*time.Minute); err != nil {
 		// While its volume is still on the node it was leaving, nothing is
 		// lost: it is put back there as it was.
-		live := context.WithoutCancel(ctx)
-		if now, gerr := s.fresh(live, mc); gerr == nil {
-			if still, verr := controller.VolumeNode(live, s.nodeReader(), now); verr == nil && still == from && !s.claimGoing(live, key) {
-				if uerr := s.unplace(live, key, from); uerr == nil {
-					// The controller reads the mark live before deleting
-					// anything; one already past that look is given a
-					// moment to show, and then it is not put back.
-					time.Sleep(5 * time.Second)
-					if !s.claimGoing(live, key) {
-						restart()
-						return snap, failed(err, "the server's volume on %s was not ready, so the server was put back on %s as it was", target, from)
-					}
-					// Going after all: held again, to be moved on, so
-					// that the game never starts on an empty volume.
-					_ = s.remark(live, key, target, snap.ID)
-				}
-			}
+		if s.unmove(context.WithoutCancel(ctx), mc, from, target, snap.ID) {
+			restart()
+			return snap, failed(err, "the server's volume on %s was not ready, so the server was put back on %s as it was", target, from)
 		}
 		return snap, failed(err, "the server's volume on %s was not ready, so the server was left stopped; the files are in snapshot %s", target, shortID(snap.ID))
 	}
@@ -270,6 +359,166 @@ func (s *Server) move(ctx context.Context, org string, mc *avsysv1.MinecraftServ
 		now.Spec.State = avsysv1.StateRunning
 	}
 	return snap, s.Client.Patch(ctx, now, client.MergeFrom(orig))
+}
+
+// unmove puts a server whose volume on the node it was being moved to was
+// not ready back on the node its old volume is on, from, if the old volume
+// is still there and not going: nothing is lost then. It says whether it
+// did.
+func (s *Server) unmove(ctx context.Context, mc *avsysv1.MinecraftServer, from, target, snapshot string) bool {
+	key := client.ObjectKeyFromObject(mc)
+	now, err := s.fresh(ctx, mc)
+	if err != nil {
+		return false
+	}
+	if still, err := controller.VolumeNode(ctx, s.nodeReader(), now); err != nil || still != from || s.claimGoing(ctx, key) {
+		return false
+	}
+	if err := s.unplace(ctx, key, from); err != nil {
+		return false
+	}
+	// The controller reads the mark live before deleting anything; one
+	// already past that look is given a moment to show, and then it is not
+	// put back.
+	time.Sleep(5 * time.Second)
+	if !s.claimGoing(ctx, key) {
+		return true
+	}
+	// Going after all: held again, to be moved on, so that the game never
+	// starts on an empty volume.
+	_ = s.remark(ctx, key, target, snapshot)
+	return false
+}
+
+// moveFromSnapshot moves a server off a node that is down, from, to
+// target. Its files there cannot be reached, so it is made again on target
+// from its newest snapshot. It stays the same server, under its name and
+// address, with its settings and history; what changed since that snapshot
+// is lost, which whoever asks has been told. asked is the snapshot they
+// were shown, which has to be the newest still.
+func (s *Server) moveFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, mc *avsysv1.MinecraftServer, target, from, asked string) error {
+	snap, record, err := s.newestToMoveFrom(r.Context(), a.Org.Slug, mc.Name)
+	if err != nil {
+		return err
+	}
+	if len(asked) < 8 || !strings.HasPrefix(snap.ID, asked) {
+		return &Error{Status: http.StatusConflict, Code: "snapshot_changed", Message: fmt.Sprintf("The newest snapshot of %s is now one from %s. Look again before moving the server.", mc.Name, snap.Time.UTC().Format("2006-01-02 15:04 MST"))}
+	}
+	if err := s.settleRecord(r.Context(), mc, record); err != nil {
+		return operationFailed(err)
+	}
+	// Held from here until the move is over: it is all there is of the
+	// server's files.
+	op, ok := s.ops.begin(a.Namespace, a.Org.Slug, mc.Name, kindMove, snap.ID)
+	if !ok {
+		return errBusy
+	}
+	started := *op
+	work := func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+		defer cancel()
+		err := s.rebuildOn(ctx, a.Org.Slug, mc, target, from, snap, record, op)
+		// No snapshot was taken: what the server says of its snapshots is
+		// left as it is.
+		s.finishUnsaved(ctx, a.Namespace, mc.Name, kindMove, err)
+		if err == nil {
+			s.audit(ctx, u, a.Org, "server.move", mc.Name, fmt.Sprintf("to %s from snapshot %s of %s, %s being down; its files there were left", target, shortID(snap.ID), snap.Time.UTC().Format(time.RFC3339), from))
+		}
+		return err
+	}
+	if r.URL.Query().Get("wait") == "true" {
+		if err := work(context.WithoutCancel(r.Context())); err != nil {
+			return operationFailed(err)
+		}
+		now, err := s.fresh(r.Context(), mc)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, s.view(now))
+		return nil
+	}
+	go func() { _ = work(context.Background()) }()
+	writeJSON(w, http.StatusAccepted, started)
+	return nil
+}
+
+// rebuildOn makes a server again on target from a snapshot, holding the
+// server's claim. Its volume on from is let go of: the controller removes
+// its pod there at once, the node not being there to stop it, and a new
+// volume is made on target, where the snapshot's files are put. The game is
+// held off until they are all there, and is then as it was, running or
+// not.
+func (s *Server) rebuildOn(ctx context.Context, org string, mc *avsysv1.MinecraftServer, target, from string, snap *backup.Snapshot, record *snapshotRecord, op *operation) (err error) {
+	key := client.ObjectKeyFromObject(mc)
+	if mc, err = s.fresh(ctx, mc); err != nil {
+		return err
+	}
+	if err := unfinished(mc); err != nil {
+		return err
+	}
+	// Looked at again now that the claim is held: a node that came back
+	// has the server's files as they are now, and those are moved instead.
+	if down, err := controller.NodeDownByName(ctx, s.nodeReader(), from); err != nil {
+		return err
+	} else if !down {
+		return fmt.Errorf("%s is up again, so nothing was changed; move the server as usual", from)
+	}
+
+	s.setOperation(mc.Namespace, op, "Making the server's volume on "+target, 0)
+	// Held for the snapshot's files by the same marks as any move, put on
+	// in one change.
+	if err := s.place(ctx, key, target, snap.ID); err != nil {
+		return err
+	}
+	if err := s.waitPodOn(ctx, key, target, 10*time.Minute); err != nil {
+		if s.unmove(context.WithoutCancel(ctx), mc, from, target, snap.ID) {
+			return failed(err, "the server's volume on %s was not ready, so the server was left on %s", target, from)
+		}
+		return failed(err, "the server's volume on %s was not ready; restore snapshot %s to finish the move", target, shortID(snap.ID))
+	}
+	// A connection kept to its files on the node that is down would only
+	// wait for that node.
+	s.workspaces.drop(key.Namespace, key.Name)
+	ws, err := s.dialWorkspaceWithin(ctx, mc.Namespace, mc.Name, 5*time.Minute)
+	if err != nil {
+		return failed(err, "the server's files on %s could not be reached; restore snapshot %s to finish the move", target, shortID(snap.ID))
+	}
+	defer ws.Close()
+	s.setOperation(mc.Namespace, op, "Putting the server's files back", 0)
+	last := time.Time{}
+	// The volume is new and empty: all the snapshot has goes in, the
+	// workspace home too where it has it, as one taken for a move does.
+	put := s.Backups.Restore
+	if snap.Trigger == backup.TriggerMove {
+		put = s.Backups.RestoreWhole
+	}
+	err = put(ctx, org, ws, snap.ID, func(p backup.Progress) {
+		if time.Since(last) < 500*time.Millisecond {
+			return
+		}
+		last = time.Now()
+		s.setOperation(mc.Namespace, op, "Putting the server's files back", p.Percent)
+	})
+	s.serverIcons.forget(key.Namespace + "/" + key.Name)
+	if err != nil {
+		return failed(err, "putting the server's files back on %s failed; restore snapshot %s to finish the move", target, shortID(snap.ID))
+	}
+	s.setOperation(mc.Namespace, op, "Finishing", 100)
+	return s.settleRebuilt(ctx, key, record)
+}
+
+// settleRebuilt finishes a server made again from a snapshot as a restore
+// does: the settings its files go with are the snapshot's, and so is the
+// note of which operators the panel made. With those on, the marks that
+// hold the game off come off, and it is as it was, running or not.
+func (s *Server) settleRebuilt(ctx context.Context, key client.ObjectKey, record *snapshotRecord) error {
+	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) { restoreSoftware(spec, &record.Spec) }); err != nil {
+		return failed(err, "the files are back, but the settings that go with them could not be applied; restore the snapshot to finish the move")
+	}
+	if err := s.noteRoleLists(ctx, key, record.roleListNotes()); err != nil {
+		return failed(err, "the files and settings are back, but the note of who was made an operator could not be; restore the snapshot to finish the move")
+	}
+	return s.markRestoring(ctx, key, "")
 }
 
 // place records a server on a node, checked to have room for it, one at a
@@ -376,6 +625,8 @@ func (s *Server) stopAnew(ctx context.Context, key client.ObjectKey, stamp strin
 	return s.stopReplacing(ctx, key, stamp, func(mc *avsysv1.MinecraftServer) {
 		// In the same change as the stop, so that a panel restarting before
 		// the move gets further finds it and puts the server back as it was.
+		// Marked so, its pod is made again on its node even if that node is
+		// cordoned, to read its files there (see controller.readingForMove).
 		mc.Annotations[avsysv1.AnnotationMoveWas] = string(mc.Spec.State)
 		if mc.Spec.State == "" {
 			mc.Annotations[avsysv1.AnnotationMoveWas] = string(avsysv1.StateRunning)
@@ -408,7 +659,7 @@ func (s *Server) stopReplacing(ctx context.Context, key client.ObjectKey, stamp 
 // stopped: a game still loading is let finish first, for up to
 // controller.LoadGrace, and then saves and stops, which a large world can
 // take minutes to.
-const stopWait = controller.LoadGrace + 3*time.Minute
+var stopWait = controller.LoadGrace + 3*time.Minute
 
 // waitRestarted waits for a server's pod made again with this stamp to have
 // its workspace up.

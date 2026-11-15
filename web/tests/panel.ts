@@ -1,4 +1,5 @@
 import { test as base, expect, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -17,10 +18,16 @@ export type Role = "owner" | "admin" | "operator" | "viewer";
  */
 export const withMetrics = "http://127.0.0.1:8098";
 
+/**
+ * Where the panel that copies snapshots offsite listens, with the older of
+ * the first organization's snapshots there already.
+ */
+export const withOffsite = "http://127.0.0.1:8097";
+
 const panels = new Map<string, Panel>();
-/** The panel at baseURL: the one without a metrics API unless it is withMetrics. */
+/** The panel at baseURL: the plain one unless it is withMetrics or withOffsite. */
 const info = (baseURL?: string) => {
-  const file = baseURL === withMetrics ? "tests/.panel-metrics.json" : "tests/.panel.json";
+  const file = baseURL === withMetrics ? "tests/.panel-metrics.json" : baseURL === withOffsite ? "tests/.panel-offsite.json" : "tests/.panel.json";
   let panel = panels.get(file);
   if (!panel) {
     panel = JSON.parse(readFileSync(file, "utf8")) as Panel;
@@ -41,6 +48,11 @@ interface Fixtures {
   org: (servers: string[]) => Promise<string>;
   /** A page in another browser, as someone else: for what one sees of another. */
   pageAs: (who: Role | "outsider") => Promise<Page>;
+  /**
+   * Starts a panel of its own, with nobody in it yet, as one just installed,
+   * and gives its address. It is stopped when the test ends.
+   */
+  freshPanel: () => Promise<string>;
   /** Errors a page threw. A test fails on any, unless it empties this itself. */
   pageErrors: string[];
   password: string;
@@ -62,6 +74,17 @@ function apiFor(request: APIRequestContext, token: string): Api {
   return { get: (p) => call("GET", p), post: (p, b) => call("POST", p, b ?? {}), patch: (p, b) => call("PATCH", p, b) };
 }
 
+/** Adds each error a page throws to errors. */
+export function watchErrors(page: Page, errors: string[]) {
+  page.on("pageerror", (e) => {
+    // WebKit reports a request that was cut short by leaving the page
+    // (the live-updates stream, on signing in) as an error of the page.
+    // Nothing was thrown by the app.
+    if (/due to access control checks/.test(e.message)) return;
+    errors.push(e.message);
+  });
+}
+
 export const test = base.extend<Fixtures>({
   password: async ({ baseURL }, use) => use(info(baseURL).password),
 
@@ -71,13 +94,7 @@ export const test = base.extend<Fixtures>({
   pageErrors: [
     async ({ page }, use) => {
       const errors: string[] = [];
-      page.on("pageerror", (e) => {
-        // WebKit reports a request that was cut short by leaving the page
-        // (the live-updates stream, on signing in) as an error of the page.
-        // Nothing was thrown by the app.
-        if (/due to access control checks/.test(e.message)) return;
-        errors.push(e.message);
-      });
+      watchErrors(page, errors);
       await use(errors);
       expect(errors, "errors thrown in the page").toEqual([]);
     },
@@ -124,6 +141,36 @@ export const test = base.extend<Fixtures>({
   api: async ({ request, baseURL }, use) => {
     await use((who) => apiFor(request, info(baseURL).tokens[who]));
   },
+
+  freshPanel: [
+    // It needs no other fixture: Playwright reads that from the empty pattern.
+    async ({}, use) => {
+      const started: ChildProcess[] = [];
+      await use(async () => {
+        // As playwright.config.ts starts the other panels.
+        const [command, ...args] = (process.env.AVSYS_UITEST ?? "go run ../cmd/avsys-uitest").split(" ");
+        const panel = spawn(command, [...args, "--fresh", "--listen", "127.0.0.1:0", "--web-dir", "dist", "--upstream", "tests/upstream"], {
+          // A process group of its own, so that stopping it stops what `go run` started too.
+          detached: true,
+          stdio: ["ignore", "pipe", "inherit"],
+        });
+        started.push(panel);
+        return new Promise<string>((resolve, reject) => {
+          let out = "";
+          panel.stdout?.on("data", (chunk: Buffer) => {
+            out += chunk.toString();
+            if (out.includes("\n")) resolve((JSON.parse(out.split("\n")[0]) as Panel).url);
+          });
+          panel.on("exit", (code) => reject(new Error(`the fresh panel exited (${code}) before it was listening`)));
+        });
+      });
+      for (const panel of started) {
+        if (panel.pid && panel.exitCode === null) process.kill(-panel.pid, "SIGTERM");
+      }
+    },
+    // Compiling it, where it is not built already, takes a while.
+    { timeout: 180_000 },
+  ],
 
   org: async ({ request, baseURL }, use, testInfo) => {
     await use(async (servers) => {

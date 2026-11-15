@@ -82,10 +82,17 @@ jobs:
           docker cp "$(docker create avsys-workspace:ci)":/usr/local/bin/restic /usr/local/bin/restic
           restic version
           AVSYS_TEST_WORKSPACE_IMAGE=avsys-workspace:ci go test -count=1 ./internal/backup/
+      # The CRD from api/, and deploy/install.yaml and the chart's test
+      # renders from deploy/chart (hack/chart.sh). Then helm lint with each
+      # set of values, and values the chart must refuse. That what it makes
+      # works is the e2e's: it installs the panel with the chart.
       - name: Generated code is current
         run: |
-          make generate
-          git diff --exit-code -- api deploy/crds
+          make generate chart
+          git add -N -- api deploy
+          git diff --exit-code -- api deploy
+      - name: Chart
+        run: make chart-check
       # The lint is two rules about React hooks, which the type checker
       # cannot see: a hook called conditionally, and an effect that does not
       # say what it depends on. Configured in web/biome.json. The audit is
@@ -95,7 +102,13 @@ jobs:
         working-directory: web
         run: |
           bun install --frozen-lockfile
-          bun audit --audit-level=moderate
+          # Asked of npm's registry, which now and then does not answer:
+          # tried three times. An advisory fails all three.
+          for try in 1 2 3; do
+            bun audit --audit-level=moderate && break
+            [ "$try" = 3 ] && exit 1
+            sleep 15
+          done
           bun run lint
           bun run build
       # The images, for what govulncheck and the audit do not see: the
@@ -113,7 +126,17 @@ jobs:
       # fixed there. The panel's own program is govulncheck's, above.
       #
       # Trivy is fetched by version and checked against the release's hash.
+      # Its list of advisories is kept between runs, a day at a time: a
+      # registry that does not answer then scans with yesterday's list, with
+      # a warning, and does not fail the build.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: trivy-db
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.date.outputs.today }}
+          restore-keys: trivy-db-
       - name: Image vulnerabilities
+        id: scan
         env:
           TRIVY_VERSION: 0.76.2
           TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
@@ -124,7 +147,23 @@ jobs:
           curl -fsSL --retry 3 -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "$TRIVY_SHA256  trivy.tar.gz" | sha256sum -c -
           tar -xzf trivy.tar.gz trivy
-          scan() { ./trivy image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed "$@"; }
+          # The panel's base is pulled here, where it can be tried again.
+          for try in 1 2 3; do
+            docker pull -q "$panel_base" >/dev/null && break
+            [ "$try" = 3 ] && exit 1
+            sleep 15
+          done
+          fresh=0
+          for try in 1 2 3; do
+            ./trivy image --quiet --download-db-only --db-repository mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2 && { fresh=1; break; }
+            sleep 15
+          done
+          if [ "$fresh" = 0 ]; then
+            [ -f ~/.cache/trivy/db/trivy.db ] || { echo "::error::the list of advisories could not be fetched"; exit 1; }
+            echo "::warning::the list of advisories could not be fetched; scanning with the one from an earlier run"
+          fi
+          echo "fresh=$fresh" >> "$GITHUB_OUTPUT"
+          scan() { ./trivy image --quiet --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed "$@"; }
           echo "::group::Go programs in the workspace, listed only"
           scan --pkg-types library avsys-workspace:ci
           echo "::endgroup::"
@@ -134,10 +173,16 @@ jobs:
             scan --pkg-types os --exit-code 1 "$image" || failed=1
           done
           exit "$failed"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && steps.trivy-db.outputs.cache-hit != 'true' && steps.scan.outputs.fresh == '1'
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.date.outputs.today }}
 
-  # Installs the panel into an empty cluster the way a user would, then runs a
-  # real Minecraft server through it. This is what catches a broken manifest,
-  # missing permissions or a panel that cannot make its first start.
+  # Installs the panel into an empty cluster with the chart, the way a user
+  # would, then runs a real Minecraft server through it. This is what catches
+  # a broken chart, missing permissions or a panel that cannot make its
+  # first start.
   #
   # In four parts side by side, each on a cluster of its own: most of its
   # time is games starting, one after another.
@@ -180,11 +225,28 @@ jobs:
             type=gha,scope=e2e-panel
             type=gha,scope=panel
           cache-to: ${{ matrix.part == 'content' && 'type=gha,scope=e2e-panel,mode=max' || '' }}
+      # What the cluster pulls from Docker Hub (the game's image, and the
+      # one that measures a node), as an earlier run pulled it: loaded only
+      # if Docker Hub does not give it this time. One part keeps a new copy
+      # once a day.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: outside
+        with:
+          path: e2e-outside/images.tar
+          key: e2e-outside-${{ steps.date.outputs.today }}
+          restore-keys: e2e-outside-
       - name: End to end
         env:
           E2E_SKIP_BUILD: "1"
           AVSYS_E2E_PART: ${{ matrix.part }}
+          E2E_OUTSIDE_TAR: e2e-outside/images.tar
+          E2E_OUTSIDE_SAVE: ${{ matrix.part == 'content' && steps.outside.outputs.cache-hit != 'true' && '1' || '' }}
         run: ./hack/e2e-cluster.sh
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && matrix.part == 'content' && steps.outside.outputs.cache-hit != 'true' && hashFiles('e2e-outside/fresh') != ''
+        with:
+          path: e2e-outside/images.tar
+          key: e2e-outside-${{ steps.date.outputs.today }}
 
   # The check that is required: every part passed.
   e2e:
@@ -321,7 +383,8 @@ jobs:
           fi
 
   # Publishes the panel and workspace images to GitHub's container registry,
-  # once the tests above pass.
+  # once the tests above pass. A tag's chart and release follow, further
+  # down.
   #
   #   push to main   ->  :edge and :sha-<commit>
   #   tag v1.2.3     ->  :v1.2.3 and :latest
@@ -416,3 +479,83 @@ jobs:
             [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$tip" ] && exit 0
           done
           echo "main kept moving; edge is left to the runs that follow"
+
+  # A version tag is a release, once its images are published: the chart,
+  # at the tag's version and running the tag's images, pushed to the
+  # registry beside them, and a GitHub release with the install and upgrade
+  # commands, the install manifest of that version, and notes made from the
+  # pull requests merged since the last release.
+  #
+  #   tag v1.2.3  ->  oci://ghcr.io/gt-drehmal/charts/avsys:1.2.3
+  #                   a release v1.2.3 with install.yaml
+  #
+  # A tag with a suffix, as v1.2.3-rc.1, is a prerelease, which the panel's
+  # update notice does not offer.
+  release:
+    needs: publish
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The Helm hack/chart.sh renders with, from its release, checked
+      # against the release's hash.
+      - name: Helm
+        env:
+          HELM_VERSION: 4.3.1
+          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "$HELM_SHA256  helm.tar.gz" | sha256sum -c -
+          tar -xzf helm.tar.gz --strip-components=1 linux-amd64/helm
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      # v1.2.3 is chart version 1.2.3, and runs the images :v1.2.3. The
+      # manifest is the chart's default render, as in the repository, but of
+      # this version.
+      - name: Chart
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::$TAG is not a version, as v1.2.3"; exit 1 ;;
+          esac
+          version=${TAG#v}
+          sed -i -e "s/^version: .*/version: $version/" -e "s/^appVersion: .*/appVersion: $TAG/" deploy/chart/Chart.yaml
+          HELM=helm ./hack/chart.sh render
+          grep -q "image: \"ghcr.io/gt-drehmal/avsys:$TAG\"" deploy/install.yaml
+          helm package deploy/chart --destination "$RUNNER_TEMP/chart"
+          echo "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          helm push "$RUNNER_TEMP/chart/avsys-$version.tgz" oci://ghcr.io/gt-drehmal/charts
+      - name: Release
+        run: |
+          version=${TAG#v}
+          cat > "$RUNNER_TEMP/notes.md" <<NOTES
+          ## Install
+
+          \`\`\`sh
+          helm install avsys oci://ghcr.io/gt-drehmal/charts/avsys --version $version \\
+            -n avsys --create-namespace --set publicURL=https://panel.example.com
+          \`\`\`
+
+          Or without Helm: download [install.yaml](https://github.com/$GH_REPO/releases/download/$TAG/install.yaml), set \`AVSYS_PUBLIC_URL\` in it, and \`kubectl apply -f install.yaml\`.
+
+          ## Upgrade
+
+          \`\`\`sh
+          helm upgrade avsys oci://ghcr.io/gt-drehmal/charts/avsys --version $version \\
+            -n avsys --reset-then-reuse-values
+          \`\`\`
+
+          Or apply this release's install.yaml with your changes carried over.
+
+          NOTES
+          prerelease=false
+          case "$TAG" in *-*) prerelease=true ;; esac
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes \
+            --notes-file "$RUNNER_TEMP/notes.md" --prerelease="$prerelease" deploy/install.yaml

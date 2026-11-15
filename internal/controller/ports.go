@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
@@ -83,6 +84,17 @@ func writePublicPorts(ports map[string]int32) string {
 	return strings.Join(parts, ",")
 }
 
+// sharedPublic is the public port given to the same port of a server by
+// the other protocol, if it has one.
+func sharedPublic(ports []avsysv1.ExtraPort, p avsysv1.ExtraPort, given map[string]int32) (int32, bool) {
+	for _, q := range ports {
+		if n, ok := given[q.Name]; ok && q.Port == p.Port && protocolOf(q) != protocolOf(p) {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
 // allocating holds giving out public ports to one server at a time.
 var allocating sync.Mutex
 
@@ -97,9 +109,21 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 	have := publicPorts(mc)
 	want := map[string]int32{}
 	if sharesAddress(mc) && r.Config.PortRange.First != 0 && !none {
+		// Public ports by number and protocol. Two of one server share a
+		// number only by different protocols: one changed since to the
+		// other's protocol is given another.
+		used := map[string]bool{}
+		use := func(p avsysv1.ExtraPort, n int32) bool {
+			k := fmt.Sprintf("%d/%s", n, protocolOf(p))
+			if used[k] {
+				return false
+			}
+			used[k], want[p.Name] = true, n
+			return true
+		}
 		for _, p := range mc.Spec.Ports {
 			if n, ok := have[p.Name]; ok && n >= r.Config.PortRange.First && n <= r.Config.PortRange.Last {
-				want[p.Name] = n
+				use(p, n)
 			}
 		}
 		if len(want) < len(mc.Spec.Ports) {
@@ -138,6 +162,11 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 				if _, ok := want[p.Name]; ok {
 					continue
 				}
+				// One port by both protocols, as Geyser's, is given one
+				// public port: players are told one address for it.
+				if n, ok := sharedPublic(mc.Spec.Ports, p, want); ok && use(p, n) {
+					continue
+				}
 				for next <= r.Config.PortRange.Last && taken[next] {
 					next++
 				}
@@ -145,7 +174,8 @@ func (r *Reconciler) allocatePorts(ctx context.Context, mc *avsysv1.MinecraftSer
 					full = true
 					continue
 				}
-				want[p.Name], taken[next] = next, true
+				use(p, next)
+				taken[next] = true
 			}
 		}
 	}
@@ -200,6 +230,7 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		}
 	}
 	if !sharesAddress(mc) || len(open) == 0 || theirs {
+		r.closeStandIn(client.ObjectKeyFromObject(mc))
 		if !theirs {
 			if err := r.Delete(ctx, own); client.IgnoreNotFound(err) != nil {
 				return nil, false, err
@@ -221,10 +252,18 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		}
 		return st, full || theirs, nil
 	}
+	// While the game is not running, the panel answers on them instead.
+	standIn, err := r.standingIn(ctx, mc)
+	if err != nil {
+		return nil, false, err
+	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, own, func() error {
 		own.Labels = labelsFor(mc)
 		own.Annotations = r.Config.PortsServiceAnnotations
 		own.Spec.Selector = map[string]string{avsysv1.LabelServer: mc.Name}
+		if standIn {
+			own.Spec.Selector = nil
+		}
 		own.Spec.Type = corev1.ServiceTypeNodePort
 		if r.Config.PortRange.First != 0 {
 			own.Spec.Type = corev1.ServiceTypeLoadBalancer
@@ -246,6 +285,13 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 	})
 	if err != nil {
 		return nil, false, err
+	}
+	// Not answered for, the ports reach nothing while the game does not
+	// run, which is no reason to hold up the server itself: it is tried
+	// again in a while.
+	if err := r.pointPorts(ctx, mc, own, open, standIn); err != nil {
+		log.FromContext(ctx).Error(err, "pointing extra ports at the panel")
+		full = true
 	}
 	st = portStatus(mc, own, public, r.Config)
 	// Where the load balancer put these ports on an address of their own,

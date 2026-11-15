@@ -84,11 +84,92 @@ test("what a server has from before its software was changed still shows, but no
   await expect(plugins.getByRole("button", { name: "Add plugins" })).toHaveCount(0);
 });
 
-test("a server made from a modpack says what is added on top of it", async ({ page }) => {
-  await survival(page, { loader: "fabric", modpack: { source: "modrinth", project: "fabulously-optimized", title: "Fabulously Optimized" } }, []);
+const fabulous = { source: "modrinth", project: "fabulously-optimized", version: "fo1", versionName: "6.4.0", title: "Fabulously Optimized", gameVersion: "1.21.4", loader: "fabric", iconUrl: "/fo-icon.png" };
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGM4oREFRAwQCgAl3gUpEzqvXwAAAAABJRU5ErkJggg==", "base64");
+
+/** Answers for what survival's modpack lists, counting what is asked of its pack. */
+async function packContents(page: Page, files: object[]) {
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/modpack/**", async (route) => {
+    asked.push(new URL(route.request().url()).pathname.split("/modpack")[1]);
+    return route.fulfill({ json: { files } });
+  });
+  await page.route("**/fo-icon.png", (route) => route.fulfill({ body: png, contentType: "image/png" }));
+  return asked;
+}
+
+test("a server made from a modpack says what is added on top of it, in a line where there is none", async ({ page }) => {
+  await survival(page, { loader: "fabric", modpack: fabulous }, []);
+  await packContents(page, []);
   await page.goto("/o/friends/s/survival/content");
   await expect(page.getByText("Fabulously Optimized", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Mods", exact: true }).getByText("None on top of the modpack.")).toBeVisible();
+  // Each empty section is one line with its Add, under no heading.
+  for (const [region, says, add] of [
+    ["Mods", "No mods added on top of the pack.", "Add mods"],
+    ["Datapacks", "No datapacks.", "Add datapacks"],
+    ["Resource packs", "No resource packs.", "Add resource pack"],
+  ]) {
+    const section = page.getByRole("region", { name: region, exact: true });
+    await expect(section).toHaveText(`${says}Add`);
+    await expect(section.getByRole("heading")).toHaveCount(0);
+    await expect(section.getByRole("button", { name: add })).toBeVisible();
+  }
+  // Its Add still adds.
+  await page.getByRole("button", { name: "Add mods" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
+test("mods on a modpack are said to be added on top of it", async ({ page }) => {
+  await survival(page, { loader: "fabric", modpack: fabulous }, [lithium, fire]);
+  await packContents(page, []);
+  await page.goto("/o/friends/s/survival/content");
+  const mods = page.getByRole("region", { name: "Mods", exact: true });
+  await expect(mods.getByRole("heading")).toHaveText("Mods added on top of the pack1");
+  await expect(mods.getByText("Lithium", { exact: true })).toBeVisible();
+  await expect(mods.getByRole("button", { name: "Add mods" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Datapacks", exact: true }).getByRole("heading")).toHaveText("Datapacks1");
+});
+
+test("a pack from Modrinth lists what is in it, by its version, with its picture from Modrinth", async ({ page }) => {
+  await survival(page, { loader: "fabric", modpack: fabulous }, []);
+  const asked = await packContents(page, [
+    { path: "mods/lithium.jar", server: true, project: "gvQqBUqZ", title: "Lithium" },
+    { path: "mods/sodium.jar", server: false, project: "AANobbMI", title: "Sodium" },
+    { path: "resourcepacks/faithful.zip", server: true },
+  ]);
+  await page.goto("/o/friends/s/survival/content");
+  await expect(page.locator('img[src="/fo-icon.png"]')).toBeVisible();
+  // Not only mods.
+  await page.getByRole("button", { name: "In this pack (3)" }).click();
+  const files = page.getByRole("region", { name: "In the modpack" });
+  await expect(files.getByRole("listitem")).toHaveText([/Lithium\s*Mod/, /faithful\s*Resource pack/, /Sodium\s*Client only, left out/]);
+  // Each from Modrinth links to its page there; one from elsewhere does not.
+  const link = (n: number) => files.getByRole("listitem").nth(n).getByRole("link", { name: "Open on Modrinth" });
+  await expect(link(0)).toHaveAttribute("href", "https://modrinth.com/project/gvQqBUqZ");
+  await expect(link(0)).toHaveAttribute("target", "_blank");
+  await expect(link(1)).toHaveCount(0);
+  await expect(link(2)).toHaveAttribute("href", "https://modrinth.com/project/AANobbMI");
+  // Few enough not to need a search.
+  await expect(files.getByRole("searchbox")).toHaveCount(0);
+  expect(asked).toEqual(["/contents"]);
+});
+
+test("a server without a modpack has its Content page as before", async ({ page }) => {
+  await survival(page, { loader: "fabric" }, []);
+  const asked = await packContents(page, [{ path: "mods/lithium.jar", server: true }]);
+  await page.goto("/o/friends/s/survival/content");
+  for (const [region, heading, says] of [
+    ["Mods", "Mods", "No mods."],
+    ["Datapacks", "Datapacks", "No datapacks."],
+    ["Resource packs", "Resource packs", "None. A pack added here is offered to each player as they join."],
+  ]) {
+    const section = page.getByRole("region", { name: region, exact: true });
+    await expect(section.getByRole("heading")).toHaveText(heading);
+    await expect(section.getByText(says)).toBeVisible();
+  }
+  await expect(page.getByText(/added on top of the pack/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /in this pack/i })).toHaveCount(0);
+  expect(asked).toEqual([]);
 });
 
 test("a viewer sees the sections, and no way to add to them", async ({ page, as }) => {

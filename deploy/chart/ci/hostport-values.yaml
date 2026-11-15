@@ -1,0 +1,25 @@
+# A cluster with no load balancer: the panel pinned to one node, its ports
+# opened there, and resource packs served on a port of their own for players
+# who cannot reach the panel.
+publicURL: https://panel.example.org
+image:
+  tag: v0.1.0
+expose:
+  mode: hostPort
+  node: node-1
+  hostPorts:
+    http: 8080
+    ssh: 2222
+    minecraft: 25566
+packs:
+  listener:
+    enabled: true
+  url: http://play.example.org:8081
+  cacheMiB: 2048
+persistence:
+  data:
+    storageClass: local-path
+  backups:
+    size: 200Gi
+    storageClass: "-"
+signups: true

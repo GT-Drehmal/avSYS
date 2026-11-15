@@ -105,6 +105,37 @@
   "file": "neoforge.json"
  },
  {
+  "url": "https://api.mojang.com/users/profiles/minecraft/alex",
+  "has": "",
+  "file": "profile-alex.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/notch",
+  "has": "",
+  "file": "profile-notch.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/jeb_",
+  "has": "",
+  "file": "profile-jeb.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/dinnerbone",
+  "has": "",
+  "file": "profile-dinnerbone.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/grumm",
+  "has": "",
+  "file": "profile-grumm.json"
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/herobrine",
+  "has": "",
+  "file": "no-such-player.json",
+  "status": 404
+ },
+ {
   "url": "https://api.mojang.com/users/profiles/minecraft/",
   "has": "",
   "file": "profile.json"
@@ -113,5 +144,47 @@
   "url": "https://sessionserver.mojang.com/session/minecraft/profile/",
   "has": "",
   "file": "profile.json"
+ },
+ {
+  "url": "https://api.github.com/repos/GT-Drehmal/avSYS/releases/latest",
+  "has": "",
+  "file": "github-latest.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/xuid/tim203",
+  "has": "",
+  "file": "geyser-xuid-tim203.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/xuid/redned235",
+  "has": "",
+  "file": "geyser-xuid-redned235.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/xuid/",
+  "has": "",
+  "file": "geyser-not-cached.json",
+  "status": 503
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/gamertag/2535432196048835",
+  "has": "",
+  "file": "geyser-gamertag-tim203.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/gamertag/2535407489632336",
+  "has": "",
+  "file": "geyser-gamertag-redned235.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/gamertag/",
+  "has": "",
+  "file": "geyser-not-cached.json",
+  "status": 503
+ },
+ {
+  "url": "https://api.geysermc.org/v2/skin/",
+  "has": "",
+  "file": "geyser-no-skin.json"
  }
 ]

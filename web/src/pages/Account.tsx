@@ -1,12 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { PicturePicker } from "../components/Picture";
 import { Button, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
 import { ago } from "../lib/format";
 import { keys, useAction, useMe, useMeta } from "../lib/queries";
 import { toast } from "../lib/toast";
+import { Sessions, TwoFactor } from "./AccountSecurity";
 
 const sshKeys = ["ssh-keys"] as const;
 const apiTokens = ["api-tokens"] as const;
@@ -296,8 +298,16 @@ function SignIn() {
   const [next, setNext] = useState("");
   const change = useAction(() => api.post("/me/password", { current, new: next }));
   const linked = new Map(me.identities.map((i) => [i.provider, i.login]));
+  // Linking an account that could not be linked comes back here with why.
+  const [params] = useSearchParams();
+  const linkError = params.get("error");
   return (
     <Section title="Sign-in">
+      {linkError && (
+        <div ref={(el) => el?.scrollIntoView({ block: "center" })}>
+          <Notice tone="danger">{linkError}</Notice>
+        </div>
+      )}
       {meta && meta.providers.length > 0 && (
         <ul className="overflow-hidden rounded-md border border-line bg-surface">
           {meta.providers.map((p) => (
@@ -314,32 +324,34 @@ function SignIn() {
           ))}
         </ul>
       )}
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          change.mutate(undefined, {
-            onSuccess: () => {
-              setCurrent("");
-              setNext("");
-              qc.invalidateQueries({ queryKey: keys.me });
-              toast.info("Password updated");
-            },
-          });
-        }}
-      >
-        {me.hasPassword && (
-          <Field label="Current password">{(id) => <Input id={id} type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}</Field>
-        )}
-        <Field label={me.hasPassword ? "New password" : "Set a password"} hint="At least 8 characters.">
-          {(id) => <Input id={id} type="password" required minLength={8} autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />}
-        </Field>
-        <div>
-          <Button type="submit" loading={change.isPending}>
-            {me.hasPassword ? "Change password" : "Set password"}
-          </Button>
-        </div>
-      </form>
+      {meta?.passwords !== false && (
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            change.mutate(undefined, {
+              onSuccess: () => {
+                setCurrent("");
+                setNext("");
+                qc.invalidateQueries({ queryKey: keys.me });
+                toast.info("Password updated");
+              },
+            });
+          }}
+        >
+          {me.hasPassword && (
+            <Field label="Current password">{(id) => <Input id={id} type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}</Field>
+          )}
+          <Field label={me.hasPassword ? "New password" : "Set a password"} hint="At least 8 characters.">
+            {(id) => <Input id={id} type="password" required minLength={8} autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />}
+          </Field>
+          <div>
+            <Button type="submit" loading={change.isPending}>
+              {me.hasPassword ? "Change password" : "Set password"}
+            </Button>
+          </div>
+        </form>
+      )}
     </Section>
   );
 }
@@ -353,6 +365,8 @@ export function Account() {
       <SSHKeys />
       <APITokens />
       <SignIn />
+      <TwoFactor />
+      <Sessions />
     </>
   );
 }

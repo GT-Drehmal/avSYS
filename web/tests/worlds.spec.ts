@@ -267,9 +267,43 @@ test("a world from the library newer than the game picked is warned of, and one 
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page.getByText("Pick a world from the library.")).toBeVisible();
   await picker.getByRole("button", { name: /Island/ }).click();
-  await expect(page.getByText("This world was last opened in 1.21.5, which is newer than 1.21.4.")).toBeVisible();
+  await expect(page.getByText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
   await page.getByRole("button", { name: "Change" }).last().click();
   await expect(page.getByRole("searchbox", { name: "Search worlds" })).toBeVisible();
+});
+
+test("a new server with a world from the library newer than the game picked is asked about first, and the world sent saying so", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await library(page, [world("w1", "Island", { version: "1.21.5" })], slug);
+  let sent: URLSearchParams | null = null;
+  await page.route(`**/api/v1/orgs/${slug}/servers/island/import?*`, async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/island`) });
+  });
+  await page.goto(`/o/${slug}/new`);
+  await page.getByLabel("Display name").fill("Island");
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  const ask = page.getByRole("dialog", { name: "Open a 1.21.5 world in 1.21.4?" });
+  await expect(ask).toContainText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.");
+  // Nothing is made unless asked to.
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  expect(await api("owner").get(`/orgs/${slug}/servers`)).toEqual([]);
+  // On the version it was last opened in, there is nothing to ask.
+  await page.getByLabel("Game version").selectOption("1.21.5");
+  await expect(page.getByText(/cannot open the world/)).toHaveCount(0);
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("button", { name: "Create server" }).click();
+  await ask.getByRole("button", { name: "Create server anyway" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/island$`));
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", library: "w1", newerWorld: "true" });
 });
 
 test("a template is given a world from the library, kept with it", async ({ page, as, org }) => {
@@ -303,7 +337,7 @@ test("a stopped server's world is replaced with one from the library", async ({ 
   await page.goto("/o/friends/s/creative/settings");
   await page.getByRole("button", { name: "Replace the world" }).click();
   const dialog = page.getByRole("dialog", { name: "Replace the world?" });
-  await dialog.getByRole("button", { name: "Library", exact: true }).click();
+  await dialog.getByRole("button", { name: "Library world", exact: true }).click();
   const replace = dialog.getByRole("button", { name: "Replace the world" });
   await expect(replace).toBeDisabled();
   await dialog.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
@@ -311,6 +345,32 @@ test("a stopped server's world is replaced with one from the library", async ({ 
   await replace.click();
   await expect(dialog).toHaveCount(0);
   expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", replace: "true", library: "w1" });
+  expect(sent!.get("newerWorld")).toBeNull();
+});
+
+test("a stopped server's world replaced with one from the library from a newer game is asked about first", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island", { version: "26.3" })]);
+  let sent: URLSearchParams | null = null;
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
+    sent = new URL(route.request().url()).searchParams;
+    await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+  });
+  await page.goto("/o/friends/s/creative/settings");
+  await page.getByRole("button", { name: "Replace the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+  await dialog.getByRole("button", { name: "Library world", exact: true }).click();
+  await dialog.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect(dialog.getByText("The world was last opened in 26.3. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  const ask = page.getByRole("dialog", { name: "Open a 26.3 world in 1.21.4?" });
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  expect(sent).toBeNull();
+  await dialog.getByRole("button", { name: "Replace the world" }).click();
+  await ask.getByRole("button", { name: "Replace the world anyway" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(Object.fromEntries(sent!)).toMatchObject({ world: "true", replace: "true", library: "w1", newerWorld: "true" });
 });
 
 test("a server's world is saved to the library from its Backups tab, named after it unless named otherwise", async ({ page, as }) => {
@@ -460,7 +520,7 @@ test("a world's picture opens larger when clicked, for an operator to change or 
   await expect(seen.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
 });
 
-test("a world's picture goes when the world does, and comes back with it", async ({ page, as }) => {
+test("a world's picture goes when the world does, and comes back with it, whatever the server runs", async ({ page, as }) => {
   await as("owner");
   await library(page, [world("w1", "Island")]);
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -472,8 +532,14 @@ test("a world's picture goes when the world does, and comes back with it", async
   await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
   await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
   await expect(picture).toBeVisible();
+  // A modpack server starts with the world too.
   await page.getByRole("button", { name: "Modpack", exact: true }).click();
+  await expect(picture).toBeVisible();
+  const choices = page.getByRole("group", { name: "World", exact: true });
+  await choices.getByRole("button", { name: "New world" }).click();
   await expect(picture).toHaveCount(0);
+  await choices.getByRole("button", { name: "Library world" }).click();
+  await expect(picture).toBeVisible();
   await page.getByRole("button", { name: "Game version", exact: true }).click();
   await expect(picture).toBeVisible();
 });
@@ -505,4 +571,266 @@ test("a new server looks as the world it is made with does, unless given a pictu
   await page.getByRole("button", { name: "Change" }).last().click();
   await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
   await expect(picture).toHaveCount(0);
+});
+
+// A resource pack uploaded to a world: required, and what players are asked.
+const mapPack = { url: "", sha1: "a".repeat(40), enforce: true, prompt: "For the map", uploaded: { name: "map.zip", size: 3 << 20, time: new Date().toISOString() }, project: null };
+
+test("a map uploaded with its resource pack beside it is added with the pack, unless switched off", async ({ page, as }) => {
+  await as("operator");
+  const calls = await library(page, []);
+  await page.goto("/o/friends/worlds");
+  for (const [use, files] of [
+    [true, { "Island Save/level.dat": levelDat("1.21.4", "Island"), "Island Save/resources.zip": "PK pack" }],
+    [false, { "Arena/level.dat": levelDat("1.21.4", "Arena"), "resources.zip": "PK pack" }],
+  ] as const) {
+    await page.getByRole("button", { name: "Add world" }).click();
+    const dialog = page.getByRole("dialog", { name: "Add a world" });
+    await dialog.getByLabel("World archive").setInputFiles({ name: "map.zip", mimeType: "application/zip", buffer: zip(files) });
+    const usePack = dialog.getByRole("switch", { name: "Use the map's resource pack" });
+    await expect(usePack).toHaveAttribute("aria-checked", "true");
+    await expect(dialog).toContainText("resources.zip · 7 B");
+    if (!use) await usePack.click();
+    await dialog.getByLabel("Name").fill(use ? "Island" : "Arena");
+    await dialog.getByRole("button", { name: "Add world" }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+  expect(calls.map((c) => `${c.method} ${c.path} ${c.query.name ?? ""}`)).toEqual(["POST /worlds/upload Island", "PUT /worlds/w9/resource-pack resources.zip", "POST /worlds/upload Arena"]);
+  // One with none has nothing to switch off.
+  await page.getByRole("button", { name: "Add world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add a world" });
+  await dialog.getByLabel("World archive").setInputFiles({ name: "plain.zip", mimeType: "application/zip", buffer: zip({ "Plain/level.dat": levelDat("1.21.4", "Plain") }) });
+  await expect(dialog.getByTestId("world-summary")).toContainText('World "Plain"');
+  await expect(dialog.getByRole("switch", { name: "Use the map's resource pack" })).toHaveCount(0);
+});
+
+test("a world is given a resource pack from an address, required, and has it taken off again", async ({ page, as }) => {
+  await as("operator");
+  const calls = await library(page, [world("w1", "Island"), world("w2", "Arena", { resourcePack: mapPack })]);
+  await page.goto("/o/friends/worlds");
+  await expect(page.getByRole("listitem", { name: "Arena" })).toContainText("with a resource pack");
+  await expect(page.getByRole("listitem", { name: "Island" })).not.toContainText("resource pack");
+  await page.getByRole("button", { name: "Actions for Island" }).click();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  let dialog = page.getByRole("dialog", { name: "Edit Island" });
+  await expect(dialog.getByRole("switch", { name: "Required" })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Add resource pack" }).click();
+  const picker = page.getByRole("dialog");
+  await picker.getByRole("button", { name: "From URL" }).click();
+  await picker.getByLabel("Download URL").fill("https://example.com/map.zip");
+  await picker.getByLabel("SHA-1").fill("ab".repeat(20));
+  await picker.getByRole("button", { name: "Use this pack" }).click();
+  dialog = page.getByRole("dialog", { name: "Edit Island" });
+  const pack = dialog.getByRole("region", { name: "Resource pack" });
+  await expect(pack).toContainText("map");
+  await expect(pack).toContainText("https://example.com/map.zip");
+  await dialog.getByRole("switch", { name: "Required" }).click();
+  await dialog.getByLabel("Prompt").fill("For the map");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(calls[0]).toMatchObject({ method: "PATCH", path: "/worlds/w1", body: { name: "Island", resourcePack: { url: "https://example.com/map.zip", sha1: "ab".repeat(20), enforce: true, prompt: "For the map" } } });
+
+  // One it has, taken off.
+  await page.getByRole("button", { name: "Actions for Arena" }).click();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  dialog = page.getByRole("dialog", { name: "Edit Arena" });
+  await expect(dialog.getByRole("region", { name: "Resource pack" })).toContainText("map");
+  await expect(dialog.getByRole("switch", { name: "Required" })).toHaveAttribute("aria-checked", "true");
+  await expect(dialog.getByLabel("Prompt")).toHaveValue("For the map");
+  await dialog.getByRole("region", { name: "Resource pack" }).getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Add resource pack" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(calls[1]).toMatchObject({ method: "PATCH", path: "/worlds/w2", body: { resourcePack: null } });
+});
+
+test("a world is given a resource pack file, uploaded once it is saved", async ({ page, as }) => {
+  await as("operator");
+  const calls = await library(page, [world("w1", "Island")]);
+  await page.goto("/o/friends/worlds");
+  await page.getByRole("button", { name: "Actions for Island" }).click();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  let dialog = page.getByRole("dialog", { name: "Edit Island" });
+  await dialog.getByRole("button", { name: "Add resource pack" }).click();
+  const picker = page.getByRole("dialog");
+  await picker.getByRole("button", { name: "Upload", exact: true }).click();
+  await picker.getByLabel("Resource pack file").setInputFiles({ name: "island.zip", mimeType: "application/zip", buffer: Buffer.from("PK zip") });
+  dialog = page.getByRole("dialog", { name: "Edit Island" });
+  await expect(dialog.getByRole("region", { name: "Resource pack" })).toContainText("island");
+  // Nothing is sent until it is saved.
+  expect(calls).toEqual([]);
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(calls.map((c) => `${c.method} ${c.path} ${c.query.name ?? ""}`.trim())).toEqual(["PUT /worlds/w1/resource-pack island.zip", "PATCH /worlds/w1"]);
+  expect(calls[1].body).toMatchObject({ resourcePack: { enforce: false, prompt: "" } });
+});
+
+/** What is asked of a server being made, by what and how. One given a resource pack has the one given. */
+async function watchServer(page: Page, slug: string, name: string, pack?: Record<string, unknown>) {
+  const asked: { method: string; path: string; query: Record<string, string> }[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers/${name}/**`, async (route) => {
+    const req = route.request();
+    if (req.method() === "GET") return route.fallback();
+    const url = new URL(req.url());
+    asked.push({ method: req.method(), path: url.pathname.split(`/servers/${name}`)[1], query: Object.fromEntries(url.searchParams) });
+    const server = await (await page.request.get(`/api/v1/orgs/${slug}/servers/${name}`)).json();
+    if (pack && url.pathname.endsWith("/resource-pack")) server.spec.resourcePack = pack;
+    return route.fulfill({ json: server });
+  });
+  return asked;
+}
+
+test("a world's resource pack is in the new server form with it, and goes to the server", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await library(page, [world("w1", "Island", { resourcePack: mapPack }), world("w2", "Arena")], slug);
+  const asked = await watchServer(page, slug, "island", { ...mapPack, url: `https://panel.example/packs/${mapPack.sha1}.zip` });
+  await page.goto(`/o/${slug}/worlds`);
+  await page.getByRole("listitem", { name: "Island" }).getByRole("button", { name: "New server" }).click();
+  await expect(page.getByTestId("world-summary")).toContainText("with a resource pack");
+  // What a server can be given shows once its type is picked.
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  const packs = page.getByRole("list", { name: "Packs, the top one first" });
+  await expect(packs).toContainText("map");
+  await expect(packs).toContainText("the world's");
+  await expect(page.getByRole("switch", { name: "Required" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByLabel("Prompt")).toHaveValue("For the map");
+  // Another world has none: Island's goes. Picked again, it comes back.
+  await page.getByRole("button", { name: "Change" }).last().click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Arena/ }).click();
+  await expect(packs).toHaveCount(0);
+  await page.getByRole("button", { name: "Change" }).last().click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect(packs).toContainText("map");
+  // A new world has none either.
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "New world" }).click();
+  await expect(packs).toHaveCount(0);
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await expect(packs).toContainText("map");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(asked).toEqual([
+    { method: "PUT", path: "/import", query: expect.objectContaining({ world: "true", library: "w1" }) },
+    { method: "PUT", path: "/resource-pack", query: { world: "w1", wait: "true" } },
+    { method: "POST", path: "/start", query: {} },
+  ]);
+});
+
+test("a world's resource pack taken off in the new server form is not given", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await library(page, [world("w1", "Island", { resourcePack: mapPack })], slug);
+  const asked = await watchServer(page, slug, "island");
+  await page.goto(`/o/${slug}/new?world=w1`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByRole("button", { name: "Remove map" }).click();
+  await expect(page.getByRole("list", { name: "Packs, the top one first" })).toHaveCount(0);
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page.getByText("Island is set up")).toBeVisible();
+  expect(asked.map((a) => `${a.method} ${a.path}`)).toEqual(["PUT /import", "POST /start"]);
+});
+
+test("a template given a world from the library keeps the world's resource pack with it", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await library(page, [world("w1", "Island", { resourcePack: mapPack })], slug);
+  const put: string[] = [];
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/templates/[^/]+/world(\\?.*)?$`), (route) => {
+    const req = route.request();
+    put.push(`${req.method()} ${new URL(req.url()).search}${req.method() === "PATCH" ? JSON.stringify(req.postDataJSON()) : ""}`);
+    return route.fulfill({ json: {} });
+  });
+  await page.goto(`/o/${slug}/templates/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByLabel("Name", { exact: true }).fill("Island base");
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect(page.getByRole("list", { name: "Packs, the top one first" })).toContainText("map");
+  // Not required for this template's servers.
+  await page.getByRole("switch", { name: "Required" }).click();
+  await page.getByRole("button", { name: "Create template" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  expect(put).toEqual(["PUT ?library=w1&pack=true", 'PATCH {"resourcePack":{"enforce":false,"prompt":"For the map"}}']);
+});
+
+test("a stopped server's world replaced with one from the library takes its resource pack, unless switched off", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island", { resourcePack: mapPack })]);
+  const sent: Record<string, string>[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/creative/import?*", async (route) => {
+    sent.push(Object.fromEntries(new URL(route.request().url()).searchParams));
+    await route.fulfill({ status: 202, json: await (await page.request.get("/api/v1/orgs/friends/servers/creative")).json() });
+  });
+  await page.goto("/o/friends/s/creative/settings");
+  for (const use of [true, false]) {
+    await page.getByRole("button", { name: "Replace the world" }).click();
+    const dialog = page.getByRole("dialog", { name: "Replace the world?" });
+    await dialog.getByRole("button", { name: "Library world", exact: true }).click();
+    await dialog.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+    const usePack = dialog.getByRole("switch", { name: "Use the world's resource pack" });
+    await expect(usePack).toHaveAttribute("aria-checked", "true");
+    if (!use) await usePack.click();
+    await dialog.getByRole("button", { name: "Replace the world" }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+  expect(sent[0]).toMatchObject({ library: "w1", replace: "true", pack: "true" });
+  expect(sent[1]).toMatchObject({ library: "w1", replace: "true" });
+  expect(sent[1].pack).toBeUndefined();
+});
+
+test("a world's resource pack the form has already is not added twice, and a template keeps the one pack it has", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const fromUrl = { url: "https://example.com/map.zip", sha1: "ab".repeat(20), enforce: false, project: null, uploaded: null };
+  await library(page, [world("w1", "Island", { resourcePack: fromUrl }), world("w2", "Arena", { resourcePack: mapPack })], slug);
+  const addUrl = async () => {
+    await page.getByRole("button", { name: "Add resource pack" }).click();
+    const picker = page.getByRole("dialog");
+    await picker.getByRole("button", { name: "From URL" }).click();
+    await picker.getByLabel("Download URL").fill(fromUrl.url);
+    await picker.getByLabel("SHA-1").fill(fromUrl.sha1);
+    await picker.getByRole("button", { name: /Use this pack|Add/ }).last().click();
+    await expect(picker).toHaveCount(0);
+  };
+  const packs = page.getByRole("list", { name: "Packs, the top one first" }).getByRole("listitem");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await addUrl();
+  await expect(packs).toHaveCount(1);
+  // The same pack, with Island: once.
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
+  await expect(page.getByTestId("world-summary")).toContainText("with a resource pack");
+  await expect(packs).toHaveCount(1);
+  // Another, with Arena: both.
+  await page.getByRole("button", { name: "Change" }).last().click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Arena/ }).click();
+  await expect(packs).toHaveCount(2);
+
+  // A template has one pack: one it has stays, and the world's is not kept.
+  const put: string[] = [];
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/templates/[^/]+/world(\\?.*)?$`), (route) => {
+    put.push(`${route.request().method()} ${new URL(route.request().url()).search}`);
+    return route.fulfill({ json: {} });
+  });
+  await page.goto(`/o/${slug}/templates/new`);
+  await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
+  await page.getByLabel("Game version").selectOption("1.21.4");
+  await page.getByLabel("Name", { exact: true }).fill("Arena base");
+  await addUrl();
+  await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
+  await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Arena/ }).click();
+  await expect(page.getByTestId("world-summary")).toContainText("with a resource pack");
+  await expect(packs).toHaveCount(1);
+  await expect(packs).toContainText("map");
+  await expect(packs).not.toContainText("the world's");
+  await page.getByRole("button", { name: "Create template" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
+  expect(put).toEqual(["PUT ?library=w2"]);
 });

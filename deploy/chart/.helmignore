@@ -1,0 +1,3 @@
+# Values sets and what they render to, checked in CI; not part of the chart.
+ci/
+.DS_Store

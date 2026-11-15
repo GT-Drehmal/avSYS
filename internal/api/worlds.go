@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,7 +28,8 @@ import (
 // template's own world is. One uploaded is kept as it was sent; one saved
 // from a server or a snapshot is a tar of its world's folders, the world as
 // "world" and the Nether and the End beside it where the server kept them
-// apart. Putting one in a server is the import that puts any world in.
+// apart. Putting one in a server is the import that puts any world in. One
+// saved is downloaded as a zip of a single-player save, made as it is sent.
 
 // libraryHost is what a world in the library is kept under.
 func libraryHost(id string) string { return "world-" + id }
@@ -94,6 +97,9 @@ type worldView struct {
 	Ready bool `json:"ready"`
 	// Error says why its archive could not be made, for one that was not.
 	Error string `json:"error,omitempty"`
+	// ResourcePack is the pack it is played with, given to each server it
+	// is given to: one from an address, or one uploaded, with no address.
+	ResourcePack *avsysv1.ResourcePackSpec `json:"resourcePack,omitempty"`
 }
 
 // librarySnapshots are the snapshots of the library's worlds, by world.
@@ -117,6 +123,7 @@ func worldOf(w *store.World, snaps map[string]backup.Snapshot, busy bool) worldV
 		ID: w.ID, Name: w.Name, Description: w.Description, CreatedBy: w.CreatedBy, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 		Root: w.Root, Version: w.Version, File: w.File, Size: w.Size, Unpacked: w.Unpacked, Source: w.Source,
 		Saving: busy && w.Failed == "", Ready: kept && !busy && w.Failed == "", Error: w.Failed,
+		ResourcePack: worldPackOf(w),
 	}
 }
 
@@ -129,7 +136,7 @@ func (s *Server) libraryWorld(ctx context.Context, a *access, id string) (*store
 	} else if err != nil {
 		return nil, nil, err
 	}
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+	list, err := s.templateSnapshots(ctx, a.Org)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -165,7 +172,7 @@ func (s *Server) listWorlds(w http.ResponseWriter, r *http.Request, u *store.Use
 	if err != nil {
 		return err
 	}
-	list, err := s.templateSnapshots(r.Context(), a.Org.Slug)
+	list, err := s.templateSnapshots(r.Context(), a.Org)
 	if err != nil {
 		return err
 	}
@@ -266,6 +273,9 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	kept, err := s.Backups.KeepFile(ctx, a.Org.Slug, libraryHost(world.ID), ownWorldFile, u.Username, body)
 	if err == nil {
 		world.Size = kept.Size
+		err = s.noteTemplateSnapshot(ctx, a.Org, kept)
+	}
+	if err == nil {
 		err = s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, kept.Size, world.Unpacked)
 	}
 	if err != nil {
@@ -287,6 +297,8 @@ func (s *Server) forgetWorld(ctx context.Context, a *access, id string, kept *ba
 	if kept != nil {
 		if err := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); err != nil {
 			s.Log.Error("could not remove a world's archive kept for nothing", "world", id, "snapshot", kept.ID, "error", err)
+		} else {
+			s.forgetTemplateSnapshots(ctx, a.Org, kept.ID)
 		}
 	}
 	if err := s.Store.DeleteWorld(ctx, a.Org.ID, id); err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -317,8 +329,10 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 	if (in.Server == "") == (in.Snapshot == "") {
 		return errBadRequest("A world is saved from a server or from a snapshot.")
 	}
-	// Where its world is, and what it was opened in last.
+	// Where its world is, what it was opened in last, and the resource pack
+	// it was played with.
 	var level, version, source string
+	var pack *avsysv1.ResourcePackSpec
 	var snap *backup.Snapshot
 	var take func(ctx context.Context) (*backup.Snapshot, error)
 	if in.Snapshot != "" {
@@ -333,6 +347,7 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 			return errNoRecord(err)
 		}
 		level, version, source = levelOf(&record.Spec), snap.Version, "snapshot:"+snap.Server
+		pack = record.Spec.ResourcePack.DeepCopy()
 	} else {
 		mc := &avsysv1.MinecraftServer{}
 		if err := s.Client.Get(r.Context(), client.ObjectKey{Namespace: a.Namespace, Name: in.Server}, mc); err != nil {
@@ -345,6 +360,7 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 			return err
 		}
 		level, version, source = levelOf(&mc.Spec), mc.Spec.Version, "server:"+mc.Name
+		pack = mc.Spec.ResourcePack.DeepCopy()
 		// "Latest" is whichever it ran last: the game says, after its
 		// software's name.
 		if ran := controller.RanVersion(mc.Status.Version); version == "LATEST" && ran != "" {
@@ -400,6 +416,8 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 			if kept != nil {
 				if derr := s.Backups.Delete(ctx, a.Org.Slug, kept.ID); derr != nil {
 					s.Log.Error("could not remove a world's archive kept for nothing", "world", saved.ID, "snapshot", kept.ID, "error", derr)
+				} else {
+					s.forgetTemplateSnapshots(ctx, a.Org, kept.ID)
 				}
 				kept = nil
 			}
@@ -412,6 +430,10 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		if take != nil {
 			if from, err = take(ctx); err != nil {
 				return nil, err
+			}
+			// The pack its files have is the one its snapshot's record says.
+			if record, err := s.recordOf(ctx, a.Org.Slug, from.ID); err == nil {
+				pack = record.Spec.ResourcePack.DeepCopy()
 			}
 		}
 		folders := []backup.Folder{{Path: dataRoot + "/" + level, As: libraryRoot}}
@@ -426,8 +448,20 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		}
 		// A tar is as large as what is in it.
 		saved.Size, saved.Unpacked = kept.Size, kept.Size
+		if err := s.noteTemplateSnapshot(ctx, a.Org, kept); err != nil {
+			return kept, err
+		}
 		if err := s.Store.SetWorldArchive(ctx, a.Org.ID, saved.ID, saved.Root, saved.Version, saved.Size, saved.Unpacked); err != nil {
 			return kept, err
+		}
+		// Its resource pack, as the server had one. Without it, the world is
+		// still the world: the pack can be given to it again.
+		if pack != nil {
+			if raw, err := s.carryPack(ctx, a, saved.ID, from.ID, pack, u.Username); err != nil {
+				s.Log.Warn("a world was saved to the library without its server's resource pack", "world", saved.Name, "error", err)
+			} else {
+				saved.Pack = raw
+			}
 		}
 		// Its picture, as the server had one.
 		if raw, err := s.Backups.File(ctx, a.Org.Slug, from.ID, serverIconPath, snapshotIconLimit); err == nil && raw != nil {
@@ -453,20 +487,41 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 	return nil
 }
 
-// updateWorld renames a world or changes its description.
+// updateWorld renames a world, changes its description, or changes the
+// resource pack it names: resourcePack null for none, one with a url for
+// one from that address, or one with only enforce or prompt for whether
+// players must take the one it has and what they are asked.
 func (s *Server) updateWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleOperator)
 	if err != nil {
 		return err
 	}
-	busy := worldBusy(a, r.PathValue("world"))
+	var in struct {
+		Name, Description *string
+		ResourcePack      json.RawMessage `json:"resourcePack"`
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	// Its pack is not changed while another is uploaded to it.
+	if in.ResourcePack != nil {
+		release, err := claimWorld(a, r.PathValue("world"))
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	busy := in.ResourcePack == nil && worldBusy(a, r.PathValue("world"))
 	world, snap, err := s.libraryWorld(r.Context(), a, r.PathValue("world"))
 	if err != nil {
 		return err
 	}
-	var in struct{ Name, Description *string }
-	if err := decode(r, &in); err != nil {
-		return err
+	was := worldPackOf(world)
+	var pack *avsysv1.ResourcePackSpec
+	if in.ResourcePack != nil {
+		if pack, err = changedPack(was, in.ResourcePack); err != nil {
+			return err
+		}
 	}
 	name, description := world.Name, world.Description
 	if in.Name != nil {
@@ -482,6 +537,20 @@ func (s *Server) updateWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 		return worldNameTaken(world.Name)
 	} else if err != nil {
 		return err
+	}
+	if in.ResourcePack != nil {
+		ctx := context.WithoutCancel(r.Context())
+		world.Pack = packJSON(pack)
+		if err := s.Store.SetWorldPack(ctx, a.Org.ID, world.ID, world.Pack); err != nil {
+			return err
+		}
+		// An uploaded one it no longer names goes.
+		if was != nil && was.Uploaded != nil && (pack == nil || pack.Uploaded == nil) {
+			s.dropKeptPacks(ctx, a, libraryHost(world.ID), "")
+		}
+		if packJSON(was) != world.Pack {
+			s.audit(ctx, u, a.Org, "world.resource-pack", world.Name, packAudit(pack))
+		}
 	}
 	s.audit(r.Context(), u, a.Org, "world.update", world.Name, "")
 	writeJSON(w, http.StatusOK, worldOfSnap(world, snap, busy))
@@ -505,19 +574,20 @@ func (s *Server) deleteWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	defer release()
 	ctx := context.WithoutCancel(r.Context())
-	list, err := s.templateSnapshots(ctx, a.Org.Slug)
+	list, err := s.repoSnapshots(ctx, a.Org.Slug)
 	if err != nil {
 		return err
 	}
 	var ids []string
 	for _, snap := range list {
-		if snap.Server == libraryHost(world.ID) && isTemplate(&snap) {
+		if (snap.Server == libraryHost(world.ID) || snap.Server == packHost(libraryHost(world.ID))) && isTemplate(&snap) {
 			ids = append(ids, snap.ID)
 		}
 	}
 	if err := s.Backups.DeleteMany(ctx, a.Org.Slug, ids); err != nil {
 		return snapshotError(err)
 	}
+	s.forgetTemplateSnapshotsOf(ctx, a.Org, libraryHost(world.ID), packHost(libraryHost(world.ID)))
 	if err := s.Store.DeleteWorld(ctx, a.Org.ID, world.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
@@ -526,8 +596,9 @@ func (s *Server) deleteWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	return nil
 }
 
-// downloadWorld sends a world's archive, as it was uploaded or as it was
-// saved.
+// downloadWorld sends a world's archive: one uploaded as it was uploaded,
+// and one saved from a server or a snapshot as a zip of a single-player
+// save, made as it is sent.
 func (s *Server) downloadWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleOperator)
 	if err != nil {
@@ -537,9 +608,27 @@ func (s *Server) downloadWorld(w http.ResponseWriter, r *http.Request, u *store.
 	if err != nil {
 		return err
 	}
+	if world.Source != "upload" {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(saveName(world.Name)+".zip"))
+		sent := &countWriter{}
+		if err := s.writeWorldZip(r.Context(), a, world, snap, io.MultiWriter(w, sent)); err != nil {
+			s.Log.Warn("a world's download did not finish", "world", world.ID, "error", err)
+			// Nothing sent yet: said so. Once it has begun, the download is
+			// cut off, so that the browser says it failed rather than keep a
+			// zip without some of the world.
+			if sent.n == 0 {
+				w.Header().Del("Content-Disposition")
+				w.Header().Del("Content-Type")
+				return snapshotError(err)
+			}
+			panic(http.ErrAbortHandler)
+		}
+		return nil
+	}
 	file := world.File
 	if file == "" {
-		file = world.Name + ".tar"
+		file = world.Name
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(file))

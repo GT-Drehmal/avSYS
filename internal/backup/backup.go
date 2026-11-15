@@ -135,6 +135,9 @@ type Manager struct {
 	answers map[string]repoAnswers
 	// records are the records read out of snapshots, which never change.
 	records map[string][]byte
+	// copies is what was last read of each organization's copies file; see
+	// offsiteCopies.
+	copies map[string]keptCopies
 }
 
 // Snapshot is one saved state of a server.
@@ -156,6 +159,9 @@ type Snapshot struct {
 	// Lineage is the same for a snapshot and for every copy of it in another
 	// repository, which each have an ID of their own.
 	Lineage string `json:"-"`
+	// Offsite is set on a snapshot that has a copy in the offsite
+	// repository, as of the last time that was read; see offsiteCopies.
+	Offsite bool `json:"offsite,omitempty"`
 }
 
 // Meta describes the server a snapshot is being taken of.
@@ -325,6 +331,22 @@ func (m *Manager) Holds(ctx context.Context, org string) (count int, known bool)
 	return 0, len(entries) == 0
 }
 
+// Reachable says whether the panel can read where an organization's
+// repository is kept: nil if it can, or if nothing is kept there yet. The
+// repositories are on the panel's own volume, which may be storage that is
+// not there any more, as on a node that is down.
+func (m *Manager) Reachable(org string) error {
+	if _, err := os.Stat(filepath.Join(m.repoDir(org), "config")); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// No repository yet, which is only so if the folder it would be in can
+	// be read.
+	if _, err := os.ReadDir(m.Dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // UploadsDir is where an organization's files sent in parts are put
 // together: beside its repository, on the same disk.
 func (m *Manager) UploadsDir(org string) string { return filepath.Join(m.Dir, ".uploads", org) }
@@ -463,7 +485,7 @@ func (m *Manager) List(ctx context.Context, org string) ([]Snapshot, error) {
 
 // list is List for callers that already hold the repository's lock. Taking a
 // read lock twice deadlocks as soon as a writer is waiting in between.
-// Rejected snapshots are left out.
+// Rejected snapshots are left out, and those with a copy offsite say so.
 func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
 	all, err := m.listAll(ctx, org)
 	if err != nil {
@@ -473,12 +495,11 @@ func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(rejected) == 0 {
-		return all, nil
-	}
+	copied := m.offsiteCopies(org)
 	out := all[:0:0]
 	for _, s := range all {
 		if !rejected[s.ID] {
+			s.Offsite = copied[s.Lineage]
 			out = append(out, s)
 		}
 	}
@@ -506,7 +527,14 @@ func (m *Manager) listAll(ctx context.Context, org string) ([]Snapshot, error) {
 	for _, r := range raw {
 		list = append(list, r.snapshot())
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Time.After(list[j].Time) })
+	// Two of the same time, as copies made in the same second are, by ID:
+	// in the same order each time.
+	sort.Slice(list, func(i, j int) bool {
+		if !list[i].Time.Equal(list[j].Time) {
+			return list[i].Time.After(list[j].Time)
+		}
+		return list[i].ID < list[j].ID
+	})
 	m.keep(org, state, func(a *repoAnswers) { a.list = slices.Clone(list) })
 	return list, nil
 }
@@ -661,6 +689,19 @@ func (m *Manager) Record(ctx context.Context, org, id string) ([]byte, error) {
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
+	// One named in full that is there, and not rejected, is found without
+	// listing them all: its record is read straight away, if it was not
+	// before.
+	if m.there(org, id) {
+		if record, ok := m.keptRecord(org, id); ok {
+			return record, nil
+		}
+		record, err := m.restic(ctx, org, "dump", "--no-lock", id, RecordPath)
+		if err == nil {
+			m.keepRecord(org, id, record)
+		}
+		return record, err
+	}
 	snap, err := m.get(ctx, org, id)
 	if err != nil {
 		return nil, err
@@ -1162,7 +1203,7 @@ func (m *Manager) Destroy(org string) error {
 		return err
 	}
 	// The offsite copy is left as it is: nothing here says to remove it.
-	for _, file := range []string{m.removedFile(org), m.statusFile(org)} {
+	for _, file := range []string{m.removedFile(org), m.statusFile(org), m.copiesFile(org)} {
 		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

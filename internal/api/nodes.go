@@ -12,6 +12,7 @@ import (
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
+	"github.com/GT-Drehmal/avSYS/internal/release"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -33,6 +34,9 @@ type nodeView struct {
 	Name string `json:"name"`
 	// Ready is whether it is up and takes pods.
 	Ready bool `json:"ready"`
+	// Cordoned is whether it is kept from taking new pods, as before
+	// maintenance. What runs on it can still be moved off.
+	Cordoned bool `json:"cordoned,omitempty"`
 	// Automatic is whether new servers may be placed on it without asking.
 	Automatic bool `json:"automatic"`
 	// Hosts is whether it is set to take new servers, up or not.
@@ -79,6 +83,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 		v := nodeView{
 			Name:      n.Name,
 			Ready:     controller.NodeReady(n),
+			Cordoned:  n.Spec.Unschedulable,
 			Automatic: controller.NodeUsable(n),
 			Hosts:     n.Labels[avsysv1.LabelNodeHosts] != "false",
 			Score:     controller.NodeScore(n),
@@ -121,6 +126,10 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 		if last != nil {
 			answer["measured"] = last
 		}
+		if latest := s.Updates.Newer(); latest != nil {
+			answer["update"] = s.updateOf(r.Context(), latest)
+		}
+		answer["panel"] = s.panelOf(r.Context())
 	}
 	// Which node automatic placement would choose now, for the memory asked
 	// about, so that "Automatic" can say where that is.
@@ -149,6 +158,9 @@ func (s *Server) checkNode(ctx context.Context, name string, memory resource.Qua
 	if node == nil {
 		return errBadRequest("There is no node named %q.", name)
 	}
+	if node.Spec.Unschedulable {
+		return errBadRequest("%s is cordoned. Choose another node.", name)
+	}
 	if !controller.NodeReady(node) {
 		return errBadRequest("%s is not taking new servers right now.", name)
 	}
@@ -175,4 +187,34 @@ func (s *Server) createPlaced(ctx context.Context, mc *avsysv1.MinecraftServer, 
 
 func gib(b int64) string {
 	return fmt.Sprintf("%.1f GB", float64(max(b, 0))/(1<<30))
+}
+
+// updateView is a newer release than the one running, for the instance
+// administrator, with what upgrades to it.
+type updateView struct {
+	Version string `json:"version"`
+	Notes   string `json:"notes"`
+	// Command upgrades the panel, as it was installed. Empty where that is
+	// not known.
+	Command string `json:"command,omitempty"`
+	// Manifest is the release's install.yaml, for a panel installed from
+	// one.
+	Manifest string `json:"manifest,omitempty"`
+}
+
+func (s *Server) updateOf(ctx context.Context, latest *release.Latest) updateView {
+	v := updateView{Version: latest.Version, Notes: latest.Notes}
+	var svc *corev1.Service
+	if s.Config.RouterService.Name != "" {
+		svc = &corev1.Service{}
+		if err := s.nodeReader().Get(ctx, s.Config.RouterService, svc); err != nil {
+			svc = nil
+		}
+	}
+	in := release.InstallOf(svc)
+	v.Command = latest.Command(in)
+	if in.Manifest {
+		v.Manifest = latest.Manifest()
+	}
+	return v
 }

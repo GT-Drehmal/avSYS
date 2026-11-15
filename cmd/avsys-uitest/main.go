@@ -9,13 +9,16 @@
 // the files in --upstream. Pages that need a running server (console,
 // files, terminal, snapshots) are there to be opened and to fail politely.
 // The cluster has no metrics API unless --metrics is given, which also
-// gives it two nodes (see metrics.go).
+// gives it two nodes (see metrics.go). With --fresh it is a panel just
+// installed instead, with nobody and nothing in it, waiting to be set up.
 //
 // It prints one line of JSON when it is listening: the address, and an API
-// token for each of the people it was seeded with.
+// token for each of the people it was seeded with. --listen with port 0
+// takes any free port, which that line then says.
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -30,17 +33,23 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/api"
 	"github.com/GT-Drehmal/avSYS/internal/auth"
+	"github.com/GT-Drehmal/avSYS/internal/auth/fakeidp"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/release"
 	"github.com/GT-Drehmal/avSYS/internal/router"
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
@@ -52,8 +61,10 @@ func main() {
 	upstreamDir := flag.String("upstream", "web/tests/upstream", "answers for the services the panel looks things up in")
 	readyFile := flag.String("ready", "", "also write the line printed when listening to this file")
 	metrics := flag.Bool("metrics", false, "stand in a metrics API, and two nodes for it to answer for")
+	offsite := flag.Bool("offsite", false, "copy snapshots offsite, with the older ones of the first organization there already")
+	fresh := flag.Bool("fresh", false, "seed nothing: a panel just installed, waiting for its first account")
 	flag.Parse()
-	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics); err != nil {
+	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *offsite, *fresh); err != nil {
 		fmt.Fprintln(os.Stderr, "avsys-uitest:", err)
 		os.Exit(1)
 	}
@@ -62,7 +73,7 @@ func main() {
 // password is the one every seeded person signs in with.
 const password = "correct horse battery staple"
 
-func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error {
+func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite, fresh bool) error {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	dir, err := os.MkdirTemp("", "avsys-uitest-")
@@ -101,11 +112,20 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 	// Nothing runs here to wait for: a server's files are not there at once.
 	gateway := &sshgw.Gateway{Store: db, Dialer: noPods{}, Log: log, WorkspaceTries: 1}
 	srv := &api.Server{
-		Config:  api.Config{NamespacePrefix: "mc-", PublicURL: "http://" + listen, SSHHost: "panel.test", SSHPort: 2222, RouterDomain: "play.test", Version: "uitest"},
-		Store:   db,
-		Client:  cluster,
-		Reader:  cluster,
-		Kube:    kubefake.NewSimpleClientset(),
+		Config: api.Config{NamespacePrefix: "mc-", SSHHost: "panel.test", SSHPort: 2222, RouterDomain: "play.test", Version: "v0.1.0",
+			// Installed with the chart: see the Service below.
+			RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"},
+			// Its own Deployment, which it can move to a newer release.
+			Deployment: types.NamespacedName{Namespace: "avsys", Name: "avsys"}},
+		Store:  db,
+		Client: cluster,
+		Reader: cluster,
+		Kube: kubefake.NewSimpleClientset(&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "avsys", Name: "avsys"},
+			Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "avsys", Image: "ghcr.io/gt-drehmal/avsys:v0.1.0"}},
+			}}},
+		}),
 		Dialer:  noPods{},
 		Gateway: gateway,
 		Events:  api.NewHub(),
@@ -117,44 +137,115 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 		Upstream: up,
 	}
 	gateway.Authz = srv
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
+	}
+	srv.Config.PublicURL = "http://" + ln.Addr().String()
 
+	// An OpenID Connect provider of its own, which signs in whoever is typed
+	// on its page. "outsider" there is the outsider here.
+	idp, err := fakeidp.Start("avsys-uitest", "uitest-secret", srv.Config.PublicURL+"/api/v1/auth/oidc/callback")
+	if err != nil {
+		return err
+	}
+	defer idp.Close()
+	provider, err := auth.NewOIDCProvider(auth.OIDCConfig{Issuer: idp.URL, ClientID: idp.ClientID, ClientSecret: idp.ClientSecret, Name: "Test ID"}, srv.Config.PublicURL)
+	if err != nil {
+		return err
+	}
+	srv.Config.Providers = map[string]*auth.Provider{provider.ID: provider}
+
+	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
+	srv.Metrics = metrics
+	srv.GameCommand = metrics.gameCommand
+	tokens := map[string]string{}
+	if !fresh {
+		if tokens, err = populate(ctx, srv, cluster, dir, withOffsite, provider.ID, idp.URL); err != nil {
+			return err
+		}
+		if withMetrics {
+			if err := seedNodes(ctx, cluster); err != nil {
+				return err
+			}
+		}
+		backfill(ctx, srv, metrics)
+	}
+	go srv.RunUsage(ctx)
+
+	// A newer release than this one (v0.1.0) is out, as upstream says, and
+	// the panel was installed with the chart, as its Service says.
+	panelService := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "avsys", Name: "avsys",
+		Labels:      map[string]string{"helm.sh/chart": "avsys-0.1.0"},
+		Annotations: map[string]string{"meta.helm.sh/release-name": "avsys", "meta.helm.sh/release-namespace": "avsys"}}}
+	if err := cluster.Create(ctx, panelService); err != nil {
+		return err
+	}
+	srv.Updates = &release.Checker{Current: srv.Config.Version, Client: &http.Client{Transport: up}}
+	srv.Updates.Refresh(ctx)
+
+	ready, _ := json.Marshal(map[string]any{"url": srv.Config.PublicURL, "password": password, "tokens": tokens})
+	fmt.Println(string(ready))
+	if readyFile != "" {
+		if err := os.WriteFile(readyFile, ready, 0o600); err != nil {
+			return err
+		}
+	}
+	return http.Serve(ln, srv.Handler())
+}
+
+// populate fills the panel with people, organizations, servers and
+// snapshots, and returns an API token for each person. With offsite, the
+// panel copies snapshots offsite, and the older ones are there already. The
+// outsider is linked to "outsider" at the OpenID Connect provider (oidc,
+// whose issuer is issuer).
+func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir string, offsite bool, oidc, issuer string) (map[string]string, error) {
+	db := srv.Store
 	// People, one for each role in the first organization, and one who is
 	// in neither.
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tokens := map[string]string{}
 	users := map[string]*store.User{}
 	for _, name := range []string{"owner", "admin", "operator", "viewer", "outsider"} {
 		u := &store.User{Username: name, DisplayName: strings.ToUpper(name[:1]) + name[1:], PasswordHash: hash}
 		if err := db.CreateUser(ctx, u); err != nil {
-			return err
+			return nil, err
 		}
 		secret, err := db.CreateAPIToken(ctx, &store.APIToken{UserID: u.ID, Name: "uitest"})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		users[name], tokens[name] = u, secret
 	}
+	if err := db.LinkIdentity(ctx, store.Identity{Provider: oidc, Subject: auth.OIDCSubject(issuer, "outsider"), UserID: users["outsider"].ID, Login: "outsider"}); err != nil {
+		return nil, err
+	}
 	friends := &store.Org{Name: "Friends", Slug: "friends"}
 	if err := db.CreateOrg(ctx, friends, users["owner"].ID); err != nil {
-		return err
+		return nil, err
 	}
 	for _, name := range []string{"admin", "operator", "viewer"} {
-		inv := &store.Invite{OrgID: friends.ID, Role: store.Role(name), CreatedBy: users["owner"].ID}
+		inv := &store.Invite{OrgID: friends.ID, Role: store.Role(name), CreatedBy: "owner"}
 		if err := db.CreateInvite(ctx, inv); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := db.AcceptInvite(ctx, inv.Token, users[name].ID); err != nil {
-			return err
+			return nil, err
 		}
+	}
+	// An invite that has run out, for its link to be followed.
+	expired := time.Now().Add(-time.Hour)
+	if err := db.CreateInvite(ctx, &store.Invite{OrgID: friends.ID, Role: store.RoleViewer, CreatedBy: "owner", ExpiresAt: &expired}); err != nil {
+		return nil, err
 	}
 	// A second organization of the same owner, with a server of the same
 	// name as one in the first.
 	club := &store.Org{Name: "Build Club", Slug: "club"}
 	if err := db.CreateOrg(ctx, club, users["owner"].ID); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Servers in each state a list has to draw.
@@ -180,7 +271,7 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 			},
 		}
 		if err := cluster.Create(ctx, mc); err != nil {
-			return err
+			return nil, err
 		}
 		mc.Status = avsysv1.MinecraftServerStatus{Phase: s.phase, Message: s.message, Players: s.players, Address: mc.Spec.Expose.Hostname, MaxPlayers: 20}
 		if s.phase == avsysv1.PhaseRunning {
@@ -194,57 +285,52 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics bool) error 
 			mc.Status.Snapshots = &avsysv1.SnapshotStatus{LastRun: &at}
 		}
 		if err := cluster.Status().Update(ctx, mc); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	if err := seedSnapshots(dir); err != nil {
-		return err
+	if err := seedSnapshots(dir, offsite); err != nil {
+		return nil, err
 	}
-
-	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
-	srv.Metrics = metrics
-	srv.GameCommand = metrics.gameCommand
-	if withMetrics {
-		if err := seedNodes(ctx, cluster); err != nil {
-			return err
+	if offsite {
+		// A directory standing in for the far end. The panel learns what
+		// is there the way it does after any sync.
+		srv.Backups.Offsite = &backup.Offsite{Repository: filepath.Join(dir, "offsite"), Password: password}
+		if _, err := srv.Backups.SyncOffsite(ctx, "friends"); err != nil {
+			return nil, err
 		}
 	}
-	backfill(ctx, srv, metrics)
-	go srv.RunUsage(ctx)
-
-	ln, err := net.Listen("tcp", listen)
-	if err != nil {
-		return err
-	}
-	ready, _ := json.Marshal(map[string]any{"url": "http://" + ln.Addr().String(), "password": password, "tokens": tokens})
-	fmt.Println(string(ready))
-	if readyFile != "" {
-		if err := os.WriteFile(readyFile, ready, 0o600); err != nil {
-			return err
-		}
-	}
-	return http.Serve(ln, srv.Handler())
+	return tokens, nil
 }
 
 // resticStandIn is what the panel runs as restic here. It answers the
 // questions the panel asks of a repository out of files beside it, and
 // agrees to everything else. Its arguments are as the panel gives them:
-// --repo DIR --password-file FILE --no-cache COMMAND ...
+// --repo DIR, then --password-file FILE --no-cache for its own repositories
+// or --cache-dir DIR for the offsite ones, then COMMAND ...
 const resticStandIn = `#!/bin/sh
 repo=$2
-case "$6" in
+shift 2
+while :; do
+  case "$1" in
+    --password-file|--cache-dir) shift 2 ;;
+    --no-cache) shift ;;
+    *) break ;;
+  esac
+done
+case "$1" in
   snapshots) cat "$repo/snapshots.json" 2>/dev/null || echo '[]' ;;
   stats) echo '{"total_size": 734003200, "snapshots_count": 6}' ;;
-  dump) cat "$repo/record-$8.json" 2>/dev/null || exit 1 ;;
+  dump) cat "$repo/record-$3.json" 2>/dev/null || exit 1 ;;
   forget) cat "$repo/forget.json" 2>/dev/null ;;
 esac
 `
 
 // seedSnapshots gives the first organization a repository with snapshots in
 // it: several of a server that runs every day, one of another, and the last
-// one of a server that has since been deleted.
-func seedSnapshots(dir string) error {
+// one of a server that has since been deleted. With offsite, the offsite
+// repository has copies of those more than a few hours old.
+func seedSnapshots(dir string, offsite bool) error {
 	if err := os.WriteFile(filepath.Join(dir, "restic"), []byte(resticStandIn), 0o755); err != nil {
 		return err
 	}
@@ -262,7 +348,9 @@ func seedSnapshots(dir string) error {
 		Added int64 `json:"data_added_packed"`
 	}
 	type snapshot struct {
-		ID       string    `json:"id"`
+		ID string `json:"id"`
+		// Original is the snapshot a copy was made of.
+		Original string    `json:"original,omitempty"`
 		Time     time.Time `json:"time"`
 		Hostname string    `json:"hostname"`
 		Tags     []string  `json:"tags"`
@@ -322,7 +410,29 @@ func seedSnapshots(dir string) error {
 	if err := write("snapshots.json", list); err != nil {
 		return err
 	}
-	return write("forget.json", []map[string]any{{"reasons": reasons}})
+	if err := write("forget.json", []map[string]any{{"reasons": reasons}}); err != nil {
+		return err
+	}
+	if !offsite {
+		return nil
+	}
+	// A copy has an ID of its own.
+	var copies []snapshot
+	for _, s := range list {
+		if now.Sub(s.Time) > 12*time.Hour {
+			s.Original, s.ID = s.ID, "f"+s.ID[1:]
+			copies = append(copies, s)
+		}
+	}
+	far := filepath.Join(dir, "offsite", "friends")
+	if err := os.MkdirAll(far, 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(copies)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(far, "snapshots.json"), data, 0o600)
 }
 
 // noPods is the way into servers' pods where there are none.
@@ -357,6 +467,8 @@ type upstream struct {
 		URL  string `json:"url"`
 		Has  string `json:"has"`
 		File string `json:"file"`
+		// Status is what it answers with, where that is not 200 OK.
+		Status int `json:"status"`
 	}
 }
 
@@ -387,7 +499,8 @@ func (u *upstream) RoundTrip(r *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{"Content-Type": {"application/json"}}, Body: f, Request: r}, nil
+		status := cmp.Or(route.Status, http.StatusOK)
+		return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Header: http.Header{"Content-Type": {"application/json"}}, Body: f, Request: r}, nil
 	}
 	fmt.Fprintln(os.Stderr, "avsys-uitest: nothing answers", address)
 	return nil, errors.New("offline: " + r.URL.Host)

@@ -518,7 +518,7 @@ test("launch flags: Aikar's on for a new server, as the original has them for a 
   await page.goto(`/o/${slug}/s/flags/settings`);
   await page.getByRole("switch", { name: /Aikar's flags/ }).click();
   await page.getByLabel("Extra JVM flags").fill("-XX:+UseZGC");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/flags`)).spec.jvm).toEqual({ aikarFlags: false, extraFlags: "-XX:+UseZGC" });
 });
 
@@ -586,7 +586,7 @@ test("a server with Aikar's flags in its environment shows them as its launch fl
   await expect(page.getByLabel("Extra JVM flags")).toHaveValue("-XX:+AlwaysPreTouch\n-Dfoo=bar");
   await expect(page.getByLabel("Environment")).toHaveValue("TZ=UTC");
   await page.getByLabel("Extra JVM flags").fill("-XX:+AlwaysPreTouch");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.jvm).toEqual({ aikarFlags: true, extraFlags: "-XX:+AlwaysPreTouch" });
   expect(sent[0].spec.env).toEqual([{ name: "TZ", value: "UTC" }]);
@@ -1062,13 +1062,13 @@ test("what is typed in a server's settings while a save is on its way is kept", 
     await route.fulfill({ response: res });
   });
   await page.getByLabel("Message of the day").fill("First");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/typed`)).spec.properties?.motd).toBe("First");
   await page.getByLabel("Message of the day").fill("Second");
   answer();
   await expect(page.getByText("Settings saved")).toBeVisible();
   await expect(page.getByLabel("Message of the day")).toHaveValue("Second");
-  await expect(page.getByRole("button", { name: /^Save/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
 });
 
 test("a server's whitelist is turned off only once that is confirmed", async ({ page, as, org, api }) => {
@@ -1082,17 +1082,17 @@ test("a server's whitelist is turned off only once that is confirmed", async ({ 
   // TRUE is on, as the game reads it.
   await expect(page.getByLabel("Whitelist", { exact: true })).toHaveValue("true");
   await page.getByLabel("Whitelist", { exact: true }).selectOption("false");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   const asked = page.getByRole("dialog");
   await expect(asked.getByText(/Anyone who finds the server's address can join/)).toBeVisible();
   await asked.getByRole("button", { name: "Cancel" }).click();
   expect((await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("TRUE");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Save without a whitelist" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties["white-list"]).toBe("false");
   // Other changes to a server open already are not asked about.
   await page.getByLabel("Message of the day").fill("Still open");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/walled`)).spec.properties.motd).toBe("Still open");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
@@ -1280,17 +1280,32 @@ test("a copy made with a world of one's own has it put in once its files are", a
   expect((await sent).postDataJSON()).not.toHaveProperty("world");
 });
 
-test("a server brought back keeps its own world, with no choice of another", async ({ page, as }) => {
+test("a server brought back keeps its own world to begin with, and can be given a new one", async ({ page, as }) => {
   await as("owner");
   const list = await (await page.request.get("/api/v1/orgs/friends/snapshots")).json();
   const final = list.snapshots.find((s: { server: string }) => s.server === "oldworld");
   await page.goto(`/o/friends/new?from=snapshot:${final.id}`);
   await expect(page.getByRole("heading", { name: "Bring back oldworld" })).toBeVisible();
-  await expect(page.getByRole("group", { name: "World", exact: true })).toHaveCount(0);
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
+  await expect(worldChoice.getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
+  for (const other of ["New world", "Library world", "Upload world"]) await expect(worldChoice.getByRole("button", { name: other })).toBeVisible();
   // How it was made is how it was made: its terrain is saved.
   await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
   await expect(page.getByLabel("Seed")).toBeDisabled();
   await expect(page.getByRole("switch", { name: "Hardcore" })).toBeDisabled();
+  // A new one is made as asked.
+  await worldChoice.getByRole("button", { name: "New world" }).click();
+  await expect(page.getByLabel("Seed")).toBeEnabled();
+  await page.getByLabel("Seed").fill("42");
+  const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.route("**/api/v1/orgs/friends/servers", (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
+  );
+  await page.getByRole("button", { name: "Create server", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
+  const body = (await sent).postDataJSON();
+  expect(body).toMatchObject({ name: "oldworld", fromSnapshot: final.id, world: "new" });
+  expect(body.spec.properties).toMatchObject({ "level-seed": "42" });
 });
 
 test("a long error in the bar along the bottom does not cover the end of the form", async ({ page, as, org }) => {
@@ -1329,10 +1344,14 @@ test("a server set to an older version than its world was opened in is warned of
   await page.getByLabel("Game version").selectOption("1.21.4");
   await expect(page.getByText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
-  const dialog = page.getByRole("alertdialog", { name: "Go back to 1.21.4?" }).or(page.getByRole("dialog", { name: "Go back to 1.21.4?" }));
+  const dialog = page.getByRole("dialog", { name: "Open a 1.21.5 world in 1.21.4?" });
+  await expect(dialog).toContainText("The world was last opened in 1.21.5. 1.21.4 cannot open the world, so the server will not start.");
   await expect(dialog).toContainText("restore a snapshot from before 1.21.5");
   // Not saved unless asked to.
   await dialog.getByRole("button", { name: "Cancel" }).click();
+  expect((await api("owner").get(`/orgs/${slug}/servers/newer`)).spec.version).toBe("1.21.5");
+  // Nor by the panel, unless the request says it is meant.
+  await expect(api("owner").patch(`/orgs/${slug}/servers/newer`, { spec: { version: "1.21.4" } })).rejects.toThrow(/409.*newer_world/);
   expect((await api("owner").get(`/orgs/${slug}/servers/newer`)).spec.version).toBe("1.21.5");
   await page.getByRole("button", { name: "Save changes" }).click();
   await page.getByRole("button", { name: "Change to 1.21.4 anyway" }).click();

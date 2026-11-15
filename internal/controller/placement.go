@@ -378,6 +378,37 @@ func NodeReady(n *corev1.Node) bool {
 	return false
 }
 
+// NodeDown reports whether a node cannot be reached: it does not report
+// itself ready. A node kept from taking new pods is not down; what runs on
+// it can still be reached.
+func NodeDown(n *corev1.Node) bool {
+	for _, c := range n.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status != corev1.ConditionTrue
+		}
+	}
+	return true
+}
+
+// nodeDownByName is NodeDown for a node named, which a node no longer in
+// the cluster is too.
+func nodeDownByName(ctx context.Context, reader client.Reader, name string) (bool, error) {
+	n := &corev1.Node{}
+	err := reader.Get(ctx, types.NamespacedName{Name: name}, n)
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return NodeDown(n), nil
+}
+
+// NodeDownByName is nodeDownByName for the panel.
+func NodeDownByName(ctx context.Context, reader client.Reader, name string) (bool, error) {
+	return nodeDownByName(ctx, reader, name)
+}
+
 // NodeScore is a node's measured single-core speed, 0 if unmeasured.
 func NodeScore(n *corev1.Node) float64 { return nodeScore(n) }
 

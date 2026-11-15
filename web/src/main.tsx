@@ -24,14 +24,18 @@ const pages = {
   NewServer: () => import("./pages/NewServer"),
   Nodes: () => import("./pages/Nodes"),
   OrgSettings: () => import("./pages/OrgSettings"),
+  Reset: () => import("./pages/Reset"),
   ServerPage: () => import("./pages/server/ServerPage"),
   Servers: () => import("./pages/Servers"),
   Settings: () => import("./pages/server/Settings"),
   Snapshots: () => import("./pages/server/Snapshots"),
   TemplateForm: () => import("./pages/TemplateForm"),
   Templates: () => import("./pages/Templates"),
+  TwoFactorRequired: () => import("./pages/AccountSecurity"),
   Usage: () => import("./pages/server/Usage"),
   Worlds: () => import("./pages/Worlds"),
+  Players: () => import("./pages/Players"),
+  PlayerListPage: () => import("./pages/Players"),
 };
 const page = <K extends keyof typeof pages>(name: K) => lazy(() => pages[name]().then((m) => ({ default: (m as unknown as Record<K, ComponentType>)[name] })));
 
@@ -46,14 +50,18 @@ const Mods = page("Mods");
 const NewServer = page("NewServer");
 const Nodes = page("Nodes");
 const OrgSettings = page("OrgSettings");
+const Reset = page("Reset");
 const ServerPage = page("ServerPage");
 const Servers = page("Servers");
 const Settings = page("Settings");
 const Snapshots = page("Snapshots");
 const TemplateForm = page("TemplateForm");
 const Templates = page("Templates");
+const TwoFactorRequired = page("TwoFactorRequired");
 const Usage = page("Usage");
 const Worlds = page("Worlds");
+const Players = page("Players");
+const PlayerListPage = page("PlayerListPage");
 
 // The editor and terminal pull in large libraries: not until they are opened.
 const Files = lazy(() => import("./pages/server/Files"));
@@ -83,6 +91,8 @@ function RequireAuth() {
   }, [signedIn]);
   if (me.isPending) return <div className="flex h-dvh items-center justify-center"><Spinner /></div>;
   if (!me.data) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
+  // An administrator who has to set up two-factor does that first.
+  if (me.data.mustSetUpTwoFactor && location.pathname !== "/two-factor") return <Navigate to="/two-factor" replace />;
   return <Outlet />;
 }
 
@@ -95,7 +105,9 @@ createRoot(document.getElementById("root")!).render(
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/invite/:token" element={<Invite />} />
+          <Route path="/reset/:token" element={<Reset />} />
           <Route element={<RequireAuth />}>
+            <Route path="two-factor" element={<TwoFactorRequired />} />
             <Route element={<Shell />}>
               <Route index element={<Home />} />
               <Route path="account" element={<Account />} />
@@ -108,6 +120,8 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="templates/new" element={<TemplateForm />} />
                 <Route path="templates/:template/edit" element={<TemplateForm />} />
                 <Route path="worlds" element={<Worlds />} />
+                <Route path="players" element={<Players />} />
+                <Route path="players/:list" element={<PlayerListPage />} />
                 <Route path="members" element={<Members />} />
                 <Route path="settings" element={<OrgSettings />} />
                 <Route path="s/:server" element={<ServerPage />}>

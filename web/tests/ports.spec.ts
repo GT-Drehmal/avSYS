@@ -31,10 +31,10 @@ test("an installed mod that needs a port is said, and opening it is one press an
   await page.getByRole("button", { name: "Add a port" }).click();
   await page.getByLabel("Port name").nth(1).fill("votifier");
   await page.getByLabel("Port number").nth(1).fill("8192");
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.ports).toEqual([
-    { name: "voice-chat", port: 24454, protocol: "UDP" },
+    { name: "voice-chat", port: 24454, protocol: "UDP", for: "simple-voice-chat" },
     { name: "votifier", port: 8192, protocol: "TCP" },
   ]);
 });
@@ -48,7 +48,7 @@ test("an open port says where it is reached, and a port is taken off", async ({ 
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByText("survival.friends.play.example:25601")).toBeVisible();
   await page.getByRole("button", { name: "Remove geyser" }).click();
-  await page.getByRole("button", { name: /^Save/ }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].spec.ports).toEqual([]);
 });
@@ -68,14 +68,14 @@ test("a server not reachable from outside opens no ports", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Add a port" })).toHaveCount(0);
 });
 
-test("with eight ports no preset adds a ninth, and a sleeping server says its ports do not wake it", async ({ page }) => {
+test("with eight ports no preset adds a ninth, and a sleeping server says its ports wake it", async ({ page }) => {
   const eight = Array.from({ length: 8 }, (_, i) => ({ name: `p${i}`, port: 1000 + i, protocol: "TCP" }));
   await survivalWith(page, { ports: eight, mods: [{ source: "modrinth", kind: "plugin", project: "geyser" }], sleep: { enabled: true, idleMinutes: 15 } });
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByRole("button", { name: "Open it" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Add a port" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "BlueMap" })).toHaveCount(0);
-  await expect(page.getByText(/These ports do not work while the server sleeps/)).toBeVisible();
+  await expect(page.getByText("While the server sleeps, these ports still answer: a Bedrock player joining, or a visit to a map, wakes the server.")).toBeVisible();
 });
 
 test("a preset is not offered again under a name a port has, as one moved to another number", async ({ page }) => {
