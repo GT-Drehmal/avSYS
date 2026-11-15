@@ -12,6 +12,9 @@ export interface PackFile {
   path: string;
   name: string;
   server: boolean;
+  /** The Modrinth project it is from, where the panel knows it. */
+  title?: string;
+  iconUrl?: string;
 }
 
 export interface FoundPack {

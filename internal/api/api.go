@@ -139,6 +139,9 @@ type Server struct {
 	serverIcons serverIcons
 	// snapshotIcons holds the icons read out of snapshots, which never change.
 	snapshotIcons snapshotIcons
+	// packReads holds what was read of modpacks: the files each lists, and
+	// its picture.
+	packReads packReads
 	// consoles holds one lock per server, taken to type at its console.
 	consoles sync.Map
 	// bench is the measuring of nodes' speed.
@@ -424,6 +427,8 @@ func (s *Server) Handler() http.Handler {
 	api("POST /orgs/{org}/servers/{server}/{action}", s.authed(s.serverAction))
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
 	api("PUT /orgs/{org}/servers/{server}/modpack", s.authed(s.putModpack))
+	api("GET /orgs/{org}/servers/{server}/modpack/contents", s.authed(s.getModpackContents))
+	api("GET /orgs/{org}/servers/{server}/modpack/icon", s.authed(s.getModpackIcon))
 	api("GET /orgs/{org}/templates", s.authed(s.listTemplates))
 	api("POST /orgs/{org}/templates", s.authed(s.createTemplate))
 	api("GET /orgs/{org}/templates/{template}", s.authed(s.getTemplate))

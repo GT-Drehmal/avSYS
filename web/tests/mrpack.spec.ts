@@ -202,3 +202,95 @@ test("a newer .mrpack is uploaded on the Content page, and one not uploaded yet 
   await expect(page.getByRole("button", { name: "Upload newer" })).toBeVisible();
   expect(sent).toEqual({ name: "probe-2.1.mrpack", size: newer.length });
 });
+
+/** What the panel says an uploaded pack lists: nine mods, one for players only. */
+const packed = [
+  ...["lithium", "ferritecore", "krypton", "c2me", "modernfix", "spark", "chunky", "noisium"].map((n, i) => ({
+    path: `mods/${n}-fabric-1.0.${i}.jar`,
+    server: true,
+    ...(n === "lithium" ? { project: "gvQqBUqZ", title: "Lithium", iconUrl: `data:image/png;base64,${png.toString("base64")}` } : {}),
+  })),
+  { path: "mods/sodium-fabric-0.6.13.jar", server: false, project: "AANobbMI", title: "Sodium" },
+];
+
+/** Answers for the pack's contents and picture, counting what is asked. */
+async function packAnswers(page: Page, slug: string, files: object[] | null, icon: Buffer | null = png) {
+  const asked = { contents: 0, icon: [] as string[] };
+  await page.route(`**/api/v1/orgs/${slug}/servers/pack/modpack/contents`, async (route) => {
+    asked.contents++;
+    return files ? route.fulfill({ json: { files } }) : route.fulfill({ status: 502, json: { code: "upstream", message: "No." } });
+  });
+  await page.route(`**/api/v1/orgs/${slug}/servers/pack/modpack/icon?*`, async (route) => {
+    asked.icon.push(new URL(route.request().url()).search);
+    return icon ? route.fulfill({ body: icon, contentType: "image/png" }) : route.fulfill({ status: 404, json: { code: "not_found", message: "Not found." } });
+  });
+  return asked;
+}
+
+test("the Content page shows an uploaded pack's own picture, and the mods in it once asked", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await packServer(page, api("owner"), slug);
+  const asked = await packAnswers(page, slug, packed);
+  await page.goto(`/o/${slug}/s/pack/content`);
+
+  // The pack's picture, drawn as the small picture it is.
+  const icon = page.locator(`img[src*="/servers/pack/modpack/icon"]`);
+  await expect(icon).toBeVisible();
+  await expect.poll(() => icon.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  expect(await icon.evaluate((img) => getComputedStyle(img).imageRendering)).toBe("pixelated");
+  expect(asked.icon).toEqual([`?v=${sha1(probe)}`]);
+
+  // Closed at first.
+  const toggle = page.getByRole("button", { name: "Mods in this pack (9)" });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  const files = page.getByRole("region", { name: "In the modpack" });
+  await expect(files).toHaveCount(0);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(files.getByText("8 on the server · 1 left out, client only")).toBeVisible();
+  await expect(files.getByRole("listitem")).toHaveCount(9);
+  // A mod from Modrinth by its name and picture, others by their file and
+  // initials; the one for players only last, said to be left out.
+  await expect(files.getByRole("listitem").first()).toHaveText(/Lithium\s*Mod/);
+  await expect(files.getByRole("listitem").first().locator("img")).toBeVisible();
+  await expect(files.getByRole("listitem").nth(1)).toHaveText(/^F\s*ferritecore-fabric-1\.0\.1\s*Mod/);
+  await expect(files.getByRole("listitem").last()).toHaveText(/Sodium\s*Client only, left out/);
+
+  // Searched, by name or by file.
+  const search = files.getByRole("searchbox", { name: "Search the modpack" });
+  await search.fill("sodium");
+  await expect(files.getByRole("listitem")).toHaveText([/Sodium\s*Client only, left out/]);
+  await search.fill("krypton");
+  await expect(files.getByRole("listitem")).toHaveText([/krypton-fabric-1\.0\.2\s*Mod/]);
+  await search.fill("nothing like it");
+  await expect(files.getByText("Nothing matches.")).toBeVisible();
+  await toggle.click();
+  await expect(files).toHaveCount(0);
+});
+
+test("a pack with no picture shows the plain mark, and one whose list cannot be read shows no list", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await packServer(page, api("owner"), slug);
+  const asked = await packAnswers(page, slug, null, null);
+  await page.goto(`/o/${slug}/s/pack/content`);
+  await expect(page.getByText("2.0.1 · Fabric 1.21.4 · probe.mrpack")).toBeVisible();
+  await expect.poll(() => asked.contents).toBeGreaterThan(0);
+  await expect.poll(() => asked.icon.length).toBe(1);
+  await expect(page.locator('[data-mark="modpack"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: /in this pack/i })).toHaveCount(0);
+  await expect(page.getByText("No.", { exact: true })).toHaveCount(0);
+});
+
+test("a pack not uploaded yet is asked for neither its picture nor its list", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await packServer(page, api("owner"), slug, "");
+  const asked = await packAnswers(page, slug, packed);
+  await page.goto(`/o/${slug}/s/pack/content`);
+  await expect(page.getByText("The .mrpack file was not uploaded.")).toBeVisible();
+  await expect(page.locator('[data-mark="modpack"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: /in this pack/i })).toHaveCount(0);
+  expect(asked).toEqual({ contents: 0, icon: [] });
+});

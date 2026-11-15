@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { modPortsNote } from "../../components/ExtraPorts";
-import { ProjectIcon } from "../../components/ModrinthSearch";
+import { PackContents, PackIcon } from "../../components/Modpack";
 import { Button, Field, Input, Notice, Toggle } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
 import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ResourcePack, type Server } from "../../lib/api";
@@ -12,7 +12,7 @@ import { inspectPack } from "../../lib/mrpack";
 import { applyServer, keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
-import { PackStack, SectionHead, VersionDialog } from "../../components/ContentParts";
+import { EmptySection, PackStack, SectionHead, VersionDialog } from "../../components/ContentParts";
 import { useServerContext } from "./ServerPage";
 
 export function Mods() {
@@ -89,7 +89,7 @@ export function Mods() {
       {modpack && (
         <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface px-4 py-3">
           <div className="flex items-center gap-3">
-            <ProjectIcon url={modpack.iconUrl} size={40} kind="modpack" name={modpack.title || modpack.project} />
+            <PackIcon modpack={modpack} server={server} size={40} />
             <div className="min-w-0 flex-1">
               <p className="label-mono">Modpack</p>
               <p className="truncate text-[13px] font-medium">{modpack.title || modpack.project}</p>
@@ -126,6 +126,7 @@ export function Mods() {
           </div>
           {sending && <UploadProgress sending={sending} onCancel={cancel} />}
           {modpack.source === "upload" && modpack.version && <p className="text-xs text-muted">Each start puts the pack's own files back, configs too.</p>}
+          <PackContents server={server} />
         </div>
       )}
 
@@ -139,11 +140,22 @@ export function Mods() {
         // Where each is in the server's whole list, which is what is saved.
         const at = mods.flatMap((m, i) => ((m.kind ?? "mod") === kind ? [i] : []));
         const name = kindNames[kind].toLowerCase();
+        const onAdd = canEdit && takes.includes(kind) ? () => setAdding(kind) : undefined;
+        // On a modpack, mods here are those added to the pack's own, and an
+        // empty section is one quiet line.
+        const extra = !!modpack && kind === "mod";
+        if (modpack && at.length === 0) {
+          return (
+            <section key={kind} aria-label={kindNames[kind]}>
+              <EmptySection text={extra ? "No mods added on top of the pack." : `No ${name}.`} addLabel={`Add ${name}`} onAdd={onAdd} />
+            </section>
+          );
+        }
         return (
           <section key={kind} aria-label={kindNames[kind]} className="flex flex-col gap-2.5">
-            <SectionHead title={kindNames[kind]} count={at.length} onAdd={canEdit && takes.includes(kind) ? () => setAdding(kind) : undefined} />
+            <SectionHead title={extra ? "Mods added on top of the pack" : kindNames[kind]} count={at.length} addLabel={`Add ${name}`} onAdd={onAdd} />
             {at.length === 0 ? (
-              <p className="text-[13px] text-muted">{modpack && kind === "mod" ? "None on top of the modpack." : `No ${name}.`}</p>
+              <p className="text-[13px] text-muted">{`No ${name}.`}</p>
             ) : (
               <ContentList
                 mods={at.map((i) => mods[i])}
@@ -164,7 +176,7 @@ export function Mods() {
         );
       })}
 
-      <PackSection server={server} gameVersion={server.spec.modpack ? server.spec.modpack.gameVersion : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")}
+      <PackSection quiet={!!modpack} server={server} gameVersion={server.spec.modpack ? server.spec.modpack.gameVersion : server.spec.version === "LATEST" ? latest : server.spec.version} looking={looking} canEdit={canEdit} update={update} onChoose={() => setAdding("resourcepack")}
         onReplace={() => {
           setReplacing(true);
           setAdding("resourcepack");
@@ -265,6 +277,7 @@ export function Mods() {
  * are joined into one, in an order, as in the game's own list of packs.
  */
 function PackSection({
+  quiet,
   server,
   gameVersion,
   looking,
@@ -273,7 +286,7 @@ function PackSection({
   onChoose,
   onReplace,
   onVersion,
-}: { server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void }) {
+}: { quiet: boolean; server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
   // An uploaded one takes its file with it, which only this does.
@@ -286,6 +299,13 @@ function PackSection({
   // One change to it at a time: a prompt saved as its field is left is
   // done before the pack is replaced or removed, so neither undoes the other.
   const busy = update.isPending || remove.isPending || order.isPending || looking;
+  if (quiet && !pack) {
+    return (
+      <section aria-label="Resource packs">
+        <EmptySection text="No resource packs." addLabel="Add resource pack" onAdd={canEdit ? onChoose : undefined} addDisabled={busy} />
+      </section>
+    );
+  }
   return (
     <section aria-label="Resource packs" className="flex flex-col gap-2.5">
       {/* Not while the pack is being changed: a version still being looked up would land over it. */}

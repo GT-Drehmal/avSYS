@@ -31,12 +31,28 @@ function sideOf(hit: ModrinthHit) {
   return hit.client_side === "required" && hit.server_side === "required" ? "client and server" : null;
 }
 
-export function ProjectIcon({ url, size = 36, kind, name = "" }: { url?: string | null; size?: number; kind?: string; name?: string }) {
+export function ProjectIcon({
+  url,
+  size = 36,
+  kind,
+  name = "",
+  pixelated,
+  initials,
+}: { url?: string | null; size?: number; kind?: string; name?: string; pixelated?: boolean; initials?: boolean }) {
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [url]);
   const style = { width: size, height: size };
   if (url && !broken) {
-    return <img src={url} alt="" loading="lazy" onError={() => setBroken(true)} className="shrink-0 rounded-md bg-raised object-cover" style={style} />;
+    return (
+      <img
+        src={url}
+        alt=""
+        loading="lazy"
+        onError={() => setBroken(true)}
+        className="shrink-0 rounded-md bg-raised object-cover"
+        style={{ ...style, imageRendering: pixelated ? "pixelated" : undefined }}
+      />
+    );
   }
   const Mark = kindMarks[kind ?? ""] ?? Box;
   const hue = hueOf(name || kind || "");
@@ -46,9 +62,24 @@ export function ProjectIcon({ url, size = 36, kind, name = "" }: { url?: string 
       className="grid shrink-0 place-items-center rounded-md"
       style={{ ...style, background: `hsl(${hue} 30% 16%)`, color: `hsl(${hue} 55% 68%)` }}
     >
-      <Mark style={{ width: size / 2, height: size / 2 }} strokeWidth={1.75} />
+      {initials && name ? (
+        <span aria-hidden className="font-medium leading-none" style={{ fontSize: Math.round(size * 0.4) }}>
+          {initialsOf(name)}
+        </span>
+      ) : (
+        <Mark style={{ width: size / 2, height: size / 2 }} strokeWidth={1.75} />
+      )}
     </span>
   );
+}
+
+/** Words in a file's name that say what it runs on, not what it is. */
+const loaderWords = new Set(["fabric", "quilt", "forge", "neoforge", "mc"]);
+
+/** "create-ponder-1.2" as "CP": the first letters of its first two words, loaders left out. */
+function initialsOf(name: string) {
+  const words = name.split(/[^\p{L}\p{N}]+/u).filter((w) => /^\p{L}/u.test(w) && !loaderWords.has(w.toLowerCase()));
+  return ((words[0]?.[0] ?? name[0] ?? "") + (words[1]?.[0] ?? "")).toUpperCase();
 }
 
 type Kind = "mod" | "plugin" | "datapack" | "modpack" | "resourcepack";
