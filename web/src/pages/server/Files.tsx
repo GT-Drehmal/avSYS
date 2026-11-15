@@ -273,6 +273,9 @@ const svg = /\.svg$/i;
 
 const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name) && !image.test(entry.name);
 
+// What opens here at all, as text or as a picture. Anything else is shown dimmed.
+const opensHere = (entry: FileEntry) => isEditable(entry) || (!entry.dir && image.test(entry.name));
+
 type Found = FileEntry & { path: string };
 
 /** What a search found: a file's name, and the folder it is in. */
@@ -964,9 +967,13 @@ export default function Files() {
                     {entry.dir ? (
                       isOpen ? <FolderOpen className="size-4 shrink-0 text-accent" /> : <Folder className="size-4 shrink-0 text-accent" />
                     ) : (
-                      <File className={cx("size-4 shrink-0", isEditable(entry) ? "text-muted" : "text-faint")} />
+                      image.test(entry.name) ? (
+                        <ImageIcon className="size-4 shrink-0 text-muted" />
+                      ) : (
+                        <File className={cx("size-4 shrink-0", opensHere(entry) ? "text-muted" : "text-faint")} />
+                      )
                     )}
-                    <span className={cx("min-w-0 flex-1 truncate pr-2 font-mono text-[13px]", !entry.dir && !isEditable(entry) && "text-muted")}>{entry.name}</span>
+                    <span className={cx("min-w-0 flex-1 truncate pr-2 font-mono text-[13px]", !entry.dir && !opensHere(entry) && "text-muted")}>{entry.name}</span>
                     {extract.isPending && extract.variables === path && (
                       <span role="status" aria-label={`Extracting ${entry.name}`}>
                         <Spinner className="size-3.5" />
