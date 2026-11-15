@@ -201,3 +201,78 @@ test("with no saved lists, the form says where to make one", async ({ page, as, 
   await page.getByText("No saved lists yet.").first().getByRole("link", { name: "Make one under Players" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/players$`));
 });
+
+// Bedrock players are added by Xbox gamertag, looked up with GeyserMC
+// (tests/upstream: Tim203 and Redned235 are known to it, nobody else).
+
+test("Bedrock players are added by gamertag and shown as Bedrock", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/players`);
+  await page.getByRole("button", { name: "New list" }).click();
+  const dialog = page.getByRole("dialog", { name: "New list" });
+  await dialog.getByLabel("Name").fill("Event");
+  await dialog.getByRole("group", { name: "Edition" }).getByRole("button", { name: "Bedrock" }).click();
+  await expect(dialog.getByText("Xbox gamertags, one per line or separated by commas.")).toBeVisible();
+  // A gamertag can have a space: only lines and commas part them.
+  await dialog.getByLabel("Players").fill("tim203\nNobody Here");
+  await dialog.getByRole("button", { name: "Make list" }).click();
+
+  await expect(page.getByRole("heading", { name: "Event" })).toBeVisible();
+  await players(page).toEqual(["Tim203"]);
+  await expect(page.getByRole("listitem", { name: "Tim203" }).getByText("Bedrock", { exact: true })).toBeVisible();
+  await expect(page.getByText("No Bedrock player found: Nobody Here.")).toBeVisible();
+
+  // Java and Bedrock players on one list, each as they are.
+  const edition = page.getByRole("group", { name: "Edition" });
+  await expect(edition.getByRole("button", { name: "Java" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByLabel("Add players").fill("alex");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await players(page).toEqual(["Alex", "Tim203"]);
+  await expect(page.getByRole("listitem", { name: "Alex" }).getByText("Bedrock", { exact: true })).toHaveCount(0);
+  await edition.getByRole("button", { name: "Bedrock" }).click();
+  await page.getByLabel("Add players").fill("Redned235, Nobody Else");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await players(page).toEqual(["Alex", "Redned235", "Tim203"]);
+  await expect(page.getByLabel("Add players")).toHaveValue("Nobody Else");
+  await expect(page.getByText("No Bedrock player found: Nobody Else.")).toBeVisible();
+
+  const [list] = await api("owner").get<List[]>(`/orgs/${slug}/player-lists`);
+  expect(list.players).toEqual([
+    { name: "Alex", uuid: expect.any(String), kind: "java" },
+    { name: "Redned235", uuid: "0000000000000000000901f08ec7c850", kind: "bedrock", xuid: "2535407489632336" },
+    { name: "Tim203", uuid: "0000000000000000000901f64f65c7c3", kind: "bedrock", xuid: "2535432196048835" },
+  ]);
+});
+
+test("a server without Geyser and Floodgate says its Bedrock players can't join", async ({ page, as, org, api }) => {
+  const slug = await org(["one"]);
+  const owner = api("owner");
+  await owner.post<List>(`/orgs/${slug}/player-lists`, { name: "Club", names: ["Alex"] });
+  await owner.post<List>(`/orgs/${slug}/player-lists`, { name: "Event", bedrock: ["Tim203"] });
+  await as("owner");
+  await page.goto(`/o/${slug}/s/one/settings`);
+  const warning = page.getByText("Bedrock players can't join this server until Geyser and Floodgate are added.");
+  const whitelist = page.getByRole("list", { name: "Saved lists for whitelist" });
+  await whitelist.getByRole("checkbox", { name: "Club on the whitelist" }).check();
+  await expect(whitelist.getByRole("checkbox", { name: "Club on the whitelist" })).toBeChecked();
+  await expect(warning).toHaveCount(0);
+  await whitelist.getByRole("checkbox", { name: "Event on the whitelist" }).check();
+  await expect(warning).toBeVisible();
+  await expect(page.getByRole("link", { name: "Go to Content" })).toHaveAttribute("href", `/o/${slug}/s/one/content`);
+
+  // With Geyser and Floodgate on it, nothing is said.
+  await page.route(`**/api/v1/orgs/${slug}/servers`, async (route) => {
+    const servers = (await (await route.fetch()).json()) as { name: string; spec: object }[];
+    const mods = [
+      { source: "modrinth", kind: "plugin", project: "geyser", title: "Geyser" },
+      { source: "url", kind: "plugin", project: "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot", title: "spigot" },
+    ];
+    return route.fulfill({ json: servers.map((s) => (s.name === "one" ? { ...s, spec: { ...s.spec, mods } } : s)) });
+  });
+  await page.reload();
+  const ops = page.getByRole("list", { name: "Saved lists for operators" });
+  await ops.getByRole("checkbox", { name: "Event on the operators" }).check();
+  await expect(ops.getByRole("checkbox", { name: "Event on the operators" })).toBeChecked();
+  await expect(warning).toHaveCount(0);
+});

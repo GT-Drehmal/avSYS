@@ -18,7 +18,7 @@ import { NodeMove } from "../../components/NodeMove";
 import { LoaderBuildField } from "../../components/LoaderBuild";
 import { ReplaceWorld } from "../../components/ReplaceWorld";
 import { AddedInGame } from "../../components/AddedInGame";
-import { SaveAsList, SavedListsField } from "../../components/PlayerLists";
+import { BedrockNeedsMods, SaveAsList, SavedListsField } from "../../components/PlayerLists";
 import { NewerWorldConfirm } from "../../components/NewerWorld";
 import { newerThan, newerWorldWarning } from "../../lib/worlds";
 import { useServerContext } from "./ServerPage";
@@ -376,6 +376,7 @@ export function Settings() {
           value={draft.whitelistLists}
           onChange={(ids) => set("whitelistLists", ids)}
         />
+        <BedrockNeedsMods org={server.org} server={server.name} mods={server.spec.mods ?? []} ids={[...draft.whitelistLists, ...draft.opLists]} />
         <div className="grid grid-cols-2 gap-4">
           {(["whitelist", "ops"] as const).map((list) => (
             <div key={list} className="flex flex-col gap-3">

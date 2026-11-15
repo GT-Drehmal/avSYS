@@ -8,7 +8,7 @@ test.beforeEach(async ({ as }) => {
   await as("owner");
 });
 
-type Lists = Record<"whitelist" | "ops", { known: boolean; inGame: { name: string }[] }>;
+type Lists = Record<"whitelist" | "ops", { known: boolean; inGame: { name: string; uuid?: string; bedrock?: boolean }[] }>;
 
 /** Answers survival's lists from lists, taking off whom the page asks to, and keeps what is saved. */
 async function survivalLists(page: Page, lists: Lists, refuse?: string) {
@@ -87,4 +87,22 @@ test("lists that cannot be read show nothing more", async ({ page }) => {
   expect(lists.ops.known).toBe(false);
   await expect(page.getByLabel("Whitelisted players")).toBeVisible();
   await expect(page.getByText("Added in game")).toHaveCount(0);
+});
+
+test("a Bedrock player added in game is shown by gamertag, marked Bedrock, and taken off by the name the game has", async ({ page }) => {
+  const { removed, saved } = await survivalLists(page, {
+    whitelist: { known: true, inGame: [{ name: ".Tim203", uuid: "00000000-0000-0000-0009-01f64f65c7c3", bedrock: true }, { name: "Steve" }] },
+    ops: { known: true, inGame: [] },
+  });
+  await page.goto("/o/friends/s/survival/settings");
+  const whitelist = page.getByRole("list", { name: "Added in game to the whitelist" });
+  await expect(whitelist.getByRole("listitem")).toHaveText([/^Tim203Bedrock/, /^Steve/]);
+  // Kept by the name the game has for him.
+  await page.getByRole("button", { name: "Keep Tim203 on the whitelist" }).click();
+  await expect(page.getByLabel("Whitelisted players")).toHaveValue(".Tim203");
+  await page.getByRole("button", { name: "Discard" }).click();
+  await page.getByRole("button", { name: "Remove Tim203 from the whitelist" }).click();
+  await expect(whitelist.getByRole("listitem")).toHaveText([/Steve/]);
+  expect(removed).toEqual(["whitelist/.Tim203"]);
+  expect(saved).toEqual([]);
 });

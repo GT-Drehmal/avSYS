@@ -164,6 +164,8 @@ CREATE TABLE IF NOT EXISTS player_list_entries (
 	list_id  TEXT NOT NULL REFERENCES player_lists(id) ON DELETE CASCADE,
 	uuid     TEXT NOT NULL,
 	name     TEXT NOT NULL,
+	kind     TEXT NOT NULL DEFAULT 'java',
+	xuid     TEXT NOT NULL DEFAULT '',
 	added_at INTEGER NOT NULL,
 	PRIMARY KEY (list_id, uuid)
 );
@@ -233,6 +235,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
+	if err := addListPlayerKinds(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -250,6 +256,28 @@ func addVerifiedAt(db *sql.DB) error {
 	}
 	_, err := db.Exec(`UPDATE minecraft_links SET verified_at = linked_at`)
 	return err
+}
+
+// addListPlayerKinds gives a table of players on saved lists from before a
+// list could have Bedrock players the columns for their kind and XUID, with
+// every player in it one of Java.
+// Each column is looked for on its own, so that one added before a stop
+// part of the way is not taken for both.
+func addListPlayerKinds(db *sql.DB) error {
+	for _, column := range []string{"kind TEXT NOT NULL DEFAULT 'java'", "xuid TEXT NOT NULL DEFAULT ''"} {
+		name, _, _ := strings.Cut(column, " ")
+		var n int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('player_list_entries') WHERE name = ?`, name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE player_list_entries ADD COLUMN ` + column); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // addTemplateWorld gives a table of templates from before a template could

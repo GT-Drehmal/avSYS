@@ -31,6 +31,16 @@ import (
 type listedPlayer struct {
 	Name string `json:"name"`
 	UUID string `json:"uuid,omitempty"`
+	// Bedrock is whether they play Bedrock Edition, through Floodgate.
+	Bedrock bool `json:"bedrock,omitempty"`
+}
+
+// markBedrock says which players on a list are of Bedrock.
+func markBedrock(players []listedPlayer) []listedPlayer {
+	for i := range players {
+		players[i].Bedrock = bedrockListed(players[i])
+	}
+	return players
 }
 
 func playerNames(players []listedPlayer) []string {
@@ -56,18 +66,25 @@ func (s *Server) readList(ctx context.Context, mc *avsysv1.MinecraftServer, list
 				players = append(players, listedPlayer{Name: name})
 			}
 			// The file has who each is: kept beside the names, where it can be read.
+			// Two entries can have one name, as two Bedrock players can: each
+			// entry goes to one name.
 			if inFile, err := s.readListFile(ctx, mc, list); err == nil {
+				used := make([]bool, len(inFile))
 				for i := range players {
-					if k := slices.IndexFunc(inFile, func(p listedPlayer) bool { return strings.EqualFold(p.Name, players[i].Name) }); k >= 0 {
-						players[i].UUID = inFile[k].UUID
+					for k := range inFile {
+						if !used[k] && strings.EqualFold(inFile[k].Name, players[i].Name) {
+							players[i].UUID, used[k] = inFile[k].UUID, true
+							break
+						}
 					}
 				}
 			}
-			return players, nil
+			return markBedrock(players), nil
 		}
 		// Said in words not known here: its file says the same.
 	}
-	return s.readListFile(ctx, mc, list)
+	players, err := s.readListFile(ctx, mc, list)
+	return markBedrock(players), err
 }
 
 // listCommand runs a command for a running server's lists on its game,
@@ -173,11 +190,12 @@ var errNoSuchPlayer = errors.New("no such player")
 
 // addedInGame is who is on a list other than by the panel: neither put
 // there for being a member nor named in the server's settings, nor noted as
-// put there by the panel.
-func addedInGame(on []listedPlayer, made, wanted, kept []string) []listedPlayer {
+// put there by the panel. A player of a saved list the server uses is the
+// panel's by UUID too (savedUUIDs), whatever name the game has for them.
+func addedInGame(on []listedPlayer, made, wanted, kept, savedUUIDs []string) []listedPlayer {
 	out := []listedPlayer{}
 	for _, p := range on {
-		if hasName(made, p.Name) || hasName(wanted, p.Name) || hasName(kept, p.Name) || keptByUUID(kept, p.UUID) {
+		if hasName(made, p.Name) || hasName(wanted, p.Name) || hasName(kept, p.Name) || keptByUUID(kept, p.UUID) || keptByUUID(savedUUIDs, p.UUID) {
 			continue
 		}
 		out = append(out, p)
@@ -226,24 +244,44 @@ type listState struct {
 	// members are those wanted for being members, as against those wanted
 	// for being on a saved list the server uses.
 	members []string
+	// savedUUIDs are the players of the saved lists it uses, by UUID.
+	savedUUIDs []string
+	fg         floodgate
 }
 
-func (s *Server) listState(ctx context.Context, mc *avsysv1.MinecraftServer, list roleList, members []store.Member, saved map[string]*store.PlayerList) listState {
+func (s *Server) listState(ctx context.Context, mc *avsysv1.MinecraftServer, list roleList, members []store.Member, saved map[string]*store.PlayerList, fg floodgate) listState {
 	on, err := s.readList(ctx, mc, list)
-	return listState{
+	st := listState{
 		on: on, err: err,
 		made:    splitNames(mc.Annotations[list.note]),
-		wanted:  wantedOn(list, &mc.Spec, members, saved),
+		wanted:  wantedOn(list, &mc.Spec, members, saved, fg),
 		members: wantedFrom(list.from(&mc.Spec), list.picks(&mc.Spec), members),
 		kept:    list.kept(&mc.Spec),
+		fg:      fg,
 	}
+	for _, p := range savedPlayers(list.saved(&mc.Spec), saved) {
+		st.savedUUIDs = append(st.savedUUIDs, p.UUID)
+	}
+	return st
 }
 
 // savedListWith is the first of the saved lists named that has a player on
-// it, or nil.
-func savedListWith(ids []string, saved map[string]*store.PlayerList, name string) *store.PlayerList {
+// it, by their name in game, or nil.
+func savedListWith(ids []string, saved map[string]*store.PlayerList, name string, fg floodgate) *store.PlayerList {
 	for _, id := range ids {
-		if l := saved[id]; l != nil && slices.ContainsFunc(l.Players, func(p store.ListPlayer) bool { return strings.EqualFold(p.Name, name) }) {
+		if l := saved[id]; l != nil && slices.ContainsFunc(l.Players, func(p store.ListPlayer) bool { return strings.EqualFold(fg.inGame(p), name) }) {
+			return l
+		}
+	}
+	return nil
+}
+
+// savedListWithUUID is the first of the saved lists named that has a player
+// of a UUID on it, or nil.
+func savedListWithUUID(ids []string, saved map[string]*store.PlayerList, uuid string) *store.PlayerList {
+	bare := bareUUID(uuid)
+	for _, id := range ids {
+		if l := saved[id]; l != nil && bare != "" && slices.ContainsFunc(l.Players, func(p store.ListPlayer) bool { return bareUUID(p.UUID) == bare }) {
 			return l
 		}
 	}
@@ -266,11 +304,12 @@ func (s *Server) getGameLists(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	out := map[string]gameListView{}
+	fg := s.floodgateOf(r.Context(), mc)
 	for _, list := range roleLists {
-		st := s.listState(r.Context(), mc, list, members, saved)
+		st := s.listState(r.Context(), mc, list, members, saved, fg)
 		view := gameListView{Known: st.err == nil, InGame: []listedPlayer{}}
 		if st.err == nil {
-			view.InGame = addedInGame(st.on, st.made, st.wanted, st.kept)
+			view.InGame = addedInGame(st.on, st.made, st.wanted, st.kept, st.savedUUIDs)
 		}
 		out[list.key] = view
 	}
@@ -310,7 +349,8 @@ func (s *Server) removeFromGameList(w http.ResponseWriter, r *http.Request, u *s
 	if err != nil {
 		return err
 	}
-	st := s.listState(ctx, mc, list, members, saved)
+	fg := s.floodgateOf(ctx, mc)
+	st := s.listState(ctx, mc, list, members, saved, fg)
 	if st.err != nil {
 		s.Log.Warn("could not read a server's list", "server", key.String(), "list", list.what, "error", st.err)
 		return &Error{Status: http.StatusBadGateway, Code: "unreachable", Message: "The server's players could not be read right now. Try again in a moment."}
@@ -321,20 +361,37 @@ func (s *Server) removeFromGameList(w http.ResponseWriter, r *http.Request, u *s
 		return &Error{Status: http.StatusNotFound, Code: "not_found", Message: fmt.Sprintf("%s is not on the %s.", name, list.what)}
 	case hasName(st.members, name):
 		return &Error{Status: http.StatusConflict, Code: "member", Message: fmt.Sprintf("%s is a member's player. Untick them under Members instead.", name)}
-	case savedListWith(list.saved(&mc.Spec), saved, name) != nil:
-		l := savedListWith(list.saved(&mc.Spec), saved, name)
+	case savedListWith(list.saved(&mc.Spec), saved, name, fg) != nil || keptByUUID(st.savedUUIDs, st.on[i].UUID):
+		l := savedListWith(list.saved(&mc.Spec), saved, name, fg)
+		if l == nil {
+			l = savedListWithUUID(list.saved(&mc.Spec), saved, st.on[i].UUID)
+		}
 		return &Error{Status: http.StatusConflict, Code: "saved_list", Message: fmt.Sprintf("%s is on the list %s. Take them off that list, or stop using it here.", name, l.Name)}
 	case hasName(st.kept, name) || keptByUUID(st.kept, st.on[i].UUID):
 		return &Error{Status: http.StatusConflict, Code: "listed", Message: fmt.Sprintf("%s is listed in the settings. Take them out there instead.", name)}
 	}
 	name = st.on[i].Name
+	bedrock := st.on[i].Bedrock
 	switch mc.Status.Phase {
 	case avsysv1.PhaseRunning:
+		if bedrock && list.key == "whitelist" {
+			// The game cannot look up a Bedrock player's name: the file it
+			// keeps is changed, and read again.
+			if err := s.changeBedrockWhitelist(ctx, mc, nil, []listedPlayer{{Name: name}}); err != nil {
+				s.Log.Warn("could not take a Bedrock player off a whitelist", "server", key.String(), "player", name, "error", err)
+				return &Error{Status: http.StatusBadGateway, Code: "unreachable", Message: "The server did not answer. Try again in a moment."}
+			}
+			break
+		}
 		out, err := s.listCommand(ctx, mc, list.remove+name)
 		if err != nil {
 			return &Error{Status: http.StatusBadGateway, Code: "unreachable", Message: "The server did not answer. Try again in a moment."}
 		}
 		if noSuchPlayer.MatchString(plain(out)) {
+			if bedrock {
+				// It knows them only once they have joined.
+				return &Error{Status: http.StatusConflict, Code: "no_such_player", Message: fmt.Sprintf("The game can't find %s until they join. Take them off while the server is stopped.", name)}
+			}
 			return &Error{Status: http.StatusConflict, Code: "no_such_player", Message: fmt.Sprintf("The game could not find %s.", name)}
 		}
 	case avsysv1.PhaseStopped, avsysv1.PhaseSleeping:

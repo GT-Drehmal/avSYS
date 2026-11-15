@@ -162,7 +162,7 @@ func TestAddedInGame(t *testing.T) {
 		{Name: "steve"}, {Name: "Ada"}, {Name: "Otto"}, {Name: "Vera"},
 		{Name: "Notch", UUID: "069a79f4-44e9-4726-a5be-fca90e38aaf5"}, {Name: "Alex"},
 	}
-	got := addedInGame(on, []string{"ada"}, []string{"Otto"}, []string{"VERA", "069a79f444e94726a5befca90e38aaf5"})
+	got := addedInGame(on, []string{"ada"}, []string{"Otto"}, []string{"VERA", "069a79f444e94726a5befca90e38aaf5"}, nil)
 	if names := strings.Join(playerNames(got), " "); names != "Alex steve" {
 		t.Errorf("added in game: %s, want Alex steve", names)
 	}
@@ -198,7 +198,9 @@ func TestListChangesAgainstTheGame(t *testing.T) {
 
 // listGame is a running server's game, as far as its lists go: it answers
 // the commands for them as the game does (testdata/lists/vanilla-26.3.txt),
-// and keeps its operators in ops.json, as the game does.
+// and keeps its operators in ops.json, as the game does. A command that
+// changes the whitelist writes whitelist.json, and "whitelist reload" reads
+// it again (testdata/bedrock/paper-26.3-floodgate.txt).
 type listGame struct {
 	t         *testing.T
 	sc        *sftp.Client
@@ -207,6 +209,12 @@ type listGame struct {
 	ran       []string
 	// unknown are names the game knows no player of.
 	unknown []string
+	// joined are the Bedrock players who have joined, by their names in
+	// game: the game knows no other Bedrock player by name.
+	joined []string
+	// uuids are players' UUIDs, by lowercase name in game; others have one
+	// made up, of Java.
+	uuids map[string]string
 	// console is the way to it the panel dials.
 	console *rconGame
 }
@@ -221,8 +229,16 @@ func (g *listGame) answer(command string) string {
 		return fmt.Sprintf("There are %d whitelisted player(s): %s", len(g.whitelist), strings.Join(g.whitelist, ", "))
 	}
 	g.ran = append(g.ran, command)
+	if command == "whitelist reload" {
+		players, err := listFile(g.sc, dataRoot+"/whitelist.json")
+		if err != nil {
+			g.t.Error(err)
+		}
+		g.whitelist = playerNames(players)
+		return "Reloaded the whitelist"
+	}
 	verb, name := splitCommand(command)
-	if slices.Contains(g.unknown, name) {
+	if slices.Contains(g.unknown, name) || (bedrockListed(listedPlayer{Name: name}) && !hasName(g.joined, name)) {
 		return "That player does not exist"
 	}
 	switch verb {
@@ -230,9 +246,11 @@ func (g *listGame) answer(command string) string {
 		if !hasName(g.whitelist, name) {
 			g.whitelist = append(g.whitelist, name)
 		}
+		g.saveWhitelist()
 		return "Added " + name + " to the whitelist"
 	case "whitelist remove":
 		g.whitelist = slices.DeleteFunc(g.whitelist, func(n string) bool { return strings.EqualFold(n, name) })
+		g.saveWhitelist()
 		return "Removed " + name + " from the whitelist"
 	case "op":
 		g.setOps(append(g.ops(), name))
@@ -242,6 +260,25 @@ func (g *listGame) answer(command string) string {
 		return "Made " + name + " no longer a server operator"
 	}
 	return "Unknown or incomplete command, see below for error"
+}
+
+// uuidOf is the UUID the game has for a player.
+func (g *listGame) uuidOf(name string) string {
+	if uuid, ok := g.uuids[strings.ToLower(name)]; ok {
+		return uuid
+	}
+	return fmt.Sprintf("11111111-0000-4000-8000-%012x", len(name)*7919+int(name[0]))
+}
+
+// saveWhitelist writes whitelist.json as the game does after a change.
+func (g *listGame) saveWhitelist() {
+	entries := []map[string]any{}
+	for _, n := range g.whitelist {
+		entries = append(entries, map[string]any{"uuid": g.uuidOf(n), "name": n})
+	}
+	if err := writeListFile(g.sc, dataRoot+"/whitelist.json", entries); err != nil {
+		g.t.Error(err)
+	}
 }
 
 func (g *listGame) ops() []string {
@@ -255,7 +292,11 @@ func (g *listGame) ops() []string {
 func (g *listGame) setOps(names []string) {
 	entries := []map[string]any{}
 	for _, n := range names {
-		entries = append(entries, map[string]any{"uuid": "00000000-0000-0000-0000-000000000000", "name": n, "level": 4, "bypassesPlayerLimit": false})
+		uuid := "00000000-0000-0000-0000-000000000000"
+		if u, ok := g.uuids[strings.ToLower(n)]; ok {
+			uuid = u
+		}
+		entries = append(entries, map[string]any{"uuid": uuid, "name": n, "level": 4, "bypassesPlayerLimit": false})
 	}
 	if err := writeListFile(g.sc, dataRoot+"/ops.json", entries); err != nil {
 		g.t.Error(err)

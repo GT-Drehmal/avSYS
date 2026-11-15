@@ -2,10 +2,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MoreHorizontal, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
-import { Heads, Missing, PlayerHead, playerCount, typedNames } from "../components/PlayerLists";
+import { BedrockMark, type Edition, Heads, Missing, namesOf, PlayerHead, PlayerNamesField, playerCount } from "../components/PlayerLists";
 import { ListBar } from "../components/ListBar";
 import { useOrg } from "../components/Shell";
-import { Button, Confirm, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox, Textarea } from "../components/ui";
+import { Button, Confirm, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox } from "../components/ui";
 import { api, ApiError, atLeast, type PlayerList, type PlayerListChange } from "../lib/api";
 import { byCount, byText, byTime, type ListOptions, useList } from "../lib/list";
 import { keys, usePlayerLists } from "../lib/queries";
@@ -98,15 +98,16 @@ function NewList({ org, onClose }: { org: string; onClose: () => void }) {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [names, setNames] = useState("");
+  const [edition, setEdition] = useState<Edition>("java");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const make = async () => {
     setBusy(true);
     setError(null);
     try {
-      const made = await api.post<PlayerListChange>(`/orgs/${org}/player-lists`, { name, names: typedNames(names) });
+      const made = await api.post<PlayerListChange>(`/orgs/${org}/player-lists`, { name, ...namesOf(edition, names) });
       await qc.invalidateQueries({ queryKey: keys.playerLists(org) });
-      navigate(made.id, { state: { missing: made.missing } });
+      navigate(made.id, { state: { missing: made.missing, missingBedrock: made.missingBedrock } });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not make the list.");
       setBusy(false);
@@ -122,9 +123,7 @@ function NewList({ org, onClose }: { org: string; onClose: () => void }) {
         }}
       >
         <Field label="Name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="Club members" maxLength={60} />}</Field>
-        <Field label="Players" hint="Optional. Minecraft names, one per line or separated by commas.">
-          {(id) => <Textarea id={id} rows={5} value={names} onChange={(e) => setNames(e.target.value)} className="font-mono" spellCheck={false} />}
-        </Field>
+        <PlayerNamesField label="Players" edition={edition} onEdition={setEdition} value={names} onChange={setNames} optional rows={5} />
         {error && <Notice tone="danger">{error}</Notice>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>
@@ -149,10 +148,12 @@ export function PlayerListPage() {
   const list = lists.data?.find((l) => l.id === id);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState("");
+  const [edition, setEdition] = useState<Edition>("java");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Names no account has, from what was last added: on making the list too.
-  const [missing, setMissing] = useState<string[]>((location.state as { missing?: string[] } | null)?.missing ?? []);
+  const made = location.state as { missing?: string[]; missingBedrock?: string[] } | null;
+  const [missing, setMissing] = useState({ java: made?.missing ?? [], bedrock: made?.missingBedrock ?? [] });
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -192,10 +193,10 @@ export function PlayerListPage() {
     }
   };
   const add = async () => {
-    const now = await act("add", () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, { names: typedNames(adding) }));
+    const now = await act("add", () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, namesOf(edition, adding)));
     if (now) {
-      setMissing(now.missing);
-      setAdding(now.missing.join("\n"));
+      setMissing({ java: now.missing, bedrock: now.missingBedrock });
+      setAdding([...now.missing, ...now.missingBedrock].join("\n"));
     }
   };
   const shown = list.players.filter((p) => matches(query, p.name));
@@ -247,17 +248,15 @@ export function PlayerListPage() {
               add();
             }}
           >
-            <Field label="Add players" hint="Minecraft names, one per line or separated by commas.">
-              {(fieldId) => <Textarea id={fieldId} rows={3} value={adding} onChange={(e) => setAdding(e.target.value)} className="font-mono" spellCheck={false} />}
-            </Field>
+            <PlayerNamesField label="Add players" edition={edition} onEdition={setEdition} value={adding} onChange={setAdding} />
             <div className="flex items-center gap-3">
-              <Button type="submit" variant="primary" disabled={typedNames(adding).length === 0} loading={busy === "add"}>
+              <Button type="submit" variant="primary" disabled={Object.values(namesOf(edition, adding)).every((n) => n.length === 0)} loading={busy === "add"}>
                 Add
               </Button>
             </div>
           </form>
         )}
-        <Missing names={missing} />
+        <Missing names={missing.java} bedrock={missing.bedrock} />
         {error && <Notice tone="danger">{error}</Notice>}
         {list.players.length === 0 ? (
           <Empty title="No players yet">{canEdit ? "Add some above." : "An admin can add some."}</Empty>
@@ -272,6 +271,7 @@ export function PlayerListPage() {
                   <li key={p.uuid} aria-label={p.name} className="flex items-center gap-3 px-3 py-1.5">
                     <PlayerHead player={p} size={24} />
                     <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{p.name}</span>
+                    {p.kind === "bedrock" && <BedrockMark />}
                     {canEdit && (
                       <Button
                         size="sm"

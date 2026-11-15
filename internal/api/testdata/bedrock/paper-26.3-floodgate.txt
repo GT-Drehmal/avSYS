@@ -1,0 +1,25 @@
+== PAPER LATEST, Geyser and Floodgate
+[04:32:12 INFO]: Starting minecraft server version 26.3
+Geyser-Spigot (2.12.1-SNAPSHOT), floodgate (2.2.5-SNAPSHOT (b141-81b65cc)
+whitelist list => "There are no whitelisted players" err=<nil>
+fwhitelist add Tim203 => "" err=<nil>
+whitelist list => "There are 1 whitelisted player(s): .Tim203" err=<nil>
+whitelist remove .Tim203 => "That player does not exist" err=<nil>
+op .Tim203 => "That player does not exist" err=<nil>
+# The panel writes whitelist.json with .Redned235 added, by the UUID Floodgate gives his XUID
+whitelist reload => "Reloaded the whitelist" err=<nil>
+whitelist list => "There are 2 whitelisted player(s): .Tim203, .Redned235" err=<nil>
+fwhitelist remove Tim203 => "" err=<nil>
+whitelist list => "There are 1 whitelisted player(s): .Redned235" err=<nil>
+fwhitelist add Nobody_here_1 => "" err=<nil>
+whitelist list => "There are 1 whitelisted player(s): .Redned235" err=<nil>
+# log: [04:33:10 ERROR]: [floodgate] Got an error from requesting the xuid of a Bedrock player: Unable to find user in our cache. Please try specifying their Floodgate UUID instead
+-- whitelist.json
+[
+  {
+    "uuid": "00000000-0000-0000-0009-01f08ec7c850",
+    "name": ".Redned235"
+  }
+]
+-- ops.json
+[]
