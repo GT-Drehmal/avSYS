@@ -8,7 +8,7 @@ import { Picture } from "../components/Picture";
 import { Button, Chip, Confirm, CopyText, Field, Input, Modal, Notice, PageHeader, Select, Loading, Toggle } from "../components/ui";
 import { api, atLeast, roles, roleSummary, type Invite, type Member, type Role } from "../lib/api";
 import { ago } from "../lib/format";
-import { keys, useAction, useMe } from "../lib/queries";
+import { keys, useAction, useMe, useMeta } from "../lib/queries";
 import { byPlace, byText, byTime, type ListOptions, useList } from "../lib/list";
 
 const inviteURL = (token: string) => `${location.origin}/invite/${token}`;
@@ -135,6 +135,8 @@ export function Members() {
   const { org = "" } = useParams();
   const membership = useOrg();
   const me = useMe().data!;
+  // A reset link sets a password: with passwords off, there is none to set.
+  const passwords = useMeta().data?.passwords !== false;
   const canManage = atLeast(membership?.role, "admin");
   const isOwner = membership?.role === "owner";
   const members = useQuery({ queryKey: keys.members(org), queryFn: () => api.get<Member[]>(`/orgs/${org}/members`) });
@@ -209,7 +211,7 @@ export function Members() {
               ) : (
                 <Chip>{m.role}</Chip>
               )}
-              {me.user.isAdmin && m.userId !== me.user.id && (
+              {passwords && me.user.isAdmin && m.userId !== me.user.id && (
                 <Button size="sm" variant="ghost" icon={<KeyRound className="size-3.5" />} aria-label={`Reset sign-in for ${m.username}`} title="Reset sign-in" onClick={() => setResetting(m)} />
               )}
               {(editable || m.userId === me.user.id) && (

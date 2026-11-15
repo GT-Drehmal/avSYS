@@ -357,6 +357,8 @@ function SignIn() {
 }
 
 export function Account() {
+  // Two-factor goes with a password: with passwords off, there is none.
+  const passwords = useMeta().data?.passwords !== false;
   return (
     <>
       <PageHeader title="Account" />
@@ -365,7 +367,7 @@ export function Account() {
       <SSHKeys />
       <APITokens />
       <SignIn />
-      <TwoFactor />
+      {passwords && <TwoFactor />}
       <Sessions />
     </>
   );

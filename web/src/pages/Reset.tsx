@@ -26,6 +26,15 @@ export function Reset() {
   }
   if (!link.data) {
     const gone = link.error instanceof ApiError && link.error.status === 404;
+    if (link.error instanceof ApiError && link.error.code === "passwords_off") {
+      return (
+        <AuthFrame title="Passwords are turned off here" subtitle="Sign in another way.">
+          <Link to="/login" className="text-[13px] text-accent hover:underline">
+            Go to avSYS
+          </Link>
+        </AuthFrame>
+      );
+    }
     return (
       <AuthFrame title={gone ? "This link is no longer valid" : "Could not load this link"} subtitle={gone ? "Ask for a new one." : "The panel did not answer. Reload to try again."}>
         <Link to="/login" className="text-[13px] text-accent hover:underline">
