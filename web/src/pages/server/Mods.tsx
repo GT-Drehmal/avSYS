@@ -1,17 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
-import { PackContents, PackIcon, usePackFiles } from "../../components/Modpack";
+import { PackContents, PackIcon } from "../../components/Modpack";
 import { Button, Field, Input, Notice, Toggle } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
-import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
+import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ResourcePack, type Server } from "../../lib/api";
 import { ArchiveError } from "../../lib/archive";
 import { softwareWords } from "../../lib/format";
-import { inspectPack, type PackFile } from "../../lib/mrpack";
+import { inspectPack } from "../../lib/mrpack";
 import { applyServer, keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
-import { EmptySection, PackStack, SectionHead, VersionDialog } from "../../components/ContentParts";
+import { EmptySection, PackFromModpack, PackStack, SectionHead, VersionDialog } from "../../components/ContentParts";
 import { useServerContext } from "./ServerPage";
 
 export function Mods() {
@@ -28,30 +28,6 @@ export function Mods() {
   const latest = useGameVersions(server.spec.modpack ? null : server.spec.loader).data?.latest;
   const mods = server.spec.mods ?? [];
   const modpack = server.spec.modpack;
-
-  // A resource pack in the modpack from Modrinth can be the server's, at the
-  // pack's version, in one press; not one it already has.
-  const packFiles = usePackFiles(server);
-  const rp = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
-  const has = new Set([rp?.project?.id, ...(rp?.stack ?? []).map((p) => p.project?.id)].filter(Boolean));
-  const fromPack = canEdit ? packFiles.filter((f) => f.path.startsWith("resourcepacks/") && f.project && f.version && !has.has(f.project) && !(f.slug && has.has(f.slug))) : [];
-  const takeFromPack = async (f: PackFile) => {
-    const project = { source: "modrinth" as const, id: f.slug || f.project!, title: f.title, iconUrl: f.iconUrl };
-    setLooking(true);
-    try {
-      const versions = await api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(project.id)}/versions?${qs({ loader: "resourcepack" })}`);
-      const v = versions.find((v) => v.id === f.version);
-      if (!v) throw new Error(`The pack's version of ${packFileName(f)} is no longer on Modrinth.`);
-      const next = await packOfVersion(v, project);
-      // With one there, it goes on top, as one picked does.
-      if (rp) applyServer(qc, await api.post<Server>(`${serverPath(server.org, server.name)}/resource-packs/url`, { url: next.url, sha1: next.sha1, project: next.project, formats: next.formats }));
-      else await update.mutateAsync({ resourcePack: { ...next, enforce: false, prompt: "" } });
-    } catch (err) {
-      if (!(err instanceof ApiError)) toast.error(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setLooking(false);
-    }
-  };
 
   // The response is the server with the upload listed.
   const upload = async (file: File, kind: ContentKind) => {
@@ -204,11 +180,7 @@ export function Mods() {
           setAdding("resourcepack");
         }}
         onVersion={() => setVersioning("pack")}
-        suggest={fromPack.map((f) => (
-          <Button key={f.path} size="sm" disabled={looking || update.isPending} onClick={() => takeFromPack(f)} className="self-start">
-            Use {packFileName(f)} from the pack
-          </Button>
-        ))}
+        suggest={canEdit && <PackFromModpack server={server} update={update} disabled={looking || update.isPending} onLooking={setLooking} />}
       />
 
       {adding && (
@@ -314,7 +286,7 @@ function PackSection({
   onReplace,
   onVersion,
   suggest,
-}: { quiet: boolean; server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void; suggest?: ReactNode[] }) {
+}: { quiet: boolean; server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void; suggest?: ReactNode }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
   // An uploaded one takes its file with it, which only this does.
@@ -412,5 +384,3 @@ function PackSection({
   );
 }
 
-/** What a file in a modpack is called: its project's name, or its file's. */
-const packFileName = (f: PackFile) => f.title || f.name.replace(/\.(jar|zip)$/i, "");
