@@ -66,6 +66,9 @@ type Config struct {
 	// was installed, for the command that upgrades it. Empty where the
 	// panel runs outside the cluster.
 	RouterService types.NamespacedName
+	// Deployment is the panel's own, which it changes to move itself to a
+	// newer release. Empty where the panel runs outside the cluster.
+	Deployment types.NamespacedName
 }
 
 type Server struct {
@@ -124,6 +127,8 @@ type Server struct {
 	// Updates is whether a newer release is out, for the instance
 	// administrator. Nil never says so.
 	Updates *release.Checker
+	// selfUpdate holds the panel to one change of its own version at a time.
+	selfUpdate sync.Mutex
 
 	catalog    *catalog
 	workspaces *workspacePool
@@ -385,6 +390,8 @@ func (s *Server) Handler() http.Handler {
 	api("GET /nodes/usage", s.authed(s.getNodesUsage))
 	api("PATCH /nodes/{node}", s.authed(s.setNode))
 	api("POST /nodes/measure", s.authed(s.measureNodes))
+	api("PATCH /panel", s.authed(s.setPanel))
+	api("POST /panel/update", s.authed(s.updatePanel))
 	api("PATCH /me", s.authed(s.updateMe))
 	api("POST /me/password", s.authed(s.setPassword))
 	api("PUT /me/minecraft", s.authed(s.setMinecraftAccount))

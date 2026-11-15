@@ -107,7 +107,9 @@ helm upgrade avsys oci://ghcr.io/gt-drehmal/charts/avsys -n avsys --reset-then-r
 
 `--reset-then-reuse-values` keeps the values you set and takes the new release's defaults for the rest. Without Helm, apply the newer `deploy/install.yaml` with your changes carried over.
 
-When a newer release is out, the **Nodes** page says so to the instance administrator, with what changed and the command that upgrades the panel as it was installed. The panel asks GitHub every few hours; set `updateCheck: false` to stop it. Builds of the main branch never ask.
+When a newer release is out, the **Nodes** page says so to the instance administrator, with what changed and an **Update** button. Pressing it has the panel set its own Deployment to the new release's image; the cluster restarts the panel on it (players connected through the router drop for that moment, and servers keep running), and the page reloads once the new version answers. Nothing outside the cluster needs credentials for this: the panel's service account may read and patch its own Deployment and no other (the chart's `selfUpdate`, on by default). With **Install fixes by itself** on, the panel moves to a newer patch release of its version (`v0.2.1` from `v0.2.0`) by itself, once nobody is playing; minor and major releases wait for the button. Where the panel cannot update itself, the page shows the command that upgrades it as it was installed. The panel asks GitHub every few hours; set `updateCheck: false` to stop it. Builds of the main branch never ask.
+
+After updating from the panel, a later `helm upgrade` should name the release the panel now runs (`--version`), or it moves the panel back to the chart's; with Helm 4's server-side apply it also needs `--force-conflicts`, since the panel last set the image. A later `kubectl apply` should likewise use that release's `install.yaml`.
 
 To move an install made from `deploy/install.yaml` to Helm, mark its objects as the release's and then install the chart with values that match what you changed:
 

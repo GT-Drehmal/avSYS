@@ -71,4 +71,37 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "avsys.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- if .Values.selfUpdate }}
+---
+# Updating itself to a newer release, when the instance administrator presses
+# Update: the panel's own Deployment, read and changed, and no other.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "avsys.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "avsys.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ include "avsys.fullname" . | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "avsys.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "avsys.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "avsys.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "avsys.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end }}

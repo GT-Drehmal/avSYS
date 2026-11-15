@@ -242,3 +242,36 @@ func (l Latest) Command(in Install) string {
 func (l Latest) Manifest() string {
 	return "https://github.com/" + Repository + "/releases/download/" + l.Version + "/install.yaml"
 }
+
+// IsFix is whether latest is a fix of current: a newer release with the same
+// major and minor version, as v1.2.4 is of v1.2.3. Such a release only
+// fixes, so a panel may be set to move to it by itself.
+func IsFix(current, latest string) bool {
+	return Newer(current, latest) && semver.MajorMinor(current) == semver.MajorMinor(latest) && semver.Prerelease(latest) == ""
+}
+
+// splitImage splits an image reference into its repository and its tag,
+// dropping a digest: ghcr.io/x/avsys:v1.2.3@sha256:... is ghcr.io/x/avsys
+// and v1.2.3. A registry's port is part of the repository.
+func splitImage(image string) (repository, tag string) {
+	if i := strings.Index(image, "@"); i >= 0 {
+		image = image[:i]
+	}
+	if i := strings.LastIndex(image, ":"); i > strings.LastIndex(image, "/") {
+		return image[:i], image[i+1:]
+	}
+	return image, ""
+}
+
+// TagOf is an image's tag, "" for none.
+func TagOf(image string) string {
+	_, tag := splitImage(image)
+	return tag
+}
+
+// WithTag is the image in the same repository with the tag given, and no
+// digest.
+func WithTag(image, tag string) string {
+	repository, _ := splitImage(image)
+	return repository + ":" + tag
+}

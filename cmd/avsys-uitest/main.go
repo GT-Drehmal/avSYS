@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -113,11 +114,18 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 	srv := &api.Server{
 		Config: api.Config{NamespacePrefix: "mc-", SSHHost: "panel.test", SSHPort: 2222, RouterDomain: "play.test", Version: "v0.1.0",
 			// Installed with the chart: see the Service below.
-			RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"}},
-		Store:   db,
-		Client:  cluster,
-		Reader:  cluster,
-		Kube:    kubefake.NewSimpleClientset(),
+			RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"},
+			// Its own Deployment, which it can move to a newer release.
+			Deployment: types.NamespacedName{Namespace: "avsys", Name: "avsys"}},
+		Store:  db,
+		Client: cluster,
+		Reader: cluster,
+		Kube: kubefake.NewSimpleClientset(&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "avsys", Name: "avsys"},
+			Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "avsys", Image: "ghcr.io/gt-drehmal/avsys:v0.1.0"}},
+			}}},
+		}),
 		Dialer:  noPods{},
 		Gateway: gateway,
 		Events:  api.NewHub(),

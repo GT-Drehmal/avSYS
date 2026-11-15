@@ -146,6 +146,49 @@ subjects:
     namespace: avsys
 
 ---
+# Source: avsys/templates/rbac.yaml
+# Updating itself to a newer release, when the instance administrator presses
+# Update: the panel's own Deployment, read and changed, and no other.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: avsys
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "v0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["avsys"]
+    verbs: ["get", "patch"]
+
+---
+# Source: avsys/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: avsys
+  namespace: avsys
+  labels:
+    app.kubernetes.io/name: avsys
+    app.kubernetes.io/instance: avsys
+    app.kubernetes.io/version: "v0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: avsys-0.0.0-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: avsys
+subjects:
+  - kind: ServiceAccount
+    name: avsys
+    namespace: avsys
+
+---
 # Source: avsys/templates/service.yaml
 # The panel, SSH and the Minecraft router. Players and SSH need plain TCP;
 # put the panel's http port behind an ingress for TLS if you prefer.

@@ -198,6 +198,15 @@ installCRDs: true
 # upgrades. false for a panel that should not reach the internet.
 updateCheck: true
 
+# The instance administrator can update the panel to a newer release from the
+# Nodes page, and have it install fixes by itself: the panel changes the
+# image of its own Deployment, which this lets its service account do (that
+# one Deployment, nothing else). false to update only with helm upgrade.
+# After updating from the panel, a later helm upgrade should name that
+# release's chart (--version), or it moves the panel back; Helm 4 then also
+# needs --force-conflicts, as the panel last set the image.
+selfUpdate: true
+
 # More environment variables for the panel, as for a flag not listed here
 # (every flag is also AVSYS_<FLAG>), or credentials from a Secret.
 extraEnv: []
