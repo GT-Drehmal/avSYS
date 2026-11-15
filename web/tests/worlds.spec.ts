@@ -337,7 +337,7 @@ test("a stopped server's world is replaced with one from the library", async ({ 
   await page.goto("/o/friends/s/creative/settings");
   await page.getByRole("button", { name: "Replace the world" }).click();
   const dialog = page.getByRole("dialog", { name: "Replace the world?" });
-  await dialog.getByRole("button", { name: "Library", exact: true }).click();
+  await dialog.getByRole("button", { name: "Library world", exact: true }).click();
   const replace = dialog.getByRole("button", { name: "Replace the world" });
   await expect(replace).toBeDisabled();
   await dialog.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
@@ -359,7 +359,7 @@ test("a stopped server's world replaced with one from the library from a newer g
   await page.goto("/o/friends/s/creative/settings");
   await page.getByRole("button", { name: "Replace the world" }).click();
   const dialog = page.getByRole("dialog", { name: "Replace the world?" });
-  await dialog.getByRole("button", { name: "Library", exact: true }).click();
+  await dialog.getByRole("button", { name: "Library world", exact: true }).click();
   await dialog.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
   await expect(dialog.getByText("The world was last opened in 26.3. 1.21.4 cannot open the world, so the server will not start.")).toBeVisible();
   await dialog.getByRole("button", { name: "Replace the world" }).click();
@@ -520,7 +520,7 @@ test("a world's picture opens larger when clicked, for an operator to change or 
   await expect(seen.getByRole("button", { name: /Replace|Upload|Remove/ })).toHaveCount(0);
 });
 
-test("a world's picture goes when the world does, and comes back with it", async ({ page, as }) => {
+test("a world's picture goes when the world does, and comes back with it, whatever the server runs", async ({ page, as }) => {
   await as("owner");
   await library(page, [world("w1", "Island")]);
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -532,8 +532,14 @@ test("a world's picture goes when the world does, and comes back with it", async
   await page.getByRole("group", { name: "World", exact: true }).getByRole("button", { name: "Library world" }).click();
   await page.getByRole("list", { name: "Worlds" }).getByRole("button", { name: /Island/ }).click();
   await expect(picture).toBeVisible();
+  // A modpack server starts with the world too.
   await page.getByRole("button", { name: "Modpack", exact: true }).click();
+  await expect(picture).toBeVisible();
+  const choices = page.getByRole("group", { name: "World", exact: true });
+  await choices.getByRole("button", { name: "New world" }).click();
   await expect(picture).toHaveCount(0);
+  await choices.getByRole("button", { name: "Library world" }).click();
+  await expect(picture).toBeVisible();
   await page.getByRole("button", { name: "Game version", exact: true }).click();
   await expect(picture).toBeVisible();
 });

@@ -42,10 +42,23 @@ func TestStartScript(t *testing.T) {
 			mc.Spec.Loader = avsysv1.LoaderPaper
 			mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack"}
 		}, false},
+		"curseforge modpack": {func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceCurseForge, Project: "pack"}
+		}, false},
+		"modpack with an image of its own": {func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack"}
+			mc.Spec.Image = "example/mc:1"
+		}, false},
 	} {
-		game := gameContainer(buildPod(server(c.mutate), Config{}))
+		mc := server(c.mutate)
+		game := gameContainer(buildPod(mc, Config{}))
 		if c.script {
 			if want := []string{"/bin/sh", "-c", startScript}; strings.Join(game.Command, "\x00") != strings.Join(want, "\x00") {
+				t.Errorf("%s: the game is started with %q", name, game.Command)
+			}
+		} else if startsThroughPackScript(mc) {
+			// A Modrinth modpack is installed by the image, through packScript.
+			if want := []string{"/bin/sh", "-c", packScript}; strings.Join(game.Command, "\x00") != strings.Join(want, "\x00") {
 				t.Errorf("%s: the game is started with %q", name, game.Command)
 			}
 		} else if len(game.Command) != 0 {
@@ -68,6 +81,20 @@ func TestHashLeavesOutKeepingTheBuild(t *testing.T) {
 	}
 	if hashOf(paper.Spec) != paper.Annotations[annotationSpecHash] {
 		t.Error("the hash covers starting on the build it has")
+	}
+	// Nor is a modpack's install leaving the world alone.
+	pack := buildPod(server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack", Version: "v1"}
+	}), Config{})
+	if game := gameContainer(pack); len(game.Command) == 0 {
+		t.Fatal("a modpack is not started through packScript")
+	}
+	for i := range pack.Spec.Containers {
+		pack.Spec.Containers[i].TerminationMessagePolicy = ""
+		pack.Spec.Containers[i].Command = nil
+	}
+	if hashOf(pack.Spec) != pack.Annotations[annotationSpecHash] {
+		t.Error("the hash covers how a modpack's install treats the world")
 	}
 }
 

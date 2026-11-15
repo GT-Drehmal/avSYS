@@ -25,7 +25,7 @@ import { type Found, type FoundWorld, inspectServer, inspectWorld } from "../lib
 import { SetupFailed, type SetupWork, startSetup } from "../lib/setups";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
-import { newerThan, newerWorldWarning, worldSummary } from "../lib/worlds";
+import { newerThan, newerWorldWarning, runsOn, usePackGame, worldSummary } from "../lib/worlds";
 
 const GiB = 1024 ** 3;
 
@@ -494,32 +494,35 @@ export function ServerForm({
   const [v, setValues] = useState(start);
   const importing = v.kind === "import";
   const found = importing ? (v.archive?.found ?? null) : null;
-  // A world of one's own goes with a new server of a game version.
-  // Made from another's files, it keeps their world unless it is given a
-  // new one or one of its own; one brought back keeps its own.
-  const worldChoosable = !!source && (copying || forTemplate);
+  // Every server starts with a world, which can be chosen whatever it runs
+  // and however it is made: a new one, one uploaded, or one from the
+  // library. Made from another's files, or from a server's archive with a
+  // world in it, it keeps that world unless it is given another.
+  const hasKept = !!source || !!found?.world;
   // A world kept with the template it starts from, or with the one being changed.
   const theirs = source?.ownWorld ?? preset?.ownWorld ?? editing?.ownWorld;
   // Which template that is.
   const theirsFrom = source?.origin.kind === "template" ? source.origin.id : (preset?.id ?? editing?.id);
   // As the template it comes from says, where it says.
-  const [world, setWorld] = useState<WorldChoice>(given ? "library" : theirs ? "mine" : source?.world === "new" || !worldChoosable ? "new" : "kept");
+  const [world, setWorld] = useState<WorldChoice>(given ? "library" : theirs ? "mine" : source && source.world !== "new" ? "kept" : "new");
   // One from the organization's library, put in once its files are.
   const [libraryPick, setLibraryPick] = useState<LibraryWorld | null>(given ?? null);
   const [keepTheirs, setKeepTheirs] = useState(!!theirs);
   const usingMine = world === "mine";
-  const worldGiven = source ? worldChoosable : v.kind === "game";
-  const mine = worldGiven && usingMine ? v.myWorld : null;
-  const fromLibrary = worldGiven && world === "library" ? libraryPick : null;
+  const keepsWorld = world === "kept" && hasKept;
+  const mine = usingMine ? v.myWorld : null;
+  const fromLibrary = world === "library" ? libraryPick : null;
   // That world, for this one, unless another was chosen.
-  const fromTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs && !!theirsFrom && !(forTemplate && editing && theirsFrom === editing.id) ? theirsFrom : null;
-  const keepsTheirs = worldGiven && usingMine && !v.myWorld && keepTheirs && !!theirs;
-  // What is sent to be unpacked into the server once it is made.
-  const toImport = found && v.archive
-    ? { file: v.archive.file, root: found.root, world: false, listed: listed(found), version: found.world ? found.version : "" }
-    : mine
-      ? { file: mine.file, root: mine.found.root, world: true, listed: false, version: mine.found.version ?? "" }
+  const fromTheirs = usingMine && !v.myWorld && keepTheirs && !!theirs && !!theirsFrom && !(forTemplate && editing && theirsFrom === editing.id) ? theirsFrom : null;
+  const keepsTheirs = usingMine && !v.myWorld && keepTheirs && !!theirs;
+  // What is sent to be unpacked into the server once it is made: the
+  // archive of a server, without its world where it is given another, and
+  // then a world uploaded.
+  const archiveImport =
+    found && v.archive
+      ? { file: v.archive.file, root: found.root, world: found.world && !keepsWorld ? ("none" as const) : undefined, listed: listed(found), version: found.world && keepsWorld ? found.version : "" }
       : null;
+  const worldImport = mine ? { file: mine.file, root: mine.found.root, world: "true" as const, listed: false, version: mine.found.version ?? "" } : null;
   // Of the packs, the original's come with a copy, and the request itself
   // can give the lowest when it is from an address and there are none of
   // those. The rest go in once it is made, bottom first, and are put in
@@ -536,7 +539,7 @@ export function ServerForm({
   // A template keeps the packs its files have as they are, or none, or is
   // given one from an address: there is nothing to put more in.
   const packsKept = forTemplate && kept.length > 0;
-  const toUpload = v.uploads.length > 0 || packWork || !!toImport || (!forTemplate && (!!fromTheirs || !!fromLibrary));
+  const toUpload = v.uploads.length > 0 || packWork || !!archiveImport || !!worldImport || (!forTemplate && (!!fromTheirs || !!fromLibrary));
   const set = <K extends keyof Values>(key: K, value: Values[K]) => setValues((was) => ({ ...was, [key]: value }));
 
   const [needsLoader, setNeedsLoader] = useState(false);
@@ -633,34 +636,39 @@ export function ServerForm({
   // new server it is the game's or the modpack's own default.
   const unset = source || importing ? "Server default" : v.kind === "modpack" ? "Modpack default" : undefined;
   // A world that is there already was made with its own seed and type.
-  // One brought back has its own, whatever else it is given.
-  const worldMade = (!!source && (world === "kept" || !worldChoosable)) || !!found?.world || !!mine || !!fromLibrary;
-  // An import unpacks next to the archive, so both need room at once.
-  // One from the library comes as an archive too, unpacked beside it: as
-  // large as it is out of it where that is known, and else a guess.
-  const least = toImport
-    ? Math.max(1, Math.ceil(((found?.size ?? mine?.found.size ?? 0) + toImport.file.size) / GiB))
-    : fromLibrary && !forTemplate
-      ? Math.max(leastStorage, roomFor(fromLibrary))
-      : leastStorage;
+  const worldMade = keepsWorld || keepsTheirs || !!mine || !!fromLibrary;
+  // An import unpacks next to the archive, so both need room at once, and
+  // so does a world uploaded. One from the library comes as an archive too,
+  // unpacked beside it: as large as it is out of it where that is known,
+  // and else a guess.
+  const roomForWorld = worldImport ? (mine?.found.size ?? 0) + worldImport.file.size : fromLibrary && !forTemplate ? roomFor(fromLibrary) * GiB : 0;
+  const least = Math.max(leastStorage, Math.ceil(((archiveImport ? (found?.size ?? 0) + archiveImport.file.size : 0) + roomForWorld) / GiB));
   // Every version, in the order they came out, to tell which is newer.
   const allVersions = useGameVersions();
   // Made from another's files, it keeps their world unless given another.
-  const keepsOriginal = !!source && !(worldChoosable && world !== "kept");
+  const keepsOriginal = !!source && keepsWorld;
   // Where that world was last opened: as the original's game said, or in
   // the version it was on.
-  const originalWorld = source?.worldVersion && allVersions.data?.ordered.includes(source.worldVersion) ? source.worldVersion : source?.spec.version;
+  const originalWorld = source?.worldVersion && allVersions.data?.ordered.includes(source.worldVersion) ? source.worldVersion : source && runsOn(source.spec, undefined);
   // The version the world it starts with was last opened in, where known.
   const givenVersion =
-    (mine ? mine.found.version : fromLibrary ? fromLibrary.version : keepsTheirs ? theirs?.version : found?.world ? found.version : keepsOriginal ? originalWorld : "") || "";
+    (mine ? mine.found.version : fromLibrary ? fromLibrary.version : keepsTheirs ? theirs?.version : keepsWorld && found?.world ? found.version : keepsOriginal ? originalWorld : "") || "";
+  // The version it is to run: a modpack's is the one the pack is built for.
+  const packGame = usePackGame(v.kind === "modpack" ? v.modpack : null);
+  const running = v.kind === "modpack" ? packGame : effective(v.version);
   // A world from a newer version than it is to run, which that version cannot open.
-  const worldTooNew = v.kind !== "modpack" && newerThan(allVersions.data?.ordered, givenVersion, effective(v.version));
-  // A server made from a template's files with a world they did not come
-  // with: the files stay, and plugin data in them may be about the world
-  // they came with. The template's own world, or its files', is theirs; a
-  // new one is too where the template starts its servers with one.
+  const worldTooNew = newerThan(allVersions.data?.ordered, givenVersion, running);
+  // A server made from another's files, or a server's archive, with a world
+  // they did not come with: the files stay, and plugin data in them may be
+  // about the world they came with. The template's own world, or its
+  // files', is theirs; a new one is too where the template starts its
+  // servers with one.
   const swapsWorld =
-    templated && !forTemplate && (world === "library" || (world === "mine" && !keepsTheirs) || (world === "new" && (!!theirs || source?.world !== "new")));
+    !forTemplate &&
+    (templated
+      ? world === "library" || (world === "mine" && !keepsTheirs) || (world === "new" && (!!theirs || source?.world !== "new"))
+      : hasKept && !keepsWorld);
+  const swappedFrom = templated ? "the template" : importing ? "the archive" : "the original";
   // Said to be meant once asked: the panel refuses it otherwise.
   const meant = worldTooNew ? { newerWorld: "true" } : {};
   const [askNewer, setAskNewer] = useState(false);
@@ -686,7 +694,7 @@ export function ServerForm({
     }
     // A new world gets a seed of its own, unless one is given; the one it
     // keeps has the seed it was made with.
-    if (worldChoosable) set("seed", next === "kept" ? start.seed : "");
+    if (hasKept) set("seed", next === "kept" ? start.seed : "");
     setWorld(next);
     // Its picture goes with it, and comes back with it.
     if (next === "library" && libraryPick) void libraryPicture(libraryPick);
@@ -722,14 +730,15 @@ export function ServerForm({
   };
 
   // The picture a world brings, unless one was chosen here, none included:
-  // a new server looks as its world does. A copy keeps its original's.
+  // a server looks as the world it is given does. Without one, a copy keeps
+  // its original's, and an import the archive's.
   const pictureChosen = useRef(false);
   // Counted, so that one fetched too slowly does not land on the world picked since.
   const pictures = useRef(0);
   const pictureFromWorld = (file: File | null) => {
     pictures.current++;
-    if (forTemplate || source || pictureChosen.current) return;
-    setValues((was) => ({ ...was, picture: file ? { kind: "file", file } : { kind: "none" } }));
+    if (forTemplate || pictureChosen.current) return;
+    setValues((was) => ({ ...was, picture: file ? { kind: "file", file } : source ? { kind: "keep" } : { kind: "none" } }));
   };
   /** The picture of a world in the library, as a file, or none. */
   const libraryPicture = async (w: LibraryWorld) => {
@@ -743,17 +752,13 @@ export function ServerForm({
     }
     if (asked === pictures.current) pictureFromWorld(file);
   };
-  // A world set aside by choosing what has none, as a modpack, takes its
-  // picture with it, and brings it back with it.
-  const worldInUse = useRef(worldGiven);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only as it comes and goes
+  // The world in a server's archive is the one it keeps, unless another was
+  // chosen; with none in it, it gets a new one.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only as the archive comes and goes
   useEffect(() => {
-    if (worldInUse.current === worldGiven) return;
-    worldInUse.current = worldGiven;
-    if (!worldGiven) pictureFromWorld(null);
-    else if (fromLibrary) void libraryPicture(fromLibrary);
-    else if (mine) pictureFromWorld(iconOf(mine.found));
-  }, [worldGiven]);
+    if (found?.world && world === "new") setWorld("kept");
+    else if (!hasKept && world === "kept") setWorld("new");
+  }, [found, hasKept]);
   // One picked where it is kept has its picture to begin with.
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, for the world it was opened with
   useEffect(() => {
@@ -953,19 +958,26 @@ export function ServerForm({
    * A lost connection is not known to have failed, as the panel goes on
    * with what it was sent: that one is kept, to be looked at.
    */
-  const importArchive = async (w: SetupWork, server: string, title: string) => {
+  const importArchive = async (w: SetupWork, server: string, title: string, toImport: typeof archiveImport | typeof worldImport) => {
     if (!toImport) return;
     const path = serverPath(org, server);
+    // A world sent to a server that has files of its own, from another or
+    // from an archive, leaves those as they are when it is turned down.
+    const filesKept = toImport.world === "true" && (!!source || !!archiveImport);
     try {
       // In parts, so that a connection lost for a moment does not lose what
       // was sent, and an archive of any size goes.
       await w.sendParts(`Sending ${toImport.file.name}`, path, toImport.file, (upload) =>
         api.put<Server>(
-          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: "true" } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world ? {} : { players: "listed" }), version: toImport.version, ...meant, from: "upload", upload, size: toImport.file.size, wait: "true" })}`,
+          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: toImport.world } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world === "true" ? {} : { players: "listed" }), version: toImport.version, ...meant, from: "upload", upload, size: toImport.file.size, wait: "true" })}`,
           {},
         ),
       );
     } catch (err) {
+      if (filesKept && err instanceof ApiError && (cancelled(err) || (err.status >= 400 && err.code !== "error"))) {
+        const why = cancelled(err) ? "the upload was stopped." : err.message;
+        throw new SetupFailed(`${title} was made without ${toImport.file.name}: ${why} Replace the world in the server's Settings, then start the server.`, `/o/${org}/s/${server}/settings`);
+      }
       if (err instanceof ApiError && (cancelled(err) || (err.status >= 400 && err.code !== "error"))) {
         const why = cancelled(err) ? "the upload was stopped." : err.message;
         const removed = await removeServer(server);
@@ -1172,8 +1184,8 @@ export function ServerForm({
     e?.preventDefault();
     if (!source && v.kind === "modpack" && !v.modpack) return setError("Pick a modpack.");
     if (!source && importing && !v.archive) return setError("Choose an archive.");
-    if (worldGiven && usingMine && !v.myWorld && !keepsTheirs) return setError("Choose a world, or make a new one.");
-    if (worldGiven && world === "library" && !libraryPick) return setError("Pick a world from the library.");
+    if (usingMine && !v.myWorld && !keepsTheirs) return setError("Choose a world, or make a new one.");
+    if (world === "library" && !libraryPick) return setError("Pick a world from the library.");
     if (!source && v.kind !== "modpack" && !v.loader) {
       setNeedsLoader(true);
       softwareRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1200,7 +1212,7 @@ export function ServerForm({
         // Answered at once: the panel takes the snapshot of a server copied
         // as it is now, and then puts the files in, which its page shows.
         // Without its world, for one to be made or put in.
-        const fresh = worldChoosable && world !== "kept" ? { world: "new" } : source.world ? { world: "kept" } : {};
+        const fresh = world !== "kept" ? { world: "new" } : source.world ? { world: "kept" } : {};
         const server = await api.post<Server>(`/orgs/${org}/servers${keepsOriginal && worldTooNew ? "?newerWorld=true" : ""}`, { name, ...from, ...fresh, ...pictured, ...placed });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files
@@ -1208,7 +1220,7 @@ export function ServerForm({
         if (!toUpload) return navigate(`/o/${org}/s/${server.name}`);
         return handOff(server.name, async (w) => {
           await copied(w, server.name);
-          await importArchive(w, server.name, title);
+          await importArchive(w, server.name, title, worldImport);
           await importTheirs(w, server.name, title);
           await importLibrary(w, server.name, title);
           await uploadAll(w, server.name);
@@ -1222,7 +1234,8 @@ export function ServerForm({
       return handOff(server.name, async (w) => {
         // Its files go in first: made stopped, it is started once they are.
         if (toUpload) {
-          await importArchive(w, server.name, title);
+          await importArchive(w, server.name, title, archiveImport);
+          await importArchive(w, server.name, title, worldImport);
           await importTheirs(w, server.name, title);
           await importLibrary(w, server.name, title);
           try {
@@ -1696,120 +1709,117 @@ export function ServerForm({
           source
             ? "Server default keeps the original's setting."
             : v.kind === "modpack"
-              ? "Modpacks with their own world ignore these."
+              ? "With New world, a modpack that has a world of its own starts with that world."
               : undefined
         }
       >
-        {(worldChoosable || (!source && v.kind === "game")) && (
-          <>
-            <div role="group" aria-label="World" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
-              {worldChoosable && (
-                <button type="button" aria-pressed={world === "kept"} className={segment(world === "kept")} onClick={() => chooseWorld("kept")}>
-                  Keep world
-                </button>
-              )}
-              <button type="button" aria-pressed={world === "new"} className={segment(world === "new")} onClick={() => chooseWorld("new")}>
-                New world
-              </button>
-              {meta?.snapshots && (
-                <button type="button" aria-pressed={world === "library"} className={segment(world === "library")} onClick={() => chooseWorld("library")}>
-                  Library world
-                </button>
-              )}
-              <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
-                Upload world
-              </button>
+        <div role="group" aria-label="World" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
+          {hasKept && (
+            <button type="button" aria-pressed={world === "kept"} className={segment(world === "kept")} onClick={() => chooseWorld("kept")}>
+              Keep world
+            </button>
+          )}
+          <button type="button" aria-pressed={world === "new"} className={segment(world === "new")} onClick={() => chooseWorld("new")}>
+            New world
+          </button>
+          {meta?.snapshots && (
+            <button type="button" aria-pressed={world === "library"} className={segment(world === "library")} onClick={() => chooseWorld("library")}>
+              Library world
+            </button>
+          )}
+          <button type="button" aria-pressed={world === "mine"} className={segment(world === "mine")} onClick={() => chooseWorld("mine")}>
+            Upload world
+          </button>
+        </div>
+        {world === "library" &&
+          (libraryPick ? (
+            <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+              <Picture name={libraryPick.name} url={worldIcon(org, libraryPick.id)} size={32} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium">{libraryPick.name}</p>
+                <p className="truncate text-xs text-muted" data-testid="world-summary">
+                  {worldSummary(libraryPick)}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setLibraryPick(null);
+                  pictureFromWorld(null);
+                }}
+              >
+                Change
+              </Button>
             </div>
-            {world === "library" &&
-              (libraryPick ? (
-                <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-                  <Picture name={libraryPick.name} url={worldIcon(org, libraryPick.id)} size={32} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-medium">{libraryPick.name}</p>
-                    <p className="truncate text-xs text-muted" data-testid="world-summary">
-                      {worldSummary(libraryPick)}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setLibraryPick(null);
-                      pictureFromWorld(null);
-                    }}
-                  >
-                    Change
-                  </Button>
+          ) : (
+            <WorldPicker org={org} onPick={pickLibrary} />
+          ))}
+        {world === "library" && worldTooNew && <Notice tone="warn">{newerWorldWarning(givenVersion, running ?? "")}</Notice>}
+        {usingMine && (
+          <>
+            <input
+              ref={worldInput}
+              type="file"
+              accept=".zip,.tar,.tgz,.gz"
+              className="hidden"
+              aria-label="World archive"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void pickWorld(file);
+              }}
+            />
+            {v.myWorld ? (
+              <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                <ArchiveIcon className="size-5 shrink-0 text-muted" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{v.myWorld.found.name}</p>
+                  <p className="truncate text-xs text-muted" data-testid="world-summary">
+                    {[v.myWorld.found.version && `Last opened in ${v.myWorld.found.version}`, bytes(v.myWorld.found.size), v.myWorld.file.name].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
-              ) : (
-                <WorldPicker org={org} onPick={pickLibrary} />
-              ))}
-            {world === "library" && worldTooNew && <Notice tone="warn">{newerWorldWarning(givenVersion, effective(v.version))}</Notice>}
-            {usingMine && (
-              <>
-                <input
-                  ref={worldInput}
-                  type="file"
-                  accept=".zip,.tar,.tgz,.gz"
-                  className="hidden"
-                  aria-label="World archive"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (file) void pickWorld(file);
+                <Button size="sm" disabled={readingWorld} onClick={() => worldInput.current?.click()}>
+                  Change
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={readingWorld}
+                  icon={<X className="size-4" />}
+                  aria-label="Remove the world"
+                  onClick={() => {
+                    set("myWorld", null);
+                    pictureFromWorld(null);
                   }}
                 />
-                {v.myWorld ? (
-                  <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-                    <ArchiveIcon className="size-5 shrink-0 text-muted" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-medium">{v.myWorld.found.name}</p>
-                      <p className="truncate text-xs text-muted" data-testid="world-summary">
-                        {[v.myWorld.found.version && `Last opened in ${v.myWorld.found.version}`, bytes(v.myWorld.found.size), v.myWorld.file.name].filter(Boolean).join(" · ")}
-                      </p>
-                    </div>
-                    <Button size="sm" disabled={readingWorld} onClick={() => worldInput.current?.click()}>
-                      Change
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={readingWorld}
-                      icon={<X className="size-4" />}
-                      aria-label="Remove the world"
-                      onClick={() => {
-                        set("myWorld", null);
-                        pictureFromWorld(null);
-                      }}
-                    />
-                  </div>
-                ) : keepTheirs && theirs ? (
-                  <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-                    <ArchiveIcon className="size-5 shrink-0 text-muted" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-medium">{theirs.name || theirs.file || "The template's world"}</p>
-                      <p className="truncate text-xs text-muted" data-testid="world-summary">
-                        {[theirs.version && `Last opened in ${theirs.version}`, bytes(theirs.size), "kept with the template"].filter(Boolean).join(" · ")}
-                      </p>
-                    </div>
-                    <Button size="sm" disabled={readingWorld} onClick={() => worldInput.current?.click()}>
-                      Change
-                    </Button>
-                    <Button size="sm" variant="ghost" disabled={readingWorld} icon={<X className="size-4" />} aria-label="Remove the world" onClick={() => setKeepTheirs(false)} />
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">
-                    <Button icon={<ArchiveIcon className="size-4" />} loading={readingWorld} onClick={() => worldInput.current?.click()}>
-                      Choose a world
-                    </Button>
-                    <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz with the world's folder, the one with level.dat. A single-player save works.</p>
-                  </div>
-                )}
-                {worldTooNew && <Notice tone="warn">{newerWorldWarning(givenVersion, effective(v.version))}</Notice>}
-              </>
+              </div>
+            ) : keepTheirs && theirs ? (
+              <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
+                <ArchiveIcon className="size-5 shrink-0 text-muted" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{theirs.name || theirs.file || "The template's world"}</p>
+                  <p className="truncate text-xs text-muted" data-testid="world-summary">
+                    {[theirs.version && `Last opened in ${theirs.version}`, bytes(theirs.size), "kept with the template"].filter(Boolean).join(" · ")}
+                  </p>
+                </div>
+                <Button size="sm" disabled={readingWorld} onClick={() => worldInput.current?.click()}>
+                  Change
+                </Button>
+                <Button size="sm" variant="ghost" disabled={readingWorld} icon={<X className="size-4" />} aria-label="Remove the world" onClick={() => setKeepTheirs(false)} />
+              </div>
+            ) : (
+              <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong px-4 py-4">
+                <Button icon={<ArchiveIcon className="size-4" />} loading={readingWorld} onClick={() => worldInput.current?.click()}>
+                  Choose a world
+                </Button>
+                <p className="text-xs leading-relaxed text-muted">A .zip or .tar.gz with the world's folder, the one with level.dat. A single-player save works.</p>
+              </div>
             )}
-            {swapsWorld && <Notice tone="info">Plugin data from the template, such as claims and warps, may point at places this world does not have.</Notice>}
+            {worldTooNew && <Notice tone="warn">{newerWorldWarning(givenVersion, running ?? "")}</Notice>}
           </>
         )}
+        {keepsWorld && worldTooNew && v.kind === "modpack" && <Notice tone="warn">{newerWorldWarning(givenVersion, running ?? "")}</Notice>}
+        {swapsWorld && <Notice tone="info">Plugin data from {swappedFrom}, such as claims and warps, may point at places this world does not have.</Notice>}
         <div className="grid grid-cols-2 gap-4">
           <Field label="Game mode">
             {(id) => (
@@ -2071,7 +2081,7 @@ export function ServerForm({
         open={askNewer}
         onOpenChange={setAskNewer}
         world={givenVersion}
-        version={effective(v.version)}
+        version={running ?? ""}
         action={`${duplicating ? "Duplicate" : "Create server"} anyway`}
         onConfirm={() => void submit(undefined, false, true)}
       />

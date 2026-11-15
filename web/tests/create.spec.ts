@@ -1280,17 +1280,32 @@ test("a copy made with a world of one's own has it put in once its files are", a
   expect((await sent).postDataJSON()).not.toHaveProperty("world");
 });
 
-test("a server brought back keeps its own world, with no choice of another", async ({ page, as }) => {
+test("a server brought back keeps its own world to begin with, and can be given a new one", async ({ page, as }) => {
   await as("owner");
   const list = await (await page.request.get("/api/v1/orgs/friends/snapshots")).json();
   const final = list.snapshots.find((s: { server: string }) => s.server === "oldworld");
   await page.goto(`/o/friends/new?from=snapshot:${final.id}`);
   await expect(page.getByRole("heading", { name: "Bring back oldworld" })).toBeVisible();
-  await expect(page.getByRole("group", { name: "World", exact: true })).toHaveCount(0);
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
+  await expect(worldChoice.getByRole("button", { name: "Keep world" })).toHaveAttribute("aria-pressed", "true");
+  for (const other of ["New world", "Library world", "Upload world"]) await expect(worldChoice.getByRole("button", { name: other })).toBeVisible();
   // How it was made is how it was made: its terrain is saved.
   await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
   await expect(page.getByLabel("Seed")).toBeDisabled();
   await expect(page.getByRole("switch", { name: "Hardcore" })).toBeDisabled();
+  // A new one is made as asked.
+  await worldChoice.getByRole("button", { name: "New world" }).click();
+  await expect(page.getByLabel("Seed")).toBeEnabled();
+  await page.getByLabel("Seed").fill("42");
+  const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/orgs/friends/servers"));
+  await page.route("**/api/v1/orgs/friends/servers", (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) }) : route.continue(),
+  );
+  await page.getByRole("button", { name: "Create server", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
+  const body = (await sent).postDataJSON();
+  expect(body).toMatchObject({ name: "oldworld", fromSnapshot: final.id, world: "new" });
+  expect(body.spec.properties).toMatchObject({ "level-seed": "42" });
 });
 
 test("a long error in the bar along the bottom does not cover the end of the form", async ({ page, as, org }) => {

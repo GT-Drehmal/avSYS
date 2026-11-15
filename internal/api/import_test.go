@@ -210,3 +210,124 @@ func TestWorldFillTriedAgainKeepsDatapacks(t *testing.T) {
 		t.Errorf("what the try before left is still there: %v", err)
 	}
 }
+
+// A server's archive imported without its world, for another or a new one,
+// brings the rest of its files, and the datapacks its world had: its world,
+// under its own level-name too, and its Nether and End do not come.
+func TestServerArchiveWithoutItsWorld(t *testing.T) {
+	for _, tool := range []string{"bsdtar", "sh"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+	}
+	for _, without := range []bool{false, true} {
+		root := t.TempDir()
+		data := filepath.Join(root, "data")
+		write := func(path, content string) {
+			t.Helper()
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		src := filepath.Join(root, "src")
+		write(filepath.Join(src, "srv", "server.properties"), "motd=hi\nlevel-name=lobby\nlevel-seed=5\n")
+		write(filepath.Join(src, "srv", "mods", "a.jar"), "a mod")
+		write(filepath.Join(src, "srv", "lobby", "level.dat"), "its world")
+		write(filepath.Join(src, "srv", "lobby", "region", "r.0.0.mca"), "its world")
+		write(filepath.Join(src, "srv", "lobby", "datapacks", "a.zip"), "a datapack")
+		write(filepath.Join(src, "srv", "lobby_nether", "DIM-1", "x"), "its nether")
+		write(filepath.Join(src, "srv", "world_the_end", "DIM1", "x"), "an end")
+		if err := os.MkdirAll(filepath.Join(data, ".avsys"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("bsdtar", "-cf", filepath.Join(data, ".avsys", "import.archive"), "-C", src, "srv").CombinedOutput(); err != nil {
+			t.Fatalf("bsdtar: %v: %s", err, out)
+		}
+		script := regexp.MustCompile(regexp.QuoteMeta(dataRoot)+`\b`).ReplaceAllString(serverScript, data)
+		cmd := exec.Command("sh", "-c", script)
+		line := ""
+		if without {
+			line = "without"
+		}
+		cmd.Stdin = strings.NewReader("srv\n\n\n\n\n" + line + "\n")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("script: %v: %s", err, out)
+		}
+		// Without its world, a new one is not made with its seed.
+		properties := "motd=hi\nlevel-seed=5\n"
+		if without {
+			properties = "motd=hi\n"
+		}
+		for path, want := range map[string]string{
+			"mods/a.jar":             "a mod",
+			"server.properties":      properties,
+			"world/datapacks/a.zip":  "a datapack",
+			"world/level.dat":        "its world",
+			"world/region/r.0.0.mca": "its world",
+			"world_nether/DIM-1/x":   "its nether",
+			"world_the_end/DIM1/x":   "an end",
+		} {
+			got, err := os.ReadFile(filepath.Join(data, path))
+			gone := without && (strings.HasPrefix(path, "world/l") || strings.HasPrefix(path, "world/r") || strings.HasPrefix(path, "world_"))
+			if gone {
+				if !os.IsNotExist(err) {
+					t.Errorf("without its world, %s is there: %q, %v", path, got, err)
+				}
+			} else if err != nil || string(got) != want {
+				t.Errorf("without=%v, %s: %q, %v; want %q", without, path, got, err, want)
+			}
+		}
+	}
+}
+
+// A new world in place of a server's: its world, Nether and End go, for the
+// game to make again, and its datapacks stay. The rest of its files stay.
+func TestNewWorldScript(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is not installed")
+	}
+	for _, level := range []string{"", "lobby"} {
+		lv := level
+		if lv == "" {
+			lv = "world"
+		}
+		data := filepath.Join(t.TempDir(), "data")
+		for path, content := range map[string]string{
+			"mods/a.jar":                    "a mod",
+			"server.properties":             "motd=hi\n",
+			lv + "/level.dat":               "the old world",
+			lv + "/region/r.0.0.mca":        "the old world",
+			lv + "/datapacks/a.zip":         "a datapack",
+			lv + "_nether/DIM-1/x":          "the old nether",
+			lv + "_the_end/DIM1/x":          "the old end",
+			"other/level.dat":               "another folder",
+			".avsys/import.datapacks/x.zip": "left from before",
+		} {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(data, path)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(data, path), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		script := regexp.MustCompile(regexp.QuoteMeta(dataRoot)+`\b`).ReplaceAllString(newWorldScript, data)
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Stdin = strings.NewReader("\n\n\nreplace\n" + level + "\n")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("script: %v: %s", err, out)
+		}
+		for path, want := range map[string]string{"mods/a.jar": "a mod", "server.properties": "motd=hi\n", lv + "/datapacks/a.zip": "a datapack", "other/level.dat": "another folder"} {
+			if got, err := os.ReadFile(filepath.Join(data, path)); err != nil || string(got) != want {
+				t.Errorf("%s: %q, %v; want %q", path, got, err, want)
+			}
+		}
+		for _, path := range []string{lv + "/level.dat", lv + "/region", lv + "_nether", lv + "_the_end", lv + "/datapacks/x.zip", ".avsys/import.datapacks"} {
+			if _, err := os.Stat(filepath.Join(data, path)); !os.IsNotExist(err) {
+				t.Errorf("%s is still there: %v", path, err)
+			}
+		}
+	}
+}

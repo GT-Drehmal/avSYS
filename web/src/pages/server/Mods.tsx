@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { ProjectIcon } from "../../components/ModrinthSearch";
 import { Button, Field, Input, Notice, Toggle } from "../../components/ui";
-import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ResourcePack, type Server } from "../../lib/api";
+import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
+import { newerThan } from "../../lib/worlds";
+import { NewerWorldConfirm } from "../../components/NewerWorld";
 import { applyServer, keys, useAction, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
@@ -42,6 +44,21 @@ export function Mods() {
   const takes = kindsFor(server.spec);
   const sections = [...takes, ...(["mod", "plugin", "datapack"] as const).filter((k) => !takes.includes(k) && mods.some((m) => (m.kind ?? "mod") === k))];
   const versionTarget = typeof versioning === "number" ? mods[versioning] : null;
+
+  // Another version of the modpack can be built for an older game than the
+  // world was last opened in, which that game cannot open: asked first.
+  const order = useGameVersions().data?.ordered ?? [];
+  const reported = server.status.version?.split(" ").at(-1);
+  const ranOn = reported && order.includes(reported) ? reported : modpack?.gameVersion;
+  const [olderPack, setOlderPack] = useState<{ version: ModrinthVersion; game: string } | null>(null);
+  const pickPack = (v: ModrinthVersion | null, sure = false) => {
+    if (!modpack) return;
+    const game = v?.game_versions.at(-1);
+    if (v && game && !sure && newerThan(order, ranOn, game)) return setOlderPack({ version: v, game });
+    setOlderPack(null);
+    const spec = { modpack: { ...modpack, version: v?.id ?? "", versionName: v?.version_number ?? "" } };
+    update.mutate(sure ? { spec, newerWorld: true } : spec);
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -180,11 +197,20 @@ export function Mods() {
           filters={{}}
           onClose={() => setVersioning(null)}
           onPick={(v) => {
-            update.mutate({ modpack: { ...modpack, version: v?.id ?? "", versionName: v?.version_number ?? "" } });
+            pickPack(v);
             setVersioning(null);
           }}
         />
       )}
+      <NewerWorldConfirm
+        open={!!olderPack}
+        onOpenChange={(o) => !o && setOlderPack(null)}
+        world={ranOn ?? ""}
+        version={olderPack?.game ?? ""}
+        action={`Change to ${olderPack?.version.version_number ?? "it"} anyway`}
+        loading={update.isPending}
+        onConfirm={() => olderPack && pickPack(olderPack.version, true)}
+      />
     </div>
   );
 }

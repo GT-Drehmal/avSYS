@@ -17,7 +17,7 @@ import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../component
 import { NodeMove } from "../../components/NodeMove";
 import { ReplaceWorld } from "../../components/ReplaceWorld";
 import { NewerWorldConfirm } from "../../components/NewerWorld";
-import { newerThan, newerWorldWarning } from "../../lib/worlds";
+import { newerThan, newerWorldWarning, runsOn } from "../../lib/worlds";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -208,11 +208,11 @@ export function Settings() {
   // The version its world was last opened in, as far as is known: the one
   // the game says it runs, or else the one it was set to.
   const reported = server.status.version?.split(" ").at(-1);
-  const ranOn = reported && order.includes(reported) ? reported : server.spec.version === "LATEST" ? latestOf(savedVersions) : server.spec.version;
+  const ranOn = reported && order.includes(reported) ? reported : runsOn(server.spec, latestOf(savedVersions));
   const goingTo = draft.version === "LATEST" ? latestOf(versions) : draft.version;
   const newer = newerVersion(server.spec, savedVersions);
   // A world opened in a newer version cannot be opened in an older one.
-  const older = !server.spec.modpack && newerThan(order, ranOn, goingTo);
+  const older = newerThan(order, ranOn, goingTo);
 
   const [opening, setOpening] = useState(false);
   const [downgrading, setDowngrading] = useState(false);

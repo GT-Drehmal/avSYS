@@ -18,6 +18,7 @@ import (
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -379,7 +380,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	}
 	// The world it keeps was last opened in the version it was taken of.
 	if !newWorld {
-		if err := s.checkWorldVersion(r, record.Spec.Version, &spec); err != nil {
+		if err := s.checkWorldVersion(r, controller.GameVersionOf(&record.Spec), &spec); err != nil {
 			return err
 		}
 	}
