@@ -668,7 +668,8 @@ export function ServerForm({
     // An imported server keeps the version it ran, listed or not.
     if (source || importing || v.version === "LATEST" || !versions.data || versions.isPlaceholderData || versions.data.all.has(v.version)) return;
     toast.info(`${loaders.find((l) => l.id === v.loader)?.name ?? "This software"} has no build for ${v.version} yet`);
-    setValues((was) => ({ ...was, version: "LATEST" }));
+    // A build is for the version it was picked with.
+    setValues((was) => ({ ...was, version: "LATEST", loaderVersion: "" }));
   }, [source, importing, v.version, versions.data, versions.isPlaceholderData, v.loader, setValues]);
   const [addingMods, setAddingMods] = useState<PickKind | null>(null);
   // A mod whose version is being picked, by where it is in the list.
@@ -797,7 +798,13 @@ export function ServerForm({
     // A modpack file is let go of with the modpack, and the picture it brought.
     const dropping = !!v.mrpack && !!change.kind && change.kind !== "modpack";
     if (change.kind && change.kind !== "modpack") pictureFromPack(null);
-    setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "", ...(dropping ? { modpack: null, mrpack: null } : {}) }));
+    // The pinned build goes with the type and version it is for, and comes
+    // back with them, as in Settings.
+    const from = found ?? start;
+    setValues((was) => {
+      const next = { ...was, ...change, mods: [], uploads: [], ...(dropping ? { modpack: null, mrpack: null } : {}) };
+      return { ...next, loaderVersion: next.kind !== "modpack" && next.loader === from.loader && next.version === from.version ? from.loaderVersion : "" };
+    });
   };
 
   const chooseWorld = (next: WorldChoice) => {
