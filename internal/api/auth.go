@@ -144,8 +144,21 @@ func (l *loginLimiter) fail(key string) {
 	if l.failures == nil {
 		l.failures = map[string][]time.Time{}
 	}
+	// Keys are made of what callers send, so that many of them are let go
+	// of once they are old, not kept until asked about again.
+	if len(l.failures) >= loginKeysSwept {
+		for k, times := range l.failures {
+			if time.Since(times[len(times)-1]) >= loginWindow {
+				delete(l.failures, k)
+			}
+		}
+	}
 	l.failures[key] = append(l.failures[key], time.Now())
 }
+
+// loginKeysSwept is how many keys the limiter holds before it lets go of
+// those it no longer needs.
+const loginKeysSwept = 10_000
 
 var logins loginLimiter
 
@@ -163,15 +176,17 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	if u == nil || u.PasswordHash == "" || !auth.CheckPassword(u.PasswordHash, in.Password) {
+	if u == nil || u.PasswordHash == "" {
+		// As long as a wrong password takes, so that how long it took does
+		// not say whether there is such an account.
+		auth.CheckNoPassword(in.Password)
+		u = nil
+	}
+	if u == nil || !auth.CheckPassword(u.PasswordHash, in.Password) {
 		logins.fail(key)
 		return &Error{Status: http.StatusUnauthorized, Code: "bad_credentials", Message: "Wrong username or password."}
 	}
-	if err := s.startSession(w, r, u.ID); err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, u)
-	return nil
+	return s.passwordSignedIn(w, r, u)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
@@ -180,7 +195,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1, HttpOnly: true})
+	s.clearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
@@ -332,6 +347,9 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request, u *store.User) er
 	me := map[string]any{
 		"user": u, "orgs": orgs, "identities": identities, "hasPassword": u.PasswordHash != "",
 	}
+	if err := s.twoFactorOfMe(r, u, me); err != nil {
+		return err
+	}
 	// Their main one, left out, not null, for someone who has linked none;
 	// and all of them.
 	accounts, err := s.Store.MinecraftAccounts(r.Context(), u.ID)
@@ -367,8 +385,8 @@ func (s *Server) setPassword(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	if u.PasswordHash != "" && !auth.CheckPassword(u.PasswordHash, in.Current) {
-		return errBadRequest("The current password is wrong.")
+	if err := s.checkCurrentPassword(r, u, in.Current); err != nil {
+		return err
 	}
 	if len(in.New) < 8 {
 		return errBadRequest("Use a password of at least 8 characters.")
@@ -378,6 +396,10 @@ func (s *Server) setPassword(w http.ResponseWriter, r *http.Request, u *store.Us
 		return err
 	}
 	if err := s.Store.SetPassword(r.Context(), u.ID, hash); err != nil {
+		return err
+	}
+	// Anyone who knew the old one is signed out, everywhere but here.
+	if err := s.Store.EndOtherSessions(r.Context(), u.ID, sessionToken(r)); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

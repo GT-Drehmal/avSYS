@@ -274,6 +274,26 @@ export interface Me {
   minecraft?: MinecraftAccount;
   /** Every Minecraft account they have linked, the main one first. */
   minecraftAccounts?: MinecraftAccount[];
+  /** Whether signing in with their password also takes a code. */
+  twoFactor: boolean;
+  /** Recovery codes they have left. */
+  recoveryCodes: number;
+  /** An administrator who has to set up two-factor before anything else. */
+  mustSetUpTwoFactor: boolean;
+  /** Whether administrators here have to use two-factor. */
+  adminTwoFactor: boolean;
+}
+
+/** A browser signed in as someone. */
+export interface Session {
+  id: string;
+  userAgent: string;
+  address: string;
+  method: "password" | "provider" | "";
+  createdAt: string;
+  lastUsedAt: string;
+  /** The one this page is open in. */
+  current: boolean;
 }
 
 /** A Minecraft account a person has linked. */

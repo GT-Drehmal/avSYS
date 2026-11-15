@@ -56,6 +56,31 @@ CREATE TABLE IF NOT EXISTS sessions (
 	created_at INTEGER NOT NULL,
 	expires_at INTEGER NOT NULL
 );
+-- The columns sessions have had since they could be listed and ended one
+-- by one are added by addSessionDetails, to old tables and new alike.
+-- A second factor, by user: the secret of the codes, the one being set up,
+-- and the last time step a code was used for, which is not taken again.
+CREATE TABLE IF NOT EXISTS two_factor (
+	user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	secret     TEXT NOT NULL DEFAULT '',
+	pending    TEXT NOT NULL DEFAULT '',
+	last_step  INTEGER NOT NULL DEFAULT 0,
+	enabled_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS recovery_codes (
+	user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	code_hash TEXT NOT NULL,
+	PRIMARY KEY (user_id, code_hash)
+);
+-- Links an administrator makes for someone to set a new password with.
+CREATE TABLE IF NOT EXISTS reset_links (
+	token_hash     TEXT PRIMARY KEY,
+	user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_by     TEXT NOT NULL,
+	created_at     INTEGER NOT NULL,
+	expires_at     INTEGER NOT NULL,
+	two_factor_off INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS ssh_keys (
 	id           TEXT PRIMARY KEY,
 	user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -166,6 +191,10 @@ func Open(path string) (*Store, error) {
 	// and is plenty for a panel's worth of traffic.
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
+	if err := addSessionDetails(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}

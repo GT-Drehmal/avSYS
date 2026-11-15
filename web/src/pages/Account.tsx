@@ -7,6 +7,7 @@ import { api, type APIToken, type SSHKey } from "../lib/api";
 import { ago } from "../lib/format";
 import { keys, useAction, useMe, useMeta } from "../lib/queries";
 import { toast } from "../lib/toast";
+import { Sessions, TwoFactor } from "./AccountSecurity";
 
 const sshKeys = ["ssh-keys"] as const;
 const apiTokens = ["api-tokens"] as const;
@@ -353,6 +354,8 @@ export function Account() {
       <SSHKeys />
       <APITokens />
       <SignIn />
+      <TwoFactor />
+      <Sessions />
     </>
   );
 }
