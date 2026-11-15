@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Search, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Image as ImageIcon, Folder, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Search, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
@@ -40,10 +40,13 @@ function FileEditor({
   onClose,
   onDirty,
   onState,
+  onView,
 }: {
   base: string;
   path: string;
   managed: string[];
+  /** For a picture kept as text, as an svg is: shown as a picture again. */
+  onView?: () => void;
   /** What it had at another path, before the file was renamed or moved. */
   carry?: EditorState;
   onClose: () => void;
@@ -119,6 +122,11 @@ function FileEditor({
           )}
         </span>
         <div className="flex items-center gap-1.5">
+          {onView && (
+            <Button size="sm" variant="ghost" icon={<ImageIcon className="size-3.5" />} onClick={onView}>
+              View as image
+            </Button>
+          )}
           <Button size="sm" variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(false)}>
             Save
           </Button>
@@ -259,6 +267,9 @@ function store(key: string, value: unknown) {
 
 // What the panel can open in place, as the workspace's bsdtar reads.
 const archive = /\.(zip|tar|tar\.gz|tgz|tar\.xz|txz|tar\.bz2|tbz2|7z|rar)$/i;
+
+// A picture that is also text: it can be edited as text too.
+const svg = /\.svg$/i;
 
 const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name) && !image.test(entry.name);
 
@@ -740,6 +751,8 @@ export default function Files() {
   const openEntry = open || selected.dir ? null : rows.find((r): r is Extract<Row, { kind: "entry" }> => r.kind === "entry" && r.path === selected.path && !isEditable(r.entry));
   const managed = open === "/server.properties" ? Object.keys(server.spec.properties ?? {}).sort() : [];
   const onDirty = useCallback((d: boolean) => setDirty(d), []);
+  // How many times a picture was gone back to from the editor: each, asked for anew.
+  const [looks, setLooks] = useState(0);
 
   return (
     <div className="flex h-[calc(100dvh-330px)] min-h-80 overflow-hidden rounded-lg border border-line bg-surface">
@@ -1026,6 +1039,18 @@ export default function Files() {
             onDirty={onDirty}
             onState={onState}
             onClose={() => guard(() => openFile(null))}
+            onView={
+              svg.test(open)
+                ? () =>
+                    guard(() => {
+                      // As saved: the picture is asked for again, and its folder for its size.
+                      setLooks((n) => n + 1);
+                      refresh(parentOf(open));
+                      setSelected({ path: open, dir: false });
+                      openFile(null);
+                    })
+                : undefined
+            }
           />
         ) : openEntry && image.test(openEntry.entry.name) ? (
           <ImageView
@@ -1041,6 +1066,8 @@ export default function Files() {
               setFocused(path);
             }}
             onClose={() => setSelected({ path: parentOf(openEntry.path), dir: true })}
+            again={looks}
+            onEdit={svg.test(openEntry.path) && openEntry.entry.size <= maxEditable ? () => openFile(openEntry.path) : undefined}
           />
         ) : openEntry ? (
           <div className="relative flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">

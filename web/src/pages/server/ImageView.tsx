@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronLeft, ChevronRight, Download, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileCode, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui";
 import { qs, type FileEntry } from "../../lib/api";
@@ -26,15 +26,19 @@ interface Props {
   pictures: string[];
   onGo: (path: string) => void;
   onClose: () => void;
+  /** For a picture that is also text, as an svg is: opened in the editor. */
+  onEdit?: () => void;
+  /** Asked for anew each time this changes, as after an edit. */
+  again?: number;
   ref?: React.Ref<HTMLDivElement>;
 }
 
 /** A picture in the server's files, with its size, and the ones beside it a key away. */
-export function ImageView({ base, path, entry, pictures, onGo, onClose, ref }: Props) {
+export function ImageView({ base, path, entry, pictures, onGo, onClose, onEdit, again, ref }: Props) {
   // A new address when the file's time or size changes, so the page never
   // shows a picture it had before the change.
   const time = Math.floor(Date.parse(entry.modTime) / 1000);
-  const src = `/api/v1${base}/content?${qs({ path, v: Number.isNaN(time) ? undefined : `${time}-${entry.size}` })}&view`;
+  const src = `/api/v1${base}/content?${qs({ path, v: Number.isNaN(time) ? undefined : `${time}-${entry.size}`, again: again || undefined })}&view`;
   const download = `/api/v1${base}/content?${qs({ path })}&download`;
   // Each by the address it is for: those of the picture before are not this one's.
   const [natural, setNatural] = useState<{ src: string; w: number; h: number } | null>(null);
@@ -109,6 +113,11 @@ export function ImageView({ base, path, entry, pictures, onGo, onClose, ref }: P
               <Button size="sm" variant="ghost" icon={<ChevronLeft className="size-4" />} aria-label="Previous image" title="Previous image" disabled={!before} onClick={() => before && onGo(before)} />
               <Button size="sm" variant="ghost" icon={<ChevronRight className="size-4" />} aria-label="Next image" title="Next image" disabled={!after} onClick={() => after && onGo(after)} />
             </>
+          )}
+          {onEdit && (
+            <Button size="sm" variant="ghost" icon={<FileCode className="size-3.5" />} onClick={onEdit}>
+              Edit as text
+            </Button>
           )}
           {shrunk && (
             <Button size="sm" variant="ghost" aria-pressed={actual} onClick={() => setActual((a) => !a)}>

@@ -344,9 +344,14 @@ async function pictures(page: Page, failOnce: string[] = []) {
       failOnce.splice(failOnce.indexOf(path), 1);
       return route.fulfill({ status: 502, json: { code: "workspace", message: "The server's files are not reachable right now." } });
     }
-    return route.fulfill({ body: pic.body, headers: { "Content-Type": url.searchParams.has("view") ? pic.type : "application/octet-stream" } });
+    // Saved from the editor: what it is from then on.
+    if (route.request().method() === "PUT") {
+      pic.body = route.request().postData() ?? "";
+      return route.fulfill({ status: 204, headers: { ETag: `"${asked.length}"` } });
+    }
+    return route.fulfill({ body: pic.body, headers: { "Content-Type": url.searchParams.has("view") ? pic.type : "application/octet-stream", ETag: `"${asked.length}"` } });
   });
-  return { asked, svg };
+  return { asked, svg, images };
 }
 
 const natural = (img: Locator) => img.evaluate((el: HTMLImageElement) => [el.naturalWidth, el.naturalHeight]);
@@ -422,6 +427,39 @@ test("an svg is shown as a picture, never as a page or in the editor", async ({ 
   await expect(page.locator(".cm-content")).toHaveCount(0);
   await expect(page.locator("iframe, object, embed")).toHaveCount(0);
   expect(await page.evaluate(() => (window as { ran?: boolean }).ran)).toBeUndefined();
+});
+
+test("an svg can be edited as text, and viewed as a picture again with the change", async ({ page }) => {
+  const { images, svg } = await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "logo.svg").click();
+  await expect(page.getByText("32 × 24 · 20 B")).toBeVisible();
+  await page.getByRole("button", { name: "Edit as text" }).click();
+  await expect(page.locator(".cm-content")).toContainText('<rect width="32" height="24"');
+  await expect(page.getByRole("img", { name: "logo.svg" })).toHaveCount(0);
+  // Made bigger, and saved as any file is.
+  const bigger = svg.replaceAll('width="32" height="24"', 'width="48" height="40"');
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.insertText(bigger);
+  await expect(page.getByText("unsaved")).toBeVisible();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("unsaved")).toHaveCount(0);
+  expect(images["/logo.svg"].body).toBe(bigger);
+  await page.getByRole("button", { name: "View as image" }).click();
+  const img = page.getByRole("img", { name: "logo.svg" });
+  await expect(img).toBeVisible();
+  await expect(page.getByText(/^48 × 40 · /)).toBeVisible();
+  expect(await natural(img)).toEqual([48, 40]);
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+});
+
+test("a picture that is not text has no Edit as text", async ({ page }) => {
+  await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "server-icon.png").click();
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit as text" })).toHaveCount(0);
 });
 
 test("a big picture fits, and is shown at its own size when asked", async ({ page }) => {
