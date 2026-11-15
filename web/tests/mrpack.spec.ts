@@ -16,9 +16,9 @@ const index = (change: (i: any) => void = () => {}) => {
     versionId: "2.0.1",
     name: "Probe Pack",
     files: [
-      { path: "mods/lithium-fabric-0.15.3.jar", env: { client: "required", server: "required" }, downloads: ["https://cdn.modrinth.com/data/a/lithium.jar"] },
+      { path: "mods/lithium-fabric-0.15.3.jar", env: { client: "required", server: "required" }, downloads: ["https://cdn.modrinth.com/data/gvQqBUqZ/versions/Vy9QGdBz/l.jar"] },
       { path: "mods/sodium-fabric-0.6.13.jar", env: { client: "required", server: "unsupported" }, downloads: ["https://cdn.modrinth.com/data/b/sodium.jar"] },
-      { path: "resourcepacks/faithful.zip", downloads: ["https://cdn.modrinth.com/data/c/faithful.zip"] },
+      { path: "resourcepacks/faithful.zip", downloads: ["https://x.org/f.zip"] },
     ],
     dependencies: { minecraft: "1.21.4", "fabric-loader": "0.16.10" },
   };
@@ -75,6 +75,11 @@ test("a .mrpack fills the form in, and the server is made with it, then given th
   const files = page.getByRole("region", { name: "In the modpack" });
   await expect(files.getByText("2 on the server · 1 left out, client only")).toBeVisible();
   await expect(files.getByRole("listitem")).toHaveText([/lithium-fabric-0\.15\.3\s*Mod/, /faithful\s*Resource pack/, /sodium-fabric-0\.6\.13\s*Client only, left out/]);
+  // One from Modrinth links to its page there, as read from where it is
+  // downloaded; one from elsewhere does not.
+  const link = (n: number) => files.getByRole("listitem").nth(n).getByRole("link", { name: "Open on Modrinth" });
+  await expect(link(0)).toHaveAttribute("href", "https://modrinth.com/project/gvQqBUqZ");
+  await expect(link(1)).toHaveCount(0);
   // Along the bottom, what is made.
   await expect(page.getByText("Probe Pack · Probe Pack · 4 GB")).toBeVisible();
 
@@ -255,6 +260,9 @@ test("the Content page shows an uploaded pack's own picture, and the mods in it 
   await expect(files.getByRole("listitem").first()).toHaveText(/Lithium\s*Mod/);
   await expect(files.getByRole("listitem").first().locator("img")).toBeVisible();
   await expect(files.getByRole("listitem").nth(1)).toHaveText(/^F\s*ferritecore-fabric-1\.0\.1\s*Mod/);
+  // The one from Modrinth links to its page there, the others do not.
+  await expect(files.getByRole("listitem").first().getByRole("link", { name: "Open on Modrinth" })).toHaveAttribute("href", "https://modrinth.com/project/gvQqBUqZ");
+  await expect(files.getByRole("listitem").nth(1).getByRole("link")).toHaveCount(0);
   await expect(files.getByRole("listitem").last()).toHaveText(/Sodium\s*Client only, left out/);
 
   // Searched, by name or by file.

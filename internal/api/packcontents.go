@@ -36,9 +36,12 @@ type packEntry struct {
 	Path string `json:"path"`
 	// Server is false for a file for players only, which the server leaves out.
 	Server bool `json:"server"`
-	// Project, Title and IconURL are the Modrinth project the file is
-	// downloaded from, where the catalog knows it.
+	// Project and Version are the Modrinth project and version the file is
+	// downloaded from, where it is from Modrinth; Slug, Title and IconURL
+	// are the project's, where the catalog knows it.
 	Project string `json:"project,omitempty"`
+	Version string `json:"version,omitempty"`
+	Slug    string `json:"slug,omitempty"`
 	Title   string `json:"title,omitempty"`
 	IconURL string `json:"iconUrl,omitempty"`
 }
@@ -53,8 +56,8 @@ type modpackRead struct {
 var packIcons = []string{"server-overrides/server-icon.png", "overrides/server-icon.png", "overrides/icon.png", "icon.png"}
 
 // modrinthCDNFile is a file on Modrinth's CDN; the project it is of is its
-// first part.
-var modrinthCDNFile = regexp.MustCompile(`^https://cdn\.modrinth\.com/data/([A-Za-z0-9]{8})/`)
+// first part, and the version, where it says, the next.
+var modrinthCDNFile = regexp.MustCompile(`^https://cdn\.modrinth\.com/data/([A-Za-z0-9]{8})/(?:versions/([A-Za-z0-9]{8})/)?`)
 
 // readPackZip reads a pack's index and picture. A pack that is not one
 // lists nothing. A failure to read the file itself, as of the connection it
@@ -110,7 +113,7 @@ func readPackFrom(r io.ReaderAt, size int64) *modpackRead {
 					e := packEntry{Path: p, Server: f.Env["server"] != "unsupported"}
 					for _, d := range f.Downloads {
 						if m := modrinthCDNFile.FindStringSubmatch(d); m != nil {
-							e.Project = m[1]
+							e.Project, e.Version = m[1], m[2]
 							break
 						}
 					}
@@ -400,9 +403,9 @@ func (z *remoteZip) ReadAt(p []byte, off int64) (int, error) {
 }
 
 // modrinthProjectsOf looks up the projects of a pack's files in the
-// catalog: their names and pictures. What cannot be looked up just now goes
-// without.
-func (s *Server) modrinthProjectsOf(ctx context.Context, files []packEntry) map[string]struct{ title, icon string } {
+// catalog: their slugs, names and pictures. What cannot be looked up just
+// now goes without.
+func (s *Server) modrinthProjectsOf(ctx context.Context, files []packEntry) map[string]struct{ slug, title, icon string } {
 	seen := map[string]bool{}
 	var ids []string
 	for _, f := range files {
@@ -412,7 +415,7 @@ func (s *Server) modrinthProjectsOf(ctx context.Context, files []packEntry) map[
 		}
 	}
 	sort.Strings(ids)
-	out := map[string]struct{ title, icon string }{}
+	out := map[string]struct{ slug, title, icon string }{}
 	for start := 0; start < len(ids); start += 100 {
 		chunk := ids[start:min(start+100, len(ids))]
 		encoded, _ := json.Marshal(chunk)
@@ -422,6 +425,7 @@ func (s *Server) modrinthProjectsOf(ctx context.Context, files []packEntry) map[
 		}
 		var projects []struct {
 			ID      string `json:"id"`
+			Slug    string `json:"slug"`
 			Title   string `json:"title"`
 			IconURL string `json:"icon_url"`
 		}
@@ -430,7 +434,7 @@ func (s *Server) modrinthProjectsOf(ctx context.Context, files []packEntry) map[
 		}
 		for _, p := range projects {
 			if seen[p.ID] {
-				out[p.ID] = struct{ title, icon string }{p.Title, p.IconURL}
+				out[p.ID] = struct{ slug, title, icon string }{p.Slug, p.Title, p.IconURL}
 			}
 		}
 	}
@@ -453,7 +457,7 @@ func (s *Server) getModpackContents(w http.ResponseWriter, r *http.Request, u *s
 		projects := s.modrinthProjectsOf(r.Context(), read.files)
 		for _, f := range read.files {
 			if p, ok := projects[f.Project]; ok {
-				f.Title, f.IconURL = p.title, p.icon
+				f.Slug, f.Title, f.IconURL = p.slug, p.title, p.icon
 			}
 			files = append(files, f)
 		}

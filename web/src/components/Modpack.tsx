@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Upload } from "lucide-react";
+import { ExternalLink, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, serverPath, type Modpack, type Server } from "../lib/api";
 import type { PackFile } from "../lib/mrpack";
@@ -95,7 +95,14 @@ export function PackFiles({ files }: { files: PackFile[] }) {
           return (
             <li key={f.path} className={cx("flex items-center gap-2.5 px-3 py-1.5", !f.server && "opacity-60")}>
               <ProjectIcon url={f.iconUrl} size={24} kind={folder === "mods" ? "mod" : folder === "resourcepacks" ? "resourcepack" : undefined} name={name} initials />
-              <span className="min-w-0 flex-1 truncate text-[13px]">{name}</span>
+              <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px]">
+                <span className="truncate">{name}</span>
+                {f.project && (
+                  <a href={`https://modrinth.com/project/${f.project}`} target="_blank" rel="noreferrer" className="shrink-0 text-faint hover:text-accent" aria-label="Open on Modrinth">
+                    <ExternalLink className="size-3" />
+                  </a>
+                )}
+              </span>
               <span className="shrink-0 text-xs text-muted">{f.server ? (folderNames[folder] ?? folder) : "Client only, left out"}</span>
             </li>
           );
@@ -106,21 +113,27 @@ export function PackFiles({ files }: { files: PackFile[] }) {
   );
 }
 
-/**
- * What a server's modpack brings, closed until asked for. Nothing shows for
- * a pack whose list cannot be read.
- */
-export function PackContents({ server }: { server: Server }) {
+/** The files a server's modpack brings, none until read or where it cannot be. */
+export function usePackFiles(server: Server): PackFile[] {
   const pack = server.spec.modpack;
-  const [open, setOpen] = useState(false);
   const contents = useQuery({
     queryKey: ["modpack-contents", server.org, server.name, pack?.source, pack?.version],
     queryFn: () => api.get<{ files: Omit<PackFile, "name">[] }>(`${serverPath(server.org, server.name)}/modpack/contents`),
     enabled: !!pack?.version,
     retry: false,
   });
-  const files = (contents.data?.files ?? []).map((f) => ({ ...f, name: f.path.slice(f.path.lastIndexOf("/") + 1) }));
-  if (!pack?.version || files.length === 0) return null;
+  if (!pack?.version) return [];
+  return (contents.data?.files ?? []).map((f) => ({ ...f, name: f.path.slice(f.path.lastIndexOf("/") + 1) }));
+}
+
+/**
+ * What a server's modpack brings, closed until asked for. Nothing shows for
+ * a pack whose list cannot be read.
+ */
+export function PackContents({ server }: { server: Server }) {
+  const [open, setOpen] = useState(false);
+  const files = usePackFiles(server);
+  if (files.length === 0) return null;
   const mods = files.every((f) => f.path.startsWith("mods/"));
   return (
     <div className="flex flex-col gap-2">

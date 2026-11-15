@@ -143,6 +143,12 @@ test("a pack from Modrinth lists what is in it, by its version, with its picture
   await page.getByRole("button", { name: "In this pack (3)" }).click();
   const files = page.getByRole("region", { name: "In the modpack" });
   await expect(files.getByRole("listitem")).toHaveText([/Lithium\s*Mod/, /faithful\s*Resource pack/, /Sodium\s*Client only, left out/]);
+  // Each from Modrinth links to its page there; one from elsewhere does not.
+  const link = (n: number) => files.getByRole("listitem").nth(n).getByRole("link", { name: "Open on Modrinth" });
+  await expect(link(0)).toHaveAttribute("href", "https://modrinth.com/project/gvQqBUqZ");
+  await expect(link(0)).toHaveAttribute("target", "_blank");
+  await expect(link(1)).toHaveCount(0);
+  await expect(link(2)).toHaveAttribute("href", "https://modrinth.com/project/AANobbMI");
   // Few enough not to need a search.
   await expect(files.getByRole("searchbox")).toHaveCount(0);
   expect(asked).toEqual(["/contents"]);
