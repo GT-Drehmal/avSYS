@@ -464,9 +464,24 @@ func TestASignInWaitingForItsCodeEnds(t *testing.T) {
 		t.Error("the right code went through after the sign-in was ended")
 	}
 
+	// The password changed while a sign-in waits, as by a reset: the old
+	// password and a code do not sign in.
+	before := p.tab("before")
+	before.call("POST", "/auth/login", map[string]string{"username": "viewer", "password": testPassword}, nil)
+	hash, err := auth.HashPassword("a new password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.srv.Store.SetPassword(context.Background(), p.users["viewer"].ID, hash); err != nil {
+		t.Fatal(err)
+	}
+	if got, code := before.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, secret, 1)}, nil); got != 401 || code != "sign_in_again" || before.signedIn() {
+		t.Errorf("a code after the password changed: %d %s", got, code)
+	}
+
 	// Two-factor turned off while a sign-in waits: that sign-in starts again.
 	waiting := p.tab("waiting")
-	waiting.call("POST", "/auth/login", map[string]string{"username": "viewer", "password": testPassword}, nil)
+	waiting.call("POST", "/auth/login", map[string]string{"username": "viewer", "password": "a new password"}, nil)
 	if err := p.srv.Store.DisableTwoFactor(context.Background(), p.users["viewer"].ID); err != nil {
 		t.Fatal(err)
 	}

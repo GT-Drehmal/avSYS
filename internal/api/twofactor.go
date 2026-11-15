@@ -61,11 +61,14 @@ func (s *Server) mustSetUpTwoFactor(ctx context.Context, u *store.User, session 
 }
 
 // A sign-in waiting for its code: the password was right, and the account
-// has two-factor. It is held in memory, under a cookie, for a few minutes.
+// has two-factor. It is held in memory, under a cookie, for a few minutes,
+// with the password hash it was given for: a password changed or reset
+// since ends it, so that the old password cannot sign in with a code.
 type signInChallenge struct {
-	userID  string
-	expires time.Time
-	tries   int
+	userID       string
+	passwordHash string
+	expires      time.Time
+	tries        int
 }
 
 type signInChallenges struct {
@@ -83,7 +86,7 @@ const (
 
 var challenges signInChallenges
 
-func (c *signInChallenges) open(userID string) string {
+func (c *signInChallenges) open(u *store.User) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.m == nil {
@@ -95,20 +98,21 @@ func (c *signInChallenges) open(userID string) string {
 		}
 	}
 	token := store.NewID(32)
-	c.m[token] = &signInChallenge{userID: userID, expires: time.Now().Add(challengeTTL)}
+	c.m[token] = &signInChallenge{userID: u.ID, passwordHash: u.PasswordHash, expires: time.Now().Add(challengeTTL)}
 	return token
 }
 
-// get returns the user a sign-in waiting for its code is of, or "".
-func (c *signInChallenges) get(token string) string {
+// get returns the user a sign-in waiting for its code is of, and the
+// password hash it was given for; or "" for none.
+func (c *signInChallenges) get(token string) (userID, passwordHash string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ch := c.m[token]
 	if ch == nil || time.Now().After(ch.expires) {
 		delete(c.m, token)
-		return ""
+		return "", ""
 	}
-	return ch.userID
+	return ch.userID, ch.passwordHash
 }
 
 // fail counts a wrong code, and reports whether the sign-in may go on.
@@ -152,7 +156,7 @@ func (s *Server) passwordSignedIn(w http.ResponseWriter, r *http.Request, u *sto
 		return err
 	}
 	if tf.Secret != "" {
-		s.setChallengeCookie(w, challenges.open(u.ID), int(challengeTTL.Seconds()))
+		s.setChallengeCookie(w, challenges.open(u), int(challengeTTL.Seconds()))
 		writeJSON(w, http.StatusOK, map[string]any{"twoFactor": true})
 		return nil
 	}
@@ -189,7 +193,7 @@ func (s *Server) signInCode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return errSignInAgain
 	}
-	userID := challenges.get(c.Value)
+	userID, passwordHash := challenges.get(c.Value)
 	if userID == "" {
 		s.setChallengeCookie(w, "", -1)
 		return errSignInAgain
@@ -207,8 +211,9 @@ func (s *Server) signInCode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if tf.Secret == "" {
-		// Turned off since the password was given: start again.
+	if tf.Secret == "" || u.PasswordHash != passwordHash {
+		// Two-factor turned off, or the password changed, since the
+		// password was given: start again.
 		challenges.close(c.Value)
 		s.setChallengeCookie(w, "", -1)
 		return errSignInAgain
