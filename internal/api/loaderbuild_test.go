@@ -41,7 +41,8 @@ func TestLoaderBuildGoesWithItsVersion(t *testing.T) {
 		{`"loaderVersion":"0.16.10"`, "fabric 1.21.4 0.16.10"},
 		{`"loaderVersion":null`, "fabric 1.21.4 "},
 	} {
-		if got, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/pinned", `{"spec":{`+step.patch+`}}`); got != 200 {
+		// Back to an older version than the world may have been opened in, as meant.
+		if got, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/pinned?newerWorld=true", `{"spec":{`+step.patch+`}}`); got != 200 {
 			t.Fatalf("%s: %d %s", step.patch, got, msg)
 		}
 		if got := software(); got != step.want {
