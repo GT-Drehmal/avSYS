@@ -98,6 +98,21 @@ const named = (value: string | undefined, names: readonly (readonly [string, str
 
 const count = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"}`;
 
+/**
+ * A picture from where it is hosted, as a PNG the panel takes (Modrinth's are
+ * often WebP), or none when it cannot be had.
+ */
+async function pictureAt(url: string): Promise<File | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const png = await pictureForRequest(new File([await res.blob()], "icon"));
+    return new File([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], "icon.png", { type: "image/png" });
+  } catch {
+    return null;
+  }
+}
+
 /** A value in server.properties as written there, where ":" and "=" are escaped. */
 const unescaped = (value: string | undefined) => (value ?? "").replace(/\\(.)/g, "$1").trim();
 
@@ -781,7 +796,7 @@ export function ServerForm({
     if (cleared > 0) toast.info(`Removed ${cleared} item${cleared === 1 ? "" : "s"} that no longer fit`);
     // A modpack file is let go of with the modpack, and the picture it brought.
     const dropping = !!v.mrpack && !!change.kind && change.kind !== "modpack";
-    if (dropping) pictureFromWorld(null);
+    if (change.kind && change.kind !== "modpack") pictureFromPack(null);
     setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "", ...(dropping ? { modpack: null, mrpack: null } : {}) }));
   };
 
@@ -835,16 +850,37 @@ export function ServerForm({
     }
   };
 
-  // The picture a world brings, unless one was chosen here, none included:
-  // a server looks as the world it is given does. Without one, a copy keeps
-  // its original's, and an import the archive's.
+  // The picture a world brings, else the one an uploaded modpack brings,
+  // unless one was chosen here, none included: a server looks as the world it
+  // is given does, then as its pack. Without either, a copy keeps its
+  // original's, and an import the archive's. Each is kept apart, so choosing
+  // another world does not lose the pack's.
   const pictureChosen = useRef(false);
+  const broughtBy = useRef<{ world: File | null; pack: File | null }>({ world: null, pack: null });
+  const showBrought = () => {
+    if (forTemplate || pictureChosen.current) return;
+    const file = broughtBy.current.world ?? broughtBy.current.pack;
+    setValues((was) => ({ ...was, picture: file ? { kind: "file", file } : source ? { kind: "keep" } : { kind: "none" } }));
+  };
   // Counted, so that one fetched too slowly does not land on the world picked since.
   const pictures = useRef(0);
   const pictureFromWorld = (file: File | null) => {
     pictures.current++;
-    if (forTemplate || pictureChosen.current) return;
-    setValues((was) => ({ ...was, picture: file ? { kind: "file", file } : source ? { kind: "keep" } : { kind: "none" } }));
+    broughtBy.current.world = file;
+    showBrought();
+  };
+  // Counted too, for a pack's picture still being fetched when another is picked.
+  const packPictures = useRef(0);
+  const pictureFromPack = (file: File | null) => {
+    packPictures.current++;
+    broughtBy.current.pack = file;
+    showBrought();
+  };
+  /** The picture of a pack picked from Modrinth, where it has one. */
+  const packPictureFrom = async (url: string | null | undefined) => {
+    const asked = ++packPictures.current;
+    const file = url ? await pictureAt(url) : null;
+    if (asked === packPictures.current) pictureFromPack(file);
   };
   /** The picture of a world in the library, as a file, or none. */
   const libraryPicture = async (w: LibraryWorld) => {
@@ -936,7 +972,7 @@ export function ServerForm({
         mrpack: { file, found },
         displayName: was.displayName || title,
       }));
-      pictureFromWorld(found.icon ? new File([found.icon.slice()], "icon.png", { type: "image/png" }) : null);
+      pictureFromPack(found.icon ? new File([found.icon.slice()], "icon.png", { type: "image/png" }) : null);
     } catch (err) {
       if (read === reads.current) setError(err instanceof ArchiveError ? err.message : "Could not read this file.");
     } finally {
@@ -946,7 +982,7 @@ export function ServerForm({
 
   /** Takes the modpack off, and the picture it brought. */
   const dropPack = () => {
-    if (v.mrpack) pictureFromWorld(null);
+    pictureFromPack(null);
     setValues((was) => ({ ...was, modpack: null, mrpack: null }));
   };
 
@@ -1700,14 +1736,15 @@ export function ServerForm({
                 <ModrinthSearch
                   type="modpack"
                   placeholder="Search modpacks on Modrinth"
-                  onPick={(hit) =>
+                  onPick={(hit) => {
                     setValues((was) => ({
                       ...was,
                       modpack: { source: "modrinth", project: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined },
                       mrpack: null,
                       displayName: was.displayName || hit.title,
-                    }))
-                  }
+                    }));
+                    void packPictureFrom(hit.icon_url);
+                  }}
                 />
               </div>
             </>

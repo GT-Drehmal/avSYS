@@ -302,3 +302,76 @@ test("a pack not uploaded yet is asked for neither its picture nor its list", as
   await expect(page.getByRole("button", { name: /in this pack/i })).toHaveCount(0);
   expect(asked).toEqual({ contents: 0, icon: [] });
 });
+
+/** Counts what is sent to a new server after it is made, answering for the pack file and picture. */
+async function afterMade(page: Page, slug: string, name: string) {
+  const icons: Buffer[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers/${name}/**`, async (route) => {
+    const req = route.request();
+    if (req.method() === "GET") return route.fallback();
+    const url = new URL(req.url());
+    if (url.pathname.endsWith("/icon")) {
+      icons.push(req.postDataBuffer() ?? Buffer.alloc(0));
+      return route.fulfill({ status: 204 });
+    }
+    if (url.pathname.endsWith("/modpack")) {
+      const server = await (await page.request.get(`/api/v1/orgs/${slug}/servers/${name}`)).json();
+      return route.fulfill({ json: server });
+    }
+    return route.fallback();
+  });
+  return icons;
+}
+
+test("an uploaded pack's picture stays the server's when another world is chosen without one", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const icons = await afterMade(page, slug, "probe-pack");
+  await newModpack(page, slug);
+  await page.getByLabel("Modpack file").setInputFiles(packFile(probe));
+  await expect(page.getByText("Probe Pack", { exact: true })).toBeVisible();
+  // Going through the world choices, none of which has a picture, and back.
+  const worldChoice = page.getByRole("group", { name: "World", exact: true });
+  await worldChoice.getByRole("button", { name: "Upload world" }).click();
+  await worldChoice.getByRole("button", { name: "New world" }).click();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/probe-pack$`));
+  await expect.poll(() => icons.length).toBe(1);
+  // WebKit does not show a test the bytes of a file sent: checked where they can be seen.
+  if (icons[0].length > 0) expect(icons[0].equals(png)).toBe(true);
+});
+
+test("a pack picked from Modrinth gives the server its picture, as a PNG", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const icons = await afterMade(page, slug, "adventure-pack");
+  // Its picture where Modrinth keeps it.
+  await page.route("**/api/v1/catalog/modrinth/search?*", async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    for (const hit of body.hits ?? []) if (hit.slug === "adventure-pack") hit.icon_url = "https://cdn.modrinth.com/data/P0000200/icon.webp";
+    return route.fulfill({ response: res, json: body });
+  });
+  await page.route("https://cdn.modrinth.com/data/P0000200/icon.webp", (route) => route.fulfill({ body: png, contentType: "image/png", headers: { "Access-Control-Allow-Origin": "*" } }));
+  await newModpack(page, slug);
+  await page.getByRole("button", { name: /^Adventure Pack/ }).click();
+  await expect(page.getByText("modrinth:adventure-pack")).toBeVisible();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/adventure-pack$`));
+  await expect.poll(() => icons.length).toBe(1);
+  // Sent as a PNG, which the panel takes whatever Modrinth's was.
+  if (icons[0].length > 0) expect(icons[0].subarray(1, 4).toString()).toBe("PNG");
+});
+
+test("a pack picked from Modrinth without a picture leaves the server its letter", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  const icons = await afterMade(page, slug, "adventure-pack");
+  await newModpack(page, slug);
+  await page.getByRole("button", { name: /^Adventure Pack/ }).click();
+  await expect(page.getByText("modrinth:adventure-pack")).toBeVisible();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/adventure-pack$`));
+  await page.waitForTimeout(500);
+  expect(icons).toHaveLength(0);
+});
