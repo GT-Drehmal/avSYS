@@ -23,6 +23,14 @@ ROUTER_PORT=${E2E_ROUTER_PORT:-35565}
 PANEL=ghcr.io/gt-drehmal/avsys:e2e
 WORKSPACE=ghcr.io/gt-drehmal/avsys-workspace:e2e
 URL=http://localhost:$HTTP_PORT
+# What the cluster pulls from Docker Hub as the run goes: the game's image and
+# the one that measures a node. Each node pulls them as soon as it is up, and
+# tries again for a few minutes if Docker Hub does not answer. Should that
+# not be enough, E2E_OUTSIDE_TAR, a copy from an earlier run, is loaded
+# instead; with E2E_OUTSIDE_SAVE set, a copy is written there once they are
+# pulled.
+OUTSIDE=${E2E_OUTSIDE_IMAGES:-docker.io/itzg/minecraft-server:java21 docker.io/library/alpine:3}
+OUTSIDE_TAR=${E2E_OUTSIDE_TAR:-}
 
 k() { docker exec -i "$NAME" kubectl "$@"; }
 step() { printf '\n== %s\n' "$1"; }
@@ -57,6 +65,40 @@ finish() {
 }
 trap finish EXIT
 
+# prepull NODE: what the run will need from outside, on that node, ahead of
+# the run. Never fails: a node without them pulls them itself later.
+prepull() {
+  missing=
+  for image in $OUTSIDE; do
+    pulled=
+    for try in 1 2 3 4 5 6; do
+      if docker exec "$1" crictl pull "$image" >/dev/null 2>&1; then pulled=1; break; fi
+      [ "$try" = 6 ] || sleep 20
+    done
+    [ -n "$pulled" ] || missing="$missing $image"
+  done
+  if [ -z "$missing" ]; then
+    if [ -n "${E2E_OUTSIDE_SAVE:-}" ] && [ -n "$OUTSIDE_TAR" ] && [ "$1" = "$NAME" ]; then
+      mkdir -p "$(dirname "$OUTSIDE_TAR")"
+      # shellcheck disable=SC2086 # one argument per image
+      if docker exec "$1" ctr images export /tmp/outside.tar $OUTSIDE >/dev/null &&
+         docker cp "$1:/tmp/outside.tar" "$OUTSIDE_TAR.new" >/dev/null; then
+        mv "$OUTSIDE_TAR.new" "$OUTSIDE_TAR"
+        touch "$(dirname "$OUTSIDE_TAR")/fresh"
+        echo "ok: kept a copy of what the cluster pulled, for runs to come"
+      fi
+      docker exec "$1" rm -f /tmp/outside.tar || true
+    fi
+    return 0
+  fi
+  if [ -n "$OUTSIDE_TAR" ] && [ -s "$OUTSIDE_TAR" ] && docker exec -i "$1" ctr images import - < "$OUTSIDE_TAR" >/dev/null 2>&1; then
+    echo "note: Docker Hub did not give $1$missing; the copy from an earlier run is used"
+  else
+    echo "note: Docker Hub did not give $1$missing, and there is no copy from an earlier run"
+  fi
+  return 0
+}
+
 step "images"
 if [ -z "${E2E_SKIP_BUILD:-}" ]; then
   docker build -q -t "$PANEL" --build-arg VERSION=e2e . >/dev/null
@@ -74,6 +116,8 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 k wait --for=condition=Ready node --all --timeout=120s >/dev/null || fail "the cluster did not come up"
+prepull "$NAME" &
+prepulls=$!
 # The ports published above are the ones the manifest's LoadBalancer service
 # listens on, which k3s binds on its node.
 # The panel runs the workspace image of its own version, so both are needed.
@@ -86,6 +130,12 @@ step "second node"
 joining=$(docker exec "$NAME" cat /var/lib/rancher/k3s/server/node-token)
 address=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$NAME")
 docker run -d --name "$AGENT" --privileged -e K3S_URL="https://$address:6443" -e K3S_TOKEN="$joining" "$K3S" agent >/dev/null
+# Its pulls start once its container runtime answers.
+(
+  for _ in $(seq 1 60); do docker exec "$AGENT" crictl info >/dev/null 2>&1 && break; sleep 2; done
+  prepull "$AGENT"
+) &
+prepulls="$prepulls $!"
 for _ in $(seq 1 60); do
   [ "$(k get nodes --no-headers 2>/dev/null | grep -c ' Ready ')" = 2 ] && break
   sleep 2
@@ -166,5 +216,7 @@ node_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{
 # The node has no Python; the workspace image, loaded here already, has, and
 # is run in the node's network to reach its ports as a player would.
 ON_NODE_PYTHON="docker run --rm -i --network container:$NAME --entrypoint python3 $WORKSPACE"
+# shellcheck disable=SC2086 # one process each
+wait $prepulls
 AVSYS_E2E_DOWN_NODE=$AGENT_NODE AVSYS_E2E_NODE_DOWN="docker pause $AGENT" AVSYS_E2E_NODE_UP="docker unpause $AGENT" AVSYS_E2E_ON_DOWN_NODE="docker exec -i $AGENT" \
 AVSYS_E2E_NODE_IP=$node_ip AVSYS_E2E_ON_NODE="docker exec -i $NAME" AVSYS_E2E_PYTHON_ON_NODE=$ON_NODE_PYTHON AVSYS_E2E_PORT_RANGE=25600-25609 AVSYS_URL=$URL AVSYS_TOKEN=$TOKEN AVSYS_SSH_PORT=$SSH_PORT AVSYS_ROUTER_PORT=$ROUTER_PORT AVSYS_E2E_KEEP_ON_FAILURE=1 AVSYS_E2E_EXITED_LOG=$EXITED_LOG AVSYS_E2E_CONTAINER_LOG=$GAME_LOG ./hack/e2e.sh
