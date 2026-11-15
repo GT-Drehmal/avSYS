@@ -95,7 +95,13 @@ jobs:
         working-directory: web
         run: |
           bun install --frozen-lockfile
-          bun audit --audit-level=moderate
+          # Asked of npm's registry, which now and then does not answer:
+          # tried three times. An advisory fails all three.
+          for try in 1 2 3; do
+            bun audit --audit-level=moderate && break
+            [ "$try" = 3 ] && exit 1
+            sleep 15
+          done
           bun run lint
           bun run build
       # The images, for what govulncheck and the audit do not see: the
@@ -113,7 +119,17 @@ jobs:
       # fixed there. The panel's own program is govulncheck's, above.
       #
       # Trivy is fetched by version and checked against the release's hash.
+      # Its list of advisories is kept between runs, a day at a time: a
+      # registry that does not answer then scans with yesterday's list, with
+      # a warning, and does not fail the build.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: trivy-db
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.date.outputs.today }}
+          restore-keys: trivy-db-
       - name: Image vulnerabilities
+        id: scan
         env:
           TRIVY_VERSION: 0.76.2
           TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
@@ -124,7 +140,23 @@ jobs:
           curl -fsSL --retry 3 -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "$TRIVY_SHA256  trivy.tar.gz" | sha256sum -c -
           tar -xzf trivy.tar.gz trivy
-          scan() { ./trivy image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed "$@"; }
+          # The panel's base is pulled here, where it can be tried again.
+          for try in 1 2 3; do
+            docker pull -q "$panel_base" >/dev/null && break
+            [ "$try" = 3 ] && exit 1
+            sleep 15
+          done
+          fresh=0
+          for try in 1 2 3; do
+            ./trivy image --quiet --download-db-only --db-repository mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2 && { fresh=1; break; }
+            sleep 15
+          done
+          if [ "$fresh" = 0 ]; then
+            [ -f ~/.cache/trivy/db/trivy.db ] || { echo "::error::the list of advisories could not be fetched"; exit 1; }
+            echo "::warning::the list of advisories could not be fetched; scanning with the one from an earlier run"
+          fi
+          echo "fresh=$fresh" >> "$GITHUB_OUTPUT"
+          scan() { ./trivy image --quiet --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed "$@"; }
           echo "::group::Go programs in the workspace, listed only"
           scan --pkg-types library avsys-workspace:ci
           echo "::endgroup::"
@@ -134,6 +166,11 @@ jobs:
             scan --pkg-types os --exit-code 1 "$image" || failed=1
           done
           exit "$failed"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && steps.trivy-db.outputs.cache-hit != 'true' && steps.scan.outputs.fresh == '1'
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.date.outputs.today }}
 
   # Installs the panel into an empty cluster the way a user would, then runs a
   # real Minecraft server through it. This is what catches a broken manifest,
@@ -180,11 +217,28 @@ jobs:
             type=gha,scope=e2e-panel
             type=gha,scope=panel
           cache-to: ${{ matrix.part == 'content' && 'type=gha,scope=e2e-panel,mode=max' || '' }}
+      # What the cluster pulls from Docker Hub (the game's image, and the
+      # one that measures a node), as an earlier run pulled it: loaded only
+      # if Docker Hub does not give it this time. One part keeps a new copy
+      # once a day.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: outside
+        with:
+          path: e2e-outside/images.tar
+          key: e2e-outside-${{ steps.date.outputs.today }}
+          restore-keys: e2e-outside-
       - name: End to end
         env:
           E2E_SKIP_BUILD: "1"
           AVSYS_E2E_PART: ${{ matrix.part }}
+          E2E_OUTSIDE_TAR: e2e-outside/images.tar
+          E2E_OUTSIDE_SAVE: ${{ matrix.part == 'content' && steps.outside.outputs.cache-hit != 'true' && '1' || '' }}
         run: ./hack/e2e-cluster.sh
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && matrix.part == 'content' && steps.outside.outputs.cache-hit != 'true' && hashFiles('e2e-outside/fresh') != ''
+        with:
+          path: e2e-outside/images.tar
+          key: e2e-outside-${{ steps.date.outputs.today }}
 
   # The check that is required: every part passed.
   e2e:
