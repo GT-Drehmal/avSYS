@@ -523,6 +523,22 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			s.Log.Debug("could not read a server's list", "server", key.String(), "list", list.what, "error", err)
 		}
 		on := playerNames(players)
+		// A player named in the settings by UUID, as Settings keeps a
+		// Bedrock player, is put on by the image as the server starts; the
+		// panel notes them as its own by the name the game has for them, so
+		// that taken out of the settings they are taken off. Where the list
+		// cannot be read, who they are cannot be told: nothing the panel
+		// put there is taken off until it can.
+		if kept := keptUUIDs(list.kept(&fresh.Spec)); len(kept) > 0 {
+			if !known {
+				wanted = withKept(wanted, made)
+			}
+			for _, p := range players {
+				if keptByUUID(kept, p.UUID) && !hasName(wanted, p.Name) {
+					wanted = append(wanted, p.Name)
+				}
+			}
+		}
 		add, remove := listChanges(made, wanted, on, known)
 		listKey := key.String() + "/" + list.key
 		add = s.autoOps.notMissing(listKey, add)
