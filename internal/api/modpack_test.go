@@ -311,6 +311,58 @@ func TestPutModpack(t *testing.T) {
 	}
 }
 
+// An uploaded pack built for an older game than the server's world is put
+// in place only when the request says that is meant, as another version of
+// a pack from Modrinth is; refused, the settings and the files stay as they
+// were.
+func TestNewerWorldOnAnUploadedModpack(t *testing.T) {
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = upstream
+	made := `{"name":"packed","spec":{"eula":true,"state":"Stopped","modpack":{"source":"upload","project":"Probe Pack.mrpack","title":"Probe Pack","gameVersion":"1.21.4","loader":"fabric"}}}`
+	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", made); code != 201 {
+		t.Fatalf("made: %d %s", code, msg)
+	}
+	p.setPhase("alpha", "packed", avsysv1.PhaseStopped)
+	sc := p.withFiles("alpha", "packed")
+	const at = "/orgs/alpha/servers/packed/modpack?name=Probe%20Pack.mrpack"
+	if rec := p.send("owner", "PUT", at, mrpack(t, fabricIndex, nil), "X-Avsys", "1"); rec.Code != 200 {
+		t.Fatalf("upload: %d %s", rec.Code, rec.Body)
+	}
+	modpack := func() avsysv1.ModpackSpec {
+		mc := &avsysv1.MinecraftServer{}
+		if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: "mc-alpha", Name: "packed"}, mc); err != nil {
+			t.Fatal(err)
+		}
+		return *mc.Spec.Modpack
+	}
+	was := modpack()
+
+	older := mrpack(t, strings.NewReplacer(`"1.21.4"`, `"1.21"`, `"2.0.1"`, `"1.0.0"`).Replace(fabricIndex), nil)
+	rec := p.send("owner", "PUT", at, older, "X-Avsys", "1")
+	var e struct{ Code string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &e)
+	if rec.Code != 409 || e.Code != "newer_world" {
+		t.Errorf("a pack for 1.21: %d %s, want 409 newer_world", rec.Code, rec.Body)
+	}
+	if now := modpack(); now != was {
+		t.Errorf("refused, it runs %+v", now)
+	}
+	if entries, _ := sc.ReadDir(controller.ContentDir); len(entries) != 1 || entries[0].Name() != was.Version+".mrpack" {
+		t.Errorf("files after the refusal: %v", entries)
+	}
+	if rec := p.send("owner", "PUT", at+"&newerWorld=true", older, "X-Avsys", "1"); rec.Code != 200 {
+		t.Errorf("a pack for 1.21, as meant: %d %s", rec.Code, rec.Body)
+	}
+	if now := modpack(); now.GameVersion != "1.21" {
+		t.Errorf("as meant, it runs %+v", now)
+	}
+	// A newer one is never asked about.
+	newer := mrpack(t, strings.NewReplacer(`"1.21.4"`, `"1.21.5"`, `"2.0.1"`, `"2.1.0"`).Replace(fabricIndex), nil)
+	if rec := p.send("owner", "PUT", at, newer, "X-Avsys", "1"); rec.Code != 200 {
+		t.Errorf("a pack for 1.21.5: %d %s", rec.Code, rec.Body)
+	}
+}
+
 // A template of settings alone has nowhere to keep a modpack's file.
 func TestTemplateRefusesUploadedModpack(t *testing.T) {
 	p := newPanel(t)

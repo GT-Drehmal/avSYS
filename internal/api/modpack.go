@@ -296,6 +296,14 @@ func (s *Server) putModpack(w http.ResponseWriter, r *http.Request, u *store.Use
 		if err == nil {
 			previous = mc.Spec.DeepCopy()
 			mc.Spec.Modpack = pack.DeepCopy()
+			// Built for an older game than its world, which it then cannot
+			// open: only when the request says that is meant, as for another
+			// version of a pack.
+			if controller.GameVersionOf(&mc.Spec) != controller.GameVersionOf(previous) {
+				err = s.checkWorldVersion(r, s.ranOn(r.Context(), mc, previous), &mc.Spec)
+			}
+		}
+		if err == nil {
 			// Content on top of it fits what it is built for.
 			err = s.resolveContent(r.Context(), &mc.Spec, previous)
 		}
