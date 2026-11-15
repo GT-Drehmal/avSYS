@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -37,6 +38,8 @@ type curseForgeStandIn struct {
 
 	mu    sync.Mutex
 	asked []string
+	// pages is how many pages of files were asked for.
+	pages int
 }
 
 func newCurseForgeStandIn(t *testing.T, key string) *curseForgeStandIn {
@@ -201,7 +204,17 @@ func (cf *curseForgeStandIn) RoundTrip(r *http.Request) (*http.Response, error) 
 		if len(parts) == 5 {
 			return cfAnswer(r, http.StatusNotFound, nil), nil
 		}
-		return data(out)
+		index, _ := strconv.Atoi(q.Get("index"))
+		size, _ := strconv.Atoi(q.Get("pageSize"))
+		if size == 0 {
+			size = 50
+		}
+		page := out[min(index, len(out)):min(index+size, len(out))]
+		body, _ := json.Marshal(map[string]any{"data": page, "pagination": map[string]int{"index": index, "pageSize": size, "resultCount": len(page), "totalCount": len(out)}})
+		cf.mu.Lock()
+		cf.pages++
+		cf.mu.Unlock()
+		return cfAnswer(r, http.StatusOK, body), nil
 	}
 	return cfAnswer(r, http.StatusNotFound, nil), nil
 }
@@ -449,15 +462,80 @@ func TestCurseForgeContentIsPinned(t *testing.T) {
 	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "Hand Only can only be downloaded on CurseForge. Download it from https://www.curseforge.com/minecraft/mc-mods/hand-only and upload it here.") {
 		t.Errorf("one only on CurseForge: %d %s", rec.Code, rec.Body)
 	}
-	// Named by a slug, it is not one.
-	if code, _ := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"slug","spec":{"eula":true,"version":"1.20.1","loader":"forge","mods":[{"source":"curseforge","kind":"mod","project":"jei"}]}}`); code != 400 {
-		t.Errorf("a mod named by its slug: %d", code)
+	// Named by its slug, as one added outside the panel may be, it is found
+	// among its kind's projects, and keeps the name it was given.
+	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"slug","spec":{"eula":true,"version":"1.20.1","loader":"forge","mods":[{"source":"curseforge","kind":"mod","project":"jei"}]}}`); code != 201 {
+		t.Fatalf("a mod named by its slug: %d %s", code, msg)
+	}
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Namespace: "mc-alpha", Name: "slug"}, mc); err != nil {
+		t.Fatal(err)
+	}
+	if m := mc.Spec.Mods[0]; m.Project != "jei" || m.Version != "4593548" {
+		t.Errorf("named by its slug: %+v", m)
+	}
+	if code, _ := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"nothing","spec":{"eula":true,"version":"1.20.1","loader":"forge","mods":[{"source":"curseforge","kind":"mod","project":"no-such-mod"}]}}`); code != 400 {
+		t.Errorf("a slug that is no mod: %d", code)
+	}
+
+	// Without a key, what is pinned already stays as it is, and the
+	// server's other settings can still be changed.
+	p.srv.Config.CurseForgeKey = ""
+	if err := p.srv.Client.Get(ctx, client.ObjectKey{Namespace: "mc-alpha", Name: "cf"}, mc); err != nil {
+		t.Fatal(err)
+	}
+	mc.Spec.Mods[0].Java = 0
+	if err := p.srv.Client.Update(ctx, mc); err != nil {
+		t.Fatal(err)
+	}
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/cf", `{"spec":{"properties":{"motd":"hello"}}}`); code != 200 {
+		t.Errorf("a change without a key: %d %s", code, msg)
+	}
+}
+
+// What fits may be past the first page of a project's files, where several
+// loaders are picked out by the panel: every page is read.
+func TestCurseForgeFilesArePaged(t *testing.T) {
+	p := newPanel(t)
+	cf := newCurseForgeStandIn(t, "install-key")
+	var files []json.RawMessage
+	for i := range 55 {
+		files = append(files, json.RawMessage(fmt.Sprintf(`{"id":%d,"modId":238222,"displayName":"forge-%d","fileName":"forge-%d.jar","releaseType":1,"fileDate":"2024-02-%02dT00:00:00Z","downloadUrl":"https://edge.forgecdn.net/files/7/%d/forge.jar","gameVersions":["1.20.1","Forge"]}`, 7000+i, i, i, 10+i%18, i)))
+	}
+	files = append(files, json.RawMessage(`{"id":6999,"modId":238222,"displayName":"quilt-1","fileName":"quilt-1.jar","releaseType":1,"fileDate":"2023-01-01T00:00:00Z","downloadUrl":"https://edge.forgecdn.net/files/6/999/quilt.jar","gameVersions":["1.20.1","Quilt"]}`))
+	cf.files[238222] = files
+	p.withCurseForge(cf)
+
+	var versions []map[string]any
+	p.fetch("/catalog/curseforge/projects/238222/versions?loader=quilt&gameVersion=1.20.1", &versions)
+	if len(versions) != 1 || versions[0]["id"] != "6999" {
+		t.Errorf("Quilt's, on the second page: %v", versions)
+	}
+	if cf.pages != 2 {
+		t.Errorf("asked for %d pages", cf.pages)
+	}
+}
+
+// Content from CurseForge is pinned to a file of a game version named as
+// the newer releases name theirs.
+func TestCurseForgeGameVersions(t *testing.T) {
+	f := curseForgeFile{GameVersions: []string{"NeoForge", "26.3-rc-1", "26.4-snapshot-1", "1.21.4", "1.20.5-pre1", "24w14a", "Server", "Java 21"}}
+	if got := f.games(); !slices.Equal(got, []string{"1.20.5-pre1", "1.21.4", "24w14a", "26.3-rc-1", "26.4-snapshot-1"}) {
+		t.Errorf("games: %v", got)
 	}
 }
 
 // A datapack from CurseForge is fetched from where CurseForge keeps its
-// file, by the name it was pinned with.
+// file, by the name it was pinned with; put on another version, the file of
+// the one before is removed.
 func TestCurseForgeDatapack(t *testing.T) {
+	older := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{{Source: avsysv1.SourceCurseForge, Kind: avsysv1.KindDatapack, Project: "1", Version: "4000000", File: "pack-1.0.zip"}}}
+	newer := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{{Source: avsysv1.SourceCurseForge, Kind: avsysv1.KindDatapack, Project: "1", Version: "4000001", File: "pack-1.1.zip"}}}
+	if gone := leftBehind(newer, older); !slices.Equal(gone, []string{"/data/world/datapacks/pack-1.0.zip"}) {
+		t.Errorf("another version: %v", gone)
+	}
+	if gone := leftBehind(older, older); len(gone) != 0 {
+		t.Errorf("the same version: %v", gone)
+	}
 	spec := &avsysv1.MinecraftServerSpec{Mods: []avsysv1.ContentRef{{Source: avsysv1.SourceCurseForge, Kind: avsysv1.KindDatapack, Project: "1", Version: "4593548", File: "pack one.zip"}}}
 	if got := installedDatapack(spec.Mods[0]); got != "pack one.zip" {
 		t.Errorf("installed as %q", got)

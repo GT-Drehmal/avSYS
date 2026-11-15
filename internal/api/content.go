@@ -475,6 +475,12 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 			if m.Version != "" && (m.Java != 0 || (m.Kind == avsysv1.KindDatapack && m.File != "")) && m.Title != "" && m.IconURL != "" {
 				continue
 			}
+			// Pinned already, it is left as it is while the panel has no
+			// CurseForge key to learn more of it with: a change to anything
+			// else is not refused for it.
+			if m.Source == avsysv1.SourceCurseForge && m.Version != "" && (m.Kind != avsysv1.KindDatapack || m.File != "") && s.curseForgeKey(ctx) == "" {
+				continue
+			}
 		case avsysv1.SourceURL:
 			if m.Kind == avsysv1.KindDatapack {
 				break
@@ -907,7 +913,10 @@ func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 		if m.Source == avsysv1.SourceUpload && !listed[key] {
 			gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
 		}
-		if asDatapack[key] {
+		// One from CurseForge that is still listed may be of another
+		// version now, in a file of another name: the one before is
+		// removed below unless it is still the one in use.
+		if asDatapack[key] && m.Source != avsysv1.SourceCurseForge {
 			continue
 		}
 		// The image removes what it installed from Modrinth itself; a

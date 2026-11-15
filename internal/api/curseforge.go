@@ -66,6 +66,9 @@ var errNoCurseForge = &Error{Status: http.StatusNotFound, Code: "no_curseforge",
 // CurseForgeKey is the CurseForge API key in use: one entered in the panel,
 // or else the one the install gave.
 func CurseForgeKey(ctx context.Context, st *store.Store, install string) string {
+	if st == nil {
+		return install
+	}
 	if v, err := st.Setting(ctx, curseForgeKeySetting); err == nil && v != "" {
 		return v
 	}
@@ -301,7 +304,7 @@ type curseForgeFile struct {
 
 // gameVersionPattern is a game version as CurseForge lists one among a
 // file's, where loaders and sides are listed too.
-var gameVersionPattern = regexp.MustCompile(`^\d+\.\d+(\.\d+)?(-(pre|rc)\d+)?$|^\d\dw\d\d[a-z]$`)
+var gameVersionPattern = regexp.MustCompile(`^\d+\.\d+(\.\d+)?(-(pre|rc|snapshot)-?\d+)?$|^\d\dw\d\d[a-z]$`)
 
 // games are the game versions a file is for, oldest first, as Modrinth lists them.
 func (f *curseForgeFile) games() []string {
@@ -663,27 +666,37 @@ func curseForgeKindOf(class int) string {
 // curseForgeSlugPattern is what a project's slug looks like.
 var curseForgeSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
 
-// curseForgeProjectID is the ID of a project named by its ID, or of a
-// modpack named by its slug.
-func (s *Server) curseForgeProjectID(ctx context.Context, ref string) (int, error) {
+// curseForgeProjectID is the ID of a project named by its ID, or by its
+// slug, as a modpack is and content added outside the panel may be. A slug
+// is only unique within a kind of project: it is looked for among the kinds
+// given, in order, or else modpacks.
+func (s *Server) curseForgeProjectID(ctx context.Context, ref string, kinds ...string) (int, error) {
 	if id, err := strconv.Atoi(ref); err == nil && id > 0 {
 		return id, nil
 	}
 	if !curseForgeSlugPattern.MatchString(ref) {
 		return 0, errNotFound
 	}
-	params := url.Values{"gameId": {strconv.Itoa(curseForgeGame)}, "classId": {strconv.Itoa(curseForgeClasses["modpack"])}, "slug": {ref}}
-	found, err := readCurseForge[curseForgeList[curseForgeMod]](s.curseForge(ctx, "/v1/mods/search?"+params.Encode(), nil, time.Hour))
-	if err != nil {
-		return 0, err
+	if len(kinds) == 0 {
+		kinds = []string{"modpack"}
 	}
-	for _, m := range found.Data {
-		if m.Slug == ref {
-			return m.ID, nil
+	for _, kind := range kinds {
+		params := url.Values{"gameId": {strconv.Itoa(curseForgeGame)}, "classId": {strconv.Itoa(curseForgeClasses[kind])}, "slug": {ref}}
+		found, err := readCurseForge[curseForgeList[curseForgeMod]](s.curseForge(ctx, "/v1/mods/search?"+params.Encode(), nil, time.Hour))
+		if err != nil {
+			return 0, err
+		}
+		for _, m := range found.Data {
+			if m.Slug == ref {
+				return m.ID, nil
+			}
 		}
 	}
 	return 0, errNotFound
 }
+
+// curseForgeKinds are the kinds a project linked to may be, most likely first.
+var curseForgeKinds = []string{"modpack", "mod", "plugin", "resourcepack", "datapack"}
 
 func (s *Server) curseForgeMod(ctx context.Context, id int) (*curseForgeMod, error) {
 	one, err := readCurseForge[curseForgeOne[curseForgeMod]](s.curseForge(ctx, fmt.Sprintf("/v1/mods/%d", id), nil, time.Hour))
@@ -695,11 +708,18 @@ func (s *Server) curseForgeFile(ctx context.Context, mod, file int) (*curseForge
 	return &one.Data, err
 }
 
+// curseForgeFilePage is how many files CurseForge lists at a time, and
+// curseForgeFilePages how many pages of them are read at most.
+const (
+	curseForgeFilePage  = 50
+	curseForgeFilePages = 20
+)
+
 // curseForgeFiles lists a project's files for a game version and the
 // loaders given, if any, newest first. Server packs, which a modpack has
 // beside its own files, are left out.
 func (s *Server) curseForgeFiles(ctx context.Context, mod int, loaders []string, gameVersion string) ([]curseForgeFile, error) {
-	params := url.Values{"pageSize": {"50"}}
+	params := url.Values{"pageSize": {strconv.Itoa(curseForgeFilePage)}}
 	if gameVersion != "" && gameVersion != "LATEST" {
 		params.Set("gameVersion", gameVersion)
 	}
@@ -713,19 +733,27 @@ func (s *Server) curseForgeFiles(ctx context.Context, mod int, loaders []string,
 	if len(known) == 1 {
 		curseForgeLoaderParams(params, known)
 	}
-	list, err := readCurseForge[curseForgeList[curseForgeFile]](s.curseForge(ctx, fmt.Sprintf("/v1/mods/%d/files?%s", mod, params.Encode()), nil, 5*time.Minute))
-	if err != nil {
-		return nil, err
-	}
+	// Every page, as far as curseForgeFilePages: those that fit may be past
+	// the first, where several loaders are picked out here.
 	out := []curseForgeFile{}
-	for _, f := range list.Data {
-		if f.IsServerPack {
-			continue
+	for page := 0; page < curseForgeFilePages; page++ {
+		params.Set("index", strconv.Itoa(page*curseForgeFilePage))
+		list, err := readCurseForge[curseForgeList[curseForgeFile]](s.curseForge(ctx, fmt.Sprintf("/v1/mods/%d/files?%s", mod, params.Encode()), nil, 5*time.Minute))
+		if err != nil {
+			return nil, err
 		}
-		if len(known) > 1 && !anyIn(f.loaders(), known) {
-			continue
+		for _, f := range list.Data {
+			if f.IsServerPack {
+				continue
+			}
+			if len(known) > 1 && !anyIn(f.loaders(), known) {
+				continue
+			}
+			out = append(out, f)
 		}
-		out = append(out, f)
+		if len(list.Data) < curseForgeFilePage || (page+1)*curseForgeFilePage >= list.Pagination.TotalCount {
+			break
+		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].FileDate > out[j].FileDate })
 	return out, nil
@@ -766,7 +794,7 @@ func (s *Server) curseForgeVersions(w http.ResponseWriter, r *http.Request, _ *s
 func (s *Server) curseForgePage(w http.ResponseWriter, r *http.Request, _ *store.User) error {
 	ref := r.PathValue("id")
 	page := curseForgeProjectPage(ref)
-	if id, err := s.curseForgeProjectID(r.Context(), ref); err == nil {
+	if id, err := s.curseForgeProjectID(r.Context(), ref, curseForgeKinds...); err == nil {
 		if m, err := s.curseForgeMod(r.Context(), id); err == nil && m.Links.WebsiteURL != "" {
 			page = m.Links.WebsiteURL
 		}
@@ -802,9 +830,18 @@ func (t target) curseForgeLoadersFor(kind avsysv1.ContentKind) []string {
 // pinCurseForge resolves one CurseForge entry to a file and records the
 // Java it needs, as pin does for Modrinth.
 func (s *Server) pinCurseForge(ctx context.Context, m *avsysv1.ContentRef, t target) error {
-	id, err := strconv.Atoi(m.Project)
-	if err != nil || id <= 0 {
-		return errBadRequest("Content from CurseForge is named by its project's ID: %q is not one.", m.Project)
+	// Named by its slug, as content added outside the panel may be, it is
+	// looked for among its kind's projects; the image takes either.
+	kind := string(m.Kind)
+	if kind == "" {
+		kind = "mod"
+	}
+	id, err := s.curseForgeProjectID(ctx, m.Project, kind)
+	if errors.Is(err, errNotFound) {
+		return errBadRequest("%s was not found on CurseForge.", cmpOr(m.Title, m.Project))
+	}
+	if err != nil {
+		return err
 	}
 	mod, err := s.curseForgeMod(ctx, id)
 	if errors.Is(err, errNotFound) {
