@@ -385,7 +385,9 @@ func splitNames(s string) []string {
 // added. The image puts those on its lists when the server starts, and never
 // takes one off: the panel notes them as its own, so that one taken out of
 // the settings is taken off in game too. Anything there that is not a
-// player's name, such as a UUID, is left to the image.
+// player's name, such as a UUID, is left to the image. A Bedrock player's
+// name is not given to the image (see the controller's forImage): Settings
+// keeps one by UUID.
 func withKept(wanted, kept []string) []string {
 	out := append([]string{}, wanted...)
 	for _, name := range kept {

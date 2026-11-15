@@ -583,6 +583,47 @@ func TestBedrockPlayersOfAStoppedServer(t *testing.T) {
 	}
 }
 
+// A Bedrock player added in game is kept in the settings by the UUID
+// Floodgate gives them, as Settings keeps one: no longer shown as added in
+// game, nor to be taken off here. Gone from the game's file, he is left to
+// the image to put back as the server starts, by that UUID: the panel runs
+// nothing for him.
+func TestBedrockPlayerKeptByUUID(t *testing.T) {
+	p := newPanel(t)
+	g := runningWithLists(t, p)
+	p.srv.catalog.http.Transport = bedrockAccounts(newMojangAccounts("Steve"))
+	g.uuids = map[string]string{".tim203": timUUID}
+	g.joined = []string{".Tim203"}
+	g.mu.Lock()
+	g.whitelist = []string{".Tim203"}
+	g.saveWhitelist()
+	g.mu.Unlock()
+	if got := gameLists(t, p); got["whitelist"] != ".Tim203" {
+		t.Fatalf("added in game: %v", got)
+	}
+	if code, body := call(p, "admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"whitelist":["`+timUUID+`"],"ops":["`+timUUID+`"]}}`); code != http.StatusOK {
+		t.Fatalf("keeping him: %d %s", code, body)
+	}
+	if got := gameLists(t, p); got["whitelist"] != "" {
+		t.Errorf("added in game once kept: %v", got)
+	}
+	if code, errCode := p.do("admin", "DELETE", "/orgs/alpha/servers/world/lists/whitelist/.Tim203", ""); code != http.StatusConflict || errCode != "listed" {
+		t.Errorf("taking a kept Bedrock player off: %d %s", code, errCode)
+	}
+	g.commands()
+	// Taken off in game.
+	g.mu.Lock()
+	g.whitelist = nil
+	g.saveWhitelist()
+	g.mu.Unlock()
+	if err := p.srv.syncOps(context.Background(), world(t, p), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := g.commands(); got != "" {
+		t.Errorf("ran for a player kept by UUID: %s", got)
+	}
+}
+
 // A Bedrock player's head is made from the skin GeyserMC made of theirs for
 // Java; one it has none for has none.
 func TestBedrockHead(t *testing.T) {
