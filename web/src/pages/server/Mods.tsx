@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { modPortsNote } from "../../components/ExtraPorts";
 import { PackContents, PackIcon } from "../../components/Modpack";
@@ -14,7 +14,7 @@ import { newerThan, pinnedOf } from "../../lib/worlds";
 import { applyServer, keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
-import { EmptySection, PackStack, SectionHead, VersionDialog } from "../../components/ContentParts";
+import { EmptySection, PackFromModpack, PackStack, SectionHead, VersionDialog } from "../../components/ContentParts";
 import { useServerContext } from "./ServerPage";
 
 export function Mods() {
@@ -202,6 +202,7 @@ export function Mods() {
           setAdding("resourcepack");
         }}
         onVersion={() => setVersioning("pack")}
+        suggest={canEdit && <PackFromModpack server={server} update={update} disabled={looking || update.isPending} onLooking={setLooking} />}
       />
 
       {adding && (
@@ -315,7 +316,8 @@ function PackSection({
   onChoose,
   onReplace,
   onVersion,
-}: { quiet: boolean; server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void }) {
+  suggest,
+}: { quiet: boolean; server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void; suggest?: ReactNode }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
   // An uploaded one takes its file with it, which only this does.
@@ -330,8 +332,9 @@ function PackSection({
   const busy = update.isPending || remove.isPending || order.isPending || looking;
   if (quiet && !pack) {
     return (
-      <section aria-label="Resource packs">
+      <section aria-label="Resource packs" className="flex flex-col gap-2">
         <EmptySection text="No resource packs." addLabel="Add resource pack" onAdd={canEdit ? onChoose : undefined} addDisabled={busy} />
+        {suggest}
       </section>
     );
   }
@@ -339,6 +342,7 @@ function PackSection({
     <section aria-label="Resource packs" className="flex flex-col gap-2.5">
       {/* Not while the pack is being changed: a version still being looked up would land over it. */}
       <SectionHead title="Resource packs" count={stack?.length} addLabel="Add resource pack" onAdd={canEdit ? onChoose : undefined} addDisabled={busy} />
+      {suggest}
       {!pack ? (
         <p className="text-[13px] text-muted">None. A pack added here is offered to each player as they join.</p>
       ) : (

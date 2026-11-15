@@ -24,13 +24,13 @@ import (
 // packedIndex lists a mod for both sides from a Modrinth project, one for
 // players only, and a resource pack from elsewhere.
 const packedIndex = `{"formatVersion":1,"game":"minecraft","versionId":"2.0.1","name":"Probe Pack","files":[
-{"path":"mods/lithium-fabric-0.15.3.jar","env":{"client":"required","server":"required"},"downloads":["https://cdn.modrinth.com/data/gvQqBUqZ/versions/abc/lithium-fabric-0.15.3.jar"]},
-{"path":"mods/sodium-fabric-0.6.13.jar","env":{"client":"required","server":"unsupported"},"downloads":["https://cdn.modrinth.com/data/AANobbMI/versions/def/sodium-fabric-0.6.13.jar"]},
+{"path":"mods/lithium-fabric-0.15.3.jar","env":{"client":"required","server":"required"},"downloads":["https://cdn.modrinth.com/data/gvQqBUqZ/versions/ZRR9yqHD/lithium-fabric-0.15.3.jar"]},
+{"path":"mods/sodium-fabric-0.6.13.jar","env":{"client":"required","server":"unsupported"},"downloads":["https://cdn.modrinth.com/data/AANobbMI/versions/h6Kv2mDS/sodium-fabric-0.6.13.jar"]},
 {"path":"resourcepacks/faithful.zip","downloads":["https://example.com/faithful.zip"]}
 ],"dependencies":{"minecraft":"1.21.4","fabric-loader":"0.16.10"}}`
 
 // projectsAnswer is what Modrinth says of the projects in packedIndex.
-const projectsAnswer = `[{"id":"gvQqBUqZ","title":"Lithium","icon_url":"https://cdn.modrinth.com/data/gvQqBUqZ/icon.png"},{"id":"AANobbMI","title":"Sodium","icon_url":"https://cdn.modrinth.com/data/AANobbMI/icon.png"}]`
+const projectsAnswer = `[{"id":"gvQqBUqZ","slug":"lithium","title":"Lithium","icon_url":"https://cdn.modrinth.com/data/gvQqBUqZ/icon.png"},{"id":"AANobbMI","slug":"sodium","title":"Sodium","icon_url":"https://cdn.modrinth.com/data/AANobbMI/icon.png"}]`
 
 // pngOf is a picture of a side.
 func pngOf(t *testing.T, side int) string {
@@ -121,8 +121,8 @@ func contentsOf(p *panel, who, server string) (int, []packEntry) {
 func wantPacked(t *testing.T, files []packEntry) {
 	t.Helper()
 	want := []packEntry{
-		{Path: "mods/lithium-fabric-0.15.3.jar", Server: true, Project: "gvQqBUqZ", Title: "Lithium", IconURL: "https://cdn.modrinth.com/data/gvQqBUqZ/icon.png"},
-		{Path: "mods/sodium-fabric-0.6.13.jar", Server: false, Project: "AANobbMI", Title: "Sodium", IconURL: "https://cdn.modrinth.com/data/AANobbMI/icon.png"},
+		{Path: "mods/lithium-fabric-0.15.3.jar", Server: true, Project: "gvQqBUqZ", Version: "ZRR9yqHD", Slug: "lithium", Title: "Lithium", IconURL: "https://cdn.modrinth.com/data/gvQqBUqZ/icon.png"},
+		{Path: "mods/sodium-fabric-0.6.13.jar", Server: false, Project: "AANobbMI", Version: "h6Kv2mDS", Slug: "sodium", Title: "Sodium", IconURL: "https://cdn.modrinth.com/data/AANobbMI/icon.png"},
 		{Path: "resourcepacks/faithful.zip", Server: true},
 	}
 	if len(files) != len(want) {

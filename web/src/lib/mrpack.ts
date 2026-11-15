@@ -12,7 +12,10 @@ export interface PackFile {
   path: string;
   name: string;
   server: boolean;
-  /** The Modrinth project it is from, where the panel knows it. */
+  /** The Modrinth project and version it is from, where known, and the project's slug, name and picture. */
+  project?: string;
+  version?: string;
+  slug?: string;
   title?: string;
   iconUrl?: string;
 }
@@ -40,8 +43,11 @@ interface Index {
   name?: unknown;
   versionId?: unknown;
   dependencies?: Record<string, unknown>;
-  files?: { path?: unknown; env?: { server?: unknown } }[];
+  files?: { path?: unknown; env?: { server?: unknown }; downloads?: unknown }[];
 }
+
+/** A file on Modrinth's CDN; the project it is of is its first part, and the version, where it says, the next. */
+const modrinthFile = /^https:\/\/cdn\.modrinth\.com\/data\/([A-Za-z0-9]{8})\/(?:versions\/([A-Za-z0-9]{8})\/)?/;
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
@@ -72,7 +78,9 @@ export async function inspectPack(file: File): Promise<FoundPack> {
   const files = (index.files ?? [])
     .map((f) => {
       const path = text(f.path).replaceAll("\\", "/");
-      return { path, name: path.slice(path.lastIndexOf("/") + 1), server: f.env?.server !== "unsupported" };
+      const downloads = Array.isArray(f.downloads) ? f.downloads : [];
+      const from = downloads.map((d) => (typeof d === "string" ? modrinthFile.exec(d) : null)).find((m) => m);
+      return { path, name: path.slice(path.lastIndexOf("/") + 1), server: f.env?.server !== "unsupported", ...(from ? { project: from[1], ...(from[2] ? { version: from[2] } : {}) } : {}) };
     })
     .filter((f) => f.name);
   const icon = icons.map((p) => contents.files.get(p)).find((d) => d && d.length > 0) ?? null;
