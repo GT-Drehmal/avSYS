@@ -225,3 +225,105 @@ func TestNewerWorldKeptByThePanel(t *testing.T) {
 		}
 	}
 }
+
+// A new world takes the place of a server's own, made with the settings a
+// new world is made with, and nothing else. A server's archive without its
+// world has none to be asked about.
+func TestNewWorldAndNoWorldRequests(t *testing.T) {
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = upstream
+	p.srv.Backups.Restic = "true"
+	const world = "/orgs/alpha/servers/world"
+	type request struct{ query, body string }
+	for _, c := range []request{
+		{"world=new", ""},
+		{"world=new&replace=true&library=x", ""},
+		{"world=new&replace=true&template=x", ""},
+		{"world=new&replace=true&from=upload", ""},
+		{"world=none&replace=true", ""},
+		{"world=maybe", ""},
+		{"world=new&replace=true", `{"properties":{"motd":"hi"}}`},
+		{"world=new&replace=true", `{"properties":{"level-seed":"1\n2"}}`},
+		{"world=new&replace=true", `{"properties":`},
+	} {
+		if got, code := p.do("owner", "PUT", world+"/import?"+c.query, c.body); got != http.StatusBadRequest {
+			t.Errorf("%s %s: got %d %q, want 400", c.query, c.body, got, code)
+		}
+	}
+	// Held by another import, those let through stop there.
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindImport, ""); !ok {
+		t.Fatal("could not claim the server")
+	}
+	for _, c := range []request{
+		{"world=new&replace=true", ""},
+		{"world=new&replace=true&version=26.2", `{"properties":{"level-seed":"42","level-type":null,"generate-structures":"false","hardcore":"true"}}`},
+		{"world=none&version=26.2", "x"},
+	} {
+		if got, code := p.do("owner", "PUT", world+"/import?"+c.query, c.body); code != "importing" {
+			t.Errorf("%s %s: got %d %q, want it let through", c.query, c.body, got, code)
+		}
+	}
+	p.srv.ops.end("mc-alpha", "world")
+}
+
+// A server that runs a modpack is held to the same rule, by the game version
+// the pack is built for: a world given to it, and another version of the
+// pack, which can be built for an older game.
+func TestNewerWorldOnAModpack(t *testing.T) {
+	p := newPanel(t)
+	transport := offline{
+		"https://api.modrinth.com/v2/version/old": `{"id":"old","project_id":"pack","version_number":"1.0","version_type":"release","game_versions":["1.21"],"loaders":["fabric"]}`,
+		"https://api.modrinth.com/v2/version/new": `{"id":"new","project_id":"pack","version_number":"3.0","version_type":"release","game_versions":["26.2"],"loaders":["fabric"]}`,
+	}
+	for k, v := range upstream {
+		transport[k] = v
+	}
+	p.srv.catalog.http.Transport = transport
+	p.srv.Backups.Restic = "true"
+	mc := &avsysv1.MinecraftServer{}
+	key := client.ObjectKey{Namespace: "mc-alpha", Name: "world"}
+	if err := p.srv.Client.Get(context.Background(), key, mc); err != nil {
+		t.Fatal(err)
+	}
+	mc.Spec.Loader, mc.Spec.Version = "", ""
+	mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack", Version: "mid", VersionName: "2.0", GameVersion: "1.21.4", Loader: "fabric"}
+	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	const world = "/orgs/alpha/servers/world"
+
+	// Given a world, to start with or in place of its own. Held by another
+	// import, one let through stops there.
+	if _, ok := p.srv.ops.begin("mc-alpha", "alpha", "world", kindImport, ""); !ok {
+		t.Fatal("could not claim the server")
+	}
+	for _, q := range []string{"world=true", "world=true&replace=true"} {
+		if got, code := p.do("owner", "PUT", world+"/import?"+q+"&version=26.2", "x"); got != http.StatusConflict || code != "newer_world" {
+			t.Errorf("%s from 26.2: got %d %q, want 409 newer_world", q, got, code)
+		}
+		if got, code := p.do("owner", "PUT", world+"/import?"+q+"&version=26.2&newerWorld=true", "x"); code != "importing" {
+			t.Errorf("%s from 26.2, as meant: got %d %q, want it let through", q, got, code)
+		}
+		for _, older := range []string{"1.21.4", "1.21", ""} {
+			if got, code := p.do("owner", "PUT", world+"/import?"+q+"&version="+older, "x"); code != "importing" {
+				t.Errorf("%s from %q: got %d %q, want it let through", q, older, got, code)
+			}
+		}
+	}
+	p.srv.ops.end("mc-alpha", "world")
+
+	// Put on a version of the pack built for an older game than its world.
+	if got, code := p.do("owner", "PATCH", world, `{"spec":{"modpack":{"source":"modrinth","project":"pack","version":"old"}}}`); got != http.StatusConflict || code != "newer_world" {
+		t.Errorf("a version of the pack for 1.21: got %d %q, want 409 newer_world", got, code)
+	}
+	if err := p.srv.Client.Get(context.Background(), key, mc); err != nil || mc.Spec.Modpack.Version != "mid" {
+		t.Errorf("refused, it runs %+v", mc.Spec.Modpack)
+	}
+	if got, code := p.do("owner", "PATCH", world+"?newerWorld=true", `{"spec":{"modpack":{"source":"modrinth","project":"pack","version":"old"}}}`); got != http.StatusOK {
+		t.Errorf("a version of the pack for 1.21, as meant: got %d %q", got, code)
+	}
+	// A newer one is never asked about.
+	if got, code := p.do("owner", "PATCH", world, `{"spec":{"modpack":{"source":"modrinth","project":"pack","version":"new"}}}`); got != http.StatusOK {
+		t.Errorf("a version of the pack for 26.2: got %d %q", got, code)
+	}
+}

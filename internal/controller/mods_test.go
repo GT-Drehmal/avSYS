@@ -105,22 +105,22 @@ func TestModPortsEnv(t *testing.T) {
 	if before.Annotations[annotationSpecHash] == after.Annotations[annotationSpecHash] {
 		t.Error("the hash leaves out where the ports are reached")
 	}
-	// A modpack's server sets them up too, where its loader keeps them, and
-	// only then starts other than as the image starts itself.
+	// A modpack's server sets them up too, where its loader keeps them, after
+	// leaving the world alone as a Modrinth pack's start does without them.
 	pack := mc.DeepCopy()
 	pack.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack", Loader: "neoforge"}
-	if got := gameContainer(buildPod(pack, Config{})).Command; len(got) != 3 || !strings.HasPrefix(got[2], "kind=NEOFORGE\n"+modConfig) {
+	if got := gameContainer(buildPod(pack, Config{})).Command; len(got) != 3 || !strings.HasPrefix(got[2], keepWorld+"kind=NEOFORGE\n"+modConfig) {
 		t.Errorf("modpack: %q", got)
 	}
 	pack.Spec.Ports = []avsysv1.ExtraPort{votifier}
-	if got := gameContainer(buildPod(pack, Config{})).Command; len(got) != 0 {
+	if got := gameContainer(buildPod(pack, Config{})).Command; len(got) != 3 || got[2] != packScript {
 		t.Errorf("modpack without: %q", got)
 	}
 	if !strings.Contains(startScript, modConfig) {
 		t.Error("the start script does not set the mods up")
 	}
-	if got := modpackScript(&avsysv1.ModpackSpec{Loader: "fabric$(reboot)"}); !strings.HasPrefix(got, "kind=FABRICREBOOT\n") {
-		t.Errorf("a loader's name is put in the script as letters alone: %q", got[:30])
+	if got := modpackScript(&avsysv1.ModpackSpec{Loader: "fabric$(reboot)"}); !strings.HasPrefix(got, keepWorld+"kind=FABRICREBOOT\n") {
+		t.Errorf("a loader's name is put in the script as letters alone: %q", strings.TrimPrefix(got, keepWorld)[:30])
 	}
 }
 

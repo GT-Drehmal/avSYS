@@ -402,13 +402,14 @@ func (s *Server) checkVersion(ctx context.Context, spec *avsysv1.MinecraftServer
 // meant with ?newerWorld=true, as the panel's pages do once they have asked.
 // It is the same everywhere a server is given a world or a version: made
 // with one, made from a template, a snapshot or another server, its world
-// replaced, or its version changed. What cannot be told, as a version not
-// in the list or a modpack's, is let through.
+// replaced, or its version changed, a modpack's by the game version the
+// pack is built for. What cannot be told, as a version not in the list, is
+// let through.
 func (s *Server) checkWorldVersion(r *http.Request, world string, spec *avsysv1.MinecraftServerSpec) error {
-	if r.URL.Query().Get("newerWorld") == "true" || spec.Modpack != nil || !s.newerThan(r.Context(), world, spec.Version) {
+	if r.URL.Query().Get("newerWorld") == "true" || !s.newerThan(r.Context(), world, controller.GameVersionOf(spec)) {
 		return nil
 	}
-	return &Error{Status: http.StatusConflict, Code: "newer_world", Message: fmt.Sprintf("The world was last opened in %s. %s cannot open the world, so the server will not start.", world, spec.Version)}
+	return &Error{Status: http.StatusConflict, Code: "newer_world", Message: fmt.Sprintf("The world was last opened in %s. %s cannot open the world, so the server will not start.", world, controller.GameVersionOf(spec))}
 }
 
 // newerThan is whether game version a came out after b. Either one not in
@@ -446,5 +447,5 @@ func (s *Server) ranOn(ctx context.Context, mc *avsysv1.MinecraftServer, was *av
 			}
 		}
 	}
-	return was.Version
+	return controller.GameVersionOf(was)
 }

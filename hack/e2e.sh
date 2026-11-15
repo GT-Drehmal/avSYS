@@ -1035,7 +1035,7 @@ import gzip, io, sys, tarfile
 def add(t, name, data=b"x"):
     i = tarfile.TarInfo(name); i.size = len(data); t.addfile(i, io.BytesIO(data))
 with tarfile.open(sys.argv[1] + "/import.tar.gz", "w:gz") as t:
-    add(t, "Old/server.properties", b"motd=From elsewhere\nlevel-name=Drehmal\nserver-port=25599\nserver-ip=10.0.0.5\nenable-rcon=true\n")
+    add(t, "Old/server.properties", b"motd=From elsewhere\nlevel-name=Drehmal\nlevel-seed=5\nserver-port=25599\nserver-ip=10.0.0.5\nenable-rcon=true\n")
     add(t, "Old/Drehmal/level.dat"); add(t, "Old/Drehmal/session.lock"); add(t, "Old/Drehmal_nether/level.dat")
     add(t, "Old/plugins/Foo.jar"); add(t, "Old/logs/2026-01-02-1.log.gz", gzip.compress(b"[12:00:00] [Server thread/INFO]: Done (1.0s)!\n")); add(t, "Old/crash-reports/crash-2026-01-02_12.00.00-server.txt", b"---- Minecraft Crash Report ----\n"); add(t, "Old/start.sh")
     add(t, "Old/ops.json", b'[{"uuid":"853c80ef-3c37-49fd-aa49-938b674adae6","name":"jeb_","level":2,"bypassesPlayerLimit":false}]')
@@ -1074,6 +1074,16 @@ case "$props" in *server-port*|*server-ip*|*enable-rcon*|*level-name*) fail "the
 expect "and it is let start" "$(call "$IMPORTED" | field "d['status'].get('message', '')")" ""
 expect "a server with files is not imported into" "$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old" | field "d['code']")" has_files
 call -X DELETE "$IMPORTED?snapshot=false" >/dev/null
+# Without its world, for a new one or another: the rest of it comes, and
+# its world does not, nor the seed that world was made with.
+BARE=$API/orgs/$ORG/servers/imported-bare
+call -d '{"name":"imported-bare","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
+call -X PUT --data-binary "@$WORK/import.tar.gz" "$BARE/import?root=Old&world=none&players=listed&wait=true" >/dev/null
+expect "a server's folder is imported without its world" "$(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world/level.dat") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world_nether/level.dat") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/plugins/Foo.jar")" "404 404 200"
+case "$(call "$BARE/files/content?path=/server.properties")" in *level-seed*) fail "the seed of the world left out was kept" ;; *) echo "ok: not with the seed of the world left out" ;; esac
+call -X PUT --data-binary "@$WORK/save.tar.gz" "$BARE/import?root=saves%2FMy%20World&world=true&wait=true" >/dev/null
+expect "and is given another" "$(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/plugins/Foo.jar")" "200 200"
+call -X DELETE "$BARE?snapshot=false" >/dev/null
 # A world of one's own, a single-player save here, becomes a new server's:
 # with its Nether beside it, where Paper keeps one.
 OWN=$API/orgs/$ORG/servers/own-world
@@ -1143,6 +1153,14 @@ expect "and the server can start" "$(call "$OWN" | field "d['status'].get('messa
 before=$(call "$OWN/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'pre-replace'][0]") || fail "no snapshot was taken before the world was replaced"
 call -X POST "$OWN/snapshots/$before/restore?wait=true" >/dev/null
 expect "the snapshot before it puts the old world back" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca")" "200 404"
+# Or by a new one, which the game makes as the server next starts, with the
+# settings asked for.
+expect "a new world takes the place of another" "$(call -o /dev/null -w '%{http_code}' -X PUT -d '{"properties":{"level-seed":"42"}}' "$OWN/import?world=new&replace=true")" 202
+for _ in $(seq 1 120); do [ "$(call "$OWN/operation")" = null ] && break; sleep 1; done
+expect "its world is gone, for the game to make" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" "404 404"
+expect "the rest is kept" "$(call "$OWN/files/content?path=/kept.txt")" kept
+expect "and the new one is made with the seed asked for" "$(call "$OWN" | field "d['spec']['properties'].get('level-seed')")" 42
+expect "with a snapshot of the old one taken first" "$(call "$OWN/snapshots" | field "len([s for s in d['snapshots'] if s['trigger'] == 'pre-replace'])")" 2
 ids=$(call "$OWN/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
 call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
 call -X DELETE "$OWN?snapshot=false" >/dev/null

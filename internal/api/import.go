@@ -74,7 +74,8 @@ var kept = []string{".avsys", ".workspace", "lost+found"}
 // came out of it, checks that the folder named on the first line of stdin is
 // there, and empties the server directory but for what is kept. Then rest
 // runs, and the staging folder is removed. The next lines of stdin say how:
-// "split", "listed", "replace" or "fill" and the world's folder, or nothing.
+// "split", "listed", "replace" or "fill" and the world's folder, and
+// "without" for a server's archive whose world is not taken, or nothing.
 // With "replace", only the world's folders are emptied, for the one unpacked
 // to take their place; the world's folder is "world" unless said. With
 // "fill", for a server with no world yet, the datapacks that are there go
@@ -87,6 +88,7 @@ IFS= read -r split || true
 IFS= read -r listed || true
 IFS= read -r replace || true
 IFS= read -r level || true
+IFS= read -r without || true
 lv=${level:-world}
 a=` + importArchive + `
 s=` + importStaging + `
@@ -156,6 +158,14 @@ case $level in
     ;;
 esac
 if [ "$listed" = listed ]; then rm -f mods/*.jar plugins/*.jar world/datapacks/*.zip datapacks/*.zip; fi
+# Its world not taken, for another or a new one: its datapacks are content,
+# and stay. A new one is made as the server's settings say, or as the game
+# does by itself, not as the one left out was.
+if [ "$without" = without ]; then
+  rm -rf world_nether world_the_end
+  if [ -d world ]; then find world -mindepth 1 -maxdepth 1 ! -name datapacks -exec rm -rf {} +; fi
+  if [ -f server.properties ]; then sed -i -E '/^(level-seed|level-type|generate-structures|hardcore)=/d' server.properties; fi
+fi
 if [ -f server.properties ]; then
   sed -i -E '/^(server-ip|server-port|query\.port|enable-query|enable-rcon|rcon\.port|rcon\.password|level-name)=/d' server.properties
 fi
@@ -235,8 +245,29 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		return err
 	}
 	replace := r.URL.Query().Get("replace") == "true"
-	if replace && r.URL.Query().Get("world") != "true" {
+	kind := r.URL.Query().Get("world")
+	switch kind {
+	case "", "true", "new", "none":
+	default:
+		return errBadRequest(`"world" is "true", "new" or "none".`)
+	}
+	if replace && kind != "true" && kind != "new" {
 		return errBadRequest("Only a world can replace a server's world.")
+	}
+	// A new world has nothing to unpack: it takes the place of the one the
+	// server has, made by the game as it next starts, with the settings it
+	// is to be made with.
+	var made map[string]*string
+	if kind == "new" {
+		if !replace {
+			return errBadRequest("A new world takes the place of a server's world: add replace=true.")
+		}
+		if r.URL.Query().Get("template") != "" || r.URL.Query().Get("library") != "" || r.URL.Query().Get("from") != "" {
+			return errBadRequest("A new world is made by the game, not sent.")
+		}
+		if made, err = newWorldSettings(r); err != nil {
+			return err
+		}
 	}
 	if replace && !s.Backups.Available() {
 		// What it replaces could not be got back.
@@ -315,6 +346,11 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	if given != nil && given.Uploaded != nil && s.Config.PackDir == "" {
 		return errPacksUnavailable
 	}
+	// A new world, or a server's archive whose world is not taken, has none
+	// to check.
+	if kind == "none" || kind == "new" {
+		version = ""
+	}
 	if err := s.checkWorldVersion(r, version, &mc.Spec); err != nil {
 		return err
 	}
@@ -339,7 +375,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 	}
 	go func() {
-		undo, err := s.importInto(r, w, mc, root, archive, op, replace, a.Org.Slug, u.Username, onReceived)
+		undo, err := s.importInto(r, w, mc, root, archive, op, replace, made, a.Org.Slug, u.Username, onReceived)
 		ctx := context.WithoutCancel(r.Context())
 		if err == nil && givePack != nil {
 			if perr := givePack(ctx); perr != nil {
@@ -387,7 +423,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 // importInto returns the snapshot it took of what a world replaced, once there
 // is one, whether or not the rest then succeeded. received, if given, is
 // called once the archive is in.
-func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, archive func(io.Writer) error, op *operation, replace bool, org, by string, received func()) (undo *backup.Snapshot, err error) {
+func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, archive func(io.Writer) error, op *operation, replace bool, made map[string]*string, org, by string, received func()) (undo *backup.Snapshot, err error) {
 	ctx := r.Context()
 	key := client.ObjectKeyFromObject(mc)
 	wasMarked := importUnfinished(mc)
@@ -471,7 +507,10 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 	}
 
-	if r.URL.Query().Get("from") == "upload" {
+	fresh := r.URL.Query().Get("world") == "new"
+	if fresh {
+		// Nothing to receive: the game makes it.
+	} else if r.URL.Query().Get("from") == "upload" {
 		// Sent before in parts, by this upload: all of it, as large as the
 		// page said.
 		owner, size, _, err := uploadOf(sc)
@@ -540,7 +579,11 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 	}
 	touched = true
-	s.setOperation(mc.Namespace, op, "Unpacking", 0)
+	if fresh {
+		s.setOperation(mc.Namespace, op, "Clearing the world", 0)
+	} else {
+		s.setOperation(mc.Namespace, op, "Unpacking", 0)
+	}
 	session, err := backup.CommandSession(ws)
 	if err != nil {
 		return undo, err
@@ -552,6 +595,13 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		if splitsDimensions(mc.Spec.Loader) {
 			split = "split"
 		}
+	} else if fresh {
+		script = newWorldScript
+	}
+	// A server's archive whose world is not taken, for another or a new one.
+	without := ""
+	if r.URL.Query().Get("world") == "none" {
+		without = "without"
 	}
 	// Its mods, plugins and datapacks listed as the server's content are
 	// installed from that list, and their files are not kept besides.
@@ -565,7 +615,17 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	} else if fill {
 		again, level = "fill", levelOf(&mc.Spec)
 	}
-	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n" + level + "\n")
+	// For a new world, the settings it is made with that are the game's own.
+	if fresh {
+		var defaults []string
+		for _, k := range worldSettings {
+			if v, given := made[k]; given && (v == nil || *v == "") {
+				defaults = append(defaults, k)
+			}
+		}
+		without = strings.Join(defaults, " ")
+	}
+	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n" + level + "\n" + without + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 	if err := session.Run(script); err != nil {
@@ -590,8 +650,96 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 			}
 		}
 	}
+	// The new world is made with the settings asked for.
+	if fresh && len(made) > 0 {
+		if err := s.setWorldSettings(ctx, key, made); err != nil {
+			return undo, err
+		}
+	}
 	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
 	return undo, s.markImporting(ctx, key, "")
+}
+
+// newWorldScript takes a server's world away, for the game to make a new one
+// as it next starts. Its datapacks are content, and stay. It reads stdin as
+// unpacked does, for the world's folder, and then the settings of the new
+// world that are the game's own: those are taken out of server.properties,
+// where the old world's would otherwise stay.
+var newWorldScript = `set -eu
+IFS= read -r root || true
+IFS= read -r split || true
+IFS= read -r listed || true
+IFS= read -r replace || true
+IFS= read -r level || true
+IFS= read -r defaults || true
+lv=${level:-world}
+p=` + dataRoot + `/server.properties
+for key in $defaults; do
+  case $key in level-seed | level-type | generate-structures | hardcore) ;; *) continue ;; esac
+  if [ -f "$p" ]; then sed -i -E "/^$key=/d" "$p"; fi
+done
+w=` + dataRoot + `/$lv
+k=` + importStaging + `.datapacks
+rm -rf "$k"
+mkdir -p "${k%/*}"
+if [ -d "$w/datapacks" ]; then mv -- "$w/datapacks" "$k"; fi
+rm -rf "$w" "${w}_nether" "${w}_the_end"
+if [ -d "$k" ]; then
+  mkdir -p "$w"
+  mv -- "$k" "$w/datapacks"
+fi
+`
+
+// worldSettings are the settings a new world is made with, which a request
+// for one may give.
+var worldSettings = []string{"level-seed", "level-type", "generate-structures", "hardcore"}
+
+// newWorldSettings reads what a new world is to be made with from a request's
+// body, {"properties": {...}}: each of worldSettings, a value to set or null
+// for the game's default. A body that is empty gives none.
+func newWorldSettings(r *http.Request) (map[string]*string, error) {
+	var in struct {
+		Properties map[string]*string `json:"properties"`
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if err != nil {
+		return nil, errBadRequest("The request did not arrive whole.")
+	}
+	if len(bytes.TrimSpace(body)) > 0 {
+		if err := json.Unmarshal(body, &in); err != nil {
+			return nil, errBadRequest("The new world's settings are not JSON: %v.", err)
+		}
+	}
+	for k, v := range in.Properties {
+		if !slices.Contains(worldSettings, k) {
+			return nil, errBadRequest("A new world is not made with %q. It takes %s.", k, strings.Join(worldSettings, ", "))
+		}
+		if v != nil && strings.ContainsAny(*v, "\r\n") {
+			return nil, errBadRequest("%s is one line.", k)
+		}
+	}
+	return in.Properties, nil
+}
+
+// setWorldSettings puts the settings a new world is made with into a
+// server's own: a value set, or for null left to the game's default.
+func (s *Server) setWorldSettings(ctx context.Context, key client.ObjectKey, made map[string]*string) error {
+	mc := &avsysv1.MinecraftServer{}
+	if err := s.Client.Get(ctx, key, mc); err != nil {
+		return err
+	}
+	orig := mc.DeepCopy()
+	for k, v := range made {
+		if v == nil || *v == "" {
+			delete(mc.Spec.Properties, k)
+			continue
+		}
+		if mc.Spec.Properties == nil {
+			mc.Spec.Properties = map[string]string{}
+		}
+		mc.Spec.Properties[k] = *v
+	}
+	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }
 
 // keepListed leaves in a list of players the game keeps, such as ops.json,

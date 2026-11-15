@@ -392,7 +392,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	}
 	// The world it keeps was last opened in the version it was taken of.
 	if !newWorld {
-		if err := s.checkWorldVersion(r, record.Spec.Version, &spec); err != nil {
+		if err := s.checkWorldVersion(r, controller.GameVersionOf(&record.Spec), &spec); err != nil {
 			return err
 		}
 	}

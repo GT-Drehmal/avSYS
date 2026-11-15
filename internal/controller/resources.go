@@ -632,8 +632,68 @@ answers() { curl -fsS -o /dev/null --connect-timeout 3 -m 5 "$@" 2>/dev/null; }
 ` + keepBuild + keepContent + modConfig + `exec ` + imageStart + `
 `
 
+// modpackManifest is the image's record of what it installed from a Modrinth
+// modpack: the files, relative to /data, as JSON.
+const modpackManifest = "/data/.modrinth-modpack-manifest.json"
+
+// keepWorld comes first in the game container's command for a server
+// that runs a modpack in the Modrinth format, from Modrinth or uploaded.
+// The image puts the pack's own files (its overrides) into /data as it
+// installs the pack, over what is there, and later takes out the files its
+// record lists that the next version of the pack does not have. A pack may
+// have a world among them. Once the server has a world, chosen when it was
+// made, put in since, or the pack's own from an earlier start, the world is
+// the server's: the pack's world files are left out, and taken off the
+// record, so that they are neither put over the world nor taken out of it.
+// Its datapacks and per-world settings (serverconfig, as Forge keeps it)
+// still come from the pack. Without jq, the image installs the pack as it
+// does by itself.
+const keepWorld = `level=${LEVEL:-world}
+m=` + modpackManifest + `
+# Only a plain name, which the image's patterns take as it is.
+case $level in '' | .* | *[!A-Za-z0-9_-]*) level= ;; esac
+if [ -n "$level" ] && [ -f "/data/$level/level.dat" ] && command -v jq >/dev/null 2>&1; then
+  ok=yes
+  if [ -f "$m" ]; then
+    if jq --arg l "$level" '.files |= map(select(
+        (startswith($l + "/") and (startswith($l + "/datapacks/") or startswith($l + "/serverconfig/") | not))
+        or startswith($l + "_nether/") or startswith($l + "_the_end/") | not))' "$m" >"$m.avsys" 2>/dev/null; then
+      # Written over in place, so that it stays the image's to write.
+      cat "$m.avsys" >"$m" || ok=
+    else
+      ok=
+    fi
+    rm -f "$m.avsys"
+  fi
+  if [ -n "$ok" ]; then
+    out="$level/*,${level}_nether/**,${level}_the_end/**"
+    for d in region entities poi data playerdata stats advancements DIM-1 DIM1 dimensions "/data/$level"/*/; do
+      d=${d%/}
+      d=${d##*/}
+      case $d in datapacks | serverconfig | *[!A-Za-z0-9_.-]*) continue ;; esac
+      out="$out,$level/$d/**"
+    done
+    export MODRINTH_OVERRIDES_EXCLUSIONS="$out${MODRINTH_OVERRIDES_EXCLUSIONS:+,$MODRINTH_OVERRIDES_EXCLUSIONS}"
+    echo "[avsys] The server has a world: the modpack's world files are left out"
+  fi
+fi
+`
+
+// packScript is the game container's command for a server that runs a
+// modpack in the Modrinth format: keepWorld, and then the image installs
+// and starts the pack as it does by itself.
+const packScript = keepWorld + `exec ` + imageStart + `
+`
+
+// startsThroughPackScript says whether a server's game is started through
+// packScript: one run by the image from a modpack in the Modrinth format.
+func startsThroughPackScript(mc *avsysv1.MinecraftServer) bool {
+	return mc.Spec.Modpack != nil && mc.Spec.Modpack.Source != avsysv1.SourceCurseForge && mc.Spec.Image == ""
+}
+
 // modpackScript is the game container's command for a server from a
-// modpack with ports opened for mods: those are set up, and the image
+// modpack with ports opened for mods: those are set up, a pack in the
+// Modrinth format leaves the world alone as packScript does, and the image
 // installs and starts the pack as it does by itself. The pack's loader, as
 // the panel recorded it, says where its mods keep their config: the image
 // only finds out once the script has run.
@@ -647,7 +707,11 @@ func modpackScript(pack *avsysv1.ModpackSpec) string {
 		}
 		return -1
 	}, pack.Loader)
-	return "kind=" + kind + "\n" + modConfig + "exec " + imageStart + "\n"
+	world := ""
+	if pack.Source != avsysv1.SourceCurseForge {
+		world = keepWorld
+	}
+	return world + "kind=" + kind + "\n" + modConfig + "exec " + imageStart + "\n"
 }
 
 // startsThroughScript says whether a server's game is started through
@@ -770,10 +834,10 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 	// Also after the hash, so that servers already running are not asked to
 	// restart for it: the end of the game's log is kept when it fails, and
 	// that is how the status can say why it stopped (see startFailure).
-	// So is starting on the build and content a server has: it changes
-	// nothing a running game would be restarted for, and is what each start
-	// after this one does. Whatever changes it, its software or content,
-	// changes the hash itself.
+	// So is starting on the build and content a server has, and a modpack's
+	// install leaving the world alone: it changes nothing a running game
+	// would be restarted for, and is what each start after this one does.
+	// Whatever changes it, its software or content, changes the hash itself.
 	for i := range spec.Containers {
 		if spec.Containers[i].Name == MinecraftContainer {
 			spec.Containers[i].TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
@@ -781,6 +845,8 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 				spec.Containers[i].Command = []string{"/bin/sh", "-c", startScript}
 			} else if mc.Spec.Image == "" && modPortsEnv(mc, mc.Status.Ports) != "" {
 				spec.Containers[i].Command = []string{"/bin/sh", "-c", modpackScript(mc.Spec.Modpack)}
+			} else if startsThroughPackScript(mc) {
+				spec.Containers[i].Command = []string{"/bin/sh", "-c", packScript}
 			}
 		}
 	}

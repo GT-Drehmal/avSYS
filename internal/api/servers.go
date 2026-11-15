@@ -701,9 +701,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if previous, err = s.mergeSpec(r.Context(), a, mc, in.Spec); err != nil {
 			return err
 		}
-		// Made older than its world, which it then cannot open: only when
-		// the request says that is meant.
-		if mc.Spec.Version != previous.Version {
+		// Made older than its world, which it then cannot open, a modpack by
+		// another version of it too: only when the request says that is meant.
+		if controller.GameVersionOf(&mc.Spec) != controller.GameVersionOf(previous) {
 			if err := s.checkWorldVersion(r, s.ranOn(r.Context(), mc, previous), &mc.Spec); err != nil {
 				return err
 			}
