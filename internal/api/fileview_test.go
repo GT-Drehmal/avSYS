@@ -68,41 +68,44 @@ func TestImagesShownNeverRun(t *testing.T) {
 	}
 }
 
-// An image is kept by the browser only when asked for by the version it is
-// now: changed, a new version is asked for, and one not asked for by its
-// version is always looked at again.
-func TestImagesKeptByVersion(t *testing.T) {
+// An image looked at again is sent again only if what it holds has
+// changed, even to the same size in the same second, and whatever its size.
+func TestImagesKeptByWhatTheyHold(t *testing.T) {
 	p := newPanel(t)
 	sc := filesFrom(t, p, sftp.InMemHandler())
 	file := dataRoot + "/server-icon.png"
-	put(t, sc, file, "\x89PNG\r\n\x1a\nicon")
-	fi, err := sc.Stat(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := fileVersion(fi)
-	kept := func(query string) string {
+	again := func(tag string) *httptest.ResponseRecorder {
 		t.Helper()
-		return fileRead(t, p, query).Header().Get("Cache-Control")
+		req := httptest.NewRequest("GET", "/api/v1/orgs/alpha/servers/world/files/content?path=/server-icon.png&view", nil)
+		req.Header.Set("Authorization", "Bearer "+p.tokens["operator"])
+		req.Header.Set("If-None-Match", tag)
+		rec := httptest.NewRecorder()
+		p.h.ServeHTTP(rec, req)
+		return rec
 	}
-	if got := kept("path=/server-icon.png&view&v=" + now); !strings.Contains(got, "immutable") || !strings.Contains(got, "private") {
-		t.Errorf("by the version it is: Cache-Control %q", got)
-	}
-	if got := kept("path=/server-icon.png&view"); got != "no-cache" {
-		t.Errorf("by no version: Cache-Control %q", got)
-	}
-	if got := kept("path=/server-icon.png&view&v=1-1"); got != "no-cache" {
-		t.Errorf("by another version: Cache-Control %q", got)
-	}
-	if got := kept("path=/server-icon.png&v=" + now); got != "no-cache" {
-		t.Errorf("read, not looked at: Cache-Control %q", got)
-	}
-	// Bigger, the same second: another version.
-	put(t, sc, file, "\x89PNG\r\n\x1a\nicon, changed")
-	if got := kept("path=/server-icon.png&view&v=" + now); got != "no-cache" {
-		t.Errorf("changed since: Cache-Control %q", got)
-	}
-	if got := fileRead(t, p, "path=/server-icon.png&view&v="+now).Body.String(); got != "\x89PNG\r\n\x1a\nicon, changed" {
-		t.Errorf("changed since, served %q", got)
+	for _, size := range []int{12, maxEditable + 10} {
+		first := "\x89PNG" + strings.Repeat("a", size-4)
+		put(t, sc, file, first)
+		rec := fileRead(t, p, "path=/server-icon.png&view")
+		tag := rec.Header().Get("ETag")
+		if tag != fileTag([]byte(first)) {
+			t.Fatalf("%d bytes: ETag %q, want the hash of what it holds", size, tag)
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("%d bytes: Cache-Control %q, want it looked at again each time", size, got)
+		}
+		if rec.Body.String() != first {
+			t.Errorf("%d bytes: not served whole", size)
+		}
+		if got := again(tag); got.Code != http.StatusNotModified {
+			t.Errorf("%d bytes, unchanged: %d, want %d", size, got.Code, http.StatusNotModified)
+		}
+		// The same size, at once: its time may be the same, but not its hash.
+		changed := "\x89PNG" + strings.Repeat("b", size-4)
+		put(t, sc, file, changed)
+		got := again(tag)
+		if got.Code != http.StatusOK || got.Body.String() != changed {
+			t.Errorf("%d bytes, changed: %d, served the change: %v", size, got.Code, got.Body.String() == changed)
+		}
 	}
 }

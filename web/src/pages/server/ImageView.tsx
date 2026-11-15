@@ -31,7 +31,8 @@ interface Props {
 
 /** A picture in the server's files, with its size, and the ones beside it a key away. */
 export function ImageView({ base, path, entry, pictures, onGo, onClose, ref }: Props) {
-  // Kept by the browser until the file changes: a new time or size is a new address.
+  // A new address when the file's time or size changes, so the page never
+  // shows a picture it had before the change.
   const time = Math.floor(Date.parse(entry.modTime) / 1000);
   const src = `/api/v1${base}/content?${qs({ path, v: Number.isNaN(time) ? undefined : `${time}-${entry.size}` })}&view`;
   const download = `/api/v1${base}/content?${qs({ path })}&download`;
@@ -39,6 +40,14 @@ export function ImageView({ base, path, entry, pictures, onGo, onClose, ref }: P
   const [natural, setNatural] = useState<{ src: string; w: number; h: number } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [actual, setActual] = useState(false);
+  // Each time a picture is come to, or tried again, it is asked for anew:
+  // one that failed before may be there now.
+  const [tries, setTries] = useState(0);
+  const [cameTo, setCameTo] = useState(src);
+  if (cameTo !== src) {
+    setCameTo(src);
+    setFailed(null);
+  }
   const size = natural?.src === src ? natural : null;
   const broken = failed === src;
 
@@ -124,12 +133,25 @@ export function ImageView({ base, path, entry, pictures, onGo, onClose, ref }: P
       </div>
       <div ref={area} className="relative min-h-0 flex-1">
         {broken ? (
-          <p className="flex h-full items-center justify-center p-6 text-[13px] text-muted">This image can't be shown.</p>
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-6">
+            <p className="text-[13px] text-muted">This image can't be shown.</p>
+            <Button
+              size="sm"
+              onClick={(e) => {
+                // The keys stay with the picture, not lost with this button.
+                e.currentTarget.closest<HTMLElement>("[role=region]")?.focus({ preventScroll: true });
+                setFailed(null);
+                setTries((n) => n + 1);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
         ) : (
           <div className="absolute inset-0 flex overflow-auto p-4">
             {/* Centred while it fits; at its own size, scrolled to every edge. */}
             <img
-              key={src}
+              key={`${src}#${tries}`}
               src={src}
               alt={entry.name}
               draggable={false}

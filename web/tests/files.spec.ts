@@ -322,10 +322,10 @@ function png(w: number, h: number): Buffer {
 
 /**
  * survival's files with pictures in the top folder, served as the panel
- * does: as an image only when asked for one to look at. What was asked for
- * each is kept.
+ * does: as an image only when asked for one to look at, failing once for
+ * each in failOnce. What was asked for each is kept.
  */
-async function pictures(page: Page) {
+async function pictures(page: Page, failOnce: string[] = []) {
   await files(page, { "/": ["config/", "plugins/", "world/", "banner.png", "eula.txt", "logo.svg", "server-icon.png", "server.jar", "server.properties"] });
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24"><script>parent.ran = true; top.ran = true</script><rect width="32" height="24" fill="#5fe0c6"/></svg>`;
   const images: Record<string, { body: Buffer | string; type: string }> = {
@@ -339,6 +339,11 @@ async function pictures(page: Page) {
     const pic = images[url.searchParams.get("path") ?? ""];
     if (!pic) return route.fallback();
     asked.push(url.search);
+    const path = url.searchParams.get("path") ?? "";
+    if (failOnce.includes(path)) {
+      failOnce.splice(failOnce.indexOf(path), 1);
+      return route.fulfill({ status: 502, json: { code: "workspace", message: "The server's files are not reachable right now." } });
+    }
     return route.fulfill({ body: pic.body, headers: { "Content-Type": url.searchParams.has("view") ? pic.type : "application/octet-stream" } });
   });
   return { asked, svg };
@@ -385,7 +390,25 @@ test("the pictures in a folder are gone through with the arrow keys", async ({ p
   await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Next image" })).toBeDisabled();
   await page.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByRole("img")).toHaveCount(0);
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toHaveCount(0);
+});
+
+test("a picture that could not be read is asked for again, on Try again or when come back to", async ({ page }) => {
+  await pictures(page, ["/server-icon.png", "/logo.svg"]);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "server-icon.png").click();
+  await expect(page.getByText("This image can't be shown.")).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
+  await expect(page.getByText("64 × 64 · 20 B")).toBeVisible();
+  // Failing, then gone from and come back to.
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByText("This image can't be shown.")).toBeVisible();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("img", { name: "logo.svg" })).toBeVisible();
+  await expect(page.getByText("32 × 24 · 20 B")).toBeVisible();
 });
 
 test("an svg is shown as a picture, never as a page or in the editor", async ({ page }) => {
@@ -425,7 +448,7 @@ test("a file that can't be shown says so, with its size and Download", async ({ 
   await expect(page.getByText("This file can't be shown here.")).toBeVisible();
   await expect(page.getByText(/^20 B · changed/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
-  await expect(page.getByRole("img")).toHaveCount(0);
+  await expect(page.getByRole("img", { name: "level.dat" })).toHaveCount(0);
   await expect(page.locator(".cm-content")).toHaveCount(0);
 });
 

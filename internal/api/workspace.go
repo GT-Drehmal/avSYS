@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -449,14 +448,20 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, u *store.User)
 	w.Header().Set("Content-Security-Policy", fileCSP)
 	// The game and others change these files: always looked at again.
 	w.Header().Set("Cache-Control", "no-cache")
-	// An image asked for to be looked at is said to be one. Asked for as it
-	// is now, by its time and size, it is kept: once changed, the panel asks
-	// for it by another version.
+	// An image asked for to be looked at is said to be one. It is known by
+	// its hash, as one that can be edited is, whatever its size: looked at
+	// again, it is sent only if what it holds has changed. Its time is not
+	// enough: a file can change twice in a second, or keep its time.
 	if kind := imageType(full); kind != "" && !download && r.URL.Query().Has("view") {
-		w.Header().Set("Content-Type", kind)
-		if r.URL.Query().Get("v") == fileVersion(fi) {
-			w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+		sum := sha256.New()
+		if _, err := io.Copy(sum, f); err != nil {
+			return fileFailed(sc, err, "open", full)
 		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return fileFailed(sc, err, "open", full)
+		}
+		w.Header().Set("Content-Type", kind)
+		w.Header().Set("ETag", `"`+hex.EncodeToString(sum.Sum(nil)[:16])+`"`)
 		http.ServeContent(w, r, "", fi.ModTime(), f)
 		return nil
 	}
@@ -496,12 +501,6 @@ var imageTypes = map[string]string{
 // is not.
 func imageType(name string) string {
 	return imageTypes[strings.ToLower(path.Ext(name))]
-}
-
-// fileVersion is a file as it is now, as the panel lists it: when it was
-// changed, to the second, and its size.
-func fileVersion(fi fs.FileInfo) string {
-	return strconv.FormatInt(fi.ModTime().Unix(), 10) + "-" + strconv.FormatInt(fi.Size(), 10)
 }
 
 // maxEditable is the biggest file the editor opens.
