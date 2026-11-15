@@ -66,10 +66,16 @@ func (s *Server) readList(ctx context.Context, mc *avsysv1.MinecraftServer, list
 				players = append(players, listedPlayer{Name: name})
 			}
 			// The file has who each is: kept beside the names, where it can be read.
+			// Two entries can have one name, as two Bedrock players can: each
+			// entry goes to one name.
 			if inFile, err := s.readListFile(ctx, mc, list); err == nil {
+				used := make([]bool, len(inFile))
 				for i := range players {
-					if k := slices.IndexFunc(inFile, func(p listedPlayer) bool { return strings.EqualFold(p.Name, players[i].Name) }); k >= 0 {
-						players[i].UUID = inFile[k].UUID
+					for k := range inFile {
+						if !used[k] && strings.EqualFold(inFile[k].Name, players[i].Name) {
+							players[i].UUID, used[k] = inFile[k].UUID, true
+							break
+						}
 					}
 				}
 			}
@@ -371,7 +377,7 @@ func (s *Server) removeFromGameList(w http.ResponseWriter, r *http.Request, u *s
 		if bedrock && list.key == "whitelist" {
 			// The game cannot look up a Bedrock player's name: the file it
 			// keeps is changed, and read again.
-			if err := s.changeBedrockWhitelist(ctx, mc, nil, []string{name}); err != nil {
+			if err := s.changeBedrockWhitelist(ctx, mc, nil, []listedPlayer{{Name: name}}); err != nil {
 				s.Log.Warn("could not take a Bedrock player off a whitelist", "server", key.String(), "player", name, "error", err)
 				return &Error{Status: http.StatusBadGateway, Code: "unreachable", Message: "The server did not answer. Try again in a moment."}
 			}

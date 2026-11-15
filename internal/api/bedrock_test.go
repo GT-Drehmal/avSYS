@@ -135,8 +135,10 @@ func TestFloodgateNames(t *testing.T) {
 			t.Errorf("%q: %q, want %q", tag, got, want)
 		}
 	}
-	if got := (floodgate{prefix: "*", spaces: false}).name("A B"); got != "*A B" {
-		t.Errorf("spaces kept: %q", got)
+	// Floodgate set to keep spaces: written as "_" all the same, so the
+	// name can go in a command and be read back.
+	if got := (floodgate{prefix: "*"}).name("A B"); got != "*A_B" || !listedNamePattern.MatchString(got) {
+		t.Errorf("with spaces: %q", got)
 	}
 	if got := defaultFloodgate.gamertag(".Tim203"); got != "Tim203" {
 		t.Errorf("gamertag of .Tim203: %q", got)
@@ -165,7 +167,7 @@ func TestFloodgateNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, sc, dataRoot+"/config/floodgate/config.yml", strings.Replace(strings.Replace(string(real), `username-prefix: "."`, `username-prefix: "*"`, 1), "replace-spaces: true", "replace-spaces: false", 1))
-	if got := floodgateFrom(sc); got != (floodgate{prefix: "*", spaces: false}) {
+	if got := floodgateFrom(sc); got != (floodgate{prefix: "*"}) {
 		t.Errorf("a mod's settings, changed: %+v", got)
 	}
 	put(t, sc, dataRoot+"/config/floodgate/config.yml", "username-prefix: [\n")
@@ -442,6 +444,76 @@ func TestBedrockPlayersOnARunningServer(t *testing.T) {
 				t.Errorf("notes at the end: %s", got)
 			}
 		})
+	}
+}
+
+// Two gamertags cut to 16 characters make one name in game: both go on the
+// whitelist, by UUID, and taking one off the list takes only that one off.
+// One account put in another's place on the list takes its place on the
+// whitelist too.
+func TestBedrockPlayersOfOneName(t *testing.T) {
+	p := newPanel(t)
+	g := runningWithLists(t, p)
+	p.srv.catalog.http.Transport = newGeyserAccounts(newMojangAccounts(), map[string]string{"ABCDEFGHIJKLMNO1": "1001", "ABCDEFGHIJKLMNO2": "1002", "ABCDEFGHIJKLMNO3": "1003"})
+	const one, two, three = "00000000-0000-0000-0000-0000000003e9", "00000000-0000-0000-0000-0000000003ea", "00000000-0000-0000-0000-0000000003eb"
+	_, event := sendList(t, p, "admin", "POST", "/orgs/alpha/player-lists", `{"name":"Event","bedrock":["ABCDEFGHIJKLMNO1","ABCDEFGHIJKLMNO2"]}`)
+	changeWorld(t, p, func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.AutoOp = "off"
+		mc.Spec.WhitelistLists = []string{event.ID}
+	})
+	look := func() string {
+		t.Helper()
+		if err := p.srv.syncOps(context.Background(), world(t, p), nil); err != nil {
+			t.Fatal(err)
+		}
+		return g.commands()
+	}
+	uuids := func() string {
+		players, err := listFile(g.sc, dataRoot+"/whitelist.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, p := range players {
+			if p.Name != ".ABCDEFGHIJKLMNO" {
+				t.Errorf("named %s", p.Name)
+			}
+			out = append(out, p.UUID)
+		}
+		slices.Sort(out)
+		return strings.Join(out, " ")
+	}
+	if got := look(); got != "whitelist reload" {
+		t.Errorf("put on: %s", got)
+	}
+	if got := uuids(); got != one+" "+two {
+		t.Errorf("whitelist.json: %s", got)
+	}
+	if got := look(); got != "" {
+		t.Errorf("in step: %s", got)
+	}
+	if got := gameLists(t, p); got["whitelist"] != "" {
+		t.Errorf("added in game: %v", got)
+	}
+
+	// One taken off the list: only that one comes off.
+	ran := g.since()
+	if code, _ := call(p, "admin", "DELETE", "/orgs/alpha/player-lists/"+event.ID+"/players/"+bareUUID(one), ""); code != http.StatusOK {
+		t.Fatal("taking one off the list")
+	}
+	waitFor(t, "one of two of one name is taken off", func() bool { return ran() == "whitelist reload" })
+	if got := uuids(); got != two {
+		t.Errorf("whitelist.json after one was taken off: %s", got)
+	}
+	// Another put in their place: on, and the other off.
+	ran = g.since()
+	sendList(t, p, "admin", "POST", "/orgs/alpha/player-lists/"+event.ID+"/players", `{"bedrock":["ABCDEFGHIJKLMNO3"]}`)
+	if code, _ := call(p, "admin", "DELETE", "/orgs/alpha/player-lists/"+event.ID+"/players/"+bareUUID(two), ""); code != http.StatusOK {
+		t.Fatal("taking the other off the list")
+	}
+	waitFor(t, "one in another's place is put on", func() bool { return strings.HasSuffix(ran(), "whitelist reload") && uuids() == three })
+	if got := world(t, p).Annotations[avsysv1.AnnotationAutoWhitelist]; got != ".ABCDEFGHIJKLMNO" {
+		t.Errorf("note: %s", got)
 	}
 }
 

@@ -322,12 +322,14 @@ func fromSaved(ids []string, saved map[string]*store.PlayerList, fg floodgate) [
 }
 
 // savedBedrock is the Bedrock players of the saved lists named, by their
-// names in game, lowercased.
-func savedBedrock(ids []string, saved map[string]*store.PlayerList, fg floodgate) map[string]store.ListPlayer {
-	out := map[string]store.ListPlayer{}
+// names in game, lowercased. Two gamertags can make one name in game, cut
+// to 16 characters: each is kept.
+func savedBedrock(ids []string, saved map[string]*store.PlayerList, fg floodgate) map[string][]store.ListPlayer {
+	out := map[string][]store.ListPlayer{}
 	for _, p := range savedPlayers(ids, saved) {
 		if p.Bedrock() {
-			out[strings.ToLower(fg.inGame(p))] = p
+			name := strings.ToLower(fg.inGame(p))
+			out[name] = append(out[name], p)
 		}
 	}
 	return out
@@ -526,9 +528,6 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 		if known {
 			from = stillOn(made, wanted, on)
 		}
-		if len(add) == 0 && len(remove) == 0 && sameNames(from, made) {
-			continue
-		}
 		isBedrock := func(name string) bool {
 			if i := slices.IndexFunc(players, func(p listedPlayer) bool { return strings.EqualFold(p.Name, name) }); i >= 0 {
 				return players[i].Bedrock
@@ -538,23 +537,29 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 		// Bedrock players of saved lists go on a whitelist by its file, with
 		// the UUID Floodgate gives them, and come off it so: the game cannot
 		// look up their names (see bedrock.go).
-		var fileAdd []listedPlayer
-		var fileRemove []string
+		var fileAdd, fileRemove []listedPlayer
 		if list.key == "whitelist" {
 			add = slices.DeleteFunc(add, func(name string) bool {
-				p, ok := bedrock[strings.ToLower(name)]
-				if ok {
+				ps, ok := bedrock[strings.ToLower(name)]
+				for _, p := range ps {
 					fileAdd = append(fileAdd, listedPlayer{Name: name, UUID: dashedUUID(p.UUID)})
 				}
 				return ok
 			})
 			remove = slices.DeleteFunc(remove, func(name string) bool {
 				if isBedrock(name) {
-					fileRemove = append(fileRemove, name)
+					fileRemove = append(fileRemove, listedPlayer{Name: name})
 					return true
 				}
 				return false
 			})
+			if known {
+				more, gone := bedrockByUUID(bedrock, players, made)
+				fileAdd, fileRemove = append(fileAdd, more...), append(fileRemove, gone...)
+			}
+		}
+		if len(add) == 0 && len(remove) == 0 && len(fileAdd) == 0 && len(fileRemove) == 0 && sameNames(from, made) {
+			continue
 		}
 		// The note follows each command as it is carried out, so that a
 		// failure part of the way leaves it true of the game. A player put
@@ -573,10 +578,15 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 						done = append(done, p.Name)
 					}
 				}
-				done = slices.DeleteFunc(done, func(n string) bool { return hasName(fileRemove, n) })
+				for _, p := range fileRemove {
+					// One taken off by UUID leaves the name to another.
+					if p.Name != "" {
+						done = slices.DeleteFunc(done, func(n string) bool { return strings.EqualFold(n, p.Name) })
+					}
+				}
 				sort.Strings(done)
 				add = append(add, playerNames(fileAdd)...)
-				remove = append(remove, fileRemove...)
+				remove = append(remove, playerNames(fileRemove)...)
 			}
 		}
 		for _, name := range missing {
@@ -608,6 +618,37 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 		}
 	}
 	return failed
+}
+
+// bedrockByUUID is who of a list's Bedrock players are on a whitelist by
+// their name in game but not by their UUID, as when two gamertags cut to 16
+// characters make one name, or one account has taken another's place on a
+// list: those to put on (more), and the entries of that name the panel put
+// there that are no list's player now (gone), by UUID.
+func bedrockByUUID(bedrock map[string][]store.ListPlayer, on []listedPlayer, made []string) (more, gone []listedPlayer) {
+	for _, entry := range on {
+		ps := bedrock[strings.ToLower(entry.Name)]
+		if len(ps) == 0 || xuidOf(entry.UUID) == "" || !hasName(made, entry.Name) {
+			continue
+		}
+		if !slices.ContainsFunc(ps, func(p store.ListPlayer) bool { return p.UUID == bareUUID(entry.UUID) }) {
+			gone = append(gone, listedPlayer{UUID: entry.UUID})
+		}
+	}
+	for name, ps := range bedrock {
+		i := slices.IndexFunc(on, func(e listedPlayer) bool { return strings.ToLower(e.Name) == name })
+		if i < 0 {
+			// Not on by name: put on as any other.
+			continue
+		}
+		for _, p := range ps {
+			if !slices.ContainsFunc(on, func(e listedPlayer) bool { return bareUUID(e.UUID) == p.UUID }) {
+				more = append(more, listedPlayer{Name: on[i].Name, UUID: dashedUUID(p.UUID)})
+			}
+		}
+	}
+	slices.SortFunc(more, func(a, b listedPlayer) int { return strings.Compare(a.UUID, b.UUID) })
+	return more, gone
 }
 
 // applyNames carries out the additions and removals of one list with run,

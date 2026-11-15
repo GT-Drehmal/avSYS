@@ -93,23 +93,21 @@ func bedrockListed(p listedPlayer) bool {
 // floodgate is how a server's Floodgate names Bedrock players.
 type floodgate struct {
 	prefix string
-	// spaces is whether a space in a gamertag is written as "_".
-	spaces bool
 }
 
 // defaultFloodgate is Floodgate as it comes, and as a server without it
 // would name Bedrock players once it is added.
-var defaultFloodgate = floodgate{prefix: ".", spaces: true}
+var defaultFloodgate = floodgate{prefix: "."}
 
 // name is a Bedrock player's name in game, as Floodgate makes it from their
-// gamertag: behind the prefix, cut to 16 characters in all.
+// gamertag: behind the prefix, cut to 16 characters in all, a space as
+// "_". Floodgate can be set to keep spaces ("replace-spaces: false"); the
+// panel writes "_" all the same, as a name with a space could not go in a
+// command nor be read back. The game knows a whitelisted player by UUID,
+// so they are let in either way.
 func (f floodgate) name(gamertag string) string {
 	n := min(len(gamertag), max(16-len(f.prefix), 0))
-	out := f.prefix + gamertag[:n]
-	if f.spaces {
-		out = strings.ReplaceAll(out, " ", "_")
-	}
-	return out
+	return strings.ReplaceAll(f.prefix+gamertag[:n], " ", "_")
 }
 
 // inGame is a saved list's player's name in game.
@@ -158,7 +156,6 @@ func floodgateFrom(sc *sftp.Client) floodgate {
 		}
 		var c struct {
 			Prefix *string `json:"username-prefix"`
-			Spaces *bool   `json:"replace-spaces"`
 		}
 		if yaml.Unmarshal(data, &c) != nil {
 			continue
@@ -166,9 +163,6 @@ func floodgateFrom(sc *sftp.Client) floodgate {
 		out := defaultFloodgate
 		if c.Prefix != nil {
 			out.prefix = *c.Prefix
-		}
-		if c.Spaces != nil {
-			out.spaces = *c.Spaces
 		}
 		return out
 	}
@@ -312,9 +306,9 @@ func (s *Server) lookUpBedrock(ctx context.Context, gamertags []string) ([]store
 }
 
 // changeWhitelistFile puts players on whitelist.json and takes others off
-// it, by name, leaving every other entry as it was. One on it already by
-// UUID is given the name asked for.
-func changeWhitelistFile(sc *sftp.Client, file string, add []listedPlayer, remove []string) error {
+// it, by UUID where one is given and by name otherwise, leaving every other
+// entry as it was. One on it already by UUID is given the name asked for.
+func changeWhitelistFile(sc *sftp.Client, file string, add, remove []listedPlayer) error {
 	var entries []map[string]any
 	f, err := sc.Open(file)
 	switch {
@@ -338,16 +332,19 @@ func changeWhitelistFile(sc *sftp.Client, file string, add []listedPlayer, remov
 		return v
 	}
 	changed := false
-	for _, name := range remove {
+	for _, p := range remove {
 		before := len(entries)
-		entries = slices.DeleteFunc(entries, func(e map[string]any) bool { return strings.EqualFold(field(e, "name"), name) })
+		entries = slices.DeleteFunc(entries, func(e map[string]any) bool {
+			if p.UUID != "" {
+				return bareUUID(field(e, "uuid")) == bareUUID(p.UUID)
+			}
+			return strings.EqualFold(field(e, "name"), p.Name)
+		})
 		changed = changed || len(entries) != before
 	}
 	for _, p := range add {
-		i := slices.IndexFunc(entries, func(e map[string]any) bool { return strings.EqualFold(field(e, "uuid"), p.UUID) })
-		if i < 0 {
-			i = slices.IndexFunc(entries, func(e map[string]any) bool { return strings.EqualFold(field(e, "name"), p.Name) })
-		}
+		// By UUID alone: two players can have one name in game.
+		i := slices.IndexFunc(entries, func(e map[string]any) bool { return bareUUID(field(e, "uuid")) == bareUUID(p.UUID) })
 		if i < 0 {
 			entries = append(entries, map[string]any{"uuid": p.UUID, "name": p.Name})
 			changed = true
@@ -369,7 +366,7 @@ func changeWhitelistFile(sc *sftp.Client, file string, add []listedPlayer, remov
 
 // changeBedrockWhitelist puts Bedrock players on a server's whitelist and
 // takes them off it by its file, and has the game read it again if it runs.
-func (s *Server) changeBedrockWhitelist(ctx context.Context, mc *avsysv1.MinecraftServer, add []listedPlayer, remove []string) error {
+func (s *Server) changeBedrockWhitelist(ctx context.Context, mc *avsysv1.MinecraftServer, add, remove []listedPlayer) error {
 	sc, err := s.workspaces.getNow(ctx, mc.Namespace, mc.Name)
 	if err != nil {
 		return err

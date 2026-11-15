@@ -155,8 +155,15 @@ func TestBedrockListPlayers(t *testing.T) {
 }
 
 // A panel from before lists had Bedrock players has every player on them
-// as of Java.
+// as of Java; so does one stopped after the first of the two columns was
+// added.
 func TestListPlayerKindsAdded(t *testing.T) {
+	for name, columns := range map[string]string{"before": "", "half way": ", kind TEXT NOT NULL DEFAULT 'java'"} {
+		t.Run(name, func(t *testing.T) { listPlayerKindsAdded(t, columns) })
+	}
+}
+
+func listPlayerKindsAdded(t *testing.T, columns string) {
 	path := filepath.Join(t.TempDir(), "lists.db")
 	s, err := Open(path)
 	if err != nil {
@@ -178,8 +185,8 @@ func TestListPlayerKindsAdded(t *testing.T) {
 	}
 	for _, q := range []string{
 		`DROP TABLE player_list_entries`,
-		`CREATE TABLE player_list_entries (list_id TEXT NOT NULL REFERENCES player_lists(id) ON DELETE CASCADE, uuid TEXT NOT NULL, name TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (list_id, uuid))`,
-		`INSERT INTO player_list_entries VALUES ('` + l.ID + `', 'u-steve', 'Steve', 1700000000)`,
+		`CREATE TABLE player_list_entries (list_id TEXT NOT NULL REFERENCES player_lists(id) ON DELETE CASCADE, uuid TEXT NOT NULL, name TEXT NOT NULL, added_at INTEGER NOT NULL` + columns + `, PRIMARY KEY (list_id, uuid))`,
+		`INSERT INTO player_list_entries (list_id, uuid, name, added_at) VALUES ('` + l.ID + `', 'u-steve', 'Steve', 1700000000)`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
