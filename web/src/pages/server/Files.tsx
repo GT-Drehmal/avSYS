@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Folder, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Search, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Code2, Download, File, FilePlus, Image as ImageIcon, Folder, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PackageOpen, Pencil, Search, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Faces } from "../../components/Faces";
@@ -12,6 +12,7 @@ import { vscodeURL } from "../../lib/ssh";
 import { others, usePresence } from "../../lib/presence";
 import { toast } from "../../lib/toast";
 import { Editor } from "./Editor";
+import { image, ImageView } from "./ImageView";
 import { useServerContext } from "./ServerPage";
 
 const join = (dir: string, name: string) => (dir === "/" ? `/${name}` : `${dir}/${name}`);
@@ -26,7 +27,7 @@ const within = (path: string, dir: string) => path === dir || path.startsWith(`$
 
 // Editing is for configuration, not for worlds and jars.
 const maxEditable = 2 * 1024 * 1024;
-const binary = /\.(jar|zip|gz|tgz|tar|7z|rar|png|jpe?g|gif|webp|ico|dat|dat_old|mca|mcr|nbt|db|sqlite|lock|ogg|mp3|wav|class|so|bin)$/i;
+const binary = /\.(jar|zip|gz|tgz|tar|7z|rar|dat|dat_old|mca|mcr|nbt|db|sqlite|lock|ogg|mp3|wav|class|so|bin)$/i;
 
 /** What an editor has: the file as it opened it, and what was typed since. */
 type EditorState = { basis: EditedFile | null; draft: string | null };
@@ -39,10 +40,13 @@ function FileEditor({
   onClose,
   onDirty,
   onState,
+  onView,
 }: {
   base: string;
   path: string;
   managed: string[];
+  /** For a picture kept as text, as an svg is: shown as a picture again. */
+  onView?: () => void;
   /** What it had at another path, before the file was renamed or moved. */
   carry?: EditorState;
   onClose: () => void;
@@ -118,6 +122,11 @@ function FileEditor({
           )}
         </span>
         <div className="flex items-center gap-1.5">
+          {onView && (
+            <Button size="sm" variant="ghost" icon={<ImageIcon className="size-3.5" />} onClick={onView}>
+              View as image
+            </Button>
+          )}
           <Button size="sm" variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(false)}>
             Save
           </Button>
@@ -259,7 +268,10 @@ function store(key: string, value: unknown) {
 // What the panel can open in place, as the workspace's bsdtar reads.
 const archive = /\.(zip|tar|tar\.gz|tgz|tar\.xz|txz|tar\.bz2|tbz2|7z|rar)$/i;
 
-const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name);
+// A picture that is also text: it can be edited as text too.
+const svg = /\.svg$/i;
+
+const isEditable = (entry: FileEntry) => !entry.dir && entry.size <= maxEditable && !binary.test(entry.name) && !image.test(entry.name);
 
 type Found = FileEntry & { path: string };
 
@@ -494,9 +506,15 @@ export default function Files() {
         return next;
       });
       anchor.current = row.path;
-    } else return press(row);
+    } else {
+      press(row);
+      // A picture clicked takes the keys, for the ones beside it.
+      if (!row.entry.dir && image.test(row.entry.name)) requestAnimationFrame(() => viewer.current?.focus({ preventScroll: true }));
+      return;
+    }
     setFocused(row.path);
   };
+  const viewer = useRef<HTMLDivElement>(null);
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
   // A row's menu opened by a right click, where it was clicked.
@@ -733,6 +751,8 @@ export default function Files() {
   const openEntry = open || selected.dir ? null : rows.find((r): r is Extract<Row, { kind: "entry" }> => r.kind === "entry" && r.path === selected.path && !isEditable(r.entry));
   const managed = open === "/server.properties" ? Object.keys(server.spec.properties ?? {}).sort() : [];
   const onDirty = useCallback((d: boolean) => setDirty(d), []);
+  // How many times a picture was gone back to from the editor: each, asked for anew.
+  const [looks, setLooks] = useState(0);
 
   return (
     <div className="flex h-[calc(100dvh-330px)] min-h-80 overflow-hidden rounded-lg border border-line bg-surface">
@@ -1019,6 +1039,35 @@ export default function Files() {
             onDirty={onDirty}
             onState={onState}
             onClose={() => guard(() => openFile(null))}
+            onView={
+              svg.test(open)
+                ? () =>
+                    guard(() => {
+                      // As saved: the picture is asked for again, and its folder for its size.
+                      setLooks((n) => n + 1);
+                      refresh(parentOf(open));
+                      setSelected({ path: open, dir: false });
+                      openFile(null);
+                    })
+                : undefined
+            }
+          />
+        ) : openEntry && image.test(openEntry.entry.name) ? (
+          <ImageView
+            ref={viewer}
+            base={base}
+            path={openEntry.path}
+            entry={openEntry.entry}
+            pictures={(byDir.get(parentOf(openEntry.path))?.data?.entries ?? []).filter((e) => !e.dir && image.test(e.name)).map((e) => join(parentOf(openEntry.path), e.name))}
+            onGo={(path) => {
+              unpick();
+              anchor.current = path;
+              setSelected({ path, dir: false });
+              setFocused(path);
+            }}
+            onClose={() => setSelected({ path: parentOf(openEntry.path), dir: true })}
+            again={looks}
+            onEdit={svg.test(openEntry.path) && openEntry.entry.size <= maxEditable ? () => openFile(openEntry.path) : undefined}
           />
         ) : openEntry ? (
           <div className="relative flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -1038,7 +1087,7 @@ export default function Files() {
                 {bytes(openEntry.entry.size)} · changed {ago(openEntry.entry.modTime)}
               </p>
             </div>
-            <p className="text-xs text-muted">{openEntry.entry.size > maxEditable ? "Files over 2 MB can't be edited here." : "This kind of file can't be edited here."}</p>
+            <p className="text-xs text-muted">{binary.test(openEntry.entry.name) ? "This file can't be shown here." : "Files over 2 MB can't be edited here."}</p>
             <Button size="sm" icon={<Download className="size-3.5" />} onClick={() => window.location.assign(`/api/v1${base}/content?${qs({ path: openEntry.path })}&download`)}>
               Download
             </Button>

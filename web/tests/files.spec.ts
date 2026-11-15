@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Page } from "@playwright/test";
+import { deflateSync } from "node:zlib";
+import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./panel";
 
 // The file editor saves only over the file it opened.
@@ -265,8 +266,227 @@ test("a file that cannot be edited offers to be downloaded", async ({ page }) =>
   await files(page);
   await page.goto("/o/friends/s/survival/files");
   await item(page, "server.jar").click();
-  await expect(page.getByText("Files over 2 MB can't be edited here.")).toBeVisible();
+  await expect(page.getByText("This file can't be shown here.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+});
+
+test("a big text file says it can't be edited here, with Download", async ({ page }) => {
+  await files(page);
+  await page.route("**/api/v1/orgs/friends/servers/survival/files?*", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("path") !== "/") return route.fallback();
+    const modTime = new Date().toISOString();
+    return route.fulfill({ json: { path: "/", entries: [{ name: "latest.log", dir: false, size: 5_000_000, modTime }] } });
+  });
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "latest.log").click();
+  await expect(page.getByText("Files over 2 MB can't be edited here.")).toBeVisible();
+  await expect(page.getByText(/^4\.8 MB · changed/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
+});
+
+/** A PNG this big, as a game's textures and icons are: a frame around a transparent middle. */
+function png(w: number, h: number): Buffer {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (b: Buffer) => {
+    let c = 0xffffffff;
+    for (const x of b) c = crcTable[(c ^ x) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(w, 0);
+  header.writeUInt32BE(h, 4);
+  header.set([8, 6, 0, 0, 0], 8);
+  const row = w * 4 + 1;
+  const raw = Buffer.alloc(row * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const edge = x === 0 || y === 0 || x === w - 1 || y === h - 1;
+      raw.set(edge ? [95, 224, 198, 255] : [0, 0, 0, 0], y * row + 1 + x * 4);
+    }
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+
+/**
+ * survival's files with pictures in the top folder, served as the panel
+ * does: as an image only when asked for one to look at, failing once for
+ * each in failOnce. What was asked for each is kept.
+ */
+async function pictures(page: Page, failOnce: string[] = []) {
+  await files(page, { "/": ["config/", "plugins/", "world/", "banner.png", "eula.txt", "logo.svg", "server-icon.png", "server.jar", "server.properties"] });
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24"><script>parent.ran = true; top.ran = true</script><rect width="32" height="24" fill="#5fe0c6"/></svg>`;
+  const images: Record<string, { body: Buffer | string; type: string }> = {
+    "/server-icon.png": { body: png(64, 64), type: "image/png" },
+    "/banner.png": { body: png(1600, 1000), type: "image/png" },
+    "/logo.svg": { body: svg, type: "image/svg+xml" },
+  };
+  const asked: string[] = [];
+  await page.route("**/api/v1/orgs/friends/servers/survival/files/content?*", (route) => {
+    const url = new URL(route.request().url());
+    const pic = images[url.searchParams.get("path") ?? ""];
+    if (!pic) return route.fallback();
+    asked.push(url.search);
+    const path = url.searchParams.get("path") ?? "";
+    if (failOnce.includes(path)) {
+      failOnce.splice(failOnce.indexOf(path), 1);
+      return route.fulfill({ status: 502, json: { code: "workspace", message: "The server's files are not reachable right now." } });
+    }
+    // Saved from the editor: what it is from then on.
+    if (route.request().method() === "PUT") {
+      pic.body = route.request().postData() ?? "";
+      return route.fulfill({ status: 204, headers: { ETag: `"${asked.length}"` } });
+    }
+    return route.fulfill({ body: pic.body, headers: { "Content-Type": url.searchParams.has("view") ? pic.type : "application/octet-stream", ETag: `"${asked.length}"` } });
+  });
+  return { asked, svg, images };
+}
+
+const natural = (img: Locator) => img.evaluate((el: HTMLImageElement) => [el.naturalWidth, el.naturalHeight]);
+
+test("a picture opens as one, with its size; a small one in big, sharp pixels on squares", async ({ page }) => {
+  const { asked } = await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "server-icon.png").click();
+  const img = page.getByRole("img", { name: "server-icon.png" });
+  await expect(img).toBeVisible();
+  await expect(page.getByText("64 × 64 · 20 B")).toBeVisible();
+  expect(await natural(img)).toEqual([64, 64]);
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+  // Asked for to be looked at, by the version listed, so kept until it changes.
+  expect(asked[0]).toMatch(/[?&]view(&|$)/);
+  expect(asked[0]).toMatch(/[?&]v=\d+-20(&|$)/);
+  // Bigger, by a whole number of times, and not smoothed.
+  await expect(img).toHaveCSS("image-rendering", "pixelated");
+  await expect(img).toHaveCSS("background-image", /conic-gradient/);
+  const box = (await img.boundingBox())!;
+  expect(box.width).toBeGreaterThan(64);
+  expect(box.width % 64).toBe(0);
+  expect(box.height).toBe(box.width);
+});
+
+test("the pictures in a folder are gone through with the arrow keys", async ({ page }) => {
+  await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "server-icon.png").click();
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
+  // Folder order: banner.png, logo.svg, server-icon.png.
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("img", { name: "logo.svg" })).toBeVisible();
+  await expect(item(page, "logo.svg")).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("img", { name: "banner.png" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Previous image" })).toBeDisabled();
+  await page.getByRole("button", { name: "Next image" }).click();
+  await expect(page.getByRole("img", { name: "logo.svg" })).toBeVisible();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next image" })).toBeDisabled();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toHaveCount(0);
+});
+
+test("a picture that could not be read is asked for again, on Try again or when come back to", async ({ page }) => {
+  await pictures(page, ["/server-icon.png", "/logo.svg"]);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "server-icon.png").click();
+  await expect(page.getByText("This image can't be shown.")).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
+  await expect(page.getByText("64 × 64 · 20 B")).toBeVisible();
+  // Failing, then gone from and come back to.
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByText("This image can't be shown.")).toBeVisible();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("img", { name: "logo.svg" })).toBeVisible();
+  await expect(page.getByText("32 × 24 · 20 B")).toBeVisible();
+});
+
+test("an svg is shown as a picture, never as a page or in the editor", async ({ page }) => {
+  await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "logo.svg").click();
+  const img = page.getByRole("img", { name: "logo.svg" });
+  await expect(img).toBeVisible();
+  expect(await natural(img)).toEqual([32, 24]);
+  await expect(page.getByText("32 × 24 · 20 B")).toBeVisible();
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+  await expect(page.locator("iframe, object, embed")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as { ran?: boolean }).ran)).toBeUndefined();
+});
+
+test("an svg can be edited as text, and viewed as a picture again with the change", async ({ page }) => {
+  const { images, svg } = await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "logo.svg").click();
+  await expect(page.getByText("32 × 24 · 20 B")).toBeVisible();
+  await page.getByRole("button", { name: "Edit as text" }).click();
+  await expect(page.locator(".cm-content")).toContainText('<rect width="32" height="24"');
+  await expect(page.getByRole("img", { name: "logo.svg" })).toHaveCount(0);
+  // Made bigger, and saved as any file is.
+  const bigger = svg.replaceAll('width="32" height="24"', 'width="48" height="40"');
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.insertText(bigger);
+  await expect(page.getByText("unsaved")).toBeVisible();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("unsaved")).toHaveCount(0);
+  expect(images["/logo.svg"].body).toBe(bigger);
+  await page.getByRole("button", { name: "View as image" }).click();
+  const img = page.getByRole("img", { name: "logo.svg" });
+  await expect(img).toBeVisible();
+  await expect(page.getByText(/^48 × 40 · /)).toBeVisible();
+  expect(await natural(img)).toEqual([48, 40]);
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+});
+
+test("a picture that is not text has no Edit as text", async ({ page }) => {
+  await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "server-icon.png").click();
+  await expect(page.getByRole("img", { name: "server-icon.png" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit as text" })).toHaveCount(0);
+});
+
+test("a big picture fits, and is shown at its own size when asked", async ({ page }) => {
+  await pictures(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "banner.png").click();
+  const img = page.getByRole("img", { name: "banner.png" });
+  await expect(page.getByText("1600 × 1000 · 20 B")).toBeVisible();
+  await expect(img).not.toHaveCSS("image-rendering", "pixelated");
+  const fitted = (await img.boundingBox())!;
+  expect(fitted.width).toBeLessThan(1600);
+  expect(Math.round((fitted.width / fitted.height) * 10)).toBe(16);
+  await page.getByRole("button", { name: "Actual size" }).click();
+  await expect.poll(async () => (await img.boundingBox())?.width).toBe(1600);
+  await page.getByRole("button", { name: "Fit" }).click();
+  await expect.poll(async () => (await img.boundingBox())?.width).toBe(fitted.width);
+});
+
+test("a file that can't be shown says so, with its size and Download", async ({ page }) => {
+  await files(page);
+  await page.goto("/o/friends/s/survival/files");
+  await item(page, "world").click();
+  await item(page, "level.dat").click();
+  await expect(page.getByText("This file can't be shown here.")).toBeVisible();
+  await expect(page.getByText(/^20 B · changed/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "level.dat" })).toHaveCount(0);
   await expect(page.locator(".cm-content")).toHaveCount(0);
 });
 
@@ -331,7 +551,7 @@ test("on a phone the file takes the screen, and closing it goes back to the fold
   await page.getByRole("button", { name: "Close" }).click();
   await expect(item(page, "config.yml")).toBeVisible();
   await expect(page.locator(".cm-content")).toHaveCount(0);
-  await expect(page.getByText(/can't be edited here/)).toHaveCount(0);
+  await expect(page.getByText(/can.t be (edited|shown) here/)).toHaveCount(0);
 });
 
 test("a folder deleted takes the file open in it with it", async ({ page }) => {
@@ -676,7 +896,7 @@ test("a file found that cannot be edited is shown with Download, even past the f
   await page.getByLabel("Find a file by name").fill("e");
   // Small, but not a text file: not opened in the editor.
   await page.getByRole("list", { name: "Found" }).getByRole("button").first().click();
-  await expect(page.getByText("This kind of file can't be edited here.")).toBeVisible();
+  await expect(page.getByText("This file can't be shown here.")).toBeVisible();
   await expect(page.locator(".cm-content")).toHaveCount(0);
   // The 341st in its folder: shown, chosen, with Download.
   await page.getByRole("button", { name: "Find a file" }).click();
