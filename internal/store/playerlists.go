@@ -35,10 +35,34 @@ const (
 	MaxPlayerLists = 200
 )
 
-// ListPlayer is a player on a list.
+// The kinds of player a list can have: one of Java Edition, by their
+// Minecraft account, or one of Bedrock Edition, by their Xbox account, who
+// joins through Geyser and Floodgate.
+const (
+	KindJava    = "java"
+	KindBedrock = "bedrock"
+)
+
+// ListPlayer is a player on a list. A Java player is kept by their
+// account's UUID, with its name. A Bedrock player is kept by the UUID
+// Floodgate gives them, which is made from their XUID, with their gamertag
+// as Name.
 type ListPlayer struct {
 	UUID string `json:"uuid"`
 	Name string `json:"name"`
+	Kind string `json:"kind"`
+	XUID string `json:"xuid,omitempty"`
+}
+
+// Bedrock is whether the player is one of Bedrock Edition.
+func (p ListPlayer) Bedrock() bool { return p.Kind == KindBedrock }
+
+// kindOf is a player's kind as it is kept: Java unless said otherwise.
+func kindOf(p ListPlayer) string {
+	if p.Bedrock() {
+		return KindBedrock
+	}
+	return KindJava
 }
 
 // PlayerList is a list with its players, by name.
@@ -90,8 +114,8 @@ func (s *Store) CreatePlayerList(ctx context.Context, l *PlayerList) error {
 func insertListPlayers(ctx context.Context, tx *sql.Tx, id string, players []ListPlayer) error {
 	at := time.Now().Unix()
 	for _, p := range players {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO player_list_entries (list_id, uuid, name, added_at) VALUES (?, ?, ?, ?)
-			ON CONFLICT (list_id, uuid) DO UPDATE SET name = excluded.name`, id, p.UUID, p.Name, at); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO player_list_entries (list_id, uuid, name, kind, xuid, added_at) VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (list_id, uuid) DO UPDATE SET name = excluded.name, kind = excluded.kind, xuid = excluded.xuid`, id, p.UUID, p.Name, kindOf(p), p.XUID, at); err != nil {
 			return err
 		}
 	}
@@ -103,6 +127,7 @@ func uniquePlayers(players []ListPlayer) []ListPlayer {
 	seen := map[string]int{}
 	out := []ListPlayer{}
 	for _, p := range players {
+		p.Kind = kindOf(p)
 		if i, ok := seen[p.UUID]; ok {
 			out[i] = p
 			continue
@@ -145,7 +170,7 @@ func (s *Store) PlayerLists(ctx context.Context, orgID string) ([]PlayerList, er
 	if len(out) == 0 {
 		return out, nil
 	}
-	entries, err := s.db.QueryContext(ctx, `SELECT e.list_id, e.uuid, e.name FROM player_list_entries e JOIN player_lists l ON l.id = e.list_id
+	entries, err := s.db.QueryContext(ctx, `SELECT e.list_id, e.uuid, e.name, e.kind, e.xuid FROM player_list_entries e JOIN player_lists l ON l.id = e.list_id
 		WHERE l.org_id = ? ORDER BY e.name COLLATE NOCASE`, orgID)
 	if err != nil {
 		return nil, err
@@ -154,7 +179,7 @@ func (s *Store) PlayerLists(ctx context.Context, orgID string) ([]PlayerList, er
 	for entries.Next() {
 		var id string
 		var p ListPlayer
-		if err := entries.Scan(&id, &p.UUID, &p.Name); err != nil {
+		if err := entries.Scan(&id, &p.UUID, &p.Name, &p.Kind, &p.XUID); err != nil {
 			return nil, err
 		}
 		if i, ok := at[id]; ok {
@@ -177,7 +202,7 @@ func (s *Store) PlayerList(ctx context.Context, orgID, id string) (*PlayerList, 
 		return nil, err
 	}
 	l.CreatedAt, l.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
-	rows, err := s.db.QueryContext(ctx, `SELECT uuid, name FROM player_list_entries WHERE list_id = ? ORDER BY name COLLATE NOCASE`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT uuid, name, kind, xuid FROM player_list_entries WHERE list_id = ? ORDER BY name COLLATE NOCASE`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +210,7 @@ func (s *Store) PlayerList(ctx context.Context, orgID, id string) (*PlayerList, 
 	l.Players = []ListPlayer{}
 	for rows.Next() {
 		var p ListPlayer
-		if err := rows.Scan(&p.UUID, &p.Name); err != nil {
+		if err := rows.Scan(&p.UUID, &p.Name, &p.Kind, &p.XUID); err != nil {
 			return nil, err
 		}
 		l.Players = append(l.Players, p)
@@ -262,8 +287,8 @@ func (s *Store) RemoveListPlayer(ctx context.Context, orgID, id, uuid string) er
 	return tx.Commit()
 }
 
-// RenameListPlayer gives a player the name their account has now, on every
-// list they are on.
+// RenameListPlayer gives a player the name their account has now, a
+// Bedrock player their gamertag, on every list they are on.
 func (s *Store) RenameListPlayer(ctx context.Context, uuid, name string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE player_list_entries SET name = ? WHERE uuid = ?`, name, uuid)
 	return err

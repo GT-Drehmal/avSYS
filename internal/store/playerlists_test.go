@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -118,5 +120,80 @@ func TestPlayerLists(t *testing.T) {
 	}
 	if lists, _ := s.PlayerLists(ctx, a.ID); len(lists) != 0 {
 		t.Errorf("lists of a deleted organization: %d", len(lists))
+	}
+}
+
+// A list keeps each player's kind: a Bedrock player with their XUID, a
+// Java one as Java, said or not.
+func TestBedrockListPlayers(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	a := &Org{Slug: "a", Name: "A"}
+	if err := s.CreateOrg(ctx, a, user(t, s, "owner").ID); err != nil {
+		t.Fatal(err)
+	}
+	tim := ListPlayer{UUID: "0000000000000000000901f64f65c7c3", Name: "Tim203", Kind: KindBedrock, XUID: "2535432196048835"}
+	l := &PlayerList{OrgID: a.ID, Name: "Event", Players: []ListPlayer{tim, {UUID: "u-steve", Name: "Steve"}}}
+	if err := s.CreatePlayerList(ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.PlayerList(ctx, a.ID, l.ID)
+	if err != nil || len(got.Players) != 2 || got.Players[0] != (ListPlayer{UUID: "u-steve", Name: "Steve", Kind: KindJava}) || got.Players[1] != tim {
+		t.Fatalf("players: %+v, %v", got, err)
+	}
+	all, err := s.PlayerLists(ctx, a.ID)
+	if err != nil || len(all) != 1 || all[0].Players[1] != tim || !all[0].Players[1].Bedrock() {
+		t.Errorf("all lists: %+v, %v", all, err)
+	}
+	// A new gamertag, on every list he is on.
+	if err := s.RenameListPlayer(ctx, tim.UUID, "Tim204"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.PlayerList(ctx, a.ID, l.ID); got.Players[1].Name != "Tim204" || got.Players[1].XUID != tim.XUID {
+		t.Errorf("renamed: %+v", got.Players[1])
+	}
+}
+
+// A panel from before lists had Bedrock players has every player on them
+// as of Java.
+func TestListPlayerKindsAdded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lists.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	a := &Org{Slug: "a", Name: "A"}
+	if err := s.CreateOrg(ctx, a, user(t, s, "owner").ID); err != nil {
+		t.Fatal(err)
+	}
+	l := &PlayerList{OrgID: a.ID, Name: "Club"}
+	if err := s.CreatePlayerList(ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`DROP TABLE player_list_entries`,
+		`CREATE TABLE player_list_entries (list_id TEXT NOT NULL REFERENCES player_lists(id) ON DELETE CASCADE, uuid TEXT NOT NULL, name TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (list_id, uuid))`,
+		`INSERT INTO player_list_entries VALUES ('` + l.ID + `', 'u-steve', 'Steve', 1700000000)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	for range 2 {
+		if s, err = Open(path); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.PlayerList(ctx, a.ID, l.ID)
+		if err != nil || len(got.Players) != 1 || got.Players[0] != (ListPlayer{UUID: "u-steve", Name: "Steve", Kind: KindJava}) {
+			t.Errorf("after opening: %+v, %v", got, err)
+		}
+		s.Close()
 	}
 }

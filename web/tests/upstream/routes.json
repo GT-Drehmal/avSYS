@@ -144,5 +144,42 @@
   "url": "https://sessionserver.mojang.com/session/minecraft/profile/",
   "has": "",
   "file": "profile.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/xuid/tim203",
+  "has": "",
+  "file": "geyser-xuid-tim203.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/xuid/redned235",
+  "has": "",
+  "file": "geyser-xuid-redned235.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/xuid/",
+  "has": "",
+  "file": "geyser-not-cached.json",
+  "status": 503
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/gamertag/2535432196048835",
+  "has": "",
+  "file": "geyser-gamertag-tim203.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/gamertag/2535407489632336",
+  "has": "",
+  "file": "geyser-gamertag-redned235.json"
+ },
+ {
+  "url": "https://api.geysermc.org/v2/xbox/gamertag/",
+  "has": "",
+  "file": "geyser-not-cached.json",
+  "status": 503
+ },
+ {
+  "url": "https://api.geysermc.org/v2/skin/",
+  "has": "",
+  "file": "geyser-no-skin.json"
  }
 ]

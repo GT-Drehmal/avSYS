@@ -87,8 +87,12 @@ func listViewOf(l *store.PlayerList, uses map[string][]listUse) playerListView {
 	return v
 }
 
+// notFound is what was asked for that no account has: names of Java
+// players, and gamertags of Bedrock ones.
+type notFound struct{ java, bedrock []string }
+
 // writePlayerList answers with one list as it is now.
-func (s *Server) writePlayerList(w http.ResponseWriter, r *http.Request, a *access, id string, status int, missing []string) error {
+func (s *Server) writePlayerList(w http.ResponseWriter, r *http.Request, a *access, id string, status int, missing notFound) error {
 	l, err := s.Store.PlayerList(r.Context(), a.Org.ID, id)
 	if err != nil {
 		return err
@@ -97,15 +101,23 @@ func (s *Server) writePlayerList(w http.ResponseWriter, r *http.Request, a *acce
 	if err != nil {
 		return err
 	}
-	if missing == nil {
-		missing = []string{}
-	}
 	writeJSON(w, status, struct {
 		playerListView
 		// Missing are the names asked for that no Minecraft account has.
 		Missing []string `json:"missing"`
-	}{listViewOf(l, uses), missing})
+		// MissingBedrock are the gamertags asked for that GeyserMC knows
+		// no Bedrock player of.
+		MissingBedrock []string `json:"missingBedrock"`
+	}{listViewOf(l, uses), orNone(missing.java), orNone(missing.bedrock)})
 	return nil
+}
+
+// orNone is a list of names, or an empty one for none.
+func orNone(names []string) []string {
+	if names == nil {
+		return []string{}
+	}
+	return names
 }
 
 func (s *Server) listPlayerLists(w http.ResponseWriter, r *http.Request, u *store.User) error {
@@ -134,7 +146,7 @@ func (s *Server) getPlayerList(w http.ResponseWriter, r *http.Request, u *store.
 	if err != nil {
 		return err
 	}
-	return s.writePlayerList(w, r, a, r.PathValue("list"), http.StatusOK, nil)
+	return s.writePlayerList(w, r, a, r.PathValue("list"), http.StatusOK, notFound{})
 }
 
 // listName checks a list's name.
@@ -176,8 +188,11 @@ func (s *Server) createPlayerList(w http.ResponseWriter, r *http.Request, u *sto
 		return err
 	}
 	var in struct {
-		Name  string
-		Names []string
+		Name string
+		// Names are of Java players, and Bedrock the gamertags of Bedrock
+		// ones.
+		Names   []string
+		Bedrock []string
 		// FromServer and List are a server of the organization and one of
 		// its lists, "whitelist" or "ops", whose players the list starts with.
 		FromServer string
@@ -192,11 +207,11 @@ func (s *Server) createPlayerList(w http.ResponseWriter, r *http.Request, u *sto
 	}
 	ctx := r.Context()
 	var players []store.ListPlayer
-	var missing []string
+	var missing notFound
 	if in.FromServer != "" {
 		players, missing, err = s.playersOnServer(ctx, a, in.FromServer, in.List)
 	} else {
-		players, missing, err = s.lookUpPlayers(ctx, in.Names)
+		players, missing, err = s.lookUpAll(ctx, in.Names, in.Bedrock)
 	}
 	if err != nil {
 		return err
@@ -211,46 +226,113 @@ func (s *Server) createPlayerList(w http.ResponseWriter, r *http.Request, u *sto
 
 // playersOnServer is who is on one of a server's lists: in game where that
 // can be read, and who the panel puts there besides. Players the game has
-// a UUID for are taken as they are; the rest are looked up.
-func (s *Server) playersOnServer(ctx context.Context, a *access, server, which string) ([]store.ListPlayer, []string, error) {
+// a UUID for are taken as they are, and those of saved lists as the lists
+// have them; the rest are looked up.
+func (s *Server) playersOnServer(ctx context.Context, a *access, server, which string) ([]store.ListPlayer, notFound, error) {
 	list, ok := roleListByKey(which)
 	if !ok {
-		return nil, nil, errBadRequest("Say which list: whitelist or ops.")
+		return nil, notFound{}, errBadRequest("Say which list: whitelist or ops.")
 	}
 	mc := &avsysv1.MinecraftServer{}
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: server}, mc); err != nil {
-		return nil, nil, err
+		return nil, notFound{}, err
 	}
 	members, err := s.Store.Members(ctx, a.Org.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, notFound{}, err
 	}
 	saved, err := s.savedLists(ctx, a.Org.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, notFound{}, err
 	}
+	fg := s.floodgateOf(ctx, mc)
 	var players []store.ListPlayer
-	var names []string
+	var names, gamertags []string
+	// taken are the names in game of those taken or to be looked up.
+	var taken []string
+	take := func(p store.ListPlayer, name string) {
+		if !slices.ContainsFunc(players, func(q store.ListPlayer) bool { return q.UUID == p.UUID }) {
+			players = append(players, p)
+		}
+		taken = append(taken, name)
+	}
+	// GeyserMC is asked for gamertags until it fails once: then the rest
+	// are taken from their names in game.
+	geyserUp := true
 	// One that cannot be read is left out: what the panel puts there is
 	// still known.
 	on, _ := s.readList(ctx, mc, list)
 	for _, p := range on {
-		if uuid := bareUUID(p.UUID); uuid != "" {
-			players = append(players, store.ListPlayer{UUID: uuid, Name: p.Name})
-		} else {
+		switch xuid := xuidOf(p.UUID); {
+		case xuid != "":
+			tag := fg.gamertag(p.Name)
+			if geyserUp {
+				now, err := s.gamertagOf(ctx, xuid)
+				if err == nil {
+					tag = now
+				}
+				geyserUp = err == nil || errors.Is(err, errNotFound)
+			}
+			take(store.ListPlayer{UUID: bareUUID(p.UUID), Name: tag, Kind: store.KindBedrock, XUID: xuid}, p.Name)
+		case bareUUID(p.UUID) != "":
+			take(store.ListPlayer{UUID: bareUUID(p.UUID), Name: p.Name, Kind: store.KindJava}, p.Name)
+		case p.Bedrock:
+			gamertags = append(gamertags, fg.gamertag(p.Name))
+			taken = append(taken, p.Name)
+		default:
 			names = append(names, p.Name)
+			taken = append(taken, p.Name)
 		}
 	}
-	for _, name := range withKept(wantedOn(list, &mc.Spec, members, saved), list.kept(&mc.Spec)) {
-		if !slices.ContainsFunc(players, func(p store.ListPlayer) bool { return strings.EqualFold(p.Name, name) }) && !hasName(names, name) {
+	for _, p := range savedPlayers(list.saved(&mc.Spec), saved) {
+		take(p, fg.inGame(p))
+	}
+	for _, name := range withKept(wantedFrom(list.from(&mc.Spec), list.picks(&mc.Spec), members), list.kept(&mc.Spec)) {
+		switch {
+		case hasName(taken, name):
+		case bedrockListed(listedPlayer{Name: name}):
+			gamertags = append(gamertags, fg.gamertag(name))
+		default:
 			names = append(names, name)
 		}
+		taken = append(taken, name)
 	}
-	found, missing, err := s.lookUpPlayers(ctx, names)
+	found, missing, err := s.lookUpAll(ctx, names, gamertags)
 	if err != nil {
-		return nil, nil, err
+		return nil, notFound{}, err
 	}
-	return append(players, found...), missing, nil
+	for _, p := range found {
+		take(p, "")
+	}
+	return players, missing, nil
+}
+
+// lookUpAll looks up Java players by name with Mojang, and Bedrock ones by
+// gamertag with GeyserMC. A name given as a Java one that no Java account
+// could have, behind a prefix as Floodgate shows Bedrock players, is taken
+// for a gamertag.
+func (s *Server) lookUpAll(ctx context.Context, names, gamertags []string) ([]store.ListPlayer, notFound, error) {
+	var java []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if bare := strings.TrimLeft(name, ".*!~+-"); bare != name && gamertagPattern.MatchString(bare) {
+			gamertags = append(gamertags, name)
+		} else {
+			java = append(java, name)
+		}
+	}
+	if len(java)+len(gamertags) > store.MaxListPlayers {
+		return nil, notFound{}, errBadRequest("Up to %d players can be added at once.", store.MaxListPlayers)
+	}
+	found, missing, err := s.lookUpPlayers(ctx, java)
+	if err != nil {
+		return nil, notFound{}, err
+	}
+	bedrock, missingBedrock, err := s.lookUpBedrock(ctx, gamertags)
+	if err != nil {
+		return nil, notFound{}, err
+	}
+	return append(found, bedrock...), notFound{java: missing, bedrock: missingBedrock}, nil
 }
 
 // bareUUID is a player's UUID as Mojang gives it, without dashes, or "" for
@@ -303,7 +385,7 @@ func (s *Server) lookUpPlayers(ctx context.Context, names []string) ([]store.Lis
 		switch {
 		case errs[i] == nil:
 			if !slices.ContainsFunc(out, func(p store.ListPlayer) bool { return p.UUID == found[i].UUID }) {
-				out = append(out, store.ListPlayer{UUID: found[i].UUID, Name: found[i].Name})
+				out = append(out, store.ListPlayer{UUID: found[i].UUID, Name: found[i].Name, Kind: store.KindJava})
 			}
 		case errors.As(errs[i], &e) && e.Code == "no_such_player":
 			missing = append(missing, name)
@@ -334,7 +416,7 @@ func (s *Server) updatePlayerList(w http.ResponseWriter, r *http.Request, u *sto
 		return listStoreError(err, name)
 	}
 	s.audit(r.Context(), u, a.Org, "players.rename", name, "")
-	return s.writePlayerList(w, r, a, id, http.StatusOK, nil)
+	return s.writePlayerList(w, r, a, id, http.StatusOK, notFound{})
 }
 
 // deletePlayerList forgets a list, and takes it out of the servers that
@@ -406,13 +488,14 @@ func (s *Server) dropSavedListFrom(ctx context.Context, mc *avsysv1.MinecraftSer
 	}
 }
 
-// addListPlayers puts the players named on a list, as Mojang has them.
+// addListPlayers puts the players named on a list, as Mojang and GeyserMC
+// have them.
 func (s *Server) addListPlayers(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleAdmin)
 	if err != nil {
 		return err
 	}
-	var in struct{ Names []string }
+	var in struct{ Names, Bedrock []string }
 	if err := decode(r, &in); err != nil {
 		return err
 	}
@@ -422,7 +505,7 @@ func (s *Server) addListPlayers(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		return err
 	}
-	found, missing, err := s.lookUpPlayers(ctx, in.Names)
+	found, missing, err := s.lookUpAll(ctx, in.Names, in.Bedrock)
 	if err != nil {
 		return err
 	}
@@ -486,5 +569,5 @@ func (s *Server) removeListPlayer(w http.ResponseWriter, r *http.Request, u *sto
 	}
 	s.audit(ctx, u, a.Org, "players.remove", l.Name, l.Players[i].Name)
 	s.syncOpsSoon(a.Org)
-	return s.writePlayerList(w, r, a, id, http.StatusOK, nil)
+	return s.writePlayerList(w, r, a, id, http.StatusOK, notFound{})
 }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sync"
 	"time"
 
@@ -85,13 +86,28 @@ func (s *Server) getPlayerHead(w http.ResponseWriter, r *http.Request, _ *store.
 
 // headOf makes a player's head from their skin: nil for one with none.
 func (s *Server) headOf(ctx context.Context, uuid string) ([]byte, error) {
-	body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(uuid), 6*time.Hour)
-	if err != nil {
-		return nil, err
+	var skin string
+	if xuid := xuidOf(uuid); xuid != "" {
+		// A Bedrock player's skin is the one GeyserMC made for Java of the
+		// skin they last played in, if they have played through Geyser.
+		body, err := s.catalog.get(ctx, geyserAPI+"skin/"+url.PathEscape(xuid), 6*time.Hour)
+		if err != nil {
+			return nil, err
+		}
+		if skin, err = geyserSkinURL(body); err != nil {
+			return nil, err
+		}
+	} else {
+		body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(uuid), 6*time.Hour)
+		if err != nil {
+			return nil, err
+		}
+		if skin, err = skinURL(body); err != nil {
+			return nil, err
+		}
 	}
-	skin, err := skinURL(body)
-	if err != nil || skin == "" {
-		return nil, err
+	if skin == "" {
+		return nil, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, skin, nil)
 	if err != nil {
@@ -144,6 +160,24 @@ func skinURL(profile []byte) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// textureID is the ID of a skin on Mojang's texture server.
+var textureID = regexp.MustCompile(`^[0-9a-f]{1,128}$`)
+
+// geyserSkinURL reads where the skin GeyserMC has for a Bedrock player is:
+// "" for none, which it answers as {}.
+func geyserSkinURL(body []byte) (string, error) {
+	var skin struct {
+		TextureID string `json:"texture_id"`
+	}
+	if err := json.Unmarshal(body, &skin); err != nil {
+		return "", err
+	}
+	if !textureID.MatchString(skin.TextureID) {
+		return "", nil
+	}
+	return "https://textures.minecraft.net/texture/" + skin.TextureID, nil
 }
 
 // faceOf cuts the face out of a skin, with the outer layer over it.

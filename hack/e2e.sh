@@ -503,6 +503,26 @@ for _ in $(seq 1 20); do whitelisted | grep -qi "jeb_" || break; sleep 1; done
 case "$(whitelisted)" in *jeb_*|*Notch*) fail "a deleted list's players stay on the whitelist" ;; *) echo "ok: a deleted list's players are taken off" ;; esac
 expect "and the other list's stay on" "$(whitelisted)" "Grumm"
 expect "the server no longer names it" "$(call "$SRV" | field "d['spec'].get('whitelistLists')")" "['$EVENT']"
+# A Bedrock player, looked up by gamertag with GeyserMC: the game cannot
+# look up his name, so he goes on by whitelist.json, with the UUID Floodgate
+# gives him, and the game reads it again. The probe has no Floodgate: his
+# name has Floodgate's prefix as it comes.
+TIM=""
+for _ in $(seq 1 6); do
+  TIM=$(call -d '{"bedrock":["Tim203"]}' "$LISTS/$EVENT/players" | field "[p['uuid'] for p in d['players'] if p['kind'] == 'bedrock'][0]" 2>/dev/null) && break
+  sleep 10
+done
+[ -n "$TIM" ] || fail "a Bedrock player could not be put on a list"
+expect "a Bedrock player is kept by the UUID Floodgate gives him" "$TIM" "0000000000000000000901f64f65c7c3"
+for _ in $(seq 1 20); do whitelisted | grep -q "\.Tim203" && break; sleep 1; done
+expect "a Bedrock player on a list is put on the whitelist" "$(whitelisted)" ".Tim203"
+expect "by his UUID" "$(call "$SRV/files/content?path=/whitelist.json")" "00000000-0000-0000-0009-01f64f65c7c3"
+expect "and the Java players stay on" "$(whitelisted)" "Grumm"
+case "$(call "$SRV/lists" | field "[p['name'] for p in d['whitelist']['inGame']]")" in *Tim203*) fail "a list's Bedrock player is shown as added in game" ;; *) echo "ok: and is not shown as added in game" ;; esac
+call -X DELETE "$LISTS/$EVENT/players/$TIM" >/dev/null
+for _ in $(seq 1 20); do whitelisted | grep -q "\.Tim203" || break; sleep 1; done
+case "$(whitelisted)" in *Tim203*) fail "a Bedrock player taken off a list stays on the whitelist" ;; *) echo "ok: a Bedrock player taken off a list is taken off the whitelist" ;; esac
+expect "and the Java players stay on still" "$(whitelisted)" "Grumm"
 set_spec '{"spec":{"whitelistLists":null}}'
 call -X DELETE "$LISTS/$EVENT" >/dev/null
 

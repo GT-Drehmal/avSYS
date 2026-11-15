@@ -81,7 +81,8 @@ func (m *mojangAccounts) lookups() []string {
 // listAnswer is a saved list as the API answers with it.
 type listAnswer struct {
 	playerListView
-	Missing []string `json:"missing"`
+	Missing        []string `json:"missing"`
+	MissingBedrock []string `json:"missingBedrock"`
 }
 
 func (l listAnswer) names() string {

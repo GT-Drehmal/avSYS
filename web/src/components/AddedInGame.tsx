@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, serverPath, type GameLists, type Server } from "../lib/api";
 import { keys, useAction } from "../lib/queries";
+import { BedrockMark } from "./PlayerLists";
 import { Button } from "./ui";
 import { lines } from "./ServerFields";
 
@@ -23,26 +24,33 @@ export function AddedInGame({ server, list, listed, onKeep }: { server: Server; 
     <div className="flex flex-col gap-1.5">
       <div className="text-xs font-medium text-muted">Added in game</div>
       <ul aria-label={`Added in game to ${titles[list]}`} className="divide-y divide-line rounded-lg border border-line">
-        {players.map((p) => (
-          <li key={p.name} className="flex items-center justify-between gap-2 py-1 pr-1 pl-3 text-[13px]">
-            <span className="truncate font-mono text-fg">{p.name}</span>
-            <div className="flex gap-1">
-              <Button size="sm" variant="ghost" aria-label={`Keep ${p.name} on ${titles[list]}`} onClick={() => onKeep(p.name)}>
-                Keep
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label={`Remove ${p.name} from ${titles[list]}`}
-                loading={remove.isPending && remove.variables === p.name}
-                disabled={remove.isPending}
-                onClick={() => remove.mutate(p.name)}
-              >
-                Remove
-              </Button>
-            </div>
-          </li>
-        ))}
+        {players.map((p) => {
+          // A Bedrock player by their gamertag, without Floodgate's prefix.
+          const shown = p.bedrock ? p.name.replace(/^[.*!~+-]/, "") : p.name;
+          return (
+            <li key={p.name} className="flex items-center justify-between gap-2 py-1 pr-1 pl-3 text-[13px]">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-mono text-fg">{shown}</span>
+                {p.bedrock && <BedrockMark />}
+              </span>
+              <div className="flex gap-1">
+                <Button size="sm" variant="ghost" aria-label={`Keep ${shown} on ${titles[list]}`} onClick={() => onKeep(p.name)}>
+                  Keep
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Remove ${shown} from ${titles[list]}`}
+                  loading={remove.isPending && remove.variables === p.name}
+                  disabled={remove.isPending}
+                  onClick={() => remove.mutate(p.name)}
+                >
+                  Remove
+                </Button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

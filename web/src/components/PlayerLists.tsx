@@ -1,17 +1,61 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { api, ApiError, playerHead, type ListPlayer, type PlayerList, type PlayerListChange } from "../lib/api";
+import { api, ApiError, type ContentRef, playerHead, type ListPlayer, type PlayerList, type PlayerListChange } from "../lib/api";
 import { keys, usePlayerLists } from "../lib/queries";
 import { matches } from "../lib/search";
 import { Picture } from "./Picture";
-import { Button, cx, Field, Input, Modal, Notice, SearchBox } from "./ui";
+import { Button, cx, Field, Input, Modal, Notice, SearchBox, Textarea } from "./ui";
 
 /** Names typed or pasted: one a line, or between commas, spaces or semicolons. */
 export const typedNames = (text: string) => text.split(/[\s,;]+/).filter(Boolean);
 
+/** Gamertags typed or pasted: one a line, or between commas or semicolons. A gamertag can have spaces. */
+export const typedGamertags = (text: string) =>
+  text
+    .split(/[\n,;]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+/** Which edition names typed are of. */
+export type Edition = "java" | "bedrock";
+
+/** The names typed, as the API takes them. */
+export const namesOf = (edition: Edition, text: string) => (edition === "bedrock" ? { names: [], bedrock: typedGamertags(text) } : { names: typedNames(text), bedrock: [] });
+
 /** "1 player", "3 players". */
 export const playerCount = (n: number) => `${n} ${n === 1 ? "player" : "players"}`;
+
+/** Says a player plays Bedrock Edition. */
+export function BedrockMark() {
+  return <span className="shrink-0 rounded border border-line-strong px-1 py-px text-[10px] font-medium leading-none text-muted">Bedrock</span>;
+}
+
+/**
+ * Names to add to a list, typed or pasted, with which edition they are of:
+ * Java names, or Bedrock gamertags, which can have spaces.
+ */
+export function PlayerNamesField({ label, edition, onEdition, value, onChange, optional, rows = 3 }: { label: string; edition: Edition; onEdition: (edition: Edition) => void; value: string; onChange: (text: string) => void; optional?: boolean; rows?: number }) {
+  const segment = (on: boolean) => cx("h-6 rounded px-2.5 text-xs font-medium", on ? "bg-raised text-fg" : "text-muted hover:text-fg");
+  const hint = edition === "bedrock" ? "Xbox gamertags, one per line or separated by commas." : "Minecraft names, one per line or separated by commas.";
+  return (
+    <Field label={label} hint={optional ? `Optional. ${hint}` : hint}>
+      {(id) => (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5" role="group" aria-label="Edition">
+            <button type="button" className={segment(edition === "java")} aria-pressed={edition === "java"} onClick={() => onEdition("java")}>
+              Java
+            </button>
+            <button type="button" className={segment(edition === "bedrock")} aria-pressed={edition === "bedrock"} onClick={() => onEdition("bedrock")}>
+              Bedrock
+            </button>
+          </div>
+          <Textarea id={id} rows={rows} value={value} onChange={(e) => onChange(e.target.value)} className="font-mono" spellCheck={false} />
+        </div>
+      )}
+    </Field>
+  );
+}
 
 /** A player's head, or their initial for one with no skin of their own. */
 export function PlayerHead({ player, size = 20 }: { player: ListPlayer; size?: number }) {
@@ -31,11 +75,23 @@ export function Heads({ players, max = 5, size = 18 }: { players: ListPlayer[]; 
   );
 }
 
-/** What is said of names no Minecraft account has. */
-export function Missing({ names }: { names: string[] }) {
-  if (names.length === 0) return null;
-  return <Notice>No Minecraft account: {names.join(", ")}</Notice>;
+/** What is said of names no Minecraft account has, and of gamertags no Bedrock player was found for. */
+export function Missing({ names, bedrock = [] }: { names: string[]; bedrock?: string[] }) {
+  if (names.length === 0 && bedrock.length === 0) return null;
+  return (
+    <>
+      {names.length > 0 && <Notice>No Minecraft account: {names.join(", ")}</Notice>}
+      {bedrock.length > 0 && <Notice>No Bedrock player found: {bedrock.join(", ")}. A Bedrock player can be found once they have played on any server with Geyser.</Notice>}
+    </>
+  );
 }
+
+/** Whether a server's content has a mod or plugin, by its Modrinth slug or ID, or by its name for one from elsewhere. */
+const hasMod = (mods: ContentRef[], slug: string, id: string) =>
+  mods.some((m) => m.project === slug || m.project === id || [m.project, m.title].some((s) => s?.toLowerCase().includes(slug)));
+
+/** Whether Bedrock players can join a server with this content: through Geyser, let in by Floodgate. */
+export const takesBedrock = (mods: ContentRef[]) => hasMod(mods, "geyser", "wKkoqHrH") && hasMod(mods, "floodgate", "bWrNNfkb");
 
 interface PickerProps {
   org: string;
@@ -129,7 +185,7 @@ export function SaveAsList({ org, server, list, open, onOpenChange }: { org: str
       qc.setQueryData<PlayerList[]>(keys.playerLists(org), (all) => (all ? [...all, made] : all));
       await qc.invalidateQueries({ queryKey: keys.playerLists(org) });
       onOpenChange(false);
-      navigate(`/o/${org}/players/${made.id}`, { state: { missing: made.missing } });
+      navigate(`/o/${org}/players/${made.id}`, { state: { missing: made.missing, missingBedrock: made.missingBedrock } });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save the list.");
     } finally {
@@ -155,5 +211,26 @@ export function SaveAsList({ org, server, list, open, onOpenChange }: { org: str
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Says plainly when a server uses saved lists with Bedrock players on them
+ * but cannot let Bedrock players in: without Geyser and Floodgate.
+ */
+export function BedrockNeedsMods({ org, server, mods, ids }: { org: string; server: string; mods: ContentRef[]; ids: string[] }) {
+  const lists = usePlayerLists(org);
+  const bedrock = (lists.data ?? []).some((l) => ids.includes(l.id) && l.players.some((p) => p.kind === "bedrock"));
+  if (!bedrock || takesBedrock(mods)) return null;
+  return (
+    <Notice
+      action={
+        <Link to={`/o/${org}/s/${server}/content`} className="shrink-0 text-xs font-medium text-accent hover:underline">
+          Go to Content
+        </Link>
+      }
+    >
+      Bedrock players can't join this server until Geyser and Floodgate are added.
+    </Notice>
   );
 }

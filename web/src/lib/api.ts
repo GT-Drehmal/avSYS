@@ -593,10 +593,15 @@ export interface SnapshotList {
   usage?: { bytes: number; snapshots: number };
 }
 
-/** A player on a saved list. */
+/**
+ * A player on a saved list: of Java, by their account, or of Bedrock, by
+ * their Xbox account, with their gamertag as the name.
+ */
 export interface ListPlayer {
   uuid: string;
   name: string;
+  kind: "java" | "bedrock";
+  xuid?: string;
 }
 
 /** A server that uses a saved list, and for which of its lists. */
@@ -617,9 +622,10 @@ export interface PlayerList {
   servers: ListUse[];
 }
 
-/** A list as a change to it answers: with the names asked for that no Minecraft account has. */
+/** A list as a change to it answers: with the names asked for that no Minecraft account has, and the gamertags no Bedrock player was found for. */
 export interface PlayerListChange extends PlayerList {
   missing: string[];
+  missingBedrock: string[];
 }
 
 /** Where a player's head is drawn from. */
@@ -629,6 +635,8 @@ export const playerHead = (uuid: string) => `/api/v1/players/${uuid}/head`;
 export interface ListedPlayer {
   name: string;
   uuid?: string;
+  /** Of Bedrock, through Floodgate: the name has Floodgate's prefix. */
+  bedrock?: boolean;
 }
 
 /** One of a server's lists as the game has it: who is on it other than by the panel. */

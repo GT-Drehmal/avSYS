@@ -288,31 +288,57 @@ func accountNames(m store.Member, trusted bool) []string {
 	return out
 }
 
-// fromSaved is the players of the saved lists named, by name, each once. A
-// list that is not there any more, deleted since, is nobody.
-func fromSaved(ids []string, saved map[string]*store.PlayerList) []string {
-	var out []string
+// savedPlayers is the players of the saved lists named, each once. A list
+// that is not there any more, deleted since, is nobody.
+func savedPlayers(ids []string, saved map[string]*store.PlayerList) []store.ListPlayer {
+	var out []store.ListPlayer
+	seen := map[string]bool{}
 	for _, id := range ids {
 		l := saved[id]
 		if l == nil {
 			continue
 		}
 		for _, p := range l.Players {
-			if listedNamePattern.MatchString(p.Name) && !hasName(out, p.Name) {
-				out = append(out, p.Name)
+			if !seen[p.UUID] {
+				seen[p.UUID] = true
+				out = append(out, p)
 			}
+		}
+	}
+	return out
+}
+
+// fromSaved is the players of the saved lists named, by their names in
+// game, each once: a Bedrock player's as the server's Floodgate makes it.
+func fromSaved(ids []string, saved map[string]*store.PlayerList, fg floodgate) []string {
+	var out []string
+	for _, p := range savedPlayers(ids, saved) {
+		if name := fg.inGame(p); listedNamePattern.MatchString(name) && !hasName(out, name) {
+			out = append(out, name)
 		}
 	}
 	sort.Strings(out)
 	return out
 }
 
+// savedBedrock is the Bedrock players of the saved lists named, by their
+// names in game, lowercased.
+func savedBedrock(ids []string, saved map[string]*store.PlayerList, fg floodgate) map[string]store.ListPlayer {
+	out := map[string]store.ListPlayer{}
+	for _, p := range savedPlayers(ids, saved) {
+		if p.Bedrock() {
+			out[strings.ToLower(fg.inGame(p))] = p
+		}
+	}
+	return out
+}
+
 // wantedOn is who the panel should have on one of a server's lists, but for
 // the names in its settings: members, by role and picked, and the players of
 // the saved lists it uses.
-func wantedOn(list roleList, spec *avsysv1.MinecraftServerSpec, members []store.Member, saved map[string]*store.PlayerList) []string {
+func wantedOn(list roleList, spec *avsysv1.MinecraftServerSpec, members []store.Member, saved map[string]*store.PlayerList, fg floodgate) []string {
 	out := wantedFrom(list.from(spec), list.picks(spec), members)
-	for _, name := range fromSaved(list.saved(spec), saved) {
+	for _, name := range fromSaved(list.saved(spec), saved, fg) {
 		if !hasName(out, name) {
 			out = append(out, name)
 		}
@@ -480,9 +506,11 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	}
 	changed := false
 	var failed error
+	fg := s.floodgateOf(ctx, fresh)
 	for _, list := range roleLists {
 		made := splitNames(fresh.Annotations[list.note])
-		wanted := withKept(wantedOn(list, &fresh.Spec, members, saved), list.kept(&fresh.Spec))
+		wanted := withKept(wantedOn(list, &fresh.Spec, members, saved, fg), list.kept(&fresh.Spec))
+		bedrock := savedBedrock(list.saved(&fresh.Spec), saved, fg)
 		// Who is on it in game: anyone at the console may have changed it.
 		// Where that cannot be read, the note is gone by as it is.
 		players, err := s.readList(ctx, fresh, list)
@@ -501,6 +529,33 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 		if len(add) == 0 && len(remove) == 0 && sameNames(from, made) {
 			continue
 		}
+		isBedrock := func(name string) bool {
+			if i := slices.IndexFunc(players, func(p listedPlayer) bool { return strings.EqualFold(p.Name, name) }); i >= 0 {
+				return players[i].Bedrock
+			}
+			return bedrockListed(listedPlayer{Name: name})
+		}
+		// Bedrock players of saved lists go on a whitelist by its file, with
+		// the UUID Floodgate gives them, and come off it so: the game cannot
+		// look up their names (see bedrock.go).
+		var fileAdd []listedPlayer
+		var fileRemove []string
+		if list.key == "whitelist" {
+			add = slices.DeleteFunc(add, func(name string) bool {
+				p, ok := bedrock[strings.ToLower(name)]
+				if ok {
+					fileAdd = append(fileAdd, listedPlayer{Name: name, UUID: dashedUUID(p.UUID)})
+				}
+				return ok
+			})
+			remove = slices.DeleteFunc(remove, func(name string) bool {
+				if isBedrock(name) {
+					fileRemove = append(fileRemove, name)
+					return true
+				}
+				return false
+			})
+		}
 		// The note follows each command as it is carried out, so that a
 		// failure part of the way leaves it true of the game. A player put
 		// on a list and not noted would never be taken off again.
@@ -510,8 +565,26 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 				return errNoSuchPlayer
 			}
 			return err
-		}, list.add, list.remove)
+		}, list.add, list.remove, isBedrock)
+		if err == nil && (len(fileAdd) > 0 || len(fileRemove) > 0) {
+			if err = s.changeBedrockWhitelist(ctx, fresh, fileAdd, fileRemove); err == nil {
+				for _, p := range fileAdd {
+					if !hasName(done, p.Name) {
+						done = append(done, p.Name)
+					}
+				}
+				done = slices.DeleteFunc(done, func(n string) bool { return hasName(fileRemove, n) })
+				sort.Strings(done)
+				add = append(add, playerNames(fileAdd)...)
+				remove = append(remove, fileRemove...)
+			}
+		}
 		for _, name := range missing {
+			// The game knows a Bedrock player once they have joined: one
+			// to be made an operator is tried again at the next look.
+			if _, ok := bedrock[strings.ToLower(name)]; ok {
+				continue
+			}
 			s.autoOps.missing.Store(listKey+"/"+strings.ToLower(name), time.Now())
 			s.Log.Warn("the game knows no player of a name for its "+list.what, "server", key.String(), "player", name)
 		}
@@ -541,8 +614,10 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 // and returns who the panel has put on it afterwards: from, as changed by
 // the commands that went through, in order if all did. A player the game
 // says it knows nothing of is not noted as added, but is among missing; one
-// it cannot take off for that reason is not on it to take off.
-func applyNames(from, add, remove []string, run func(command string) error, adding, removing string) (noted, missing []string, err error) {
+// it cannot take off for that reason is not on it to take off, unless the
+// game may just not know them yet (unknown), as it does not know a Bedrock
+// player who has not joined: they stay noted, to be taken off later.
+func applyNames(from, add, remove []string, run func(command string) error, adding, removing string, unknown func(name string) bool) (noted, missing []string, err error) {
 	now := append([]string{}, from...)
 	for _, name := range add {
 		if err := run(adding + name); errors.Is(err, errNoSuchPlayer) {
@@ -556,7 +631,11 @@ func applyNames(from, add, remove []string, run func(command string) error, addi
 		}
 	}
 	for _, name := range remove {
-		if err := run(removing + name); err != nil && !errors.Is(err, errNoSuchPlayer) {
+		err := run(removing + name)
+		if errors.Is(err, errNoSuchPlayer) && unknown != nil && unknown(name) {
+			continue
+		}
+		if err != nil && !errors.Is(err, errNoSuchPlayer) {
 			return now, missing, err
 		}
 		now = slices.DeleteFunc(now, func(n string) bool { return strings.EqualFold(n, name) })
@@ -632,7 +711,8 @@ const (
 // their current name, as refreshNames does for members, and for the same
 // reason: those not looked up for a while, as many as budget has left.
 // Each is asked of Mojang on its own, not through the catalog's cache,
-// which a thousand of them would empty.
+// which a thousand of them would empty: a Bedrock player's gamertag of
+// GeyserMC.
 func (s *Server) refreshListNames(ctx context.Context, orgID string, budget *int) {
 	lists, err := s.Store.PlayerLists(ctx, orgID)
 	if err != nil {
@@ -648,7 +728,11 @@ func (s *Server) refreshListNames(ctx context.Context, orgID string, budget *int
 			}
 			s.listNameChecks.Store(p.UUID, time.Now())
 			*budget--
-			name, err := s.currentName(ctx, p.UUID)
+			current := s.currentName
+			if p.Bedrock() {
+				current = func(ctx context.Context, _ string) (string, error) { return s.currentGamertag(ctx, p.XUID) }
+			}
+			name, err := current(ctx, p.UUID)
 			if err != nil || name == p.Name {
 				continue
 			}
