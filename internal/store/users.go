@@ -234,13 +234,10 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// CreateSession returns a new opaque session token for the user.
+// CreateSession returns a new opaque session token for the user. See
+// OpenSession for one that says where it is for.
 func (s *Store) CreateSession(ctx context.Context, userID string, ttl time.Duration) (string, error) {
-	token := NewID(32)
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		hashToken(token), userID, now(), time.Now().Add(ttl).Unix())
-	return token, err
+	return s.OpenSession(ctx, userID, ttl, SessionInfo{})
 }
 
 func (s *Store) SessionUser(ctx context.Context, token string) (*User, error) {
@@ -254,7 +251,12 @@ func (s *Store) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
+// DeleteExpiredSessions clears out sessions that have expired, and reset
+// links.
 func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM reset_links WHERE expires_at <= ?`, now()); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, now())
 	return err
 }

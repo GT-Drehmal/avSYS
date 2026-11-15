@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link2, Trash2 } from "lucide-react";
+import { KeyRound, Link2, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useParams } from "react-router";
 import { useOrg } from "../components/Shell";
 import { ListBar } from "../components/ListBar";
 import { Picture } from "../components/Picture";
-import { Button, Chip, Confirm, CopyText, Field, Input, Modal, PageHeader, Select, Loading } from "../components/ui";
+import { Button, Chip, Confirm, CopyText, Field, Input, Modal, Notice, PageHeader, Select, Loading, Toggle } from "../components/ui";
 import { api, atLeast, roles, roleSummary, type Invite, type Member, type Role } from "../lib/api";
 import { ago } from "../lib/format";
 import { keys, useAction, useMe } from "../lib/queries";
@@ -84,6 +84,53 @@ function InviteDialog({ org, myRole, onClose }: { org: string; myRole: Role; onC
   );
 }
 
+/**
+ * A link for a member to set a new password with, as when they forgot
+ * theirs: for the panel's administrator to make and hand to them.
+ */
+function ResetDialog({ member, onClose }: { member: Member; onClose: () => void }) {
+  const [twoFactorOff, setTwoFactorOff] = useState(false);
+  const [made, setMade] = useState<{ url: string } | null>(null);
+  const make = useAction(() => api.post<{ url: string }>(`/users/${member.userId}/reset-link`, { twoFactorOff }));
+  const name = member.displayName || member.username;
+  if (made) {
+    return (
+      <Modal open onOpenChange={onClose} title="Reset link" description={`Send this to ${name}. It works once, for 24 hours.`}>
+        <div className="flex flex-col gap-4">
+          <div className="rounded-md border border-line bg-bg px-3 py-2">
+            <CopyText value={made.url} className="text-xs" wrap />
+          </div>
+          <Notice tone="info">Copy it now. It is not shown again.</Notice>
+          <div className="flex justify-end">
+            <Button variant="primary" onClick={onClose}>
+              Done
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+  return (
+    <Modal open onOpenChange={onClose} title={`Reset sign-in for ${name}?`} description="Makes a link to set a new password. Using it signs them out everywhere.">
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          make.mutate(undefined, { onSuccess: setMade });
+        }}
+      >
+        <Toggle checked={twoFactorOff} onChange={setTwoFactorOff} label="Turn off two-factor" hint="For a lost phone. Off when the link is used." />
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={make.isPending}>
+            Make link
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export function Members() {
   const { org = "" } = useParams();
   const membership = useOrg();
@@ -94,6 +141,7 @@ export function Members() {
   const invites = useQuery({ queryKey: keys.invites(org), queryFn: () => api.get<Invite[]>(`/orgs/${org}/invites`), enabled: canManage });
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [resetting, setResetting] = useState<Member | null>(null);
   const options: ListOptions<Member> = {
     said: (m) => [m.displayName, m.username, inGame(m), m.role, m.userId === me.user.id && "you"],
     then: byText(nameOf),
@@ -161,6 +209,9 @@ export function Members() {
               ) : (
                 <Chip>{m.role}</Chip>
               )}
+              {me.user.isAdmin && m.userId !== me.user.id && (
+                <Button size="sm" variant="ghost" icon={<KeyRound className="size-3.5" />} aria-label={`Reset sign-in for ${m.username}`} title="Reset sign-in" onClick={() => setResetting(m)} />
+              )}
               {(editable || m.userId === me.user.id) && (
                 <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} aria-label={m.userId === me.user.id ? "Leave organization" : `Remove ${m.username}`} onClick={() => setRemoving(m)} />
               )}
@@ -197,6 +248,7 @@ export function Members() {
       )}
 
       {inviting && membership && <InviteDialog org={org} myRole={membership.role} onClose={() => setInviting(false)} />}
+      {resetting && <ResetDialog member={resetting} onClose={() => setResetting(null)} />}
       <Confirm
         open={!!removing}
         onOpenChange={() => setRemoving(null)}

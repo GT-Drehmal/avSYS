@@ -8,6 +8,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-logr/logr v1.4.4
 	github.com/pkg/sftp v1.13.11
+	github.com/pquerna/otp v1.5.0
 	github.com/restic/rest-server v0.14.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/mod v0.41.0
@@ -23,6 +24,7 @@ require (
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect

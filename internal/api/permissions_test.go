@@ -409,6 +409,9 @@ var publicRoutes = []string{
 	"GET /auth/{provider}/start",
 	"GET /auth/{provider}/callback",
 	"GET /invites/{token}",
+	"POST /auth/login/code",
+	"GET /reset-links/{token}",
+	"POST /reset-links/{token}",
 }
 
 func TestEveryOtherRouteNeedsASignIn(t *testing.T) {

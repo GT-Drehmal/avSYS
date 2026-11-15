@@ -240,22 +240,29 @@ func bearerToken(r *http.Request) string {
 }
 
 func (s *Server) currentUser(r *http.Request) (*store.User, error) {
+	u, _, err := s.currentSession(r)
+	return u, err
+}
+
+// currentSession is who a request is from, and the browser session it was
+// made in: nil for a request with an API token.
+func (s *Server) currentSession(r *http.Request) (*store.User, *store.Session, error) {
 	if token := bearerToken(r); token != "" {
 		u, err := s.Store.UserByAPIToken(r.Context(), token)
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, errUnauthorized
+			return nil, nil, errUnauthorized
 		}
-		return u, err
+		return u, nil, err
 	}
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
-		return nil, errUnauthorized
+		return nil, nil, errUnauthorized
 	}
-	u, err := s.Store.SessionUser(r.Context(), c.Value)
+	u, session, err := s.Store.SessionByToken(r.Context(), c.Value, sessionInfo(r, ""))
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, errUnauthorized
+		return nil, nil, errUnauthorized
 	}
-	return u, err
+	return u, session, err
 }
 
 // public wraps a handler that needs no session.
@@ -278,9 +285,17 @@ func (s *Server) public(h handler) http.Handler {
 // authed wraps a handler that needs a signed-in user.
 func (s *Server) authed(h userHandler) http.Handler {
 	return s.public(func(w http.ResponseWriter, r *http.Request) error {
-		u, err := s.currentUser(r)
+		u, session, err := s.currentSession(r)
 		if err != nil {
 			return err
+		}
+		// An administrator who has to set up two-factor does that first.
+		if !twoFactorSetupRoutes[r.Pattern] {
+			if must, err := s.mustSetUpTwoFactor(r.Context(), u, session); err != nil {
+				return err
+			} else if must {
+				return errTwoFactorRequired
+			}
 		}
 		return h(w, r, u)
 	})
@@ -361,6 +376,9 @@ func (s *Server) Handler() http.Handler {
 	api("POST /auth/logout", s.public(s.logout))
 	api("GET /auth/{provider}/start", s.public(s.oauthStart))
 	api("GET /auth/{provider}/callback", s.public(s.oauthCallback))
+	api("POST /auth/login/code", s.public(s.signInCode))
+	api("GET /reset-links/{token}", s.public(s.getResetLink))
+	api("POST /reset-links/{token}", s.public(s.useResetLink))
 
 	api("GET /me", s.authed(s.getMe))
 	api("GET /nodes", s.authed(s.listNodes))
@@ -382,6 +400,16 @@ func (s *Server) Handler() http.Handler {
 	api("POST /me/ssh-keys", s.authed(s.addSSHKey))
 	api("POST /me/ssh-keys/import", s.authed(s.importSSHKeys))
 	api("DELETE /me/ssh-keys/{id}", s.authed(s.deleteSSHKey))
+
+	api("GET /me/sessions", s.authed(s.listSessions))
+	api("DELETE /me/sessions", s.authed(s.endOtherSessions))
+	api("DELETE /me/sessions/{id}", s.authed(s.endSession))
+	api("POST /me/two-factor/setup", s.authed(s.setUpTwoFactor))
+	api("POST /me/two-factor", s.authed(s.enableTwoFactor))
+	api("POST /me/two-factor/off", s.authed(s.disableTwoFactor))
+	api("POST /me/two-factor/recovery-codes", s.authed(s.newRecoveryCodes))
+	api("PUT /settings/admin-two-factor", s.authed(s.putAdminTwoFactor))
+	api("POST /users/{user}/reset-link", s.authed(s.createResetLink))
 
 	api("GET /me/tokens", s.authed(s.listAPITokens))
 	api("POST /me/tokens", s.authed(s.createAPIToken))
@@ -552,6 +580,13 @@ func (s *Server) staticHandler() http.Handler {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
 		if path == "index.html" {
+			// No other site may show the panel in a frame of its own, to
+			// have people click in it unknowing; and a link out of the
+			// panel does not take the address of the page it was on,
+			// which may hold a reset link or an invite.
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+			w.Header().Set("Referrer-Policy", "same-origin")
 			// Written directly: the file server would redirect any request
 			// for index.html back to its directory.
 			page, err := fs.ReadFile(s.Static, "index.html")
@@ -571,8 +606,24 @@ func (s *Server) staticHandler() http.Handler {
 
 const sessionTTL = 30 * 24 * time.Hour
 
+// providerCallback is the route a sign-in through a provider ends on.
+const providerCallback = "GET /api/v1/auth/{provider}/callback"
+
+// startSession signs a browser in. The session is of a sign-in through a
+// provider if it is made on the provider's callback, and of a password
+// otherwise, as at sign-up: see openSession.
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID string) error {
-	token, err := s.Store.CreateSession(r.Context(), userID, sessionTTL)
+	method := store.SignedInWithPassword
+	if r.Pattern == providerCallback {
+		method = store.SignedInWithProvider
+	}
+	return s.openSession(w, r, userID, method)
+}
+
+// openSession signs a browser in as a user, by method: one of the
+// store.SignedInWith values.
+func (s *Server) openSession(w http.ResponseWriter, r *http.Request, userID, method string) error {
+	token, err := s.Store.OpenSession(r.Context(), userID, sessionTTL, sessionInfo(r, method))
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { Navigate, useSearchParams } from "react-router";
 import { Wordmark } from "../components/Shell";
+import { SignInCode } from "../components/SignInCode";
 import { Button, Field, Input, Notice, Spinner } from "../components/ui";
 import { api, ApiError, qs, type Meta } from "../lib/api";
 import { keys, useMe, useMeta } from "../lib/queries";
@@ -39,6 +40,20 @@ export function AuthForm({ meta, mode, invite, next, setup }: AuthFormProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The password was right, and the account has two-factor: the code next.
+  const [codeStep, setCodeStep] = useState(false);
+  if (codeStep) {
+    return (
+      <SignInCode
+        next={next}
+        onRestart={(why) => {
+          setCodeStep(false);
+          setPassword("");
+          setError(why ?? null);
+        }}
+      />
+    );
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,7 +61,11 @@ export function AuthForm({ meta, mode, invite, next, setup }: AuthFormProps) {
     setError(null);
     try {
       if (mode === "register") await api.post("/auth/register", { username, password, invite });
-      else await api.post("/auth/login", { username, password });
+      else if ((await api.post<{ twoFactor?: boolean }>("/auth/login", { username, password })).twoFactor) {
+        setCodeStep(true);
+        setBusy(false);
+        return;
+      }
       await qc.invalidateQueries({ queryKey: keys.meta });
       await qc.invalidateQueries({ queryKey: keys.me });
       // A full navigation, so every cached answer from the signed-out state is gone.
