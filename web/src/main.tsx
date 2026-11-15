@@ -6,7 +6,7 @@ import "./app.css";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Shell } from "./components/Shell";
 import { Setups } from "./components/Setups";
-import { Spinner, Toaster } from "./components/ui";
+import { sayProblemsInPlace, Spinner, Toaster } from "./components/ui";
 import { queryClient, useMe } from "./lib/queries";
 
 // Each page is fetched as it is needed, so that the first load is the frame
@@ -96,6 +96,7 @@ function RequireAuth() {
   return <Outlet />;
 }
 
+sayProblemsInPlace();
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary full>

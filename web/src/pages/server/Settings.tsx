@@ -453,7 +453,7 @@ export function Settings() {
           )}
         </Field>
         {draft.exposeType !== "None" && (
-          <Field label="Hostname" hint={usesRouter ? "Point the hostname's DNS at the avSYS router." : "Optional."}>
+          <Field label="Hostname" hint={usesRouter ? "Point the hostname's DNS at the avSYS router." : "Optional."} missing="Enter a hostname.">
             {(id) => <Input id={id} required={usesRouter} {...text("hostname")} placeholder="play.example.com" className="font-mono" spellCheck={false} />}
           </Field>
         )}

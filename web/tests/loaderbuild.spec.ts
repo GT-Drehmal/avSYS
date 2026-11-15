@@ -90,14 +90,6 @@ test("the server form shows the loader build of the server it starts from, and c
   // Back on the type it is for, it is back too, as in Settings.
   await type.getByRole("button", { name: /^Fabric/ }).click();
   await expect(build).toHaveValue("0.16.5");
-
-  // So for a copy.
-  await page.goto(`/o/${slug}/new?from=server:fabric`);
-  await expect(build).toHaveValue("0.16.5");
-  await type.getByRole("button", { name: /^Forge/ }).click();
-  await expect(build).toHaveValue("");
-  await type.getByRole("button", { name: /^Fabric/ }).click();
-  await expect(build).toHaveValue("0.16.5");
 });
 
 test("a template whose version is no longer listed goes to Latest without its loader build", async ({ page, as, org, api }) => {

@@ -13,7 +13,7 @@ import { StartPicker, type StartKind, WorldPicker } from "../components/StartPic
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { SavedListsField } from "../components/PlayerLists";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
-import { BottomBar, Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
+import { BottomBar, Button, Checked, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { NewerWorldConfirm } from "../components/NewerWorld";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
@@ -1774,14 +1774,14 @@ export function ServerForm({
             }}
           />
         )}
-        <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from this template are called this." : undefined}>
+        <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from this template are called this." : undefined} missing="Give it a name.">
           {(id) => <Input id={id} required maxLength={forTemplate ? 60 : undefined} value={v.displayName} onChange={(e) => set("displayName", e.target.value)} />}
         </Field>
         {forTemplate ? (
           <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
         ) : (
-          <Field label="Short name" hint={nameHint}>
-            {(id) => <Input id={id} required value={name} onChange={(e) => set("customName", e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
+          <Field label="Short name" hint={nameHint} missing="Give it a short name.">
+            {(id) => <Input id={id} required value={name} onChange={(e) => set("customName", e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" title="Use lowercase letters, digits and -, starting with a letter." className="font-mono" spellCheck={false} />}
           </Field>
         )}
         <Field label="Message of the day" hint="Shown under the name in the server list.">
@@ -2248,16 +2248,18 @@ export function ServerForm({
       {!forTemplate && (
       <Section title={!source ? "Minecraft EULA" : duplicating ? "Duplicate" : "Create"}>
         {!source ? (
-          <label className="flex items-start gap-2.5 text-[13px] leading-relaxed">
-            <input type="checkbox" required checked={eula} onChange={(e) => setEula(e.target.checked)} className="mt-1 size-3.5 accent-(--color-accent)" />
-            <span>
-              I agree to the{" "}
-              <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                Minecraft End User License Agreement
-              </a>
-              .
-            </span>
-          </label>
+          <Checked missing="Check this box to accept the EULA.">
+            <label className="flex items-start gap-2.5 text-[13px] leading-relaxed">
+              <input type="checkbox" required checked={eula} onChange={(e) => setEula(e.target.checked)} className="mt-1 size-3.5 accent-(--color-accent)" />
+              <span>
+                I agree to the{" "}
+                <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                  Minecraft End User License Agreement
+                </a>
+                .
+              </span>
+            </label>
+          </Checked>
         ) : (
           <>
             <Toggle checked={startNow} onChange={setStartNow} label="Start when ready" />

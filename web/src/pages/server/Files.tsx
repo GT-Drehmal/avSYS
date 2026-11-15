@@ -213,7 +213,9 @@ function NameDialog({
           }
         }}
       >
-        <Field label={label}>{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} pattern={pattern} className="font-mono" />}</Field>
+        <Field label={label} missing={pattern === "/.*" ? "Enter a folder." : "Give it a name."}>
+          {(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} pattern={pattern} title={pattern === "/.*" ? "Start with /." : "Use no / in a name."} className="font-mono" />}
+        </Field>
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" loading={busy}>

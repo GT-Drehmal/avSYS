@@ -68,9 +68,9 @@ export function NewOrgDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           );
         }}
       >
-        <Field label="Name">{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-        <Field label="Short name" hint="Used in links and SSH logins. Cannot be changed later.">
-          {(id) => <Input id={id} required value={effectiveSlug} onChange={(e) => setSlug(e.target.value)} className="font-mono" pattern="[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?" />}
+        <Field label="Name" missing="Give it a name.">{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
+        <Field label="Short name" hint="Used in links and SSH logins. Cannot be changed later." missing="Give it a short name.">
+          {(id) => <Input id={id} required value={effectiveSlug} onChange={(e) => setSlug(e.target.value)} className="font-mono" pattern="[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?" title="Use lowercase letters, digits and -." />}
         </Field>
         <div className="flex justify-end gap-2">
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>

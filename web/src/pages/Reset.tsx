@@ -69,7 +69,7 @@ export function Reset() {
         }}
       >
         <input type="text" name="username" autoComplete="username" value={link.data.username} readOnly hidden />
-        <Field label="New password" hint="At least 8 characters.">
+        <Field label="New password" hint="At least 8 characters." missing="Enter a new password.">
           {(id) => <Input id={id} type="password" required autoFocus minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
         </Field>
         {error && <Notice tone="danger">{error}</Notice>}

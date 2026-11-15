@@ -350,7 +350,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
           <Toggle checked={usePack} onChange={setUsePack} disabled={busy} label="Use the map's resource pack" hint={`resources.zip · ${bytes(found.pack.size)}. Given to each server made with this world.`} />
         )}
         {from === "server" && picked && <p className="text-xs text-muted">A snapshot of the server is taken first, and the world is saved from that.</p>}
-        <Field label="Name">
+        <Field label="Name" missing="Give it a name.">
           {(id) => (
             <Input
               id={id}
@@ -445,7 +445,7 @@ function EditWorld({ org, world, onClose }: { org: string; world: LibraryWorld; 
         }}
       >
         <PictureChange name={name} current={worldIcon(org, world.id)} value={picture} onChange={setPicture} optional="Optional. Shown in the library." kept="" />
-        <Field label="Name">{(id) => <Input id={id} required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
+        <Field label="Name" missing="Give it a name.">{(id) => <Input id={id} required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
         <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
         <section aria-label="Resource pack" className="flex flex-col gap-2.5">
           <p className="text-[13px] font-medium">Resource pack</p>

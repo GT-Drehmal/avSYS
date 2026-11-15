@@ -104,10 +104,10 @@ export function AuthForm({ meta, mode, invite, next, setup }: AuthFormProps) {
         </>
       )}
       <form onSubmit={submit} className="flex flex-col gap-4">
-        <Field label="Username">
+        <Field label="Username" missing="Enter your username.">
           {(id) => <Input id={id} autoFocus required autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(e) => setUsername(e.target.value)} />}
         </Field>
-        <Field label="Password" hint={mode === "register" ? "At least 8 characters." : undefined}>
+        <Field label="Password" hint={mode === "register" ? "At least 8 characters." : undefined} missing="Enter your password.">
           {(id) => (
             <Input id={id} type="password" required minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "register" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} />
           )}
