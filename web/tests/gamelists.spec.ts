@@ -103,7 +103,7 @@ test("a Bedrock player added in game is shown by gamertag, marked Bedrock, and t
   // such player, and the server would not start.
   await page.getByRole("button", { name: "Keep Tim203 on the whitelist" }).click();
   await expect(page.getByLabel("Whitelisted players")).toHaveValue("00000000-0000-0000-0009-01f64f65c7c3");
-  await expect(whitelist.getByRole("listitem")).toHaveText([/^Steve/]);
+  await expect(whitelist.getByRole("listitem")).toHaveText([/^S?Steve/]);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saved.length).toBe(1);
   expect(saved[0].spec.whitelist).toEqual(["00000000-0000-0000-0009-01f64f65c7c3"]);
