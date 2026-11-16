@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { AccentPicker, ThemePicker, useSetLook } from "../components/Look";
 import { PicturePicker } from "../components/Picture";
+import { ProviderIcon } from "../components/ProviderIcon";
 import { Button, Checked, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
 import { ago } from "../lib/format";
@@ -342,6 +343,7 @@ function SignIn() {
         <ul className="overflow-hidden rounded-md border border-line bg-surface">
           {meta.providers.map((p) => (
             <li key={p.id} className="flex items-center gap-3 border-b border-line px-3 py-2 text-[13px] last:border-b-0">
+              <ProviderIcon id={p.id} />
               <span className="flex-1 font-medium">{p.name}</span>
               {linked.has(p.id) ? (
                 <Chip className="border-accent/40 text-accent">{linked.get(p.id) || "linked"}</Chip>
