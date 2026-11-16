@@ -7,9 +7,19 @@ import { useMeta } from "./queries";
  */
 export const sourceNames: Record<CatalogSource, string> = { modrinth: "Modrinth", curseforge: "CurseForge" };
 
-/** The catalogs this panel offers, Modrinth first. */
-export function useSources(): CatalogSource[] {
-  return useMeta().data?.curseforge ? ["modrinth", "curseforge"] : ["modrinth"];
+/**
+ * The catalogs offered, Modrinth first. CurseForge is offered without a key
+ * too, to say how it is turned on.
+ */
+export const sources: CatalogSource[] = ["modrinth", "curseforge"];
+
+/**
+ * Whether a catalog can be searched, and what is in it looked up, here:
+ * CurseForge only with a key. Undefined until that is known.
+ */
+export function useSearchable(): (source: CatalogSource) => boolean | undefined {
+  const meta = useMeta().data;
+  return (source) => (source === "modrinth" ? true : meta && !!meta.curseforge);
 }
 
 /** Whether a source is a catalog, rather than a URL or an upload. */

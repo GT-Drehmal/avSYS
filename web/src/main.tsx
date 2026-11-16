@@ -17,6 +17,7 @@ const pages = {
   Backups: () => import("./pages/Backups"),
   Console: () => import("./pages/server/Console"),
   Home: () => import("./pages/Home"),
+  InstanceSettings: () => import("./pages/InstanceSettings"),
   Invite: () => import("./pages/Invite"),
   Login: () => import("./pages/Login"),
   Members: () => import("./pages/Members"),
@@ -43,6 +44,7 @@ const Account = page("Account");
 const Backups = page("Backups");
 const Console = page("Console");
 const Home = page("Home");
+const InstanceSettings = page("InstanceSettings");
 const Invite = page("Invite");
 const Login = page("Login");
 const Members = page("Members");
@@ -113,6 +115,7 @@ createRoot(document.getElementById("root")!).render(
               <Route index element={<Home />} />
               <Route path="account" element={<Account />} />
               <Route path="nodes" element={<Nodes />} />
+              <Route path="settings" element={<InstanceSettings />} />
               <Route path="o/:org">
                 <Route index element={<Servers />} />
                 <Route path="new" element={<NewServer />} />

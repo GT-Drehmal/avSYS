@@ -600,8 +600,8 @@ func TestCurseForgeKeySetting(t *testing.T) {
 
 	panelOf := func() map[string]any {
 		t.Helper()
-		_, nodes := p.get("root", "GET", "/nodes", "")
-		panel, _ := nodes["panel"].(map[string]any)
+		_, got := p.get("root", "GET", "/panel", "")
+		panel, _ := got["panel"].(map[string]any)
 		return panel
 	}
 	if got := panelOf()["curseforge"]; got != "" {

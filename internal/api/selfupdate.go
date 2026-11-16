@@ -161,6 +161,21 @@ func (s *Server) updatePanel(w http.ResponseWriter, r *http.Request, u *store.Us
 	return nil
 }
 
+// getPanel is the panel itself, for the instance administrator's settings:
+// the version it runs and how it updates, a newer release where there is
+// one, and where its CurseForge key comes from.
+func (s *Server) getPanel(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if !u.IsAdmin {
+		return errForbidden
+	}
+	answer := map[string]any{"panel": s.panelOf(r.Context())}
+	if latest := s.Updates.Newer(); latest != nil {
+		answer["update"] = s.updateOf(r.Context(), latest)
+	}
+	writeJSON(w, http.StatusOK, answer)
+	return nil
+}
+
 // setPanel sets whether the panel takes fix releases by itself, and its
 // CurseForge API key: "" removes the one entered in it.
 func (s *Server) setPanel(w http.ResponseWriter, r *http.Request, u *store.User) error {

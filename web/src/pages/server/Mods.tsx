@@ -11,7 +11,7 @@ import { ArchiveError } from "../../lib/archive";
 import { softwareWords } from "../../lib/format";
 import { inspectPack } from "../../lib/mrpack";
 import { newerThan, pinnedOf } from "../../lib/worlds";
-import { isCatalog, useSources, versionsKey } from "../../lib/catalog";
+import { isCatalog, useSearchable, versionsKey } from "../../lib/catalog";
 import { applyServer, keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
@@ -23,7 +23,7 @@ export function Mods() {
   const update = useUpdateServer(server.org, server.name);
   const qc = useQueryClient();
   // Versions are looked up where the content is from, while the panel can.
-  const sources = useSources();
+  const searchable = useSearchable();
   const [adding, setAdding] = useState<PickKind | null>(null);
   // The pack there is being replaced, rather than another put on top of it.
   const [replacing, setReplacing] = useState(false);
@@ -128,7 +128,7 @@ export function Mods() {
                 </p>
               )}
             </div>
-            {isCatalog(modpack.source) && sources.includes(modpack.source) && (
+            {isCatalog(modpack.source) && searchable(modpack.source) && (
               <Button size="sm" disabled={!canEdit} onClick={() => setVersioning("modpack")}>
                 {modpack.versionName || "Newest release"}
               </Button>
@@ -193,7 +193,7 @@ export function Mods() {
                 note={(m) => modPortsNote(m, server.spec.ports)}
                 onRemove={canEdit ? (j) => update.mutate({ mods: mods.filter((_, i) => i !== at[j]) }) : undefined}
                 extra={(m, j) =>
-                  isCatalog(m.source) && sources.includes(m.source) && (
+                  isCatalog(m.source) && searchable(m.source) && (
                     <Button size="sm" disabled={!canEdit} onClick={() => setVersioning(at[j])} className="max-w-40">
                       <span className="truncate">{m.versionName || "Newest"}</span>
                     </Button>
@@ -332,7 +332,7 @@ function PackSection({
 }: { quiet: boolean; server: Server; gameVersion?: string; looking: boolean; canEdit: boolean; update: ReturnType<typeof useUpdateServer>; onChoose: () => void; onReplace: () => void; onVersion: () => void; suggest?: ReactNode }) {
   const qc = useQueryClient();
   const pack = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
-  const sources = useSources();
+  const searchable = useSearchable();
   // An uploaded one takes its file with it, which only this does.
   const remove = useAction(() => api.del<Server>(`${serverPath(server.org, server.name)}/resource-pack`));
   const stack = pack?.stack?.length ? pack.stack : null;
@@ -374,7 +374,7 @@ function PackSection({
             />
           ) : (
           <PackCard pack={pack} showKind={false}>
-            {pack.project && sources.includes(pack.project.source) && (
+            {pack.project && searchable(pack.project.source) && (
               <Button size="sm" disabled={!canEdit || busy} onClick={onVersion} className="max-w-40">
                 <span className="truncate">{pack.project.versionName || "Version"}</span>
               </Button>

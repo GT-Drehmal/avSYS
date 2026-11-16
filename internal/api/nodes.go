@@ -126,10 +126,6 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request, u *store.User
 		if last != nil {
 			answer["measured"] = last
 		}
-		if latest := s.Updates.Newer(); latest != nil {
-			answer["update"] = s.updateOf(r.Context(), latest)
-		}
-		answer["panel"] = s.panelOf(r.Context())
 	}
 	// Which node automatic placement would choose now, for the memory asked
 	// about, so that "Automatic" can say where that is.
