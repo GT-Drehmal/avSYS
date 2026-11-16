@@ -1,0 +1,125 @@
+{
+ "data": [
+  {
+   "id": 6000001,
+   "gameId": 432,
+   "modId": 238222,
+   "isAvailable": true,
+   "displayName": "jei-1.21.4-fabric-19.21.0.247.jar",
+   "fileName": "jei-1.21.4-fabric-19.21.0.247.jar",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "00000000000000000000000000000000005b8d81",
+     "algo": 1
+    }
+   ],
+   "fileDate": "2026-09-10T10:00:00Z",
+   "fileLength": 123456,
+   "downloadCount": 10,
+   "downloadUrl": "https://files.invalid/6000001/jei-1.21.4-fabric-19.21.0.247.jar",
+   "gameVersions": [
+    "1.21.4",
+    "Fabric"
+   ],
+   "sortableGameVersions": [],
+   "dependencies": [
+    {
+     "modId": 419699,
+     "relationType": 3
+    }
+   ],
+   "alternateFileId": 0,
+   "isServerPack": false,
+   "fileFingerprint": 6000001
+  },
+  {
+   "id": 5900000,
+   "gameId": 432,
+   "modId": 238222,
+   "isAvailable": true,
+   "displayName": "jei-1.21.4-fabric-19.20.0.240.jar",
+   "fileName": "jei-1.21.4-fabric-19.20.0.240.jar",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "00000000000000000000000000000000005a06e0",
+     "algo": 1
+    }
+   ],
+   "fileDate": "2026-08-01T10:00:00Z",
+   "fileLength": 123456,
+   "downloadCount": 10,
+   "downloadUrl": "https://files.invalid/5900000/jei-1.21.4-fabric-19.20.0.240.jar",
+   "gameVersions": [
+    "1.21.4",
+    "Fabric"
+   ],
+   "sortableGameVersions": [],
+   "dependencies": [],
+   "alternateFileId": 0,
+   "isServerPack": false,
+   "fileFingerprint": 5900000
+  },
+  {
+   "id": 4593548,
+   "gameId": 432,
+   "modId": 238222,
+   "isAvailable": true,
+   "displayName": "jei-1.20.1-forge-15.2.0.27.jar",
+   "fileName": "jei-1.20.1-forge-15.2.0.27.jar",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "000000000000000000000000000000000046178c",
+     "algo": 1
+    }
+   ],
+   "fileDate": "2023-06-24T10:00:00Z",
+   "fileLength": 123456,
+   "downloadCount": 10,
+   "downloadUrl": "https://files.invalid/4593548/jei-1.20.1-forge-15.2.0.27.jar",
+   "gameVersions": [
+    "1.20.1",
+    "Forge"
+   ],
+   "sortableGameVersions": [],
+   "dependencies": [],
+   "alternateFileId": 0,
+   "isServerPack": false,
+   "fileFingerprint": 4593548
+  },
+  {
+   "id": 5100001,
+   "gameId": 432,
+   "modId": 900001,
+   "isAvailable": true,
+   "displayName": "handonly-1.0.jar",
+   "fileName": "handonly-1.0.jar",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "00000000000000000000000000000000004dd1e1",
+     "algo": 1
+    }
+   ],
+   "fileDate": "2026-01-01T00:00:00Z",
+   "fileLength": 123456,
+   "downloadCount": 10,
+   "downloadUrl": null,
+   "gameVersions": [
+    "1.21.4",
+    "Fabric"
+   ],
+   "sortableGameVersions": [],
+   "dependencies": [],
+   "alternateFileId": 0,
+   "isServerPack": false,
+   "fileFingerprint": 5100001
+  }
+ ]
+}

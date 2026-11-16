@@ -314,8 +314,8 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
 	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
-		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
-			return errBadRequest("A resource pack picked from a project names the project: source modrinth, and the project's id.")
+		if !packSource(rp.Project) {
+			return errBadRequest("A resource pack picked from a project names the project: source modrinth or curseforge, and the project's id.")
 		}
 	}
 	// These end up in the game's commands, one per name.

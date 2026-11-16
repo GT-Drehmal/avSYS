@@ -1,0 +1,31 @@
+{
+ "data": {
+  "id": 5000001,
+  "gameId": 432,
+  "modId": 715572,
+  "isAvailable": true,
+  "displayName": "All the Mods 9-0.2.44.zip",
+  "fileName": "All the Mods 9-0.2.44.zip",
+  "releaseType": 1,
+  "fileStatus": 4,
+  "hashes": [
+   {
+    "value": "00000000000000000000000000000000004c4b41",
+    "algo": 1
+   }
+  ],
+  "fileDate": "2024-02-01T00:00:00Z",
+  "fileLength": 123456,
+  "downloadCount": 10,
+  "downloadUrl": "https://edge.forgecdn.net/files/5000/1/atm9-0.2.44.zip",
+  "gameVersions": [
+   "1.21.4",
+   "Forge"
+  ],
+  "sortableGameVersions": [],
+  "dependencies": [],
+  "alternateFileId": 0,
+  "isServerPack": false,
+  "fileFingerprint": 5000001
+ }
+}

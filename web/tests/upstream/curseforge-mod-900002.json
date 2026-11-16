@@ -1,0 +1,54 @@
+{
+ "data": {
+  "id": 900002,
+  "gameId": 432,
+  "name": "Biomes Galore",
+  "slug": "biomes-galore",
+  "links": {
+   "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/biomes-galore",
+   "wikiUrl": "",
+   "issuesUrl": "",
+   "sourceUrl": ""
+  },
+  "summary": "More biomes",
+  "status": 4,
+  "downloadCount": 50000,
+  "isFeatured": false,
+  "primaryCategoryId": 0,
+  "categories": [
+   {
+    "id": 406,
+    "gameId": 432,
+    "name": "World Gen",
+    "slug": "world-gen",
+    "url": "",
+    "iconUrl": "",
+    "dateModified": "2014-05-08T17:44:39.433Z",
+    "isClass": false,
+    "classId": 6,
+    "parentCategoryId": 6
+   }
+  ],
+  "classId": 6,
+  "authors": [
+   {
+    "id": 1,
+    "name": "terra",
+    "url": ""
+   }
+  ],
+  "logo": null,
+  "screenshots": [],
+  "mainFileId": 0,
+  "latestFiles": [],
+  "latestFilesIndexes": [],
+  "latestEarlyAccessFilesIndexes": [],
+  "dateCreated": "2020-01-01T00:00:00Z",
+  "dateModified": "2026-09-01T10:00:00Z",
+  "dateReleased": "2026-09-01T10:00:00Z",
+  "allowModDistribution": true,
+  "gamePopularityRank": 1,
+  "isAvailable": true,
+  "thumbsUpCount": 0
+ }
+}

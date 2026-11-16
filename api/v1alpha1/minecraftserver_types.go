@@ -207,7 +207,7 @@ type ResourcePackSpec struct {
 	// server's files, where snapshots and copies take it along, and the
 	// panel serves it, at an address of its SHA1: URL is that address.
 	Uploaded *UploadedPack `json:"uploaded,omitempty"`
-	// Project is set for a pack picked from Modrinth: URL and SHA1 are of
+	// Project is set for a pack picked from Modrinth or CurseForge: URL and SHA1 are of
 	// the file of the version picked.
 	Project *PackProject `json:"project,omitempty"`
 	// Formats are the pack formats it is made for, where known: read from
@@ -243,7 +243,7 @@ type StackedPack struct {
 // PackProject is the project a resource pack was picked from, and which
 // version of it.
 type PackProject struct {
-	// +kubebuilder:validation:Enum=modrinth
+	// +kubebuilder:validation:Enum=modrinth;curseforge
 	Source string `json:"source"`
 	// ID is the project's slug or ID there.
 	ID          string `json:"id"`

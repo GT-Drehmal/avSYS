@@ -566,9 +566,9 @@ export function PageHeader({ title, description, actions }: { title: ReactNode; 
 }
 
 /** A settings block: what it is on the left, the controls on the right. */
-export function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+export function Section({ title, description, region, children }: { title: string; description?: ReactNode; region?: boolean; children: ReactNode }) {
   return (
-    <section className="grid gap-x-10 gap-y-4 border-t border-line py-7 first:border-t-0 first:pt-0 md:grid-cols-[220px_minmax(0,1fr)]">
+    <section aria-label={region ? title : undefined} className="grid gap-x-10 gap-y-4 border-t border-line py-7 first:border-t-0 first:pt-0 md:grid-cols-[220px_minmax(0,1fr)]">
       <div>
         <h2 className="text-[13px] font-semibold">{title}</h2>
         {description && <p className="mt-1 text-xs leading-relaxed text-muted">{description}</p>}

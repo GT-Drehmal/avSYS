@@ -55,8 +55,9 @@ test("each kind is in its own section, without a chip saying what it is", async 
   // An upload shows its name without its extension, and one from Modrinth no ID.
   await expect(datapacks.getByText("Hell_Is_Fire_v0.1.0", { exact: true })).toBeVisible();
   await expect(page.getByText("modrinth:gvQqBUqZ")).toHaveCount(0);
-  // One from elsewhere has no link, so it says where it is from.
-  await expect(page.getByText("curseforge:394468")).toBeVisible();
+  // One from CurseForge links there too, through the panel, which knows its page.
+  await expect(page.getByText("curseforge:394468")).toHaveCount(0);
+  await expect(mods.getByRole("link", { name: "Open on CurseForge" })).toHaveAttribute("href", "/api/v1/catalog/curseforge/projects/394468/page");
   await expect(page.getByText("mod", { exact: true })).toHaveCount(0);
   await expect(page.getByText("datapack", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Resource packs" }).getByText("None.", { exact: false })).toBeVisible();

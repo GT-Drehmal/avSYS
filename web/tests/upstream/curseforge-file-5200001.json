@@ -1,0 +1,31 @@
+{
+ "data": {
+  "id": 5200001,
+  "gameId": 432,
+  "modId": 900002,
+  "isAvailable": true,
+  "displayName": "biomes-galore-2.0.jar",
+  "fileName": "biomes-galore-2.0.jar",
+  "releaseType": 1,
+  "fileStatus": 4,
+  "hashes": [
+   {
+    "value": "00000000000000000000000000000000004f5881",
+    "algo": 1
+   }
+  ],
+  "fileDate": "2026-07-01T00:00:00Z",
+  "fileLength": 123456,
+  "downloadCount": 10,
+  "downloadUrl": "https://files.invalid/5200001/biomes-galore-2.0.jar",
+  "gameVersions": [
+   "1.21.4",
+   "Fabric"
+  ],
+  "sortableGameVersions": [],
+  "dependencies": [],
+  "alternateFileId": 0,
+  "isServerPack": false,
+  "fileFingerprint": 5200001
+ }
+}

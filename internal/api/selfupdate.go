@@ -48,6 +48,10 @@ type panelView struct {
 	AutoUpdate bool `json:"autoUpdate"`
 	// Updating is the release it is moving to, while it does.
 	Updating string `json:"updating,omitempty"`
+	// CurseForge is where its CurseForge API key comes from: "panel" for
+	// one entered in it, "install" for one it was installed with, or ""
+	// for none. The key itself is never shown.
+	CurseForge string `json:"curseforge"`
 }
 
 // selfDeployment is the panel's own Deployment and the index of the panel's
@@ -80,7 +84,7 @@ func (s *Server) autoUpdate(ctx context.Context) bool {
 
 // panelOf is what the instance administrator is shown of the panel.
 func (s *Server) panelOf(ctx context.Context) panelView {
-	v := panelView{Version: s.Config.Version, AutoUpdate: s.autoUpdate(ctx)}
+	v := panelView{Version: s.Config.Version, AutoUpdate: s.autoUpdate(ctx), CurseForge: s.curseForgeKeyFrom(ctx)}
 	// Only a release that looks for newer ones has somewhere to go.
 	if s.Updates == nil || !release.IsRelease(s.Config.Version) {
 		return v
@@ -157,16 +161,42 @@ func (s *Server) updatePanel(w http.ResponseWriter, r *http.Request, u *store.Us
 	return nil
 }
 
-// setPanel sets whether the panel takes fix releases by itself.
+// getPanel is the panel itself, for the instance administrator's settings:
+// the version it runs and how it updates, a newer release where there is
+// one, and where its CurseForge key comes from.
+func (s *Server) getPanel(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if !u.IsAdmin {
+		return errForbidden
+	}
+	answer := map[string]any{"panel": s.panelOf(r.Context())}
+	if latest := s.Updates.Newer(); latest != nil {
+		answer["update"] = s.updateOf(r.Context(), latest)
+	}
+	writeJSON(w, http.StatusOK, answer)
+	return nil
+}
+
+// setPanel sets whether the panel takes fix releases by itself, and its
+// CurseForge API key: "" removes the one entered in it.
 func (s *Server) setPanel(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	if !u.IsAdmin {
 		return errForbidden
 	}
 	var in struct {
-		AutoUpdate *bool `json:"autoUpdate"`
+		AutoUpdate    *bool   `json:"autoUpdate"`
+		CurseForgeKey *string `json:"curseforgeKey"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
+	}
+	if in.CurseForgeKey != nil {
+		if err := s.setCurseForgeKey(r.Context(), u, *in.CurseForgeKey); err != nil {
+			return err
+		}
+		if in.AutoUpdate == nil {
+			writeJSON(w, http.StatusOK, s.panelOf(r.Context()))
+			return nil
+		}
 	}
 	if in.AutoUpdate == nil {
 		return errBadRequest("Say whether avSYS updates by itself.")

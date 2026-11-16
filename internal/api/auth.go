@@ -46,6 +46,9 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) error {
 		"ssh":           map[string]any{"host": s.Config.SSHHost, "port": s.Config.SSHPort},
 		// Whether this panel can take snapshots at all.
 		"snapshots": s.Backups.Available(),
+		// Whether it has a CurseForge API key, which anything from
+		// CurseForge needs.
+		"curseforge": s.curseForgeKey(r.Context()) != "",
 	})
 	return nil
 }
