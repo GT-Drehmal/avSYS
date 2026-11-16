@@ -119,10 +119,11 @@ not read.
 
 What the sign-in page needs. **Public.**
 
-Returns `{version, setupRequired, allowSignups, providers: [{id, name}], passwords, ssh: {host, port}, snapshots, curseforge}`.
+Returns `{version, setupRequired, allowSignups, providers: [{id, name}], passwords, ssh: {host, port}, snapshots, curseforge, accent}`.
 `setupRequired` is true while there is no account; `passwords` false when
 password sign-in is off; `snapshots` whether restic is there; `curseforge`
-whether a CurseForge key is set.
+whether a CurseForge key is set; `accent` the panel's accent, for anyone
+who has not picked one.
 
 ### `POST /auth/register`
 
@@ -212,15 +213,23 @@ All of these are **signed in**, and act on the caller's own account.
 
 ### `GET /me`
 
-Who you are. Returns `{user, orgs, identities, hasPassword, twoFactor, recoveryCodes, mustSetUpTwoFactor, adminTwoFactor, minecraftAccounts, minecraft?}`.
+Who you are. Returns `{user, orgs, identities, hasPassword, look, twoFactor, recoveryCodes, mustSetUpTwoFactor, adminTwoFactor, minecraftAccounts, minecraft?}`.
 `orgs` is `[{id, slug, name, createdAt, hasIcon, role}]` (every
 organization, as owner, for the instance administrator); `identities` the
-linked providers `[{provider, login}]`; `recoveryCodes` how many are left;
+linked providers `[{provider, login}]`; `look` is `{theme, accent}` (see
+[`PATCH /me/look`](#patch-melook)); `recoveryCodes` how many are left;
 `minecraftAccounts` `[{uuid, name, linkedAt, main, verified}]`.
 
 ### `PATCH /me`
 
 Body: `{displayName}` (up to 64 characters). Returns the user.
+
+### `PATCH /me/look`
+
+How the panel looks to you. Body: any of `{theme, accent}`. `theme` is
+`auto` (as the system), `light` or `dark`; `accent` is `amethyst`, `gold`,
+`teal`, `blue`, `rose`, or `""` for the panel's. Only what is given
+changes. Returns `{theme, accent}`. An unknown value is a `400`.
 
 ### `POST /me/password`
 
@@ -370,7 +379,7 @@ administrator, each node also has `players` and
 ### `GET /panel`
 
 The panel itself, for Instance settings. **Instance admin.** Returns
-`{panel: {version, canUpdate, autoUpdate, updating?, curseforge}, update?}`,
+`{panel: {version, canUpdate, autoUpdate, updating?, curseforge, accent}, update?}`,
 where `update` is a newer release: `{version, notes, command?, manifest?}`.
 
 ### `GET /nodes/usage`
@@ -393,12 +402,14 @@ while a measurement runs.
 
 The panel's own settings. **Instance admin.**
 
-Body: any of `{autoUpdate, curseforgeKey}`. `autoUpdate` has the panel
-install fix releases by itself. `curseforgeKey` sets the CurseForge API key
-(checked with CurseForge first), and `""` removes the one entered in the
-panel. Returns `{version, canUpdate, autoUpdate, updating?, curseforge}`,
-where `curseforge` is `panel`, `install` or `""` for where the key comes
-from. The key itself is never returned.
+Body: any of `{autoUpdate, curseforgeKey, accent}`. `autoUpdate` has the
+panel install fix releases by itself. `curseforgeKey` sets the CurseForge
+API key (checked with CurseForge first), and `""` removes the one entered
+in the panel. `accent` is the accent of everyone who has not picked their
+own: `amethyst` (the default), `gold`, `teal`, `blue` or `rose`. Returns
+`{version, canUpdate, autoUpdate, updating?, curseforge, accent}`, where
+`curseforge` is `panel`, `install` or `""` for where the key comes from.
+The key itself is never returned. An empty body is a `400`.
 
 ### `POST /panel/update`
 
