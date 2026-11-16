@@ -1,0 +1,31 @@
+{
+ "data": {
+  "id": 5900000,
+  "gameId": 432,
+  "modId": 238222,
+  "isAvailable": true,
+  "displayName": "jei-1.21.4-fabric-19.20.0.240.jar",
+  "fileName": "jei-1.21.4-fabric-19.20.0.240.jar",
+  "releaseType": 1,
+  "fileStatus": 4,
+  "hashes": [
+   {
+    "value": "00000000000000000000000000000000005a06e0",
+    "algo": 1
+   }
+  ],
+  "fileDate": "2026-08-01T10:00:00Z",
+  "fileLength": 123456,
+  "downloadCount": 10,
+  "downloadUrl": "https://files.invalid/5900000/jei-1.21.4-fabric-19.20.0.240.jar",
+  "gameVersions": [
+   "1.21.4",
+   "Fabric"
+  ],
+  "sortableGameVersions": [],
+  "dependencies": [],
+  "alternateFileId": 0,
+  "isServerPack": false,
+  "fileFingerprint": 5900000
+ }
+}

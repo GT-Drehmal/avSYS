@@ -261,6 +261,9 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		if mc.Spec.Modpack.Version != "" {
 			env["CF_FILE_ID"] = mc.Spec.Modpack.Version
 		}
+		// Files of the pack whose authors allow downloads only on
+		// CurseForge itself are looked for here, where they can be uploaded.
+		env["CF_DOWNLOADS_REPO"] = CurseForgeDownloads
 	default:
 		env["TYPE"] = strings.ToUpper(string(mc.Spec.Loader))
 		env["VERSION"] = mc.Spec.Version
@@ -277,10 +280,6 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 			}
 		}
 	}
-	if cfg.CurseForgeAPIKey != "" {
-		env["CF_API_KEY"] = cfg.CurseForgeAPIKey
-	}
-
 	var modrinth, curseforge, modURLs, pluginURLs, datapackURLs []string
 	for _, m := range mc.Spec.Mods {
 		switch m.Source {
@@ -294,6 +293,15 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 			}
 			modrinth = append(modrinth, ref)
 		case avsysv1.SourceCurseForge:
+			// The image installs mods and plugins from CurseForge itself,
+			// but not datapacks: those are fetched from where CurseForge
+			// keeps the file, as one from a URL is.
+			if m.Kind == avsysv1.KindDatapack {
+				if u := CurseForgeFileURL(m.Version, m.File); u != "" {
+					datapackURLs = append(datapackURLs, u)
+				}
+				continue
+			}
 			ref := m.Project
 			if m.Version != "" {
 				ref += ":" + m.Version
@@ -374,6 +382,9 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		out = append(out, corev1.EnvVar{Name: k, Value: env[k]})
 	}
 	out = append(out, rconPasswordEnv(mc))
+	if UsesCurseForge(&mc.Spec) {
+		out = append(out, curseForgeKeyEnv())
+	}
 	// A server's own environment comes last and wins, except over launch
 	// flags set in their own fields: an older entry for those would
 	// otherwise override what its settings now say.

@@ -17,7 +17,7 @@ import { BottomBar, Button, Checked, Chip, Confirm, cx, Field, Input, Notice, Pa
 import { cancelled } from "../components/Uploading";
 import { NewerWorldConfirm } from "../components/NewerWorld";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
+import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type CatalogSource, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, softwareWords } from "../lib/format";
 import { launchOf } from "../lib/launch";
@@ -30,6 +30,7 @@ import { SetupFailed, type SetupWork, startSetup } from "../lib/setups";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
 import { newerThan, newerWorldWarning, runsOn, usePackGame, worldSummary } from "../lib/worlds";
+import { isCatalog, sourceNames, useSources } from "../lib/catalog";
 
 const GiB = 1024 ** 3;
 
@@ -688,6 +689,10 @@ export function ServerForm({
   // How much of a template's world has been sent, while it is.
   const [sent, setSent] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
+  // Where modpacks are searched for: Modrinth, or CurseForge where it is set up.
+  const sources = useSources();
+  const [packSource, setPackSource] = useState<CatalogSource>("modrinth");
+  const shownPackSource = sources.includes(packSource) ? packSource : "modrinth";
   const archiveInput = useRef<HTMLInputElement>(null);
   // The archive read last: one read earlier that ends later is not used.
   const reads = useRef(0);
@@ -1734,7 +1739,9 @@ export function ServerForm({
                       {[v.modpack.versionName, softwareWords(v.modpack.loader, v.modpack.gameVersion), v.mrpack ? `${v.mrpack.file.name}, ${bytes(v.mrpack.file.size)}` : v.modpack.project].filter(Boolean).join(" · ")}
                     </p>
                   ) : (
-                    <p className="truncate font-mono text-xs text-muted">modrinth:{v.modpack.project}</p>
+                    <p className="truncate font-mono text-xs text-muted">
+                      {v.modpack.source}:{v.modpack.project}
+                    </p>
                   )}
                 </div>
                 <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Choose a different modpack" onClick={dropPack} />
@@ -1744,14 +1751,25 @@ export function ServerForm({
           ) : (
             <>
               {!forTemplate && <PackDrop reading={reading} onFile={(file) => void pickPack(file)} />}
+              {sources.length > 1 && (
+                <div role="group" aria-label="Search on" className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
+                  {sources.map((s) => (
+                    <button key={s} type="button" aria-pressed={shownPackSource === s} className={segment(shownPackSource === s)} onClick={() => setPackSource(s)}>
+                      {sourceNames[s]}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="h-[30rem] overflow-hidden rounded-md border border-line bg-surface p-3">
                 <ModrinthSearch
+                  key={shownPackSource}
+                  source={shownPackSource}
                   type="modpack"
-                  placeholder="Search modpacks on Modrinth"
+                  placeholder={`Search modpacks on ${sourceNames[shownPackSource]}`}
                   onPick={(hit) => {
                     setValues((was) => ({
                       ...was,
-                      modpack: { source: "modrinth", project: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined },
+                      modpack: { source: shownPackSource, project: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined },
                       mrpack: null,
                       displayName: was.displayName || hit.title,
                     }));
@@ -1825,7 +1843,7 @@ export function ServerForm({
                       }}
                       onRemove={(j) => (j < mods.length ? set("mods", v.mods.filter((_, i) => i !== mods[j])) : set("uploads", v.uploads.filter((_, i) => i !== ups[j - mods.length])))}
                       extra={(m, j) =>
-                        m.source === "modrinth" &&
+                        isCatalog(m.source) && sources.includes(m.source) &&
                         j < mods.length && (
                           <Button size="sm" onClick={() => setVersioning(mods[j])} className="max-w-40">
                             <span className="truncate">{m.versionName || "Newest"}</span>
@@ -1928,6 +1946,7 @@ export function ServerForm({
         )}
         {versioned && software && versioning !== null && (
           <VersionDialog
+            source={isCatalog(versioned.source) ? versioned.source : undefined}
             title={versioned.title || versioned.project}
             project={versioned.project}
             current={versioned.version}

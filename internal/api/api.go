@@ -69,6 +69,10 @@ type Config struct {
 	// Deployment is the panel's own, which it changes to move itself to a
 	// newer release. Empty where the panel runs outside the cluster.
 	Deployment types.NamespacedName
+	// CurseForgeKey is the CurseForge API key the panel was installed
+	// with. One entered in the panel goes before it. With neither, nothing
+	// of CurseForge is offered.
+	CurseForgeKey string
 }
 
 type Server struct {
@@ -548,6 +552,11 @@ func (s *Server) Handler() http.Handler {
 	api("GET /catalog/modrinth/projects/{id}/versions", s.authed(s.modrinthVersions))
 	api("POST /catalog/sha1", s.authed(s.hashURL))
 	api("POST /catalog/modrinth/files", s.authed(s.modrinthFiles))
+	api("GET /catalog/curseforge/search", s.authed(s.curseForgeSearch))
+	api("GET /catalog/curseforge/categories", s.authed(s.curseForgeCategoryList))
+	api("GET /catalog/curseforge/projects", s.authed(s.curseForgeProjects))
+	api("GET /catalog/curseforge/projects/{id}/versions", s.authed(s.curseForgeVersions))
+	api("GET /catalog/curseforge/projects/{id}/page", s.authed(s.curseForgePage))
 
 	// Uploaded resource packs, fetched by players' games with no session.
 	mux.Handle("/packs/", s.PackHandler())

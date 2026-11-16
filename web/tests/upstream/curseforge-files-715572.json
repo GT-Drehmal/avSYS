@@ -1,0 +1,96 @@
+{
+ "data": [
+  {
+   "id": 5000003,
+   "gameId": 432,
+   "modId": 715572,
+   "isAvailable": true,
+   "displayName": "All the Mods 9-1.0.0.zip",
+   "fileName": "All the Mods 9-1.0.0.zip",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "00000000000000000000000000000000004c4b43",
+     "algo": 1
+    }
+   ],
+   "fileDate": "2026-09-01T00:00:00Z",
+   "fileLength": 123456,
+   "downloadCount": 10,
+   "downloadUrl": "https://edge.forgecdn.net/files/5000/3/atm9-1.0.0.zip",
+   "gameVersions": [
+    "1.21.5",
+    "NeoForge"
+   ],
+   "sortableGameVersions": [],
+   "dependencies": [],
+   "alternateFileId": 0,
+   "isServerPack": false,
+   "fileFingerprint": 5000003
+  },
+  {
+   "id": 5000002,
+   "gameId": 432,
+   "modId": 715572,
+   "isAvailable": true,
+   "displayName": "Server Files 1.0.0",
+   "fileName": "Server Files 1.0.0",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "00000000000000000000000000000000004c4b42",
+     "algo": 1
+    }
+   ],
+   "fileDate": "2026-09-02T00:00:00Z",
+   "fileLength": 123456,
+   "downloadCount": 10,
+   "downloadUrl": "https://edge.forgecdn.net/files/5000/2/server.zip",
+   "gameVersions": [
+    "1.21.4"
+   ],
+   "sortableGameVersions": [],
+   "dependencies": [],
+   "alternateFileId": 0,
+   "isServerPack": true,
+   "fileFingerprint": 5000002
+  },
+  {
+   "id": 5000001,
+   "gameId": 432,
+   "modId": 715572,
+   "isAvailable": true,
+   "displayName": "All the Mods 9-0.2.44.zip",
+   "fileName": "All the Mods 9-0.2.44.zip",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "00000000000000000000000000000000004c4b41",
+     "algo": 1
+    }
+   ],
+   "fileDate": "2024-02-01T00:00:00Z",
+   "fileLength": 123456,
+   "downloadCount": 10,
+   "downloadUrl": "https://edge.forgecdn.net/files/5000/1/atm9-0.2.44.zip",
+   "gameVersions": [
+    "1.21.4",
+    "Forge"
+   ],
+   "sortableGameVersions": [],
+   "dependencies": [],
+   "alternateFileId": 0,
+   "isServerPack": false,
+   "fileFingerprint": 5000001
+  }
+ ],
+ "pagination": {
+  "index": 0,
+  "pageSize": 24,
+  "resultCount": 3,
+  "totalCount": 3
+ }
+}

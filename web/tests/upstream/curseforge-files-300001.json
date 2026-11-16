@@ -1,0 +1,38 @@
+{
+ "data": [
+  {
+   "id": 4800001,
+   "gameId": 432,
+   "modId": 300001,
+   "isAvailable": true,
+   "displayName": "Stay True 1.21.4.zip",
+   "fileName": "Stay True 1.21.4.zip",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "abababababababababababababababababababab",
+     "algo": 1
+    }
+   ],
+   "fileDate": "2026-06-01T00:00:00Z",
+   "fileLength": 123456,
+   "downloadCount": 10,
+   "downloadUrl": "https://files.invalid/stay-true-1.21.4.zip",
+   "gameVersions": [
+    "1.21.4"
+   ],
+   "sortableGameVersions": [],
+   "dependencies": [],
+   "alternateFileId": 0,
+   "isServerPack": false,
+   "fileFingerprint": 4800001
+  }
+ ],
+ "pagination": {
+  "index": 0,
+  "pageSize": 24,
+  "resultCount": 1,
+  "totalCount": 1
+ }
+}

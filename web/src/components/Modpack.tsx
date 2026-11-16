@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, Upload } from "lucide-react";
+import { Upload } from "lucide-react";
+import { Link } from "react-router";
 import { useEffect, useState } from "react";
 import { api, serverPath, type Modpack, type Server } from "../lib/api";
 import type { PackFile } from "../lib/mrpack";
+import { ProjectLink } from "./Content";
 import { ProjectIcon } from "./ModrinthSearch";
 import { More } from "./ServerFields";
-import { cx, SearchBox, Spinner } from "./ui";
+import { Chip, cx, Notice, SearchBox, Spinner } from "./ui";
 
 /**
  * A modpack's picture: the one in its file, where it was read from one or
@@ -97,12 +99,13 @@ export function PackFiles({ files }: { files: PackFile[] }) {
               <ProjectIcon url={f.iconUrl} size={24} kind={folder === "mods" ? "mod" : folder === "resourcepacks" ? "resourcepack" : undefined} name={name} initials />
               <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px]">
                 <span className="truncate">{name}</span>
-                {f.project && (
-                  <a href={`https://modrinth.com/project/${f.project}`} target="_blank" rel="noreferrer" className="shrink-0 text-faint hover:text-accent" aria-label="Open on Modrinth">
-                    <ExternalLink className="size-3" />
-                  </a>
-                )}
+                {f.project && <ProjectLink source={f.source ?? "modrinth"} project={f.project} />}
               </span>
+              {f.manual && (
+                <a href={f.page} target="_blank" rel="noreferrer" className="shrink-0">
+                  <Chip className="border-warn/40 text-warn hover:bg-warn-wash">download by hand</Chip>
+                </a>
+              )}
               <span className="shrink-0 text-xs text-muted">{f.server ? (folderNames[folder] ?? folder) : "Client only, left out"}</span>
             </li>
           );
@@ -131,12 +134,26 @@ export function usePackFiles(server: Server): PackFile[] {
  * a pack whose list cannot be read.
  */
 export function PackContents({ server }: { server: Server }) {
-  const [open, setOpen] = useState(false);
+  // Open from the start where some files are to be put in by hand, to show which.
+  const [asked, setOpen] = useState<boolean | null>(null);
   const files = usePackFiles(server);
   if (files.length === 0) return null;
   const mods = files.every((f) => f.path.startsWith("mods/"));
+  // Files the image cannot fetch: the server does not start without them.
+  const manual = files.filter((f) => f.manual).length;
+  const open = asked ?? manual > 0;
   return (
     <div className="flex flex-col gap-2">
+      {manual > 0 && (
+        <Notice>
+          {manual === 1 ? "One file in this pack" : `${manual} files in this pack`} can only be downloaded on CurseForge. Download {manual === 1 ? "it" : "them"} there and upload{" "}
+          {manual === 1 ? "it" : "them"} to a folder named downloads on the{" "}
+          <Link to={`/o/${server.org}/s/${server.name}/files`} className="underline">
+            Files
+          </Link>{" "}
+          page.
+        </Notice>
+      )}
       <More label={`${mods ? "Mods in this pack" : "In this pack"} (${files.length})`} open={open} onToggle={() => setOpen(!open)} />
       {open && <PackFiles files={files} />}
     </div>

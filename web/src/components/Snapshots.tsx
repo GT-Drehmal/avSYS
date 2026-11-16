@@ -14,6 +14,7 @@ import { Picture } from "./Picture";
 import { SaveTemplate } from "./SaveTemplate";
 import { SaveWorld } from "./SaveWorld";
 import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectAllRow, SelectionBar } from "./ui";
+import { sourceNames } from "../lib/catalog";
 
 export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
@@ -368,7 +369,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
                       {spec.resourcePack.project || spec.resourcePack.uploaded ? (
                         <>
                           {packTitle(spec.resourcePack)}
-                          <span className="text-muted">{spec.resourcePack.stack?.length ? " · joined" : spec.resourcePack.uploaded ? " · uploaded" : ` · ${spec.resourcePack.project?.versionName ?? "Modrinth"}`}</span>
+                          <span className="text-muted">{spec.resourcePack.stack?.length ? " · joined" : spec.resourcePack.uploaded ? " · uploaded" : ` · ${spec.resourcePack.project?.versionName ?? sourceNames[spec.resourcePack.project?.source ?? "modrinth"]}`}</span>
                         </>
                       ) : (
                         <span className="font-mono text-xs break-all">{spec.resourcePack.url}</span>

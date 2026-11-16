@@ -1,9 +1,10 @@
 import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Box, Braces, Check, ChevronLeft, Coffee, Download, ExternalLink, Heart, Image, Info, type LucideIcon, Package, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, qs, type ModrinthHit, type ModrinthProject, type ModrinthResults, type ModrinthVersion } from "../lib/api";
+import { api, qs, type CatalogSource, type ModrinthHit, type ModrinthProject, type ModrinthResults } from "../lib/api";
+import { fetchVersions, sourceNames, versionsKey } from "../lib/catalog";
 import { ago, compact } from "../lib/format";
-import { Button, Chip, cx, Input, Select, Spinner } from "./ui";
+import { Button, Chip, cx, Input, Notice, Select, Spinner } from "./ui";
 
 export function useDebounced<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -93,6 +94,15 @@ const orders: [Order, string][] = [
   ["newest", "Newest"],
 ];
 
+/** CurseForge has no followers to sort by, but how popular a project is. */
+const ordersOf = (source: CatalogSource): [Order, string][] => (source === "curseforge" ? orders.map(([o, label]) => [o, o === "follows" ? "Popular" : label]) : orders);
+
+/** A project whose author allows downloads of it only on CurseForge itself, which the panel cannot fetch. */
+const handOnly = (hit: ModrinthHit) => hit.downloadable === false;
+
+/** Its page, where it is from. */
+const pageOf = (hit: ModrinthHit) => hit.page_url ?? `https://modrinth.com/${hit.project_type}/${hit.slug}`;
+
 /** The furthest into a search's results a page may start. */
 const lastOffset = 9_984;
 
@@ -100,6 +110,8 @@ const lastOffset = 9_984;
 const tagName = (tag: string) => (tag === "worldgen" ? "World generation" : tag.charAt(0).toUpperCase() + tag.slice(1).replace(/-/g, " "));
 
 interface Props {
+  /** Where to search: Modrinth unless said. */
+  source?: CatalogSource;
   type: Kind;
   loader?: string;
   gameVersion?: string;
@@ -121,7 +133,7 @@ interface Props {
  * It fills its parent and scrolls its results inside it, so the parent must
  * have a height.
  */
-export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick, busy, placeholder, pickLabels }: Props) {
+export function ModrinthSearch({ source = "modrinth", type, loader, gameVersion, fits, picked, onPick, busy, placeholder, pickLabels }: Props) {
   const [query, setQuery] = useState("");
   const q = useDebounced(query, 200);
   // With nothing typed there is nothing to be relevant to, so the most
@@ -133,18 +145,20 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
   // Where a mod is to run, as Modrinth's own Client and Server boxes ask.
   const [onServer, setOnServer] = useState(true);
   const [onClient, setOnClient] = useState(false);
-  const side = onServer ? (onClient ? "both" : undefined) : onClient ? "client" : "any";
+  // CurseForge does not say where a mod runs.
+  const sides = source === "modrinth";
+  const side = !sides ? undefined : onServer ? (onClient ? "both" : undefined) : onClient ? "client" : "any";
   const [looking, setLooking] = useState<ModrinthHit | null>(null);
 
   const categories = useQuery({
-    queryKey: ["modrinth-categories", type],
-    queryFn: () => api.get<string[]>(`/catalog/modrinth/categories?${qs({ type })}`),
+    queryKey: [`${source}-categories`, type],
+    queryFn: () => api.get<string[]>(`/catalog/${source}/categories?${qs({ type })}`),
     staleTime: 60 * 60_000,
   });
   const filters = { type, loader, gameVersion, q, sort, categories: chosen.join(",") || undefined, side };
   const results = useInfiniteQuery({
-    queryKey: ["modrinth", filters],
-    queryFn: ({ pageParam }) => api.get<ModrinthResults>(`/catalog/modrinth/search?${qs({ ...filters, offset: pageParam || undefined })}`),
+    queryKey: [source, filters],
+    queryFn: ({ pageParam }) => api.get<ModrinthResults>(`/catalog/${source}/search?${qs({ ...filters, offset: pageParam || undefined })}`),
     initialPageParam: 0,
     getNextPageParam: (last) => {
       const next = last.offset + last.hits.length;
@@ -181,6 +195,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
   if (looking) {
     return (
       <ProjectDetail
+        source={source}
         hit={looking}
         loader={loader}
         gameVersion={gameVersion}
@@ -203,11 +218,11 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
       <div className="flex gap-2">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute top-2 left-2.5 size-4 text-faint" />
-          <Input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={placeholder ?? "Search Modrinth"} className="pl-8" />
+          <Input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={placeholder ?? `Search ${sourceNames[source]}`} className="pl-8" />
           {results.isFetching && !results.isFetchingNextPage && <Spinner className="absolute top-2 right-2.5" />}
         </div>
         <Select aria-label="Sort by" value={sort} onChange={(e) => setOrder(e.target.value as Order)} className="w-44 shrink-0 max-sm:w-32">
-          {orders.map(([value, label]) => (
+          {ordersOf(source).map(([value, label]) => (
             <option key={value} value={value}>
               {label}
             </option>
@@ -237,7 +252,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
             })}
             {categories.isError && <span className="text-xs text-muted">The categories could not be loaded.</span>}
           </div>
-          {type === "mod" && (
+          {type === "mod" && sides && (
             <fieldset className="flex flex-col gap-1 text-xs">
               <legend className="mb-1 font-medium">Runs on</legend>
               <div className="flex gap-4">
@@ -277,12 +292,14 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
       <ul ref={list} className="-mx-2 flex min-h-0 flex-1 flex-col overflow-y-auto">
         {hits.map((hit) => {
           const chosen = isPicked(hit);
+          // One the panel cannot fetch is looked at, which says what to do instead.
+          const byHand = handOnly(hit);
           return (
             <li key={hit.project_id} className="flex items-center gap-1">
               <button
                 type="button"
                 disabled={chosen || busy}
-                onClick={() => onPick(hit)}
+                onClick={() => (byHand ? setLooking(hit) : onPick(hit))}
                 className={cx("flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2 text-left", chosen ? "opacity-60" : "hover:bg-raised")}
               >
                 <ProjectIcon url={hit.icon_url} kind={hit.project_type} name={hit.title} />
@@ -291,6 +308,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
                     <span className="truncate text-[13px] font-medium">{hit.title}</span>
                     <span className="shrink-0 text-xs text-faint">by {hit.author}</span>
                     {sideOf(hit) && <Chip>{sideOf(hit)}</Chip>}
+                    {byHand && <Chip className="border-warn/40 text-warn">upload by hand</Chip>}
                   </span>
                   <span className="block truncate text-xs text-muted">{hit.description}</span>
                 </span>
@@ -308,7 +326,9 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
           );
         })}
         {results.data && hits.length === 0 && (
-          <li className="px-2 py-8 text-center text-[13px] text-muted">Nothing on Modrinth matches that{fits ? ` for ${fits}` : " for this server"}.</li>
+          <li className="px-2 py-8 text-center text-[13px] text-muted">
+            Nothing on {sourceNames[source]} matches that{fits ? ` for ${fits}` : " for this server"}.
+          </li>
         )}
         {results.isError && !isFetchNextPageError && <li className="px-2 py-8 text-center text-[13px] text-danger">{results.error.message}</li>}
         {hasNextPage &&
@@ -330,6 +350,7 @@ export function ModrinthSearch({ type, loader, gameVersion, fits, picked, onPick
 }
 
 interface DetailProps {
+  source: CatalogSource;
   hit: ModrinthHit;
   loader?: string;
   gameVersion?: string;
@@ -345,10 +366,10 @@ interface DetailProps {
 }
 
 /** One result looked at closely: what it is, which versions fit, and what it needs. */
-function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy, onBack, onPick, pickLabels = ["Add", "Added"] }: DetailProps) {
+function ProjectDetail({ source, hit, loader, gameVersion, fits, tags, picked, has, busy, onBack, onPick, pickLabels = ["Add", "Added"] }: DetailProps) {
   const versions = useQuery({
-    queryKey: ["modrinth-versions", hit.project_id, { loader, gameVersion }],
-    queryFn: () => api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(hit.project_id)}/versions?${qs({ loader, gameVersion })}`),
+    queryKey: versionsKey(source, hit.project_id, { loader, gameVersion }),
+    queryFn: () => fetchVersions(source, hit.project_id, { loader, gameVersion }),
     staleTime: 5 * 60_000,
   });
   // What its newest version for this server needs beside it. The panel
@@ -358,9 +379,12 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
   const needed = [...new Set(required.filter((d) => d.project_id).map((d) => d.project_id as string))];
   // Some are given as a version of a project and not the project, and are not looked up by name.
   const unnamed = required.filter((d) => !d.project_id).length;
+  // The panel cannot fetch it: it is downloaded from its page and uploaded.
+  const byHand = handOnly(hit) || newest?.downloadable === false;
+  const name = sourceNames[source];
   const needs = useQuery({
-    queryKey: ["modrinth-projects", needed],
-    queryFn: () => api.get<ModrinthProject[]>(`/catalog/modrinth/projects?${qs({ ids: needed.join(",") })}`),
+    queryKey: [`${source}-projects`, needed],
+    queryFn: () => api.get<ModrinthProject[]>(`/catalog/${source}/projects?${qs({ ids: needed.join(",") })}`),
     enabled: needed.length > 0,
     staleTime: 5 * 60_000,
   });
@@ -442,20 +466,36 @@ function ProjectDetail({ hit, loader, gameVersion, fits, tags, picked, has, busy
               {unnamed > 0 && (
                 <li className="text-xs text-muted">
                   {needed.length > 0 ? "And " : ""}
-                  {unnamed === 1 ? "one other project" : `${unnamed} other projects`}, named on the project's Modrinth page.
+                  {unnamed === 1 ? "one other project" : `${unnamed} other projects`}, named on the project's {name} page.
                 </li>
               )}
-              {needs.isError && <li className="text-xs text-muted">{needed.length === 1 ? "One other project" : `${needed.length} other projects`}, named on the project's Modrinth page.</li>}
+              {needs.isError && (
+                <li className="text-xs text-muted">
+                  {needed.length === 1 ? "One other project" : `${needed.length} other projects`}, named on the project's {name} page.
+                </li>
+              )}
             </ul>
           </section>
         )}
       </div>
+      {byHand && !picked && (
+        <Notice>
+          {hit.project_type === "modpack"
+            ? `Its author only allows downloads on ${name}, so it cannot be installed from here.`
+            : `Its author only allows downloads on ${name}. Download it there, then add it with Upload.`}
+        </Notice>
+      )}
       <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
-        <a href={`https://modrinth.com/${hit.project_type}/${hit.slug}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-accent hover:underline">
-          Open on Modrinth
+        <a href={pageOf(hit)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-accent hover:underline">
+          Open on {name}
           <ExternalLink className="size-3" />
         </a>
-        {picked ? (
+        {byHand && !picked ? (
+          <a href={pageOf(hit)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[13px] font-medium text-accent hover:underline">
+            Download on {name}
+            <ExternalLink className="size-3.5" />
+          </a>
+        ) : picked ? (
           <span className="flex items-center gap-1.5 text-[13px] text-muted">
             <Check className="size-4 text-accent" />
             {pickLabels[1]}

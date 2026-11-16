@@ -3,10 +3,10 @@ import { Gauge } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Chart } from "../components/Chart";
-import { Button, Confirm, CopyText, cx, Empty, Loading, Notice, PageHeader, Spinner, Toggle } from "../components/ui";
+import { Button, Chip, Confirm, CopyText, cx, Empty, Field, Input, Loading, Notice, PageHeader, Spinner, Toggle } from "../components/ui";
 import { api, ApiError, type NodeInfo, type NodeList, type PanelInfo, type ReleaseUpdate } from "../lib/api";
 import { ago } from "../lib/format";
-import { useMe } from "../lib/queries";
+import { keys, useMe } from "../lib/queries";
 import { toast } from "../lib/toast";
 
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
@@ -199,6 +199,98 @@ function AutoUpdate({ panel }: { panel: PanelInfo }) {
 }
 
 /**
+ * The panel's CurseForge API key, which searching and installing from
+ * CurseForge needs. It is kept by the panel and never shown again: only
+ * whether there is one, to replace or remove.
+ */
+function CurseForgeKey({ panel }: { panel: PanelInfo }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const from = panel.curseforge ?? "";
+  const save = async (value: string) => {
+    setBusy(true);
+    try {
+      await api.patch("/panel", { curseforgeKey: value });
+      toast.info(value ? "CurseForge key saved" : "CurseForge key removed");
+      setEditing(false);
+      setKey("");
+      setRemoving(false);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not change this.");
+    } finally {
+      setBusy(false);
+      await Promise.all([qc.invalidateQueries({ queryKey: ["nodes"] }), qc.invalidateQueries({ queryKey: keys.meta })]);
+    }
+  };
+  const asking = editing || from === "";
+  return (
+    <section aria-label="CurseForge" className="mt-6 flex flex-col gap-3 rounded-lg border border-line bg-surface px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-medium">CurseForge</p>
+          <p className="text-xs text-muted">
+            {from === "panel"
+              ? "Mods and modpacks can be found and installed from CurseForge."
+              : from === "install"
+                ? "Mods and modpacks can be found and installed from CurseForge, with the key avSYS was installed with."
+                : "Add an API key to find and install mods and modpacks from CurseForge. Get one at console.curseforge.com."}
+          </p>
+        </div>
+        {from !== "" && <Chip className="border-accent/40 text-accent">key set</Chip>}
+        {from !== "" && !editing && (
+          <Button size="sm" onClick={() => setEditing(true)}>
+            Replace
+          </Button>
+        )}
+        {from === "panel" && !editing && (
+          <Button size="sm" variant="danger" onClick={() => setRemoving(true)}>
+            Remove
+          </Button>
+        )}
+      </div>
+      {asking && (
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (key.trim()) void save(key.trim());
+          }}
+        >
+          <Field label="API key" className="min-w-0 flex-1">
+            {(id) => <Input id={id} type="password" autoComplete="off" spellCheck={false} required value={key} onChange={(e) => setKey(e.target.value)} className="font-mono" />}
+          </Field>
+          <Button type="submit" variant="primary" loading={busy}>
+            Save
+          </Button>
+          {editing && (
+            <Button
+              onClick={() => {
+                setEditing(false);
+                setKey("");
+              }}
+            >
+              Cancel
+            </Button>
+          )}
+        </form>
+      )}
+      <Confirm
+        open={removing}
+        onOpenChange={setRemoving}
+        title="Remove the CurseForge key?"
+        description="CurseForge is no longer offered when adding content. Servers keep what they have."
+        action="Remove"
+        loading={busy}
+        onConfirm={() => save("")}
+      />
+    </section>
+  );
+}
+
+/**
  * The cluster's nodes, for the panel's administrator: whether each is up,
  * how fast it is, how much memory it has left, and which servers run on it.
  */
@@ -348,6 +440,7 @@ export function Nodes() {
         })}
       </ul>
       {nodes.data.panel?.canUpdate && <AutoUpdate panel={nodes.data.panel} />}
+      {nodes.data.panel && <CurseForgeKey panel={nodes.data.panel} />}
     </>
   );
 }

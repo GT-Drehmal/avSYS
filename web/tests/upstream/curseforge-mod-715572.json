@@ -1,0 +1,41 @@
+{
+ "data": {
+  "id": 715572,
+  "gameId": 432,
+  "name": "All the Mods 9",
+  "slug": "all-the-mods-9",
+  "links": {
+   "websiteUrl": "https://www.curseforge.com/minecraft/modpacks/all-the-mods-9",
+   "wikiUrl": "",
+   "issuesUrl": "",
+   "sourceUrl": ""
+  },
+  "summary": "All the mods 9 is the next in the All the Mods series",
+  "status": 4,
+  "downloadCount": 5600000,
+  "isFeatured": false,
+  "primaryCategoryId": 0,
+  "categories": [],
+  "classId": 4471,
+  "authors": [
+   {
+    "id": 1,
+    "name": "ATMTeam",
+    "url": ""
+   }
+  ],
+  "logo": null,
+  "screenshots": [],
+  "mainFileId": 0,
+  "latestFiles": [],
+  "latestFilesIndexes": [],
+  "latestEarlyAccessFilesIndexes": [],
+  "dateCreated": "2020-01-01T00:00:00Z",
+  "dateModified": "2026-09-01T10:00:00Z",
+  "dateReleased": "2026-09-01T10:00:00Z",
+  "allowModDistribution": true,
+  "gamePopularityRank": 1,
+  "isAvailable": true,
+  "thumbsUpCount": 0
+ }
+}

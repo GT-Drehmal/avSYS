@@ -67,8 +67,8 @@ func (s *Server) addURLToStack(w http.ResponseWriter, r *http.Request, u *store.
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	if in.Project != nil && (in.Project.Source != "modrinth" || in.Project.ID == "") {
-		return errBadRequest("A resource pack picked from a project names the project: source modrinth, and the project's id.")
+	if in.Project != nil && !packSource(in.Project) {
+		return errBadRequest("A resource pack picked from a project names the project: source modrinth or curseforge, and the project's id.")
 	}
 	return s.addPackTo(w, r, u, func(_ *access, to *os.File, limit int64) (avsysv1.StackedPack, error) {
 		stacked, err := downloadPack(r.Context(), to, in.URL, in.SHA1, limit)

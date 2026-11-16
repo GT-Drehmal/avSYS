@@ -1,6 +1,7 @@
 import { ExternalLink, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { api, qs, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec, type StackedPack } from "../lib/api";
+import { api, type CatalogSource, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec, type StackedPack } from "../lib/api";
+import { fetchVersions, isCatalog, projectPage, sourceNames, useSources } from "../lib/catalog";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { packFormatsOf, useGameFormat, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
@@ -95,7 +96,7 @@ interface AddContentProps {
 /** Choosing a server's one resource pack. */
 export interface PackPicker {
   current?: ResourcePack | null;
-  /** Makes it this one, from Modrinth or a URL; settled once it is saved. */
+  /** Makes it this one, from a catalog or a URL; settled once it is saved. */
   onPick: (pack: ResourcePack) => Promise<unknown>;
   /** Where one is uploaded, for a server that exists, and what to do with the server after. */
   upload?: { path: string; method?: "PUT" | "POST"; onDone: (next: Server) => void };
@@ -105,11 +106,12 @@ export interface PackPicker {
   keep?: (file: File) => void;
 }
 
-/** A dialog for picking mods, plugins, datapacks or the resource pack, from Modrinth, a URL or this computer. */
+/** A dialog for picking mods, plugins, datapacks or the resource pack, from Modrinth, CurseForge, a URL or this computer. */
 export function AddContentDialog({ software, mods, onAdd, busy, onUpload, uploadNote, description, pack, start, only, onClose }: AddContentProps) {
   const kinds: PickKind[] = only && start ? [start] : [...kindsFor(software), ...(pack ? (["resourcepack"] as const) : [])];
   const [kind, setKind] = useState<PickKind>(start && kinds.includes(start) ? start : kinds[0]);
-  const [tab, setTab] = useState<"modrinth" | "url" | "upload">("modrinth");
+  const sources = useSources();
+  const [tab, setTab] = useState<CatalogSource | "url" | "upload">("modrinth");
   const [uploading, setUploading] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   // Content installed on the server: the resource pack has a pane of its own.
@@ -128,7 +130,9 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
     }
   };
   const [url, setUrl] = useState("");
-  const picked = new Set(mods.filter((m) => m.source === "modrinth").map((m) => m.project));
+  // A catalog that is no longer offered, as when its key was removed, is not shown.
+  const shown = isCatalog(tab) && !sources.includes(tab) ? "modrinth" : tab;
+  const picked = new Set(mods.filter((m) => m.source === shown).map((m) => m.project));
   // "Latest" is what the server's own software will get, which can be behind the newest there is.
   const versions = useGameVersions(software.modpack ? null : software.loader);
   // Another kind's list, shown while this one's loads, is not this one's latest.
@@ -140,7 +144,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
 
   const tabClass = (active: boolean) => cx("h-7 rounded-sm px-2.5 text-xs font-medium", active ? "bg-hover text-fg" : "text-muted hover:text-fg");
   const canUpload = kind === "resourcepack" ? !!(pack?.upload || pack?.keep) : !!onUpload;
-  const sourceTab = tab === "upload" && !canUpload ? "modrinth" : tab;
+  const sourceTab = shown === "upload" && !canUpload ? "modrinth" : shown;
   return (
     <Modal open onOpenChange={onClose} size="lg" title={kinds.length === 1 ? `Add ${kindNames[kinds[0]].toLowerCase()}` : "Add content"} description={kind === "resourcepack" ? "Offered to players when they join." : description}>
       <div className="flex flex-col gap-4">
@@ -157,9 +161,11 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
             <span />
           )}
           <div className="flex gap-1 rounded-md border border-line bg-bg p-0.5">
-            <button type="button" className={tabClass(tab === "modrinth")} onClick={() => setTab("modrinth")}>
-              Modrinth
-            </button>
+            {sources.map((s) => (
+              <button key={s} type="button" className={tabClass(sourceTab === s)} onClick={() => setTab(s)}>
+                {sourceNames[s]}
+              </button>
+            ))}
             <button type="button" className={tabClass(tab === "url")} onClick={() => setTab("url")}>
               From URL
             </button>
@@ -172,20 +178,21 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
         </div>
         {kind === "resourcepack" && pack ? (
           <PackPane pack={pack} tab={sourceTab} filters={filters} fits={fitsOf(filters)} waiting={unknownLatest} onClose={onClose} />
-        ) : tab === "modrinth" ? (
+        ) : isCatalog(sourceTab) ? (
           <div className="h-[min(60vh,560px)]">
             <ModrinthSearch
-              key={kind}
+              key={`${kind}-${sourceTab}`}
+              source={sourceTab}
               type={content}
               {...filters}
               fits={fitsOf(filters)}
               picked={picked}
               busy={busy}
-              placeholder={`Search ${kindNames[kind].toLowerCase()} on Modrinth`}
-              onPick={(hit) => onAdd({ source: "modrinth", kind: content, project: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined })}
+              placeholder={`Search ${kindNames[kind].toLowerCase()} on ${sourceNames[sourceTab]}`}
+              onPick={(hit) => onAdd({ source: sourceTab, kind: content, project: projectRef(sourceTab, hit), title: hit.title, iconUrl: hit.icon_url ?? undefined })}
             />
           </div>
-        ) : tab === "upload" ? (
+        ) : sourceTab === "upload" ? (
           <label
             onDragOver={(e) => {
               e.preventDefault();
@@ -246,23 +253,27 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
   );
 }
 
-/** A Modrinth version's file as a server's resource pack, made for the formats of the game versions it is listed for. */
+/** How content from a catalog is named: on Modrinth by its slug, on CurseForge by its ID. */
+export const projectRef = (source: CatalogSource, hit: ModrinthHit) => (source === "curseforge" ? hit.project_id : hit.slug);
+
+/** A version's file as a server's resource pack, made for the formats of the game versions it is listed for. */
 export async function packOfVersion(v: ModrinthVersion, project: Omit<PackProject, "version" | "versionName">): Promise<ResourcePack> {
   const file = v.files?.find((f) => f.primary) ?? v.files?.[0];
+  if (!file && v.downloadable === false) throw new Error(`${project.title || project.id} can only be downloaded on ${sourceNames[project.source]}. Download it there, then add it with Upload.`);
   if (!file) throw new Error(`${project.title || project.id} ${v.version_number} has no file to offer.`);
   const formats = await packFormatsOf(v.game_versions ?? []);
   return { url: file.url, sha1: file.hashes.sha1 ?? "", uploaded: null, project: { ...project, version: v.id, versionName: v.version_number }, formats };
 }
 
-/** The newest release of a Modrinth project that fits, as a resource pack. */
+/** The newest release of a project that fits, as a resource pack. */
 export async function newestPack(project: Omit<PackProject, "version" | "versionName">, gameVersion?: string): Promise<ResourcePack> {
-  const versions = await api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(project.id)}/versions?${qs({ loader: "resourcepack", gameVersion })}`);
+  const versions = await fetchVersions(project.source, project.id, { loader: "resourcepack", gameVersion });
   const v = versions.find((v) => v.version_type === "release") ?? versions[0];
   if (!v) throw new Error(`${project.title || project.id} has no version for Minecraft ${gameVersion}.`);
   return packOfVersion(v, project);
 }
 
-const projectOf = (hit: ModrinthHit): Omit<PackProject, "version" | "versionName"> => ({ source: "modrinth", id: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined });
+const projectOf = (source: CatalogSource, hit: ModrinthHit): Omit<PackProject, "version" | "versionName"> => ({ source, id: projectRef(source, hit), title: hit.title, iconUrl: hit.icon_url ?? undefined });
 
 /** What a resource pack is called: its project, its file, or the end of its address. */
 /** The file at the end of an address, as it reads: a malformed escape is left as it is. */
@@ -292,7 +303,7 @@ function PackPane({
   fits,
   waiting,
   onClose,
-}: { pack: PackPicker; tab: "modrinth" | "url" | "upload"; filters: { loader?: string; gameVersion?: string }; fits?: string; waiting?: boolean; onClose: () => void }) {
+}: { pack: PackPicker; tab: CatalogSource | "url" | "upload"; filters: { loader?: string; gameVersion?: string }; fits?: string; waiting?: boolean; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState("");
   const [sha1, setSha1] = useState("");
@@ -333,17 +344,19 @@ function PackPane({
   return (
     <div className="flex flex-col gap-3">
       {current && !pack.onTop && <Notice tone="info">This replaces {packTitle(current)}.</Notice>}
-      {tab === "modrinth" ? (
+      {isCatalog(tab) ? (
         <div className="h-[min(56vh,520px)]">
           <ModrinthSearch
+            key={tab}
+            source={tab}
             type="resourcepack"
             {...filters}
             fits={fits}
             picked={new Set([current?.project?.id, ...(current?.stack ?? []).map((p) => p.project?.id)].filter((id): id is string => !!id))}
             busy={pending || waiting}
             pickLabels={pack.onTop ? ["Add", "Added"] : ["Use this pack", "In use"]}
-            placeholder="Search resource packs on Modrinth"
-            onPick={(hit) => pick(() => newestPack(projectOf(hit), filters.gameVersion))}
+            placeholder={`Search resource packs on ${sourceNames[tab]}`}
+            onPick={(hit) => pick(() => newestPack(projectOf(tab, hit), filters.gameVersion))}
           />
         </div>
       ) : tab === "upload" ? (
@@ -437,11 +450,7 @@ export function PackCard({ pack, showKind = true, children }: { pack: ResourcePa
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-2 truncate text-[13px] font-medium">
                     {title}
-                    {s.project && (
-                      <a href={`https://modrinth.com/resourcepack/${s.project.id}`} target="_blank" rel="noreferrer" className="text-faint hover:text-accent" aria-label="Open on Modrinth">
-                        <ExternalLink className="size-3" />
-                      </a>
-                    )}
+                    {s.project && <ProjectLink source={s.project.source} project={s.project.id} kind="resourcepack" />}
                   </p>
                   <p className="truncate text-xs text-faint">{s.project ? s.project.versionName : s.size ? bytes(s.size) : ""}</p>
                 </div>
@@ -458,11 +467,7 @@ export function PackCard({ pack, showKind = true, children }: { pack: ResourcePa
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-2 truncate text-[13px] font-medium">
           {packTitle(pack)}
-          {p && (
-            <a href={`https://modrinth.com/resourcepack/${p.id}`} target="_blank" rel="noreferrer" className="text-faint hover:text-accent" aria-label="Open on Modrinth">
-              <ExternalLink className="size-3" />
-            </a>
-          )}
+          {p && <ProjectLink source={p.source} project={p.id} kind="resourcepack" />}
         </p>
         {(pack.uploaded || !p) && (
           <p className="truncate font-mono text-xs text-faint">
@@ -503,8 +508,17 @@ export function PackFit({ pack, version }: { pack: ResourcePack; version?: strin
   );
 }
 
-// One from Modrinth links there, which says it all.
-const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? "uploaded file" : m.source === "modrinth" ? undefined : `${m.source}:${m.project}`);
+// One from a catalog links there, which says it all.
+const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? "uploaded file" : undefined);
+
+/** A small link to a project's page where it is from. */
+export function ProjectLink({ source = "modrinth", project, kind }: { source?: CatalogSource; project: string; kind?: string }) {
+  return (
+    <a href={projectPage(source, project, kind)} target="_blank" rel="noreferrer" className="shrink-0 text-faint hover:text-accent" aria-label={`Open on ${sourceNames[source]}`}>
+      <ExternalLink className="size-3" />
+    </a>
+  );
+}
 
 const titleOf = (m: ContentRef) => (m.source === "upload" ? withoutExtension(m.title || m.project) : m.title || m.project);
 
@@ -530,11 +544,7 @@ export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = 
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 truncate text-[13px] font-medium">
               {titleOf(m)}
-              {m.source === "modrinth" && (
-                <a href={`https://modrinth.com/project/${m.project}`} target="_blank" rel="noreferrer" className="text-faint hover:text-accent" aria-label="Open on Modrinth">
-                  <ExternalLink className="size-3" />
-                </a>
-              )}
+              {isCatalog(m.source) && <ProjectLink source={m.source} project={m.project} />}
             </p>
             {(note?.(m, i) ?? sourceLine(m)) && <p className="truncate font-mono text-xs text-faint">{note?.(m, i) ?? sourceLine(m)}</p>}
           </div>

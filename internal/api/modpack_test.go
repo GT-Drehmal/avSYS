@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"path"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,7 +34,10 @@ func mrpack(t *testing.T, index string, files map[string]string) []byte {
 	for name, body := range files {
 		all[name] = body
 	}
-	for name, body := range all {
+	// In order of name, so that a pack is the same each time it is made:
+	// where in it the index is decides what reading it fetches.
+	for _, name := range slices.Sorted(maps.Keys(all)) {
+		body := all[name]
 		if index == "" && name == "modrinth.index.json" {
 			continue
 		}

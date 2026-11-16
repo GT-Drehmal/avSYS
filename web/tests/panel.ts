@@ -24,10 +24,20 @@ export const withMetrics = "http://127.0.0.1:8098";
  */
 export const withOffsite = "http://127.0.0.1:8097";
 
+/** Where the panel installed with a CurseForge key listens: CurseForge is offered there, answered from tests/upstream. */
+export const withCurseForge = "http://127.0.0.1:8096";
+
 const panels = new Map<string, Panel>();
 /** The panel at baseURL: the plain one unless it is withMetrics or withOffsite. */
 const info = (baseURL?: string) => {
-  const file = baseURL === withMetrics ? "tests/.panel-metrics.json" : baseURL === withOffsite ? "tests/.panel-offsite.json" : "tests/.panel.json";
+  const file =
+    baseURL === withMetrics
+      ? "tests/.panel-metrics.json"
+      : baseURL === withOffsite
+        ? "tests/.panel-offsite.json"
+        : baseURL === withCurseForge
+          ? "tests/.panel-curseforge.json"
+          : "tests/.panel.json";
   let panel = panels.get(file);
   if (!panel) {
     panel = JSON.parse(readFileSync(file, "utf8")) as Panel;

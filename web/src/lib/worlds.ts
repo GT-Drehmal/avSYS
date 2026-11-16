@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, type LibraryWorld, type Modpack, type ModrinthVersion, type ServerSpec } from "./api";
+import { type LibraryWorld, type Modpack, type ModrinthVersion, type ServerSpec } from "./api";
+import { fetchVersions, isCatalog, versionsKey } from "./catalog";
 import { bytes } from "./format";
 
 /** Where a world came from, said plainly. */
@@ -36,7 +37,7 @@ export function worldSummary(w: LibraryWorld) {
 export const runsOn = (spec: Pick<ServerSpec, "modpack" | "version">, latest: string | undefined) =>
   spec.modpack ? spec.modpack.gameVersion : spec.version === "LATEST" ? latest : spec.version;
 
-/** The version of a modpack from Modrinth the panel pins when none is picked: its newest release, else its newest. */
+/** The version of a modpack from a catalog the panel pins when none is picked: its newest release, else its newest. */
 export const pinnedOf = (list: ModrinthVersion[] | undefined, version: string | undefined) => {
   if (!list) return undefined;
   if (version) return list.find((v) => v.id === version);
@@ -46,13 +47,14 @@ export const pinnedOf = (list: ModrinthVersion[] | undefined, version: string | 
 
 /**
  * The game version a modpack is built for: as the panel recorded it, or for
- * one just picked from Modrinth, that of the version the panel will pin.
+ * one just picked from a catalog, that of the version the panel will pin.
  */
 export function usePackGame(pack: Modpack | null | undefined) {
-  const lookup = !!pack && pack.source === "modrinth" && !pack.gameVersion && !!pack.project;
+  const source = pack && isCatalog(pack.source) ? pack.source : "modrinth";
+  const lookup = !!pack && isCatalog(pack.source) && !pack.gameVersion && !!pack.project;
   const versions = useQuery({
-    queryKey: ["modrinth-versions", pack?.project ?? "", {}],
-    queryFn: () => api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(pack?.project ?? "")}/versions?`),
+    queryKey: versionsKey(source, pack?.project ?? "", {}),
+    queryFn: () => fetchVersions(source, pack?.project ?? "", {}),
     enabled: lookup,
     staleTime: 5 * 60_000,
   });

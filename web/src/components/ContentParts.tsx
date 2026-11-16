@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ExternalLink, GripVertical, Plus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, GripVertical, Plus, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, ApiError, qs, serverPath, type ModrinthVersion, type Server, type StackedPack } from "../lib/api";
+import { api, ApiError, serverPath, type CatalogSource, type ModrinthVersion, type Server, type StackedPack } from "../lib/api";
+import { fetchVersions, sourceNames, versionsKey } from "../lib/catalog";
 import { ago, bytes } from "../lib/format";
 import type { PackFile } from "../lib/mrpack";
 import { applyServer, type useUpdateServer } from "../lib/queries";
 import { toast } from "../lib/toast";
-import { packOfVersion, stackedTitle } from "./Content";
+import { packOfVersion, ProjectLink, stackedTitle } from "./Content";
 import { usePackFiles } from "./Modpack";
 import { ProjectIcon } from "./ModrinthSearch";
 import { Button, Chip, cx, Modal, Spinner } from "./ui";
@@ -15,6 +16,8 @@ import { Button, Chip, cx, Modal, Spinner } from "./ui";
 // content with.
 
 interface VersionDialogProps {
+  /** Where the project is: Modrinth unless said. */
+  source?: CatalogSource;
   title: string;
   project: string;
   current?: string;
@@ -23,10 +26,10 @@ interface VersionDialogProps {
   onClose: () => void;
 }
 
-export function VersionDialog({ title, project, current, filters, onPick, onClose }: VersionDialogProps) {
+export function VersionDialog({ source = "modrinth", title, project, current, filters, onPick, onClose }: VersionDialogProps) {
   const versions = useQuery({
-    queryKey: ["modrinth-versions", project, filters],
-    queryFn: () => api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(project)}/versions?${qs(filters)}`),
+    queryKey: versionsKey(source, project, filters),
+    queryFn: () => fetchVersions(source, project, filters),
     staleTime: 5 * 60_000,
   });
   const row = "flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-[13px] hover:bg-raised";
@@ -58,6 +61,7 @@ export function VersionDialog({ title, project, current, filters, onPick, onClos
                 </span>
               </span>
               {v.version_type !== "release" && <Chip>{v.version_type}</Chip>}
+              {v.downloadable === false && <Chip className="border-warn/40 text-warn">upload by hand</Chip>}
               {current === v.id && <Chip className="border-accent/40 text-accent">current</Chip>}
             </button>
           </li>
@@ -241,11 +245,7 @@ export function PackStack({
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-2 truncate text-[13px] font-medium">
                   {title}
-                  {p.project && (
-                    <a href={`https://modrinth.com/resourcepack/${p.project.id}`} target="_blank" rel="noreferrer" className="text-faint hover:text-accent" aria-label="Open on Modrinth">
-                      <ExternalLink className="size-3" />
-                    </a>
-                  )}
+                  {p.project && <ProjectLink source={p.project.source} project={p.project.id} kind="resourcepack" />}
                 </p>
                 {line && <p className="truncate text-xs text-faint">{line}</p>}
               </div>
@@ -310,14 +310,16 @@ export function PackFromModpack({ server, update, disabled, onLooking }: { serve
   const files = usePackFiles(server);
   const rp = server.spec.resourcePack?.url ? server.spec.resourcePack : null;
   const has = new Set([rp?.project?.id, ...(rp?.stack ?? []).map((p) => p.project?.id)].filter(Boolean));
-  const offered = files.filter((f) => f.path.startsWith("resourcepacks/") && f.project && f.version && !has.has(f.project) && !(f.slug && has.has(f.slug)));
+  const offered = files.filter((f) => f.path.startsWith("resourcepacks/") && f.project && f.version && !f.manual && !has.has(f.project) && !(f.slug && has.has(f.slug)));
   const take = async (f: PackFile) => {
-    const project = { source: "modrinth" as const, id: f.slug || f.project || "", title: f.title, iconUrl: f.iconUrl };
+    // One from CurseForge is named by its ID there, one from Modrinth by its slug.
+    const source: CatalogSource = f.source ?? "modrinth";
+    const project = { source, id: (source === "modrinth" && f.slug) || f.project || "", title: f.title, iconUrl: f.iconUrl };
     onLooking(true);
     try {
-      const versions = await api.get<ModrinthVersion[]>(`/catalog/modrinth/projects/${encodeURIComponent(project.id)}/versions?${qs({ loader: "resourcepack" })}`);
+      const versions = await fetchVersions(source, project.id, { loader: "resourcepack" });
       const v = versions.find((v) => v.id === f.version);
-      if (!v) throw new Error(`The pack's version of ${packFileName(f)} is no longer on Modrinth.`);
+      if (!v) throw new Error(`The pack's version of ${packFileName(f)} is no longer on ${sourceNames[source]}.`);
       const next = await packOfVersion(v, project);
       if (rp) applyServer(qc, await api.post<Server>(`${serverPath(server.org, server.name)}/resource-packs/url`, { url: next.url, sha1: next.sha1, project: next.project, formats: next.formats }));
       else await update.mutateAsync({ resourcePack: { ...next, enforce: false, prompt: "" } });

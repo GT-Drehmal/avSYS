@@ -3,4 +3,5 @@ playwright-report/
 tests/.panel.json
 tests/.panel-metrics.json
 tests/.panel-offsite.json
+tests/.panel-curseforge.json
 *.tsbuildinfo

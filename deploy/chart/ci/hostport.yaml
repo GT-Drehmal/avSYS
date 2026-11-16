@@ -301,6 +301,14 @@ spec:
               value: "true"
             - name: AVSYS_UPDATE_CHECK
               value: "true"
+            # A key put in this Secret later is used from the next start;
+            # one can also be entered in the panel.
+            - name: AVSYS_CURSEFORGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: avsys-curseforge
+                  key: api-key
+                  optional: true
           ports:
             - name: http
               containerPort: 8080
