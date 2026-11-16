@@ -53,3 +53,42 @@ test("once the cluster can be reached again, servers are asked for again, and no
   await page.waitForTimeout(500);
   expect(asked.snapshots).toBe(1);
 });
+
+test("the cluster back while servers are first being asked for, they are asked for again, and that answer is shown", async ({ page, as }) => {
+  await as("owner");
+  // The cluster is said to be back while the first list is on its way, which
+  // then comes with what the panel told while it could not reach it:
+  // nothing. The page asks again, and shows that answer.
+  const signal = () => {
+    let done: () => void = () => {};
+    const promise = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    return { promise, done };
+  };
+  const first = signal();
+  const said = signal();
+  const again = signal();
+  let asked = 0;
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (asked++ > 0) {
+      again.done();
+      return route.continue();
+    }
+    first.done();
+    await said.promise;
+    // Not asked again within a few seconds, it never will be.
+    await Promise.race([again.promise, new Promise((resolve) => setTimeout(resolve, 3000))]);
+    await route.fulfill({ json: [] });
+  });
+  let streams = 0;
+  await page.route("**/api/v1/events?*", async (route) => {
+    if (streams++ > 0) return route.abort();
+    await first.promise;
+    await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: `${stream({ reachable: true })}event: resync\ndata: {"cluster":true}\n\n` });
+    said.done();
+  });
+  await page.goto("/o/friends");
+  await expect(page.getByRole("link", { name: "Survival" }).first()).toBeVisible();
+  expect(asked).toBe(2);
+});

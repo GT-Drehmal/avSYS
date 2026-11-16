@@ -99,6 +99,19 @@ prepull() {
   return 0
 }
 
+# kubelet_started NODE: waits, without going into it, until a node's k3s has
+# started its kubelet. Before then, k3s moves what runs in its container
+# into a cgroup of its own and turns on the cgroup controllers, which fails
+# while a process run in the container with docker exec is in the way: its
+# kubelet then cannot start, and the node never joins.
+kubelet_started() {
+  for _ in $(seq 1 120); do
+    docker logs "$1" 2>&1 | grep -q '"Started kubelet"' && return 0
+    sleep 1
+  done
+  return 1
+}
+
 step "images"
 if [ -z "${E2E_SKIP_BUILD:-}" ]; then
   docker build -q -t "$PANEL" --build-arg VERSION=e2e . >/dev/null
@@ -111,6 +124,7 @@ docker rm -f -v "$NAME" "$AGENT" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --privileged \
   -p "127.0.0.1:$HTTP_PORT:80" -p "127.0.0.1:$SSH_PORT:2222" -p "127.0.0.1:$ROUTER_PORT:25565" \
   "$K3S" server --disable traefik --disable metrics-server >/dev/null
+kubelet_started "$NAME" || fail "the cluster did not come up"
 for _ in $(seq 1 60); do
   k get --raw /readyz >/dev/null 2>&1 && k get serviceaccount default >/dev/null 2>&1 && break
   sleep 2
@@ -132,15 +146,32 @@ address=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{
 docker run -d --name "$AGENT" --privileged -e K3S_URL="https://$address:6443" -e K3S_TOKEN="$joining" "$K3S" agent >/dev/null
 # Its pulls start once its container runtime answers.
 (
+  kubelet_started "$AGENT" || exit 0
   for _ in $(seq 1 60); do docker exec "$AGENT" crictl info >/dev/null 2>&1 && break; sleep 2; done
   prepull "$AGENT"
 ) &
 prepulls="$prepulls $!"
-for _ in $(seq 1 60); do
-  [ "$(k get nodes --no-headers 2>/dev/null | grep -c ' Ready ')" = 2 ] && break
-  sleep 2
-done
-[ "$(k get nodes --no-headers 2>/dev/null | grep -c ' Ready ')" = 2 ] || fail "the second node did not join"
+# It joins within about 20 seconds. One that has not in a minute and a half
+# is not going to: what it said is shown, and it is started again, once.
+joined() {
+  for _ in $(seq 1 45); do
+    [ "$(k get nodes --no-headers 2>/dev/null | grep -c ' Ready ')" = 2 ] && return 0
+    sleep 2
+  done
+  return 1
+}
+# agent_said: the nodes, and what went wrong on the second one.
+agent_said() {
+  k get nodes -o wide 2>&1 || true
+  docker ps -a --filter "name=^$AGENT\$" --format '{{.Names}}: {{.Status}}' 2>&1 || true
+  docker logs "$AGENT" 2>&1 | grep -E '^E[0-9]|level=(error|fatal)|too many open files' | tail -20 | sed 's/^/agent| /' || true
+}
+if ! joined; then
+  echo "note: the second node did not join; it is started again"
+  agent_said
+  docker restart "$AGENT" >/dev/null
+  joined || { agent_said; fail "the second node did not join"; }
+fi
 docker save "$PANEL" "$WORKSPACE" | docker exec -i "$AGENT" ctr images import - >/dev/null
 AGENT_NODE=$(k get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{.items[0].metadata.name}')
 [ -n "$AGENT_NODE" ] || fail "the second node is not named"
