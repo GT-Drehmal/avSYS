@@ -28,6 +28,8 @@ Open the panel's address and sign in with your username and password, or
 with **Continue with GitHub** (or Discord, Google, or your club's own
 sign-in, whichever the panel offers).
 
+![The sign-in page, with GitHub, Discord and Google](images/sign-in.png)
+
 **New here?** Accounts come from invite links. Open the link an
 organization admin gave you, then make an account or sign in; you join
 that organization as the role the invite names. Some panels let anyone
@@ -127,6 +129,8 @@ Every way of making a server is the same form: **New server** on the
 **Servers** page. It opens filled in from where you started, and you can
 change anything before you press **Create server**.
 
+![The new-server form](images/new-server.png)
+
 ### Starting point
 
 | Choose | To |
@@ -168,8 +172,10 @@ pre-releases** to see test versions; a world opened in one may not open in
 older versions. Fabric, Quilt, Forge and NeoForge also have a **Loader
 build**, newest unless you choose.
 
-**Modpack**: search Modrinth or CurseForge and pick one. Or upload a **.mrpack** file. The pack
-decides the game version and loader.
+**Modpack**: search Modrinth or CurseForge and pick one. Or upload a
+**.mrpack** file. The pack decides the game version and loader.
+
+![Picking a modpack on the new-server form](images/modpack.png)
 
 ### The rest of the form
 
@@ -230,6 +236,8 @@ world** while it is stopped. A snapshot is taken first.
 
 ## A server's page
 
+![A server's page, with its live console](images/server.png)
+
 At the top: the server's picture, name and status, who else has the page
 open, and what was done to it last (press it for the **Activity** list).
 The buttons:
@@ -281,6 +289,8 @@ photos come out the right way up.
 The **Content** tab shows what is installed. Admins change it.
 
 **Add** opens a picker with:
+
+![Adding plugins from Modrinth](images/content-add.png)
 
 - **Modrinth** and **CurseForge**: search, filter by category, sort, and
   look closer at a project. Results fit the server's type and game version.
@@ -357,6 +367,8 @@ Minecraft name, **Bedrock** by Xbox gamertag. A list shows which servers use
 it. Changing a list changes every server using it. **Save as list** under a
 server's whitelist or operators makes one from what it has.
 
+![A saved player list with Java and Bedrock players](images/players.png)
+
 ### Bedrock players
 
 Bedrock players (phones, consoles, Windows) join a Java server through
@@ -380,6 +392,8 @@ folder**, **Upload** (or drag files in), **Find a file**, and on each row
 them. Text files up to 2 MB open in the editor; **Save** or Ctrl/Cmd-S.
 If someone else changed the file since you opened it, saving says so
 instead of overwriting their change. Pictures open as pictures.
+
+![Editing server.properties in the browser](images/files.png)
 
 **Terminal.** A shell on the server, in the server's folder, as in SSH.
 
@@ -427,6 +441,8 @@ Minecraft. Joining it wakes it: the first join is told it is waking up, and
 a minute later you can join. Operators and up can also press **Wake** on
 the server's page.
 
+![The server list: one asleep, one online, one offline](images/servers.png)
+
 ## Extra ports
 
 Some mods and plugins listen on ports of their own: voice chat, Geyser
@@ -447,6 +463,8 @@ such as a voice chat client connecting or someone opening the map.
 A **snapshot** is a server's files and settings at one moment. Taking one
 does not stop the server. Snapshots of an organization's servers share
 storage, so each costs only what changed.
+
+![The Backups page: the daily schedule and each server's snapshots](images/backups.png)
 
 **Taking one.** **Snapshot** on the server's page (operators and up).
 

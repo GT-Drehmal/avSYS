@@ -31,6 +31,21 @@ for (const who of ["owner", "viewer"] satisfies Role[]) {
   }
 }
 
+test("Help opens the documentation in a tab of its own, on a phone too", async ({ page, as }) => {
+  await as("viewer");
+  for (const viewport of [
+    { width: 1280, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/o/friends");
+    const help = page.getByRole("link", { name: "Help" });
+    await expect(help).toBeVisible();
+    await expect(help).toHaveAttribute("href", "https://gt-drehmal.github.io/avSYS/");
+    await expect(help).toHaveAttribute("target", "_blank");
+  }
+});
+
 test("the new-server page opens for the owner", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends/new");

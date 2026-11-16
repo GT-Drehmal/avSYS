@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, ChevronsUpDown, Cpu, Globe, LayoutTemplate, ListChecks, LogOut, Plus, Server, Settings, SlidersHorizontal, UserRound, Users } from "lucide-react";
+import { Archive, BookOpen, Check, ChevronsUpDown, Cpu, Globe, LayoutTemplate, ListChecks, LogOut, Plus, Server, Settings, SlidersHorizontal, UserRound, Users } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
@@ -139,6 +139,9 @@ function OrgSwitcher({ current }: { current?: Org }) {
   );
 }
 
+/** Where avSYS's documentation is published. */
+const docsURL = "https://gt-drehmal.github.io/avSYS/";
+
 function NavItem({ to, end, icon, children }: { to: string; end?: boolean; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <NavLink
@@ -266,10 +269,20 @@ export function Shell() {
             )}
           </nav>
         )}
-        <div className="flex flex-col gap-2 md:mt-auto">
+        <div className="flex items-center gap-2 md:mt-auto md:flex-col md:items-stretch">
+          {/* The documentation, in a tab of its own: what is open here stays. */}
+          <a
+            href={docsURL}
+            target="_blank"
+            rel="noreferrer"
+            className="order-last flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-muted transition-colors hover:bg-raised/60 hover:text-fg md:order-first [&>svg]:size-4"
+          >
+            <BookOpen />
+            Help
+          </a>
           <Menu>
             <MenuTrigger asChild>
-              <button className="flex h-10 w-full items-center gap-2.5 rounded-md px-1.5 text-left hover:bg-raised">
+              <button className="flex h-10 w-full min-w-0 flex-1 items-center md:flex-none gap-2.5 rounded-md px-1.5 text-left hover:bg-raised">
                 <Picture name={me.user.username} url={me.user.avatarUrl || undefined} shape="round" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] leading-tight font-medium">{me.user.displayName || me.user.username}</span>

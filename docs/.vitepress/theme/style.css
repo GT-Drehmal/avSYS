@@ -1,0 +1,91 @@
+/* The panel's look: near-neutral greys, a touch cool, and one accent,
+   amethyst, the light in the mark's gate. Deeper on a light page. */
+
+:root {
+  --vp-font-family-base: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --vp-font-family-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --vp-c-brand-1: #7a45ea;
+  --vp-c-brand-2: #6833d6;
+  --vp-c-brand-3: #7a45ea;
+  --vp-c-brand-soft: rgba(122, 69, 234, 0.12);
+
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-alt: #f6f7f8;
+  --vp-c-bg-elv: #ffffff;
+  --vp-c-bg-soft: #f1f2f4;
+  --vp-c-divider: #e3e5e8;
+  --vp-c-border: #d6d8dc;
+  --vp-c-gutter: #e3e5e8;
+  --vp-c-text-1: #16181c;
+  --vp-c-text-2: #5d6066;
+  --vp-c-text-3: #8b8e93;
+
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-active-text: #ffffff;
+
+  --vp-home-hero-name-color: var(--vp-c-brand-1);
+  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(122, 69, 234, 0.22) 0%, rgba(122, 69, 234, 0) 65%);
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+.dark {
+  --vp-c-brand-1: #b98cff;
+  --vp-c-brand-2: #caabff;
+  --vp-c-brand-3: #b98cff;
+  --vp-c-brand-soft: rgba(185, 140, 255, 0.14);
+
+  --vp-c-bg: #0b0c0f;
+  --vp-c-bg-alt: #111215;
+  --vp-c-bg-elv: #18191c;
+  --vp-c-bg-soft: #18191c;
+  --vp-c-divider: #232528;
+  --vp-c-border: #333538;
+  --vp-c-gutter: #0b0c0f;
+  --vp-c-text-1: #e6e8ec;
+  --vp-c-text-2: #94969a;
+  --vp-c-text-3: #636568;
+
+  --vp-c-default-soft: #1e2023;
+  --vp-code-block-bg: #111215;
+
+  --vp-button-brand-text: #1e0637;
+  --vp-button-brand-hover-text: #1e0637;
+  --vp-button-brand-active-text: #1e0637;
+
+  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(185, 140, 255, 0.24) 0%, rgba(185, 140, 255, 0) 65%);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--vp-c-brand-1) 30%, transparent);
+}
+
+/* The lockup is the site's title: drawn at its own 2 px cells. */
+.VPNavBarTitle .logo {
+  height: 32px;
+}
+
+/* The mark is pixels: never smoothed. */
+.VPHero .image-src {
+  image-rendering: pixelated;
+  max-width: 200px;
+  max-height: 200px;
+}
+@media (min-width: 640px) {
+  .VPHero .image-src {
+    max-width: 256px;
+    max-height: 256px;
+  }
+}
+
+/* A route heading in the API reference is code: keep it on one line where it fits. */
+.vp-doc h3 code {
+  font-size: 0.9em;
+}
+
+/* Screenshots in the guides. */
+.vp-doc img {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+}

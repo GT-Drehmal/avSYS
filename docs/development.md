@@ -54,6 +54,25 @@ make generate        # after changing api/
   k3s in a container, builds both images, installs the chart, creates the
   first account and then runs the same check.
 
+## Documentation
+
+The guides are the Markdown files in `docs/`, and the site at
+[gt-drehmal.github.io/avSYS](https://gt-drehmal.github.io/avSYS/) is built
+from them with [VitePress](https://vitepress.dev) (its settings and theme
+are in `docs/.vitepress`). Links between guides are to the `.md` files, so
+they work on GitHub as well.
+
+```sh
+cd docs && bun install && bun run dev   # the site on http://localhost:5173/avSYS/, reloading as you edit
+make docs                               # builds it, failing on a link to a page that is not there
+make docs-screenshots                   # takes the pictures in docs/images again
+```
+
+The pictures are of the test panel (`cmd/avsys-uitest`), taken by
+`web/screenshots/docs.spec.ts`. After a change to a page they show, run
+`make docs-screenshots` and commit the pictures that changed. CI builds
+the site on every pull request and publishes it from `main`.
+
 ## How changes get in
 
 `main` is protected. Every change is a pull request, and CI must pass on
