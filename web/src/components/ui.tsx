@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
-import { Check, Copy, LoaderCircle, Search, X } from "lucide-react";
+import { Check, ChevronRight, Copy, LoaderCircle, Search, X } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -361,7 +361,7 @@ export function Modal({ open, onOpenChange, title, description, children, size =
         {/* Dimmed, not blurred: a blur behind the whole page is drawn again for
             every frame of anything that moves in front of it, and a browser
             drawing without a graphics card falls to a few frames a second. */}
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/60" />
         <Dialog.Content
           // Start in the first field rather than on the close button.
           onOpenAutoFocus={(e) => {
@@ -372,7 +372,7 @@ export function Modal({ open, onOpenChange, title, description, children, size =
             }
           }}
           className={cx(
-            "fixed top-[10vh] left-1/2 z-50 flex max-h-[80vh] w-[calc(100vw-2rem)] -translate-x-1/2 animate-rise flex-col rounded-lg border border-line-strong bg-surface shadow-2xl shadow-black/60 outline-none",
+            "fixed top-[10vh] left-1/2 z-50 flex max-h-[80vh] w-[calc(100vw-2rem)] -translate-x-1/2 animate-rise flex-col rounded-lg border border-line-strong bg-surface shadow-2xl shadow-shade/60 outline-none",
             size === "lg" ? "max-w-2xl" : "max-w-md",
           )}
         >
@@ -454,7 +454,7 @@ export function MenuContent({ children, align = "end" }: { children: ReactNode; 
       <Dropdown.Content
         align={align}
         sideOffset={6}
-        className="z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-44 animate-rise overflow-y-auto rounded-md border border-line-strong bg-surface p-1 shadow-xl shadow-black/50"
+        className="z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-44 animate-rise overflow-y-auto rounded-md border border-line-strong bg-surface p-1 shadow-xl shadow-shade/50"
       >
         {children}
       </Dropdown.Content>
@@ -517,7 +517,36 @@ export function MenuCheck({ checked, onChange, children }: { checked: boolean; o
   );
 }
 
-export const MenuSeparator = () => <Dropdown.Separator className="my-1 h-px bg-line" />;
+export const MenuSub = Dropdown.Sub;
+
+/** Opens a menu of its own beside this one, with what is chosen in it now shown after its name. */
+export function MenuSubTrigger({ icon, children, value }: { icon?: ReactNode; children: ReactNode; value?: ReactNode }) {
+  return (
+    <Dropdown.SubTrigger className="flex h-8 cursor-pointer items-center gap-2 rounded-sm px-2 text-[13px] text-fg outline-none select-none data-[highlighted]:bg-hover data-[state=open]:bg-hover">
+      <span className="flex size-4 items-center justify-center text-muted [&>svg]:size-4">{icon}</span>
+      {children}
+      <span className="ml-auto flex items-center gap-1.5 pl-4 text-xs text-muted">
+        {value}
+        <ChevronRight className="size-3.5" />
+      </span>
+    </Dropdown.SubTrigger>
+  );
+}
+
+export function MenuSubContent({ children }: { children: ReactNode }) {
+  return (
+    <Dropdown.Portal>
+      <Dropdown.SubContent
+        sideOffset={4}
+        className="z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-40 animate-rise overflow-y-auto rounded-md border border-line-strong bg-surface p-1 shadow-xl shadow-shade/50"
+      >
+        {children}
+      </Dropdown.SubContent>
+    </Dropdown.Portal>
+  );
+}
+
+export const MenuSeparator = () =><Dropdown.Separator className="my-1 h-px bg-line" />;
 export const MenuLabel = ({ children }: { children: ReactNode }) => <Dropdown.Label className="label-mono px-2 py-1.5">{children}</Dropdown.Label>;
 
 export function Toaster({ children }: { children?: ReactNode }) {
@@ -530,7 +559,7 @@ export function Toaster({ children }: { children?: ReactNode }) {
         <div
           key={t.id}
           className={cx(
-            "pointer-events-auto flex animate-rise items-start gap-3 rounded-md border bg-surface px-3 py-2.5 text-[13px] leading-relaxed shadow-xl shadow-black/50",
+            "pointer-events-auto flex animate-rise items-start gap-3 rounded-md border bg-surface px-3 py-2.5 text-[13px] leading-relaxed shadow-xl shadow-shade/50",
             t.kind === "error" ? "border-danger/40 text-fg" : "border-line-strong text-fg",
           )}
         >

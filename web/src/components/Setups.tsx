@@ -16,7 +16,7 @@ export function Setups() {
       key={s.id}
       aria-label={`Setting up ${s.title}`}
       className={cx(
-        "pointer-events-auto flex animate-rise flex-col gap-1.5 rounded-md border bg-surface px-3 py-2.5 text-[13px] shadow-xl shadow-black/50",
+        "pointer-events-auto flex animate-rise flex-col gap-1.5 rounded-md border bg-surface px-3 py-2.5 text-[13px] shadow-xl shadow-shade/50",
         s.error ? "border-danger/40" : "border-line-strong",
       )}
     >

@@ -93,7 +93,7 @@ export function ProjectIcon({
     <span
       data-mark={kind ?? "other"}
       className="grid shrink-0 place-items-center rounded-md"
-      style={{ ...style, background: `hsl(${hue} 30% 16%)`, color: `hsl(${hue} 55% 68%)` }}
+      style={{ ...style, background: `hsl(${hue} var(--placeholder-bg))`, color: `hsl(${hue} var(--placeholder-fg))` }}
     >
       {initials && name ? (
         <span aria-hidden className="font-medium leading-none" style={{ fontSize: Math.round(size * 0.4) }}>

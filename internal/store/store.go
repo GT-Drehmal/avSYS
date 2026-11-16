@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS users (
 	avatar_url    TEXT NOT NULL DEFAULT '',
 	password_hash TEXT NOT NULL DEFAULT '',
 	is_admin      INTEGER NOT NULL DEFAULT 0,
-	created_at    INTEGER NOT NULL
+	created_at    INTEGER NOT NULL,
+	theme         TEXT NOT NULL DEFAULT 'auto',
+	accent        TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS minecraft_links (
 	user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -268,6 +270,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
+	if err := addUserLook(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -303,6 +309,27 @@ func addListPlayerKinds(db *sql.DB) error {
 			continue
 		}
 		if _, err := db.Exec(`ALTER TABLE player_list_entries ADD COLUMN ` + column); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addUserLook gives a table of users from before the panel could look
+// another way to each the columns for its theme and accent: the theme the
+// system's, the accent the panel's. Each column is looked for on its own,
+// as in addListPlayerKinds.
+func addUserLook(db *sql.DB) error {
+	for _, column := range []string{"theme TEXT NOT NULL DEFAULT 'auto'", "accent TEXT NOT NULL DEFAULT ''"} {
+		name, _, _ := strings.Cut(column, " ")
+		var n int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('users') WHERE name = ?`, name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ` + column); err != nil {
 			return err
 		}
 	}

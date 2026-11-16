@@ -18,6 +18,9 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     viewport: { width: 1280, height: 900 },
+    // The theme follows the system unless picked: tests see the dark one
+    // unless they ask otherwise (look.spec.ts).
+    colorScheme: "dark",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

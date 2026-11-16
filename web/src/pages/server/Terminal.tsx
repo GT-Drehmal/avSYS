@@ -5,21 +5,18 @@ import { RotateCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui";
 import { serverPath } from "../../lib/api";
+import { currentLook, onLook } from "../../lib/look";
 import { useServerContext } from "./ServerPage";
 
 /** The panel's own colour, from its stylesheet. */
 const token = (name: string, fallback: string) => getComputedStyle(document.documentElement).getPropertyValue(`--color-${name}`).trim() || fallback;
 
-/** The panel's colours around the text; the sixteen a program can ask for are its own. */
-const theme = () => {
-  const accent = token("accent", "#b98cff");
-  return {
-    background: token("bg", "#0b0c0f"),
-    foreground: token("fg", "#e6e8ec"),
-    cursor: accent,
-    cursorAccent: token("bg", "#0b0c0f"),
-    selectionBackground: /^#[0-9a-f]{6}$/i.test(accent) ? `${accent}4d` : "#b98cff4d",
-    black: token("raised", "#18191c"),
+/**
+ * The sixteen colours a program can ask for, for each theme: on a light
+ * page each is dark enough to read, and "white" is a grey.
+ */
+const ansi = {
+  dark: {
     red: "#f0707a",
     green: "#7fd88f",
     yellow: "#e3b55a",
@@ -27,7 +24,6 @@ const theme = () => {
     magenta: "#c18cf0",
     cyan: "#5fe0c6",
     white: "#cdcfd3",
-    brightBlack: token("faint", "#636568"),
     brightRed: "#f7949c",
     brightGreen: "#a3e6af",
     brightYellow: "#edc982",
@@ -35,6 +31,38 @@ const theme = () => {
     brightMagenta: "#d5aef5",
     brightCyan: "#8cf0dc",
     brightWhite: "#f2f4f9",
+  },
+  light: {
+    red: "#c3283b",
+    green: "#1f7a35",
+    yellow: "#8a5a00",
+    blue: "#225dcc",
+    magenta: "#8a3dc0",
+    cyan: "#0b7480",
+    white: "#6b6f76",
+    brightRed: "#a51d30",
+    brightGreen: "#18672c",
+    brightYellow: "#6f4a00",
+    brightBlue: "#1b4cab",
+    brightMagenta: "#70309f",
+    brightCyan: "#075f69",
+    brightWhite: "#8a8e95",
+  },
+};
+
+/** The panel's colours around the text, and the sixteen for the theme shown. */
+const theme = () => {
+  const shown = currentLook().shown;
+  const accent = token("accent", "#b98cff");
+  return {
+    background: token("bg", "#0b0c0f"),
+    foreground: token("fg", "#e6e8ec"),
+    cursor: accent,
+    cursorAccent: token("bg", "#0b0c0f"),
+    selectionBackground: /^#[0-9a-f]{6}$/i.test(accent) ? `${accent}4d` : "#b98cff4d",
+    black: shown === "light" ? "#2b2e35" : token("raised", "#18191c"),
+    brightBlack: token("faint", "#636568"),
+    ...ansi[shown],
   };
 };
 
@@ -77,8 +105,13 @@ export default function Terminal() {
     const resize = term.onResize(sendSize);
     const observer = new ResizeObserver(() => fit.fit());
     observer.observe(container.current!);
+    // Another theme or accent picked, or the system's changing while on Auto.
+    const stopLook = onLook(() => {
+      term.options.theme = theme();
+    });
 
     return () => {
+      stopLook();
       observer.disconnect();
       input.dispose();
       resize.dispose();

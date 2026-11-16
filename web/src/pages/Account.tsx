@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
+import { AccentPicker, ThemePicker, useSetLook } from "../components/Look";
 import { PicturePicker } from "../components/Picture";
 import { Button, Checked, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
@@ -38,6 +39,27 @@ function Profile() {
           </Button>
         </div>
       </form>
+    </Section>
+  );
+}
+
+/** How the panel looks to them, wherever they sign in. */
+function Appearance() {
+  const me = useMe().data!;
+  const meta = useMeta().data;
+  const save = useSetLook();
+  return (
+    <Section title="Appearance">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[13px] font-medium">Theme</span>
+          <ThemePicker value={me.look?.theme ?? "auto"} onChange={(theme) => void save({ theme })} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[13px] font-medium">Accent</span>
+          <AccentPicker value={me.look?.accent ?? ""} panel={meta?.accent ?? "amethyst"} onChange={(accent) => void save({ accent })} />
+        </div>
+      </div>
     </Section>
   );
 }
@@ -371,6 +393,7 @@ export function Account() {
     <>
       <PageHeader title="Account" />
       <Profile />
+      <Appearance />
       <Minecraft />
       <SSHKeys />
       <APITokens />
