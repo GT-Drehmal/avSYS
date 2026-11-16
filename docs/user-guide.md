@@ -19,6 +19,7 @@ the panel itself is in [Install and operate](install.md).
 - [Templates](#templates)
 - [The world library](#the-world-library)
 - [Nodes and moving servers](#nodes-and-moving-servers)
+- [Instance settings](#instance-settings)
 - [Updating the panel](#updating-the-panel)
 
 ## Signing in
@@ -40,8 +41,8 @@ your password, scan the code with an authenticator app, and type the code
 it shows. You get ten **recovery codes**: keep them somewhere safe. Each
 works once, in place of a code from the app. After that, signing in with a
 password asks for a code too. The panel's administrator can require
-two-factor of administrators; then they are asked to set it up before
-anything else.
+two-factor of administrators in **Instance settings**; then they are asked
+to set it up before anything else.
 
 **Forgot your password?** Ask the panel's administrator for a reset link.
 It works once, for a day. Setting a new password with it signs you out
@@ -91,7 +92,8 @@ organization**).
 | Owner | Also make and change other owners, change the organization's name and picture, and delete it |
 
 The panel's administrator acts as an owner in every organization they are
-not a member of, and alone sees the **Nodes** page.
+not a member of, and alone sees the **Nodes** and **Instance settings**
+pages.
 
 ### Members
 
@@ -162,8 +164,7 @@ pre-releases** to see test versions; a world opened in one may not open in
 older versions. Fabric, Quilt, Forge and NeoForge also have a **Loader
 build**, newest unless you choose.
 
-**Modpack**: search Modrinth, or CurseForge where the panel has a
-CurseForge key, and pick one. Or upload a **.mrpack** file. The pack
+**Modpack**: search Modrinth or CurseForge and pick one. Or upload a **.mrpack** file. The pack
 decides the game version and loader.
 
 ### The rest of the form
@@ -277,9 +278,10 @@ The **Content** tab shows what is installed. Admins change it.
 
 **Add** opens a picker with:
 
-- **Modrinth** and **CurseForge** (where the panel has a CurseForge key):
-  search, filter by category, sort, and look closer at a project. Results
-  fit the server's type and game version.
+- **Modrinth** and **CurseForge**: search, filter by category, sort, and
+  look closer at a project. Results fit the server's type and game version.
+  CurseForge needs a key the administrator adds in
+  [Instance settings](#instance-settings); until then its tab says so.
 - **From URL**: a direct link to the file.
 - **Upload**: `.jar` files (or `.zip` for datapacks) from your computer.
 
@@ -521,14 +523,26 @@ memory, servers and players.
 - **Measure speed** measures every node, to decide which is fastest.
 - **New servers on \<node\>**, when off, keeps new servers off that node
   unless someone picks it.
+
+## Instance settings
+
+Settings for the whole panel, for its administrator: **Account menu →
+Instance settings**, under **Nodes**.
+
+- **Updates**: a newer avSYS, what is new and an **Update** button, and
+  **Install fixes by itself**. See [Updating the panel](#updating-the-panel).
+- **Sign-in**: **Require two-factor for administrators** (when passwords
+  are on), and how people sign in and make accounts. Those are set when
+  avSYS is installed; see [Install and operate](install.md#sign-in-providers).
 - **CurseForge**: the API key that lets people add content and modpacks
   from CurseForge. It is never shown again once saved; **Replace** or
   **Remove** it.
 
 ## Updating the panel
 
-When a newer avSYS is out, the **Nodes** page says so to the administrator,
-with what is new and an **Update** button. The panel restarts on the new
+When a newer avSYS is out, **Instance settings** says so to the
+administrator, with what is new and an **Update** button (the **Nodes**
+page points there). The panel restarts on the new
 version: players are disconnected for a moment, and servers keep running.
 Everyone's page offers to reload once it is back.
 
