@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { Navigate, useSearchParams } from "react-router";
+import { ProviderIcon } from "../components/ProviderIcon";
 import { Wordmark } from "../components/Shell";
 import { SignInCode } from "../components/SignInCode";
 import { Button, Field, Input, Notice, Spinner } from "../components/ui";
@@ -82,8 +83,9 @@ export function AuthForm({ meta, mode, invite, next, setup }: AuthFormProps) {
         <a
           key={p.id}
           href={`/api/v1/auth/${p.id}/start?${qs({ invite, next, setup })}`}
-          className="flex h-9 items-center justify-center rounded-md border border-line-strong bg-raised text-[13px] font-medium hover:bg-hover"
+          className="flex h-9 items-center justify-center gap-2 rounded-md border border-line-strong bg-raised text-[13px] font-medium hover:bg-hover"
         >
+          <ProviderIcon id={p.id} />
           Continue with {p.name}
         </a>
       ))}

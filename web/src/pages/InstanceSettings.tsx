@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { AccentPicker } from "../components/Look";
+import { ProviderIcon } from "../components/ProviderIcon";
 import { Button, Chip, Confirm, CopyText, Empty, Field, Input, Loading, Notice, PageHeader, Section, Spinner, Toggle } from "../components/ui";
 import { api, ApiError, type Meta, type PanelInfo, type PanelState, type ReleaseUpdate } from "../lib/api";
 import type { Accent } from "../lib/look";
@@ -173,14 +174,26 @@ function Updates({ state }: { state: PanelState }) {
 function SignIn({ meta }: { meta: Meta }) {
   const me = useMe().data!;
   const setRequired = useAction((required: boolean) => api.put("/settings/admin-two-factor", { required }), [keys.me]);
-  const providers = meta.providers.map((p) => p.name).join(", ");
   return (
     <Section title="Sign-in" region description="Set when avSYS is installed.">
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-1.5 text-[13px]">
         <dt className="text-muted">Passwords</dt>
         <dd>{meta.passwords ? "On" : "Off"}</dd>
         <dt className="text-muted">Other ways</dt>
-        <dd>{providers || "None"}</dd>
+        <dd>
+          {meta.providers.length > 0 ? (
+            <ul className="flex flex-wrap gap-x-4 gap-y-1.5">
+              {meta.providers.map((p) => (
+                <li key={p.id} className="flex items-center gap-1.5">
+                  <ProviderIcon id={p.id} />
+                  {p.name}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            "None"
+          )}
+        </dd>
         <dt className="text-muted">New accounts</dt>
         <dd>{meta.allowSignups ? "Anyone can sign up" : "By invite"}</dd>
       </dl>
