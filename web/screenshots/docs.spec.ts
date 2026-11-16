@@ -1,4 +1,6 @@
 import type { Page } from "@playwright/test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "../tests/panel";
 
 // Pictures of the panel for the documentation, written to docs/images.
@@ -28,8 +30,28 @@ const plugins: [title: string, author: string, description: string, downloads: n
   ["BlueMap", "Blue", "A 3D map of your world, in the browser.", 1_200_000],
 ];
 
+// The test panel cannot reach Mojang for players' skins, so their heads are
+// faces of our own (screenshots/heads, 8 pixels square as the panel makes
+// them): each player one of their own, in the order first asked for.
+const heads = join("screenshots", "heads");
+const faceFiles = readdirSync(heads).sort();
+const faces = new Map<string, Buffer>();
+const faceOf = (uuid: string) => {
+  if (!faces.has(uuid)) faces.set(uuid, readFileSync(join(heads, faceFiles[faces.size % faceFiles.length])));
+  return faces.get(uuid) as Buffer;
+};
+
+/** Waits for this many players' heads to be drawn. */
+const expectFaces = (page: Page, count: number) =>
+  expect
+    .poll(() => page.locator('main img[src*="/players/"]').evaluateAll((imgs) => imgs.filter((i) => (i as HTMLImageElement).naturalWidth > 0).length))
+    .toBe(count);
+
 test.beforeEach(async ({ as, page }) => {
   await as("owner");
+  await page.route("**/api/v1/players/*/head?*", (route) =>
+    route.fulfill({ body: faceOf(new URL(route.request().url()).pathname.split("/").at(-2) ?? ""), contentType: "image/png" }),
+  );
   await page.route("**/api/v1/catalog/modrinth/search?*", async (route) => {
     const res = await (await route.fetch()).json();
     if (/plugin/.test(decodeURIComponent(new URL(route.request().url()).search))) {
@@ -150,18 +172,17 @@ test("content", async ({ page }) => {
   await shot(page, "content-add");
 });
 
-test("players", async ({ page }) => {
-  await page.goto("/o/friends/players");
-  await page.getByRole("button", { name: "New list" }).click();
-  const dialog = page.getByRole("dialog", { name: "New list" });
-  await dialog.getByLabel("Name").fill("Regulars");
-  await dialog.getByLabel("Players").fill("Notch, jeb_, Alex, Dinnerbone, Grumm");
-  await dialog.getByRole("button", { name: "Make list" }).click();
-  await expect(page.getByRole("heading", { name: "Regulars" })).toBeVisible();
-  await page.getByRole("group", { name: "Edition" }).getByRole("button", { name: "Bedrock" }).click();
-  await page.getByLabel("Add players").fill("Tim203, Redned235");
-  await page.getByRole("button", { name: "Add", exact: true }).click();
+test("players", async ({ page, api }) => {
+  const list = await api("owner").post<{ id: string; players: { uuid: string; name: string }[] }>("/orgs/friends/player-lists", {
+    name: "Regulars",
+    names: ["Notch", "jeb_", "Alex", "Dinnerbone", "Grumm"],
+    bedrock: ["Tim203", "Redned235"],
+  });
+  // Faces in the order the list shows them.
+  for (const p of [...list.players].sort((a, b) => a.name.localeCompare(b.name))) faceOf(p.uuid);
+  await page.goto(`/o/friends/players/${list.id}`);
   await expect(page.getByRole("listitem", { name: "Tim203" })).toBeVisible();
+  await expectFaces(page, list.players.length);
   await shot(page, "players");
 });
 

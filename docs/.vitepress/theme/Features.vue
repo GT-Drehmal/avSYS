@@ -54,19 +54,17 @@ defineProps<{
 .card:hover {
   border-color: var(--vp-c-brand-1);
 }
-/* The picture is of the whole window: shown closer, from just right of the
-   panel's sidebar, so what it is about can be read. */
+/* The whole window, as taken, set in from the card's rounded corners so
+   that nothing of it is cut off. */
 .picture {
-  aspect-ratio: 16 / 10;
-  overflow: hidden;
-  border-bottom: 1px solid var(--vp-c-divider);
-  background: #0b0c0f;
+  padding: 12px 12px 0;
 }
 .picture img {
   display: block;
-  width: 140%;
-  max-width: none;
-  margin-left: -32%;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
 }
 .text {
   padding: 20px 24px 24px;
