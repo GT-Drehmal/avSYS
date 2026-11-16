@@ -2,48 +2,108 @@ import type { Page } from "@playwright/test";
 import { type Api, expect, test, withCurseForge } from "./panel";
 
 // CurseForge beside Modrinth, wherever content is picked. Its API needs a
-// key: without one nothing of it shows. The panel installed with one
-// answers for CurseForge from tests/upstream, in the shape its API has.
+// key: without one its tab says how it is turned on, and has nothing to
+// search. The panel installed with one answers for CurseForge from
+// tests/upstream, in the shape its API has.
 
 test.describe("without a key", () => {
-  test("nothing of CurseForge is offered, and the administrator is told how to add one", async ({ page, as }) => {
+  const forAdmin = "Add a CurseForge API key in Instance settings to search CurseForge.";
+  const forOthers = "The panel's administrator can turn on CurseForge.";
+
+  test("the CurseForge tab tells the administrator where to add a key, and has nothing to search", async ({ page, as }) => {
     await as("owner");
     await page.goto("/o/friends/s/creative/content");
     await page.getByRole("button", { name: /^Add/ }).first().click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByRole("button", { name: "Modrinth", exact: true })).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "CurseForge", exact: true })).toHaveCount(0);
+    await expect(dialog.getByPlaceholder(/^Search .* on Modrinth$/)).toBeVisible();
+    await dialog.getByRole("button", { name: "CurseForge", exact: true }).click();
+    const off = dialog.getByTestId("curseforge-off");
+    await expect(off).toHaveText(forAdmin);
+    await expect(off.getByRole("link", { name: "Instance settings" })).toHaveAttribute("href", "/settings");
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    await expect(dialog.getByRole("combobox")).toHaveCount(0);
+    // The other tabs are as they were.
+    await dialog.getByRole("button", { name: "Modrinth", exact: true }).click();
+    await expect(dialog.getByPlaceholder(/^Search .* on Modrinth$/)).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    // The resource pack's picker too.
+    await page.getByRole("button", { name: "Add resource pack" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "CurseForge", exact: true }).click();
+    await expect(page.getByRole("dialog").getByTestId("curseforge-off")).toHaveText(forAdmin);
+    await page.keyboard.press("Escape");
+
+    // And the modpack picker.
+    await page.goto("/o/friends/new");
+    await page.getByRole("button", { name: "Modpack", exact: true }).click();
+    await expect(page.getByPlaceholder("Search modpacks on Modrinth")).toBeVisible();
+    const on = page.getByRole("group", { name: "Search on" });
+    await on.getByRole("button", { name: "CurseForge" }).click();
+    await expect(on.getByRole("button", { name: "CurseForge" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("curseforge-off")).toHaveText(forAdmin);
+    await expect(page.getByPlaceholder("Search modpacks on CurseForge")).toHaveCount(0);
+    await on.getByRole("button", { name: "Modrinth" }).click();
+    await expect(page.getByPlaceholder("Search modpacks on Modrinth")).toBeVisible();
+  });
+
+  test("anyone else is told the administrator can turn it on, with no link", async ({ page, as }) => {
+    await as("admin");
+    await page.goto("/o/friends/s/creative/content");
+    await page.getByRole("button", { name: /^Add/ }).first().click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "CurseForge", exact: true }).click();
+    await expect(dialog.getByTestId("curseforge-off")).toHaveText(forOthers);
+    await expect(dialog.getByTestId("curseforge-off").getByRole("link")).toHaveCount(0);
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
     await page.keyboard.press("Escape");
 
     await page.goto("/o/friends/new");
     await page.getByRole("button", { name: "Modpack", exact: true }).click();
-    await expect(page.getByPlaceholder("Search modpacks on Modrinth")).toBeVisible();
-    await expect(page.getByRole("group", { name: "Search on" })).toHaveCount(0);
-
-    await page.goto("/nodes");
-    const section = page.getByRole("region", { name: "CurseForge" });
-    await expect(section).toContainText("Add an API key to find and install mods and modpacks from CurseForge.");
-    await expect(section.getByLabel("API key")).toBeVisible();
-    await expect(section.getByRole("button", { name: "Remove" })).toHaveCount(0);
+    await page.getByRole("group", { name: "Search on" }).getByRole("button", { name: "CurseForge" }).click();
+    await expect(page.getByTestId("curseforge-off")).toHaveText(forOthers);
   });
 
-  test("the administrator enters a key, which is never shown again, and can replace or remove it", async ({ page, as }) => {
+  test("a key added in another tab is found on coming back, and the tab searches", async ({ page, as }) => {
+    await as("owner");
+    let key = false;
+    await page.route("**/api/v1/meta", async (route) => {
+      const meta = await (await route.fetch()).json();
+      await route.fulfill({ json: { ...meta, curseforge: key } });
+    });
+    // What it finds is answered for: this panel has no key to search with.
+    await page.route(/\/api\/v1\/catalog\/curseforge\//, (route) =>
+      route.fulfill({ json: route.request().url().includes("/search") ? { hits: [], offset: 0, limit: 20, total_hits: 0 } : [] }),
+    );
+    await page.goto("/o/friends/new");
+    await page.getByRole("button", { name: "Modpack", exact: true }).click();
+    await page.getByRole("group", { name: "Search on" }).getByRole("button", { name: "CurseForge" }).click();
+    await expect(page.getByTestId("curseforge-off")).toBeVisible();
+    key = true;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.getByPlaceholder("Search modpacks on CurseForge")).toBeVisible();
+    await expect(page.getByTestId("curseforge-off")).toHaveCount(0);
+  });
+
+  test("the administrator enters a key in Instance settings, which is never shown again, and can replace or remove it", async ({ page, as }) => {
     await as("owner");
     // The panel's own answers, so that this panel stays without a key for the other tests.
     let from = "";
     const sent: unknown[] = [];
-    await page.route("**/api/v1/nodes", async (route) => {
-      const json = await (await route.fetch()).json();
-      await route.fulfill({ json: { ...json, panel: { ...json.panel, curseforge: from } } });
-    });
     await page.route("**/api/v1/panel", async (route) => {
+      if (route.request().method() === "GET") {
+        const json = await (await route.fetch()).json();
+        return route.fulfill({ json: { ...json, panel: { ...json.panel, curseforge: from } } });
+      }
       const body = route.request().postDataJSON();
       sent.push(body);
       from = body.curseforgeKey ? "panel" : "";
       await route.fulfill({ json: { version: "v0.1.0", canUpdate: true, autoUpdate: false, curseforge: from } });
     });
-    await page.goto("/nodes");
+    await page.goto("/settings");
     const section = page.getByRole("region", { name: "CurseForge" });
+    await expect(section).toContainText("Add an API key to find and install mods and modpacks from CurseForge.");
+    await expect(section.getByRole("link", { name: "console.curseforge.com" })).toHaveAttribute("href", "https://console.curseforge.com");
+    await expect(section.getByRole("button", { name: "Remove" })).toHaveCount(0);
     await section.getByLabel("API key").fill(" $2a$10$secret ");
     await section.getByRole("button", { name: "Save" }).click();
     await expect(section.getByText("key set")).toBeVisible();
@@ -58,6 +118,21 @@ test.describe("without a key", () => {
     await page.getByRole("dialog", { name: "Remove the CurseForge key?" }).getByRole("button", { name: "Remove" }).click();
     await expect(section.getByLabel("API key")).toBeVisible();
     expect(sent).toEqual([{ curseforgeKey: "$2a$10$secret" }, { curseforgeKey: "" }]);
+  });
+
+  test("a key the panel was installed with can be replaced, not removed", async ({ page, as }) => {
+    await as("owner");
+    await page.route("**/api/v1/panel", async (route) => {
+      const json = await (await route.fetch()).json();
+      await route.fulfill({ json: { ...json, panel: { ...json.panel, curseforge: "install" } } });
+    });
+    await page.goto("/settings");
+    const section = page.getByRole("region", { name: "CurseForge" });
+    await expect(section).toContainText("with the key avSYS was installed with.");
+    await expect(section.getByText("key set")).toBeVisible();
+    await expect(section.getByRole("button", { name: "Replace" })).toBeVisible();
+    await expect(section.getByRole("button", { name: "Remove" })).toHaveCount(0);
+    await expect(section.getByLabel("API key")).toHaveCount(0);
   });
 });
 

@@ -1,11 +1,11 @@
 import { ExternalLink, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { api, type CatalogSource, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec, type StackedPack } from "../lib/api";
-import { fetchVersions, isCatalog, projectPage, sourceNames, useSources } from "../lib/catalog";
+import { fetchVersions, isCatalog, projectPage, sourceNames, sources, useSearchable } from "../lib/catalog";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { packFormatsOf, useGameFormat, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
-import { ModrinthSearch, ProjectIcon } from "./ModrinthSearch";
+import { CurseForgeOff, ModrinthSearch, ProjectIcon } from "./ModrinthSearch";
 import { Button, Chip, cx, Field, Input, Modal, Notice, Spinner } from "./ui";
 import { cancelled, UploadProgress, useUpload } from "./Uploading";
 
@@ -110,7 +110,6 @@ export interface PackPicker {
 export function AddContentDialog({ software, mods, onAdd, busy, onUpload, uploadNote, description, pack, start, only, onClose }: AddContentProps) {
   const kinds: PickKind[] = only && start ? [start] : [...kindsFor(software), ...(pack ? (["resourcepack"] as const) : [])];
   const [kind, setKind] = useState<PickKind>(start && kinds.includes(start) ? start : kinds[0]);
-  const sources = useSources();
   const [tab, setTab] = useState<CatalogSource | "url" | "upload">("modrinth");
   const [uploading, setUploading] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -130,9 +129,7 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
     }
   };
   const [url, setUrl] = useState("");
-  // A catalog that is no longer offered, as when its key was removed, is not shown.
-  const shown = isCatalog(tab) && !sources.includes(tab) ? "modrinth" : tab;
-  const picked = new Set(mods.filter((m) => m.source === shown).map((m) => m.project));
+  const picked = new Set(mods.filter((m) => m.source === tab).map((m) => m.project));
   // "Latest" is what the server's own software will get, which can be behind the newest there is.
   const versions = useGameVersions(software.modpack ? null : software.loader);
   // Another kind's list, shown while this one's loads, is not this one's latest.
@@ -144,7 +141,8 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
 
   const tabClass = (active: boolean) => cx("h-7 rounded-sm px-2.5 text-xs font-medium", active ? "bg-hover text-fg" : "text-muted hover:text-fg");
   const canUpload = kind === "resourcepack" ? !!(pack?.upload || pack?.keep) : !!onUpload;
-  const sourceTab = shown === "upload" && !canUpload ? "modrinth" : shown;
+  const sourceTab = tab === "upload" && !canUpload ? "modrinth" : tab;
+  const searchable = useSearchable()(isCatalog(sourceTab) ? sourceTab : "modrinth");
   return (
     <Modal open onOpenChange={onClose} size="lg" title={kinds.length === 1 ? `Add ${kindNames[kinds[0]].toLowerCase()}` : "Add content"} description={kind === "resourcepack" ? "Offered to players when they join." : description}>
       <div className="flex flex-col gap-4">
@@ -178,6 +176,8 @@ export function AddContentDialog({ software, mods, onAdd, busy, onUpload, upload
         </div>
         {kind === "resourcepack" && pack ? (
           <PackPane pack={pack} tab={sourceTab} filters={filters} fits={fitsOf(filters)} waiting={unknownLatest} onClose={onClose} />
+        ) : isCatalog(sourceTab) && !searchable ? (
+          searchable === false && <CurseForgeOff />
         ) : isCatalog(sourceTab) ? (
           <div className="h-[min(60vh,560px)]">
             <ModrinthSearch
@@ -309,6 +309,7 @@ function PackPane({
   const [sha1, setSha1] = useState("");
   const { sending, send, cancel } = useUpload();
   const current = pack.current?.url ? pack.current : null;
+  const searchable = useSearchable()(isCatalog(tab) ? tab : "modrinth");
   // One choice at a time, whichever tab it is made on: one still being
   // made would otherwise land after, and over, the next.
   const pending = busy || !!sending;
@@ -344,7 +345,9 @@ function PackPane({
   return (
     <div className="flex flex-col gap-3">
       {current && !pack.onTop && <Notice tone="info">This replaces {packTitle(current)}.</Notice>}
-      {isCatalog(tab) ? (
+      {isCatalog(tab) && !searchable ? (
+        searchable === false && <CurseForgeOff />
+      ) : isCatalog(tab) ? (
         <div className="h-[min(56vh,520px)]">
           <ModrinthSearch
             key={tab}

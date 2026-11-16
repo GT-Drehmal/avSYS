@@ -13,7 +13,7 @@ import (
 	"github.com/GT-Drehmal/avSYS/internal/release"
 )
 
-// The instance administrator is told on the Nodes page of a newer release,
+// The instance administrator is told in the instance settings of a newer release,
 // with the command that upgrades the panel as it was installed. Nobody else
 // is, and a panel that is up to date, or a build of a commit, says nothing.
 func TestNewerReleaseIsForTheAdministrator(t *testing.T) {
@@ -29,9 +29,15 @@ func TestNewerReleaseIsForTheAdministrator(t *testing.T) {
 	}
 	update := func(user string) map[string]any {
 		t.Helper()
-		code, got := p.get(user, "GET", "/nodes", "")
+		code, got := p.get(user, "GET", "/panel", "")
+		if user != "root" {
+			if code != 403 {
+				t.Fatalf("panel as %s: %d %v, want 403", user, code, got)
+			}
+			return nil
+		}
 		if code != 200 {
-			t.Fatalf("nodes as %s: %d %v", user, code, got)
+			t.Fatalf("panel as %s: %d %v", user, code, got)
 		}
 		u, _ := got["update"].(map[string]any)
 		return u

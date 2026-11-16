@@ -394,6 +394,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /nodes/usage", s.authed(s.getNodesUsage))
 	api("PATCH /nodes/{node}", s.authed(s.setNode))
 	api("POST /nodes/measure", s.authed(s.measureNodes))
+	api("GET /panel", s.authed(s.getPanel))
 	api("PATCH /panel", s.authed(s.setPanel))
 	api("POST /panel/update", s.authed(s.updatePanel))
 	api("PATCH /me", s.authed(s.updateMe))

@@ -1,10 +1,42 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, Braces, Check, ChevronLeft, Coffee, Download, ExternalLink, Heart, Image, Info, type LucideIcon, Package, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, qs, type CatalogSource, type ModrinthHit, type ModrinthProject, type ModrinthResults } from "../lib/api";
 import { fetchVersions, sourceNames, versionsKey } from "../lib/catalog";
 import { ago, compact } from "../lib/format";
+import { keys, useMe } from "../lib/queries";
+import { Link } from "react-router";
 import { Button, Chip, cx, Input, Notice, Select, Spinner } from "./ui";
+
+/**
+ * In place of searching CurseForge on a panel with no key for it: where it
+ * is turned on, or who can. Coming back to the page after adding the key,
+ * as from another tab, finds it.
+ */
+export function CurseForgeOff() {
+  const admin = useMe().data?.user.isAdmin;
+  const qc = useQueryClient();
+  useEffect(() => {
+    const look = () => void qc.invalidateQueries({ queryKey: keys.meta });
+    window.addEventListener("focus", look);
+    return () => window.removeEventListener("focus", look);
+  }, [qc]);
+  return (
+    <p className="rounded-md border border-dashed border-line-strong px-4 py-6 text-center text-[13px] text-muted" data-testid="curseforge-off">
+      {admin ? (
+        <>
+          Add a CurseForge API key in{" "}
+          <Link to="/settings" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+            Instance settings
+          </Link>{" "}
+          to search CurseForge.
+        </>
+      ) : (
+        "The panel's administrator can turn on CurseForge."
+      )}
+    </p>
+  );
+}
 
 export function useDebounced<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value);

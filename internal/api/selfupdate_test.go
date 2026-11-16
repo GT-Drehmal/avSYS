@@ -65,9 +65,16 @@ func deployed(t *testing.T, kube *kubefake.Clientset) corev1.Container {
 
 func panelSays(t *testing.T, p *panel, who string) map[string]any {
 	t.Helper()
-	code, got := p.get(who, "GET", "/nodes", "")
+	code, got := p.get(who, "GET", "/panel", "")
+	// Only the instance administrator is shown the panel.
+	if who != "root" {
+		if code != 403 {
+			t.Fatalf("panel as %s: %d %v, want 403", who, code, got)
+		}
+		return nil
+	}
 	if code != 200 {
-		t.Fatalf("nodes as %s: %d %v", who, code, got)
+		t.Fatalf("panel as %s: %d %v", who, code, got)
 	}
 	v, _ := got["panel"].(map[string]any)
 	return v

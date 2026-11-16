@@ -866,10 +866,12 @@ export interface NodeList {
   automatic?: string;
   measuring?: boolean;
   measured?: { at: string; failed?: string[]; error?: string };
-  /** A newer release than the one running, for the panel's administrator. */
+}
+
+/** The panel itself, and a newer release than the one running: for its administrator. */
+export interface PanelState {
+  panel: PanelInfo;
   update?: ReleaseUpdate;
-  /** The panel itself, for its administrator. */
-  panel?: PanelInfo;
 }
 
 export interface PanelInfo {

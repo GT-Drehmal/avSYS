@@ -203,25 +203,36 @@ test("only the panel's administrator may reset someone's sign-in", async ({ page
   await expect(owner.getByRole("button", { name: "Reset sign-in for owner" })).toHaveCount(0);
 });
 
-test("the administrator can require two-factor of administrators; others cannot", async ({ page, as, pageAs }) => {
+test("the administrator can require two-factor of administrators in Instance settings; others cannot", async ({ page, as, pageAs }) => {
   await as("owner");
   // Answered here: the setting is the whole panel's, and other tests sign
   // in as the owner with a password.
   let asked: unknown = null;
+  let required = false;
   await page.route("**/api/v1/settings/admin-two-factor", async (route) => {
     asked = route.request().postDataJSON();
+    required = (asked as { required: boolean }).required;
     await route.fulfill({ status: 204 });
   });
-  await page.goto("/account");
-  const toggle = page.getByRole("switch", { name: /Require for administrators/ });
+  await page.route("**/api/v1/me", async (route) => {
+    const me = await (await route.fetch()).json();
+    await route.fulfill({ json: { ...me, adminTwoFactor: required } });
+  });
+  await page.goto("/settings");
+  const toggle = page.getByRole("region", { name: "Sign-in" }).getByRole("switch", { name: "Require two-factor for administrators" });
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await toggle.click();
   await expect.poll(() => asked).toEqual({ required: true });
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  // It is the whole panel's, so not on the administrator's own account page.
+  await page.goto("/account");
+  await expect(page.getByRole("heading", { name: "Two-factor" })).toBeVisible();
+  await expect(page.getByRole("switch", { name: /Require/ })).toHaveCount(0);
 
   const viewer = await pageAs("viewer");
   await viewer.goto("/account");
   await expect(viewer.getByRole("heading", { name: "Two-factor" })).toBeVisible();
-  await expect(viewer.getByRole("switch", { name: /Require for administrators/ })).toHaveCount(0);
+  await expect(viewer.getByRole("switch", { name: /Require/ })).toHaveCount(0);
 });
 
 test("an administrator who has to set up two-factor is sent to do that first", async ({ page, as }) => {
