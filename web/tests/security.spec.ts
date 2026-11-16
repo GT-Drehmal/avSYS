@@ -183,7 +183,9 @@ test("the administrator makes a reset link, and the member sets a new password w
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill("a brand new password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/);
+  // Signed in, the panel goes on to their organization: once there, so
+  // that going to the link is not cut short by that.
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}$`));
   expect(await signedIn(page.request)).toBe(true);
 
   // The link works once.
