@@ -262,7 +262,7 @@ func (r *Reconciler) ensurePorts(ctx context.Context, mc *avsysv1.MinecraftServe
 		own.Annotations = r.Config.PortsServiceAnnotations
 		own.Spec.Selector = map[string]string{avsysv1.LabelServer: mc.Name}
 		if standIn {
-			own.Spec.Selector = nil
+			own.Spec.Selector = standInSelector(mc)
 		}
 		own.Spec.Type = corev1.ServiceTypeNodePort
 		if r.Config.PortRange.First != 0 {
