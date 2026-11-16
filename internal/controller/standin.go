@@ -38,9 +38,19 @@ func StandInSliceName(server string) string { return PortsServiceName(server) + 
 // own controller of endpoints leaves alone.
 const standInManager = "stand-in.avsys.dev"
 
-// clusterSlices marks the endpoints the cluster makes for a Service with a
-// selector.
-const clusterSlices = "endpointslice-controller.k8s.io"
+// standInLabel is in the selector of a server's extra ports while the panel
+// stands in, and on no pod: the Service selects none.
+const standInLabel = "avsys.dev/stand-in"
+
+// standInSelector is what a server's Service of extra ports selects while
+// the panel stands in: no pod at all. The cluster then keeps its own
+// endpoints of the Service empty, beside the panel's. A Service with no
+// selector would not do: the cluster leaves what it last made of the game's
+// pod, and copies its Endpoints into endpoints of the Service again, so
+// that players would be sent there as often as to the panel.
+func standInSelector(mc *avsysv1.MinecraftServer) map[string]string {
+	return map[string]string{avsysv1.LabelServer: mc.Name, standInLabel: "true"}
+}
 
 // standingIn says whether the panel answers on a server's extra ports: while
 // its game is not running, if the panel can.
@@ -60,9 +70,9 @@ func (r *Reconciler) standingIn(ctx context.Context, mc *avsysv1.MinecraftServer
 }
 
 // pointPorts has a server's Service of extra ports, svc, reach the panel
-// while it stands in, through endpoints of its own: the Service then has no
-// selector, which is what lets endpoints be given. Otherwise those are
-// taken away, the Service selecting the game's pod.
+// while it stands in, through endpoints of its own beside the cluster's,
+// which are of no pod (see standInSelector). Otherwise those are taken away,
+// the Service selecting the game's pod.
 //
 // A panel that cannot stand in, as one outside the cluster, leaves
 // endpoints alone: it may not be allowed to read them.
@@ -75,18 +85,6 @@ func (r *Reconciler) pointPorts(ctx context.Context, mc *avsysv1.MinecraftServer
 	if !standIn {
 		r.closeStandIn(key)
 		return r.dropSlice(ctx, slice)
-	}
-	// The cluster makes no endpoints for a Service without a selector, but
-	// leaves those it made while it had one, of the game's pod: traffic
-	// would still be shared out to them.
-	var made discoveryv1.EndpointSliceList
-	if err := r.Reader.List(ctx, &made, client.InNamespace(mc.Namespace), client.MatchingLabels{discoveryv1.LabelServiceName: svc.Name, discoveryv1.LabelManagedBy: clusterSlices}); err != nil {
-		return err
-	}
-	for i := range made.Items {
-		if err := r.Delete(ctx, &made.Items[i]); client.IgnoreNotFound(err) != nil {
-			return err
-		}
 	}
 	ip, at, err := r.Config.StandIn.Open(key, open)
 	if err != nil {
