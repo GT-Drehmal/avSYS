@@ -14,7 +14,7 @@ export function AuthFrame({ title, subtitle, children }: { title: string; subtit
       {/* A single soft light from above; the only decoration on the page. */}
       <div className="pointer-events-none absolute -top-64 left-1/2 size-[640px] -translate-x-1/2 rounded-full bg-accent/[0.07] blur-3xl" />
       <div className="relative w-full max-w-[340px]">
-        <Wordmark className="mb-8 text-lg" />
+        <Wordmark className="mb-8" />
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         {subtitle && <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{subtitle}</p>}
         <div className="mt-6">{children}</div>

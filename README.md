@@ -1,4 +1,9 @@
-# avSYS
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img src="docs/logo-light.svg" alt="avSYS" width="221" height="64">
+  </picture>
+</h1>
 
 A Minecraft server panel that is native to Kubernetes. Built for GT Drehmal; not affiliated with Primordial Team.
 

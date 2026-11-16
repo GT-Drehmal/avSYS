@@ -1,5 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#0c1011"/>
-  <path d="M16 6 26 24H21.5L16 13.6 10.5 24H6Z" fill="#5fe0c6"/>
-  <rect x="13" y="20" width="6" height="2.6" fill="#5fe0c6"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" shape-rendering="crispEdges"><title>avSYS</title><style>:root{--lg-q:#eef3f2;--lg-v:#b98cff}@media (prefers-color-scheme: light){:root{--lg-q:#1b2427;--lg-v:#7a45ea}}</style><path style="fill:var(--lg-q,#eef3f2)" d="M14 0h4v2h-4ZM12 2h8v2h-8ZM10 4h12v2h-12ZM6 8h20v2h-20ZM6 10h20v2h-20ZM8 12h4v2h-4ZM20 12h4v2h-4ZM8 14h4v2h-4ZM20 14h4v2h-4ZM8 16h4v2h-4ZM20 16h4v2h-4ZM8 18h4v2h-4ZM20 18h4v2h-4ZM8 20h4v2h-4ZM20 20h4v2h-4ZM8 22h4v2h-4ZM20 22h4v2h-4ZM8 24h4v2h-4ZM20 24h4v2h-4ZM8 26h4v2h-4ZM20 26h4v2h-4ZM6 28h20v2h-20ZM6 30h20v2h-20Z"/><path style="fill:var(--lg-v,#b98cff)" d="M14 14h4v2h-4ZM14 16h4v2h-4ZM14 18h4v2h-4ZM14 20h4v2h-4ZM14 22h4v2h-4ZM14 24h4v2h-4Z"/></svg>
