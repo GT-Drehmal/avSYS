@@ -6,6 +6,7 @@ import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
 import { keys, useAction, useCluster, useLiveServers, useMe, useMeta } from "../lib/queries";
 import { clearSetups } from "../lib/setups";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { LookMenu } from "./Look";
 import { Picture } from "./Picture";
 import { Button, cx, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
 
@@ -290,6 +291,8 @@ export function Shell() {
                   </MenuItem>
                 </>
               )}
+              <MenuSeparator />
+              <LookMenu />
               <MenuSeparator />
               <MenuItem icon={<LogOut />} onSelect={signOut}>
                 Sign out

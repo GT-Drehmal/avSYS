@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import "./app.css";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { LookSync } from "./components/Look";
 import { Shell } from "./components/Shell";
 import { Setups } from "./components/Setups";
 import { Spinner, Toaster } from "./components/ui";
@@ -144,6 +145,7 @@ createRoot(document.getElementById("root")!).render(
           </Route>
         </Routes>
         </Suspense>
+        <LookSync />
         <Toaster>
           <Setups />
         </Toaster>

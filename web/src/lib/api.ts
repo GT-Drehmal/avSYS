@@ -1,6 +1,8 @@
 // Types and a small fetch wrapper for the panel's REST API. Spec and status
 // mirror the MinecraftServer resource, so the same shapes work with kubectl.
 
+import type { Accent, Theme } from "./look";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -229,6 +231,8 @@ export interface Meta {
   snapshots: boolean;
   /** Whether it has a CurseForge API key, which anything from CurseForge needs. */
   curseforge?: boolean;
+  /** The accent of anyone who has not picked their own. */
+  accent?: Accent;
 }
 
 export interface User {
@@ -286,6 +290,8 @@ export interface Me {
   mustSetUpTwoFactor: boolean;
   /** Whether administrators here have to use two-factor. */
   adminTwoFactor: boolean;
+  /** How the panel looks to them: the accent "" where they go by the panel's. */
+  look: { theme: Theme; accent: Accent | "" };
 }
 
 /** A browser signed in as someone. */
@@ -885,6 +891,8 @@ export interface PanelInfo {
   updating?: string;
   /** Where its CurseForge API key comes from: entered here, given when it was installed, or none. */
   curseforge?: "panel" | "install" | "";
+  /** The accent of anyone who has not picked their own. */
+  accent: Accent;
 }
 
 export interface ReleaseUpdate {

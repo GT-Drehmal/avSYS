@@ -1,7 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { AccentPicker } from "../components/Look";
 import { Button, Chip, Confirm, CopyText, Empty, Field, Input, Loading, Notice, PageHeader, Section, Spinner, Toggle } from "../components/ui";
 import { api, ApiError, type Meta, type PanelInfo, type PanelState, type ReleaseUpdate } from "../lib/api";
+import type { Accent } from "../lib/look";
 import { keys, useAction, useMe, useMeta, usePanel } from "../lib/queries";
 import { toast } from "../lib/toast";
 
@@ -298,7 +300,27 @@ function CurseForge({ panel }: { panel: PanelInfo }) {
   );
 }
 
-/** What is set for the whole panel, by its administrator: updates, sign-in and CurseForge. */
+/** The accent of anyone who has not picked their own, and of the sign-in pages. */
+function PanelAccent({ panel }: { panel: PanelInfo }) {
+  const qc = useQueryClient();
+  const save = async (accent: Accent) => {
+    qc.setQueryData<PanelState>(keys.panel, (d) => (d ? { ...d, panel: { ...d.panel, accent } } : d));
+    qc.setQueryData<Meta>(keys.meta, (d) => (d ? { ...d, accent } : d));
+    try {
+      await api.patch("/panel", { accent });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not change this.");
+    }
+    await Promise.all([qc.invalidateQueries({ queryKey: keys.panel }), qc.invalidateQueries({ queryKey: keys.meta })]);
+  };
+  return (
+    <Section title="Accent" region description="For everyone who has not picked their own.">
+      <AccentPicker value={panel.accent ?? "amethyst"} onChange={(accent) => void save(accent)} />
+    </Section>
+  );
+}
+
+/** What is set for the whole panel, by its administrator: updates, sign-in, CurseForge and its accent. */
 export function InstanceSettings() {
   const me = useMe().data;
   const meta = useMeta().data;
@@ -312,6 +334,7 @@ export function InstanceSettings() {
       <Updates state={state.data} />
       {meta && <SignIn meta={meta} />}
       <CurseForge panel={state.data.panel} />
+      <PanelAccent panel={state.data.panel} />
     </>
   );
 }

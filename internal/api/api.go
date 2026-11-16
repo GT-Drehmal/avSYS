@@ -398,6 +398,7 @@ func (s *Server) Handler() http.Handler {
 	api("PATCH /panel", s.authed(s.setPanel))
 	api("POST /panel/update", s.authed(s.updatePanel))
 	api("PATCH /me", s.authed(s.updateMe))
+	api("PATCH /me/look", s.authed(s.setLook))
 	api("POST /me/password", s.authed(s.setPassword))
 	api("PUT /me/minecraft", s.authed(s.setMinecraftAccount))
 	api("DELETE /me/minecraft", s.authed(s.clearMinecraftAccount))

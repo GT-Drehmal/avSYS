@@ -49,6 +49,9 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) error {
 		// Whether it has a CurseForge API key, which anything from
 		// CurseForge needs.
 		"curseforge": s.curseForgeKey(r.Context()) != "",
+		// The accent of anyone who has not picked one, and of the pages
+		// before signing in where this browser has none.
+		"accent": s.panelAccent(r.Context()),
 	})
 	return nil
 }
@@ -461,6 +464,9 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request, u *store.User) er
 	}
 	me := map[string]any{
 		"user": u, "orgs": orgs, "identities": identities, "hasPassword": u.PasswordHash != "",
+		// How the panel looks to them: what they picked, the accent ""
+		// where they have not and have the panel's.
+		"look": lookOf(u),
 	}
 	if err := s.twoFactorOfMe(r, u, me); err != nil {
 		return err
