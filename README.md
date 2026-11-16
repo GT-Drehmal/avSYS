@@ -2,6 +2,8 @@
 
 A Minecraft server panel that is native to Kubernetes. Built for GT Drehmal; not affiliated with Primordial Team.
 
+**[Documentation](https://gt-drehmal.github.io/avSYS/)** · [User guide](https://gt-drehmal.github.io/avSYS/user-guide) · [Install](https://gt-drehmal.github.io/avSYS/install)
+
 Each server is a `MinecraftServer` resource. avSYS turns it into a pod running [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server) with its own volume, and gives you a web UI, an API and SSH on top.
 
 - **Servers in a minute.** Pick a game version and loader (Vanilla, Paper, Fabric, Forge, NeoForge, Purpur, Quilt, Folia) or a modpack from Modrinth, CurseForge or a `.mrpack`. Start from a new world, one from your world library, or one you upload. Add mods, plugins, datapacks and resource packs from Modrinth, CurseForge, a URL, or a file on your computer; each is pinned to a version that fits.
@@ -23,6 +25,8 @@ helm install avsys oci://ghcr.io/gt-drehmal/charts/avsys -n avsys --create-names
 Or `kubectl apply -f deploy/install.yaml` after setting `AVSYS_PUBLIC_URL` in it. Open the panel and create the first account: it becomes the administrator. Everything else is in [Install and operate](docs/install.md).
 
 ## Documentation
+
+Read it at **[gt-drehmal.github.io/avSYS](https://gt-drehmal.github.io/avSYS/)**, or here in [`docs/`](docs/):
 
 | | |
 | --- | --- |

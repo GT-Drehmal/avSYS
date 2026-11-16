@@ -2,7 +2,7 @@ VERSION ?= dev
 IMAGE ?= ghcr.io/gt-drehmal/avsys
 WORKSPACE_IMAGE ?= ghcr.io/gt-drehmal/avsys-workspace
 
-.PHONY: dev web generate chart chart-check test test-snapshots test-browser e2e e2e-cluster images
+.PHONY: dev web generate chart chart-check test test-snapshots test-browser e2e e2e-cluster images docs docs-screenshots
 
 # Run the panel on this machine against the current kubectl context.
 dev: web
@@ -58,6 +58,15 @@ e2e:
 # with the chart, its first account, then e2e. Needs only Docker.
 e2e-cluster:
 	./hack/e2e-cluster.sh
+
+# The documentation site: docs/ built with VitePress into docs/.vitepress/dist.
+docs:
+	cd docs && bun install --frozen-lockfile && bun run build
+
+# The pictures of the panel in docs/images, taken again from the test panel
+# (cmd/avsys-uitest) in Chromium. Commit what changed.
+docs-screenshots: web
+	cd web && bunx playwright test -c screenshots.config.ts
 
 images:
 	docker build -t $(IMAGE):$(VERSION) --build-arg VERSION=$(VERSION) .
