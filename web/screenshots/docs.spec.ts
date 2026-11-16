@@ -9,6 +9,10 @@ import { expect, test } from "../tests/panel";
 const shot = async (page: Page, name: string) => {
   // Nothing still moving: no caret, no spinner half-way round.
   await page.waitForLoadState("networkidle").catch(() => {});
+  // Every player's head on the page drawn, not still on its way.
+  await expect
+    .poll(() => page.locator('img[src*="/players/"]').evaluateAll((imgs) => imgs.every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0)))
+    .toBe(true);
   await page.screenshot({ path: `../docs/images/${name}.png`, animations: "disabled", caret: "hide" });
 };
 
