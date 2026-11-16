@@ -103,7 +103,7 @@ with values that match what you changed.
 
 Open `publicURL` and create an account. The first account becomes the
 **instance administrator**: it can make organizations, see every one as an
-owner, and use the **Nodes** page. After that, accounts are made from
+owner, and use the **Nodes** and **Instance settings** pages. After that, accounts are made from
 invite links, unless `signups` is `true`, which lets anyone make one.
 
 With [passwords off](#passwords-off) there is no form to fill in. The
@@ -308,10 +308,10 @@ turned back on.
 Mods, plugins, datapacks, resource packs and modpacks from CurseForge need
 a CurseForge API key (get one at
 [console.curseforge.com](https://console.curseforge.com)). Without one,
-nothing of CurseForge shows in the panel.
+CurseForge's tab says how it is turned on.
 
-The simplest way: the instance administrator enters it on the **Nodes**
-page, under **CurseForge**. The panel checks it with CurseForge and keeps
+The simplest way: the instance administrator enters it in **Instance
+settings**, under **CurseForge**. The panel checks it with CurseForge and keeps
 it in its database; it is never shown again, only that one is set, with
 **Replace** and **Remove**.
 
@@ -438,14 +438,15 @@ release's defaults for the rest. Without Helm, apply the newer release's
 
 ### Updating from the panel
 
-When a newer release is out, the **Nodes** page says so to the instance
-administrator, with what changed and an **Update** button. Pressing it has
+When a newer release is out, **Instance settings** says so to the instance
+administrator, with what changed and an **Update** button (the **Nodes**
+page points there). Pressing it has
 the panel set its own Deployment to the new release's image. The cluster
 restarts the panel on it: players connected through the router drop for
 that moment, servers keep running, and the page reloads once the new
 version answers.
 
-- **Install fixes by itself**, on the same page, has the panel move to a
+- **Install fixes by itself**, in Instance settings too, has the panel move to a
   newer patch release of its version (`v0.2.1` from `v0.2.0`) by itself,
   once nobody is playing. Minor and major releases wait for the button.
 - The panel asks GitHub for the newest release every six hours. Set

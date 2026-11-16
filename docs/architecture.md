@@ -347,7 +347,7 @@ the one beside the local repository.
   each able to do what the one before can and more. The instance
   administrator acts as an owner in every organization they are not a
   member of, and alone can make organizations, give domains, see the
-  Nodes page, and make reset links. See the
+  Nodes and Instance settings pages, and make reset links. See the
   [user guide](user-guide.md#roles).
 - **Checked on every request.** Each route decides the role it needs, from
   the organization in its path. Someone outside the organization is told
@@ -381,7 +381,7 @@ servers that must not see each other's files in different organizations.
 ## Updates
 
 The panel asks GitHub for its newest release every six hours. Pressing
-**Update** on the Nodes page patches the image of its own Deployment, and
+**Update** in Instance settings patches the image of its own Deployment, and
 the cluster starts the new version in its place. With "Install fixes by
 itself" on, it does so for a newer patch release by itself, every ten
 minutes looking for a moment when no game has anyone on it. The workspace

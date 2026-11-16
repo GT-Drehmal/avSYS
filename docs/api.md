@@ -365,8 +365,13 @@ Returns `{nodes: [{name, ready, cordoned?, automatic, hosts, score, memory, free
 `automatic` is whether the node takes new servers. For the instance
 administrator, each node also has `players` and
 `servers: [{org, name, memory, phase?, players?}]`, and the answer has
-`measuring`, `measured`, `update` (a newer release: `{version, notes, command?, manifest?}`)
-and `panel` (`{version, canUpdate, autoUpdate, updating?, curseforge}`).
+`measuring` and `measured`.
+
+### `GET /panel`
+
+The panel itself, for Instance settings. **Instance admin.** Returns
+`{panel: {version, canUpdate, autoUpdate, updating?, curseforge}, update?}`,
+where `update` is a newer release: `{version, notes, command?, manifest?}`.
 
 ### `GET /nodes/usage`
 
