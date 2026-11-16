@@ -27,7 +27,7 @@ export function SignInCode({ next, onRestart }: { next: string; onRestart: (why?
   };
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
-      <Field label="Code" hint="From your authenticator app, or a recovery code.">
+      <Field label="Code" hint="From your authenticator app, or a recovery code." missing="Enter the code.">
         {(id) => <Input id={id} autoFocus required autoComplete="one-time-code" spellCheck={false} value={code} onChange={(e) => setCode(e.target.value)} className="font-mono" />}
       </Field>
       {error && <Notice tone="danger">{error}</Notice>}

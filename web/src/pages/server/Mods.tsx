@@ -50,18 +50,24 @@ export function Mods() {
   const { sending, send, sendStaged, cancel } = useUpload();
   const [reading, setReading] = useState(false);
   const packInput = useRef<HTMLInputElement>(null);
-  const uploadPack = async (file: File | undefined) => {
+  const uploadPack = async (file: File | undefined, sure = false) => {
     if (!file) return;
     setReading(true);
+    let found: Awaited<ReturnType<typeof inspectPack>>;
     try {
-      await inspectPack(file);
+      found = await inspectPack(file);
     } catch (err) {
       toast.error(err instanceof ArchiveError ? err.message : "Could not read this file.");
       return;
     } finally {
       setReading(false);
     }
+    // Built for an older game than the world: asked first, as for another
+    // version of a pack.
+    if (!sure && newerThan(order, ranOn, found.gameVersion)) return setOlderPack({ game: found.gameVersion, name: found.versionId || file.name, go: () => void uploadPack(file, true) });
+    setOlderPack(null);
     const path = `${serverPath(server.org, server.name)}/modpack`;
+    const meant = sure ? { newerWorld: "true" } : {};
     try {
       const next = meta?.snapshots
         ? await sendStaged<Server>(
@@ -69,9 +75,9 @@ export function Mods() {
             file,
             (q) => `/orgs/${server.org}/uploads?${qs(q)}`,
             (q) => `/orgs/${server.org}/uploads?${qs(q)}`,
-            (upload) => api.put<Server>(`${path}?${qs({ name: file.name, upload, size: file.size })}`, undefined),
+            (upload) => api.put<Server>(`${path}?${qs({ name: file.name, upload, size: file.size, ...meant })}`, undefined),
           )
-        : await send<Server>(file.name, `${path}?${qs({ name: file.name })}`, file);
+        : await send<Server>(file.name, `${path}?${qs({ name: file.name, ...meant })}`, file);
       applyServer(qc, next);
       toast.info(`${next.spec.modpack?.title || file.name} is the modpack now`);
     } catch (err) {
@@ -91,14 +97,14 @@ export function Mods() {
   const order = useGameVersions().data?.ordered ?? [];
   const reported = server.status.version?.split(" ").at(-1);
   const ranOn = reported && order.includes(reported) ? reported : modpack?.gameVersion;
-  const [olderPack, setOlderPack] = useState<{ version: ModrinthVersion | null; game: string; name: string } | null>(null);
+  const [olderPack, setOlderPack] = useState<{ game: string; name: string; go: () => void } | null>(null);
   const pickPack = (v: ModrinthVersion | null, sure = false) => {
     if (!modpack) return;
     // The best fit is the version the panel pins for none picked, from the
     // list the picker showed.
     const pinned = v ?? pinnedOf(qc.getQueryData<ModrinthVersion[]>(["modrinth-versions", modpack.project, {}]), undefined);
     const game = pinned?.game_versions.at(-1);
-    if (pinned && game && !sure && newerThan(order, ranOn, game)) return setOlderPack({ version: v, game, name: pinned.version_number });
+    if (pinned && game && !sure && newerThan(order, ranOn, game)) return setOlderPack({ game, name: pinned.version_number, go: () => pickPack(v, true) });
     setOlderPack(null);
     const spec = { modpack: { ...modpack, version: v?.id ?? "", versionName: v?.version_number ?? "" } };
     update.mutate(sure ? { spec, newerWorld: true } : spec);
@@ -295,7 +301,7 @@ export function Mods() {
         version={olderPack?.game ?? ""}
         action={`Change to ${olderPack?.name ?? "it"} anyway`}
         loading={update.isPending}
-        onConfirm={() => olderPack && pickPack(olderPack.version, true)}
+        onConfirm={() => olderPack?.go()}
       />
     </div>
   );

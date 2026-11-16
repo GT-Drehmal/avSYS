@@ -74,7 +74,7 @@ export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCan
         <div className="text-xs text-muted">
           Or enter this key: <CopyText value={key.secret} className="text-xs" wrap />
         </div>
-        <Field label="Code">
+        <Field label="Code" missing="Enter the code.">
           {(id) => <Input id={id} required autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} className="w-36 font-mono" />}
         </Field>
         <div className="flex justify-end gap-2">
@@ -94,7 +94,7 @@ export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCan
         start.mutate(undefined, { onSuccess: setKey });
       }}
     >
-      <Field label="Password">
+      <Field label="Password" missing="Enter your password.">
         {(id) => <Input id={id} type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
       </Field>
       <div className="flex justify-end gap-2">
@@ -120,7 +120,7 @@ function WithPassword({ title, action, danger, run, onClose }: { title: string; 
           go.mutate(undefined);
         }}
       >
-        <Field label="Password">
+        <Field label="Password" missing="Enter your password.">
           {(id) => <Input id={id} type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
         </Field>
         <div className="flex justify-end gap-2">

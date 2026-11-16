@@ -2,6 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
 import { Check, Copy, LoaderCircle, Search, X } from "lucide-react";
 import {
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -56,7 +57,7 @@ export function Button({ variant = "default", size = "md", loading, icon, childr
 }
 
 const controlClass =
-  "rounded-md border border-line-strong bg-bg px-2.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-faint focus:border-accent focus:outline-none disabled:opacity-50";
+  "rounded-md border border-line-strong bg-bg px-2.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-faint focus:border-accent focus:outline-none aria-invalid:border-danger disabled:opacity-50";
 
 /**
  * A control fills its container unless it is given a width of its own. The
@@ -103,19 +104,120 @@ interface FieldProps {
   hint?: ReactNode;
   children: (id: string) => ReactNode;
   className?: string;
+  /** What is said when it is left empty, where "Fill this in." is not enough. */
+  missing?: string;
 }
 
 /** A labelled form control. The child receives the id to put on its input. */
-export function Field({ label, hint, children, className }: FieldProps) {
+export function Field({ label, hint, children, className, missing }: FieldProps) {
   const id = useId();
+  const { ref, problem } = useProblem(missing);
   return (
-    <div className={cx("flex flex-col gap-1.5", className)}>
+    <div ref={ref} className={cx("flex flex-col gap-1.5", className)}>
       <label htmlFor={id} className="text-[13px] font-medium text-fg">
         {label}
       </label>
       {children(id)}
+      {problem && <p className="text-xs text-danger">{problem}</p>}
       {hint && <p className="text-xs leading-relaxed text-muted empty:hidden">{hint}</p>}
     </div>
+  );
+}
+
+type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+
+const isControl = (t: EventTarget | null): t is Control => t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement;
+
+/** What is wrong with a control, in a few plain words. */
+function problemOf(c: Control, missing?: string): string {
+  const v = c.validity;
+  const input = c instanceof HTMLInputElement ? c : null;
+  if (v.valueMissing) return missing ?? (input?.type === "checkbox" ? "Check this box." : c instanceof HTMLSelectElement ? "Pick one." : "Fill this in.");
+  if (v.badInput) return "Enter a number.";
+  if (v.patternMismatch || v.typeMismatch) return c.title || "Check what is typed here.";
+  if (v.tooShort && !(c instanceof HTMLSelectElement)) return `Use at least ${c.minLength} characters.`;
+  if (v.tooLong && !(c instanceof HTMLSelectElement)) return `Use at most ${c.maxLength} characters.`;
+  if (v.rangeUnderflow && input) return `Use ${input.min} or more.`;
+  if (v.rangeOverflow && input) return `Use ${input.max} or less.`;
+  if (v.stepMismatch && input) return `Use steps of ${input.step}.`;
+  return c.validationMessage;
+}
+
+/**
+ * Says what is wrong with a control in the element given the ref, once a
+ * form with it is sent: the problem, said under it, and the control marked,
+ * until it is put right. Field has this; a control without a Field is put
+ * in a Checked.
+ */
+function useProblem(missing?: string) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Invalid does not bubble: it is caught on its way down.
+    const invalid = (e: Event) => {
+      if (!isControl(e.target)) return;
+      e.target.setAttribute("aria-invalid", "true");
+      setProblem(problemOf(e.target, missing));
+    };
+    const changed = (e: Event) => {
+      const c = e.target;
+      if (!isControl(c) || c.getAttribute("aria-invalid") !== "true") return;
+      // Once the change has reached the page: a render before it would put
+      // the value it had back in the control, and the change would be lost.
+      setTimeout(() => {
+        if (c.validity.valid) {
+          c.removeAttribute("aria-invalid");
+          setProblem(null);
+        } else setProblem(problemOf(c, missing));
+      });
+    };
+    el.addEventListener("invalid", invalid, true);
+    el.addEventListener("input", changed, true);
+    el.addEventListener("change", changed, true);
+    return () => {
+      el.removeEventListener("invalid", invalid, true);
+      el.removeEventListener("input", changed, true);
+      el.removeEventListener("change", changed, true);
+    };
+  }, [missing]);
+  return { ref, problem };
+}
+
+/** A control without a Field, whose problem is said under it as a Field's is. */
+export function Checked({ missing, className, children }: { missing?: string; className?: string; children: ReactNode }) {
+  const { ref, problem } = useProblem(missing);
+  return (
+    <div ref={ref} className={cx("flex flex-col gap-1", className)}>
+      {children}
+      {problem && <p className="text-xs text-danger">{problem}</p>}
+    </div>
+  );
+}
+
+let reporting = false;
+
+/**
+ * In place of the browser's bubble on a form sent with something missing or
+ * wrong, the panel's own: the problem is said under each such control (see
+ * Field and Checked), and the first is scrolled to and focused. Set up once,
+ * for every form.
+ */
+export function sayProblemsInPlace() {
+  document.addEventListener(
+    "invalid",
+    (e) => {
+      e.preventDefault();
+      // The invalid controls of one form sent are told of one after another,
+      // at once: the first is the one gone to.
+      if (reporting || !isControl(e.target)) return;
+      reporting = true;
+      setTimeout(() => (reporting = false));
+      e.target.focus({ preventScroll: true });
+      e.target.scrollIntoView({ block: "center" });
+    },
+    true,
   );
 }
 

@@ -21,6 +21,10 @@ func (s *Server) createResetLink(w http.ResponseWriter, r *http.Request, u *stor
 	if !u.IsAdmin {
 		return &Error{Status: http.StatusForbidden, Code: "forbidden", Message: "Only the panel's administrator can do this."}
 	}
+	// A reset link sets a password, which is not taken with passwords off.
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ TwoFactorOff bool }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -45,6 +49,9 @@ func (s *Server) createResetLink(w http.ResponseWriter, r *http.Request, u *stor
 
 // getResetLink says whose a reset link is, for the page it opens.
 func (s *Server) getResetLink(w http.ResponseWriter, r *http.Request) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	u, err := s.Store.ResetLinkUser(r.Context(), r.PathValue("token"))
 	if errors.Is(err, store.ErrNotFound) {
 		return errResetLinkGone
@@ -58,6 +65,9 @@ func (s *Server) getResetLink(w http.ResponseWriter, r *http.Request) error {
 // useResetLink sets a new password with a reset link. Every session of the
 // account ends; the person then signs in with it.
 func (s *Server) useResetLink(w http.ResponseWriter, r *http.Request) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Password string }
 	if err := decode(r, &in); err != nil {
 		return err

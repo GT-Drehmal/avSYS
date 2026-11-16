@@ -385,7 +385,9 @@ func splitNames(s string) []string {
 // added. The image puts those on its lists when the server starts, and never
 // takes one off: the panel notes them as its own, so that one taken out of
 // the settings is taken off in game too. Anything there that is not a
-// player's name, such as a UUID, is left to the image.
+// player's name, such as a UUID, is left to the image. A Bedrock player's
+// name is not given to the image (see the controller's forImage): Settings
+// keeps one by UUID.
 func withKept(wanted, kept []string) []string {
 	out := append([]string{}, wanted...)
 	for _, name := range kept {
@@ -521,6 +523,22 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			s.Log.Debug("could not read a server's list", "server", key.String(), "list", list.what, "error", err)
 		}
 		on := playerNames(players)
+		// A player named in the settings by UUID, as Settings keeps a
+		// Bedrock player, is put on by the image as the server starts; the
+		// panel notes them as its own by the name the game has for them, so
+		// that taken out of the settings they are taken off. Where the list
+		// cannot be read, who they are cannot be told: nothing the panel
+		// put there is taken off until it can.
+		if kept := keptUUIDs(list.kept(&fresh.Spec)); len(kept) > 0 {
+			if !known {
+				wanted = withKept(wanted, made)
+			}
+			for _, p := range players {
+				if keptByUUID(kept, p.UUID) && !hasName(wanted, p.Name) {
+					wanted = append(wanted, p.Name)
+				}
+			}
+		}
 		add, remove := listChanges(made, wanted, on, known)
 		listKey := key.String() + "/" + list.key
 		add = s.autoOps.notMissing(listKey, add)

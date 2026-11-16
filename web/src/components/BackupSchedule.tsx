@@ -4,7 +4,7 @@ import { api, type BackupOverride, type BackupPolicy, type Server } from "../lib
 import { ago } from "../lib/format";
 import { keys, useAction, useBackupPolicy, useUpdateServer } from "../lib/queries";
 import { toast } from "../lib/toast";
-import { Button, Input, Select, Toggle } from "./ui";
+import { Button, Checked, Input, Select, Toggle } from "./ui";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -51,30 +51,34 @@ export type When = Pick<BackupPolicy, "minute" | "keep">;
 export function ScheduleFields({ value, onChange }: { value: When; onChange: (patch: Partial<When>) => void }) {
   return (
     <>
-      <label className="flex flex-col gap-1.5 text-xs text-muted">
-        Time
-        <Input type="time" required value={toLocal(value.minute)} onChange={(e) => e.target.value && onChange({ minute: toUTC(e.target.value) })} className="h-8 w-36" />
-      </label>
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className="mb-1.5 text-xs text-muted">Keep the newest of each of the last</legend>
-        <div className="flex flex-wrap gap-3">
-          {periods.map(([key, unit, most]) => (
-            <label key={key} className="flex items-center gap-1.5 text-[13px] text-muted">
-              <Input
-                type="number"
-                required
-                min={key === "daily" ? 1 : 0}
-                max={most}
-                value={value.keep[key]}
-                onChange={(e) => onChange({ keep: { ...value.keep, [key]: Number(e.target.value) } })}
-                className="h-8 w-16"
-                aria-label={`${unit} to keep`}
-              />
-              {unit}
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <Checked missing="Pick a time.">
+        <label className="flex flex-col gap-1.5 text-xs text-muted">
+          Time
+          <Input type="time" required value={toLocal(value.minute)} onChange={(e) => e.target.value && onChange({ minute: toUTC(e.target.value) })} className="h-8 w-36" />
+        </label>
+      </Checked>
+      <Checked>
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="mb-1.5 text-xs text-muted">Keep the newest of each of the last</legend>
+          <div className="flex flex-wrap gap-3">
+            {periods.map(([key, unit, most]) => (
+              <label key={key} className="flex items-center gap-1.5 text-[13px] text-muted">
+                <Input
+                  type="number"
+                  required
+                  min={key === "daily" ? 1 : 0}
+                  max={most}
+                  value={value.keep[key]}
+                  onChange={(e) => onChange({ keep: { ...value.keep, [key]: Number(e.target.value) } })}
+                  className="h-8 w-16"
+                  aria-label={`${unit} to keep`}
+                />
+                {unit}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      </Checked>
     </>
   );
 }

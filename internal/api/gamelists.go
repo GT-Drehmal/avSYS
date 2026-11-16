@@ -204,6 +204,17 @@ func addedInGame(on []listedPlayer, made, wanted, kept, savedUUIDs []string) []l
 	return out
 }
 
+// keptUUIDs are the players named in a server's settings by UUID.
+func keptUUIDs(kept []string) []string {
+	var out []string
+	for _, k := range kept {
+		if playerUUIDPattern.MatchString(k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // keptByUUID is whether a player is named in a server's settings by UUID.
 func keptByUUID(kept []string, uuid string) bool {
 	if uuid == "" {

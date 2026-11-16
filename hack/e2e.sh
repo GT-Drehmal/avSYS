@@ -580,6 +580,13 @@ call -X DELETE "$LISTS/$EVENT/players/$TIM" >/dev/null
 for _ in $(seq 1 20); do whitelisted | grep -q "\.Tim203" || break; sleep 1; done
 case "$(whitelisted)" in *Tim203*) fail "a Bedrock player taken off a list stays on the whitelist" ;; *) echo "ok: a Bedrock player taken off a list is taken off the whitelist" ;; esac
 expect "and the Java players stay on still" "$(whitelisted)" "Grumm"
+# Kept in the settings, as Settings keeps a Bedrock player added in game:
+# by that UUID. He is off the whitelist now; the image puts him back by it
+# as the server next starts (under datapacks), where it would look the name
+# the game has for him up with Mojang, which has no such player, and not
+# start. One kept by that name, as Settings once kept one, does not stop
+# it either.
+set_spec '{"spec":{"whitelist":["00000000-0000-0000-0009-01f64f65c7c3",".Tim203"],"ops":["00000000-0000-0000-0009-01f64f65c7c3"]}}'
 set_spec '{"spec":{"whitelistLists":null}}'
 call -X DELETE "$LISTS/$EVENT" >/dev/null
 
@@ -709,6 +716,9 @@ mods=$(call "$SRV" | field "__import__('json').dumps(d['spec']['mods'])")
 with=$(python3 -c 'import json, sys; m = json.loads(sys.argv[1]); m.append({"source": "url", "kind": "datapack", "project": sys.argv[2]}); print(json.dumps({"spec": {"mods": m}}))' "$mods" "$PACK")
 set_spec "$with"
 restarted
+expect "a Bedrock player kept in the settings by UUID is put back as the server starts" "$(call "$SRV/files/content?path=/whitelist.json")" "00000000-0000-0000-0009-01f64f65c7c3"
+expect "and made an operator" "$(call "$SRV/files/content?path=/ops.json")" "00000000-0000-0000-0009-01f64f65c7c3"
+set_spec '{"spec":{"whitelist":null,"ops":null}}'
 expect "a datapack from a URL is installed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/world/datapacks/Veinminer-1.2.4.zip")" 200
 expect "and enabled" "$(call -d '{"command":"datapack list enabled"}' "$SRV/console" | field "d['output']")" "Veinminer-1.2.4.zip"
 set_spec "{\"spec\":{\"mods\":$mods}}"
