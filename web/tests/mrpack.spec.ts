@@ -352,7 +352,11 @@ test("a pack picked from Modrinth gives the server its picture, as a PNG", async
     for (const hit of body.hits ?? []) if (hit.slug === "adventure-pack") hit.icon_url = "https://cdn.modrinth.com/data/P0000200/icon.webp";
     return route.fulfill({ response: res, json: body });
   });
-  await page.route("https://cdn.modrinth.com/data/P0000200/icon.webp", (route) => route.fulfill({ body: png, contentType: "image/png", headers: { "Access-Control-Allow-Origin": "*" } }));
+  // Slow to come: the server is not made without it.
+  await page.route("https://cdn.modrinth.com/data/P0000200/icon.webp", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.fulfill({ body: png, contentType: "image/png", headers: { "Access-Control-Allow-Origin": "*" } });
+  });
   await newModpack(page, slug);
   await page.getByRole("button", { name: /^Adventure Pack/ }).click();
   await expect(page.getByText("modrinth:adventure-pack")).toBeVisible();
