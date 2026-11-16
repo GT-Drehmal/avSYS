@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { AccentPicker, ThemePicker, useSetLook } from "../components/Look";
 import { PicturePicker } from "../components/Picture";
+import { PlayerHead } from "../components/PlayerLists";
 import { ProviderIcon } from "../components/ProviderIcon";
 import { Button, Checked, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
@@ -93,6 +94,7 @@ function Minecraft() {
         <ul className="overflow-hidden rounded-lg border border-line bg-surface">
           {accounts.map((a) => (
             <li key={a.uuid} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
+              <PlayerHead player={a} size={24} />
               <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium">{a.name}</span>
               {a.verified ? (
                 <span className="text-xs text-muted">verified</span>

@@ -94,7 +94,7 @@ test("a member's accounts are all shown beside them", async ({ page }) => {
     });
   });
   await page.goto("/o/friends/members");
-  await expect(page.getByText("· Vera, VeraAlt in game")).toBeVisible();
+  await expect(page.getByText("Vera, VeraAlt in game", { exact: true })).toBeVisible();
 });
 
 test("an account is verified with the code the game shows", async ({ page }) => {

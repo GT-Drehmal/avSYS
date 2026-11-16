@@ -96,7 +96,8 @@ test("a Bedrock player added in game is shown by gamertag, marked Bedrock, and t
   });
   await page.goto("/o/friends/s/survival/settings");
   const whitelist = page.getByRole("list", { name: "Added in game to the whitelist" });
-  await expect(whitelist.getByRole("listitem")).toHaveText([/^Tim203Bedrock/, /^Steve/]);
+  // After the head, or the initial standing in for it.
+  await expect(whitelist.getByRole("listitem")).toHaveText([/^T?Tim203Bedrock/, /^S?Steve/]);
   // Kept by the UUID Floodgate gives him: the image, as the server starts,
   // would look the name the game has for him up with Mojang, which has no
   // such player, and the server would not start.

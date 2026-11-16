@@ -462,7 +462,8 @@ export interface ServerStatus {
   address?: string;
   ports?: PortStatus[];
   version?: string;
-  players?: { online: number; max: number; names?: string[] } | null;
+  /** Who is on: names, and with sample the same players with their UUIDs, at most a dozen. */
+  players?: { online: number; max: number; names?: string[]; sample?: { name: string; id?: string }[] } | null;
   lastActive?: string;
   restarts?: number;
   pendingRestart?: boolean;

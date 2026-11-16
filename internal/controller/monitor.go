@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,10 +85,7 @@ func (m *Monitor) check(ctx context.Context, mc *avsysv1.MinecraftServer) {
 		return
 	}
 	orig := mc.DeepCopy()
-	players := &avsysv1.PlayersStatus{Online: int32(st.Players.Online), Max: int32(st.Players.Max)}
-	for _, p := range st.Players.Sample {
-		players.Names = append(players.Names, p.Name)
-	}
+	players := playersOf(st)
 	mc.Status.Players = players
 	if players.Max > 0 {
 		mc.Status.MaxPlayers = players.Max
@@ -133,4 +132,23 @@ func SetAsleep(ctx context.Context, c client.Client, mc *avsysv1.MinecraftServer
 		delete(mc.Annotations, avsysv1.AnnotationAsleep)
 	}
 	return c.Patch(ctx, mc, client.MergeFrom(orig))
+}
+
+// playerID is a UUID as the game writes one.
+var playerID = regexp.MustCompile(`^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$`)
+
+// playersOf is who a server's answer to a ping says is on. A player who
+// asked not to be listed is named "Anonymous Player" with a UUID of zeros,
+// as are the lines of text some plugins put there: those have no UUID here.
+func playersOf(st mcproto.Status) *avsysv1.PlayersStatus {
+	players := &avsysv1.PlayersStatus{Online: int32(st.Players.Online), Max: int32(st.Players.Max)}
+	for _, p := range st.Players.Sample {
+		players.Names = append(players.Names, p.Name)
+		id := strings.ToLower(p.ID)
+		if !playerID.MatchString(id) || strings.Trim(strings.ReplaceAll(id, "-", ""), "0") == "" {
+			id = ""
+		}
+		players.Sample = append(players.Sample, avsysv1.OnlinePlayer{Name: p.Name, ID: id})
+	}
+	return players
 }

@@ -251,7 +251,7 @@ func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir s
 	}
 
 	// Servers in each state a list has to draw.
-	players := &avsysv1.PlayersStatus{Online: 2, Max: 20, Names: []string{"Steve", "Alex"}}
+	players := &avsysv1.PlayersStatus{Online: 2, Max: 20, Names: []string{"Steve", "Alex"}, Sample: []avsysv1.OnlinePlayer{{Name: "Steve", ID: "8667ba71-b85a-4004-af54-457a9734eed7"}, {Name: "Alex", ID: "ec561538-f3fd-461d-aff5-086b22154bce"}}}
 	for _, s := range []seed{
 		{org: "friends", name: "survival", display: "Survival", loader: avsysv1.LoaderPaper, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseRunning, players: players, lastBackup: 3 * time.Hour,
 			mods: []avsysv1.ContentRef{{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindPlugin, Project: "luckperms", Title: "LuckPerms", Version: "lp1", VersionName: "v5.5.0"}}},

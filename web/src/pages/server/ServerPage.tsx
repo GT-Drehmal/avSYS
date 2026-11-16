@@ -6,6 +6,7 @@ import { newFrom } from "../../lib/origin";
 import { ActivityLine } from "../../components/ActivityLine";
 import { Faces } from "../../components/Faces";
 import { PictureZoom } from "../../components/Picture";
+import { Heads } from "../../components/PlayerLists";
 import { ServerActions } from "../../components/ServerActions";
 import { holdsTheServer, OperationRow } from "../../components/Snapshots";
 import { useOrg } from "../../components/Shell";
@@ -143,6 +144,8 @@ export function ServerPage() {
   const canOperate = atLeast(role, "operator");
   const { status, spec } = server;
   const players = status.players;
+  // Who is on, with their UUIDs for their heads where the game gave them.
+  const on = players?.sample?.map((p) => ({ name: p.name, uuid: p.id })) ?? players?.names?.map((name) => ({ name })) ?? [];
   // A web map's page, served on the port opened for it.
   const map = modReached(spec.ports, status.ports, (k) => !!k.map);
 
@@ -216,12 +219,17 @@ export function ServerPage() {
         </Fact>
         <Fact label="Players">
           {status.phase === "Running" && players ? (
-            <span title={players.names?.join(", ")}>
-              <span className="font-mono tabular-nums">
+            <span className="flex min-w-0 items-center gap-2" title={on.map((p) => p.name).join(", ") || undefined}>
+              <span className="shrink-0 font-mono tabular-nums">
                 {players.online}
                 <span className="text-faint"> / {players.max}</span>
               </span>
-              {players.names && players.names.length > 0 && <span className="ml-2 text-muted">{players.names.join(", ")}</span>}
+              {on.length > 0 && (
+                <>
+                  <Heads players={on} max={5} size={16} />
+                  <span className="truncate text-muted">{on.map((p) => p.name).join(", ")}</span>
+                </>
+              )}
             </span>
           ) : (
             <span className="text-faint">–</span>
