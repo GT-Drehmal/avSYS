@@ -104,7 +104,8 @@ const count = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"}`
  */
 async function pictureAt(url: string): Promise<File | null> {
   try {
-    const res = await fetch(url);
+    // Not had in a while, it is none: the server is not made until then.
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
     const png = await pictureForRequest(new File([await res.blob()], "icon"));
     return new File([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], "icon.png", { type: "image/png" });
@@ -878,14 +879,18 @@ export function ServerForm({
   };
   // Counted too, for a pack's picture still being fetched when another is picked.
   const packPictures = useRef(0);
+  // A pack's picture still being fetched, which a server is not made without.
+  const [fetchingPackPicture, setFetchingPackPicture] = useState(false);
   const pictureFromPack = (file: File | null) => {
     packPictures.current++;
+    setFetchingPackPicture(false);
     broughtBy.current.pack = file;
     showBrought();
   };
   /** The picture of a pack picked from Modrinth, where it has one. */
   const packPictureFrom = async (url: string | null | undefined) => {
     const asked = ++packPictures.current;
+    setFetchingPackPicture(!!url);
     const file = url ? await pictureAt(url) : null;
     if (asked === packPictures.current) pictureFromPack(file);
   };
@@ -2307,7 +2312,7 @@ export function ServerForm({
             >
               Cancel
             </Link>
-            <Button type="submit" variant="primary" loading={busy}>
+            <Button type="submit" variant="primary" loading={busy || fetchingPackPicture}>
               {sent !== null ? `Sending the world, ${Math.round(sent * 100)}%` : forTemplate ? (editing ? "Save" : "Create template") : !source ? "Create server" : duplicating ? "Duplicate" : "Create server"}
             </Button>
           </div>

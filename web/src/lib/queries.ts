@@ -101,12 +101,19 @@ export const useCluster = () => useQuery<Cluster>({ queryKey: keys.cluster, quer
 export function useLiveServers() {
   const qc = useQueryClient();
   useEffect(() => {
+    // Asks again for what is shown of these. One still being asked for the
+    // first time is asked again too: its answer may be from before what
+    // changed, and asking again while it is on its way would only wait for it.
+    const askAgain = (queryKey: readonly unknown[]) =>
+      void qc
+        .cancelQueries({ queryKey, predicate: (q) => q.state.data === undefined && q.state.fetchStatus === "fetching" })
+        .then(() => qc.invalidateQueries({ queryKey }));
     // What the cluster says, and nothing else: servers, and where they run.
     const refetchCluster = () => {
-      qc.invalidateQueries({ queryKey: ["servers"] });
+      askAgain(["servers"]);
       // A move may have finished unheard, and with it what each node has left.
-      qc.invalidateQueries({ queryKey: ["placement"] });
-      qc.invalidateQueries({ queryKey: ["nodes"] });
+      askAgain(["placement"]);
+      askAgain(["nodes"]);
     };
     // Everything events keep current, for when any of them may have been
     // missed. Each is only asked for again if a page shows it now; the rest
@@ -115,18 +122,18 @@ export function useLiveServers() {
     const refetchHeard = () => {
       refetchCluster();
       // What was running may have finished unheard: it is asked for again.
-      qc.invalidateQueries({ queryKey: ["running"] });
+      askAgain(["running"]);
       // Lists kept from a page left earlier are not asked for again until
       // it is opened; what they say is running may have finished too.
       qc.setQueriesData<SnapshotList>({ queryKey: ["snapshots"] }, (list) => list && { ...list, operations: [] });
       // A snapshot taken or deleted, and so one to copy offsite, or not.
-      qc.invalidateQueries({ queryKey: ["snapshots"] });
-      qc.invalidateQueries({ queryKey: ["offsite"] });
+      askAgain(["snapshots"]);
+      askAgain(["offsite"]);
       // A sync may have finished unheard, copying the snapshot whose details are open.
-      qc.invalidateQueries({ queryKey: ["snapshot"] });
-      qc.invalidateQueries({ queryKey: ["activity"] });
+      askAgain(["snapshot"]);
+      askAgain(["activity"]);
       // A template's version may have been saved unheard.
-      qc.invalidateQueries({ queryKey: ["templates"] });
+      askAgain(["templates"]);
     };
     const source = new EventSource(`/api/v1/events?tab=${tab}`);
     let opened = false;

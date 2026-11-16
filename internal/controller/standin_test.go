@@ -86,6 +86,12 @@ func slice(t *testing.T, c client.Client, server string) *discoveryv1.EndpointSl
 	return s
 }
 
+// selectsNoPod says whether a Service selects no pod, as one the panel
+// stands in for does.
+func selectsNoPod(svc *corev1.Service) bool {
+	return svc.Spec.Selector != nil && svc.Spec.Selector[standInLabel] != ""
+}
+
 func slicePorts(s *discoveryv1.EndpointSlice) []string {
 	var out []string
 	for _, p := range s.Ports {
@@ -113,7 +119,7 @@ func TestExtraPortsReachThePanelWhileAsleep(t *testing.T) {
 	}
 
 	svc := portsService(t, c, "probe")
-	if svc.Spec.Selector != nil {
+	if !selectsNoPod(svc) {
 		t.Errorf("asleep, its ports select its pod: %v", svc.Spec.Selector)
 	}
 	s := slice(t, c, "probe")
@@ -161,7 +167,7 @@ func TestExtraPortsReachThePanelWhileAsleep(t *testing.T) {
 	if _, _, err := r.ensurePorts(ctx, woken, nil); err != nil {
 		t.Fatal(err)
 	}
-	if portsService(t, c, "probe").Spec.Selector != nil || slice(t, c, "probe") == nil {
+	if !selectsNoPod(portsService(t, c, "probe")) || slice(t, c, "probe") == nil {
 		t.Error("starting, its ports no longer reach the panel")
 	}
 
@@ -187,31 +193,14 @@ func TestExtraPortsReachThePanelWhileAsleep(t *testing.T) {
 	}
 
 	// The other sleeps on, as it was.
-	if portsService(t, c, "other").Spec.Selector != nil || slice(t, c, "other") == nil {
+	if !selectsNoPod(portsService(t, c, "other")) || slice(t, c, "other") == nil {
 		t.Error("the other server's ports no longer reach the panel")
 	}
 	if _, ok := stand.open[client.ObjectKeyFromObject(other)]; !ok {
 		t.Error("the panel stopped listening for the other server")
 	}
 
-	// Put to sleep again: as soon as its game is told to stop. The
-	// endpoints the cluster made of its game's pod, which it does not take
-	// away itself, go; another Service's stay.
-	clusterMade := func(name, service string) *discoveryv1.EndpointSlice {
-		return &discoveryv1.EndpointSlice{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "mc-x", Name: name, Labels: map[string]string{
-				discoveryv1.LabelServiceName: service, discoveryv1.LabelManagedBy: "endpointslice-controller.k8s.io",
-			}},
-			AddressType: discoveryv1.AddressTypeIPv4,
-			Endpoints:   []discoveryv1.Endpoint{{Addresses: []string{"10.42.1.20"}}},
-		}
-	}
-	gamePods, others := clusterMade("probe-ports-abcde", PortsServiceName("probe")), clusterMade("probe-xyz", "probe")
-	for _, s := range []*discoveryv1.EndpointSlice{gamePods, others} {
-		if err := c.Create(ctx, s); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Put to sleep again: as soon as its game is told to stop.
 	again := &avsysv1.MinecraftServer{}
 	_ = c.Get(ctx, client.ObjectKeyFromObject(probe), again)
 	asleep(again)
@@ -221,14 +210,8 @@ func TestExtraPortsReachThePanelWhileAsleep(t *testing.T) {
 	if _, _, err := r.ensurePorts(ctx, again, nil); err != nil {
 		t.Fatal(err)
 	}
-	if portsService(t, c, "probe").Spec.Selector != nil || slice(t, c, "probe") == nil {
+	if !selectsNoPod(portsService(t, c, "probe")) || slice(t, c, "probe") == nil {
 		t.Error("its game stopping, its ports do not reach the panel")
-	}
-	if err := c.Get(ctx, client.ObjectKeyFromObject(gamePods), &discoveryv1.EndpointSlice{}); err == nil {
-		t.Error("the endpoints of its game's pod are still there beside the panel's")
-	}
-	if err := c.Get(ctx, client.ObjectKeyFromObject(others), &discoveryv1.EndpointSlice{}); err != nil {
-		t.Errorf("another Service's endpoints were taken: %v", err)
 	}
 
 	// Its ports taken off, the panel lets go of them.
