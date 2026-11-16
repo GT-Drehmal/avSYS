@@ -217,8 +217,7 @@ func (s *Server) putModpack(w http.ResponseWriter, r *http.Request, u *store.Use
 
 	sc, closeFiles, err := s.filesOf(r.Context(), mc, wait)
 	if err != nil {
-		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
-		return errWorkspace
+		return s.unreachable(mc.Name, err)
 	}
 	defer closeFiles()
 	if err := sc.MkdirAll(controller.ContentDir); err != nil {
@@ -317,6 +316,6 @@ func (s *Server) putModpack(w http.ResponseWriter, r *http.Request, u *store.Use
 	}
 	s.removeDroppedUploadsWith(r.Context(), sc, a.Namespace, mc.Name, &mc.Spec, previous)
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.modpack", mc.Name, name)
-	writeJSON(w, http.StatusOK, s.view(mc))
+	writeJSON(w, http.StatusOK, s.view(a.Role, mc))
 	return nil
 }

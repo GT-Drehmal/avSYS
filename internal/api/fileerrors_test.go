@@ -19,6 +19,12 @@ import (
 // handlers, with its folder there.
 func filesFrom(t *testing.T, p *panel, h sftp.Handlers) *sftp.Client {
 	t.Helper()
+	return serverFilesFrom(t, p, "world", h)
+}
+
+// serverFilesFrom is filesFrom for another of alpha's servers.
+func serverFilesFrom(t *testing.T, p *panel, name string, h sftp.Handlers) *sftp.Client {
+	t.Helper()
 	c, s := net.Pipe()
 	server := sftp.NewRequestServer(s, h)
 	go func() { _ = server.Serve() }()
@@ -33,7 +39,7 @@ func filesFrom(t *testing.T, p *panel, h sftp.Handlers) *sftp.Client {
 	used := &atomic.Int64{}
 	used.Store(time.Now().UnixNano())
 	p.srv.workspaces.mu.Lock()
-	key := p.srv.Namespace("alpha") + "/world"
+	key := p.srv.Namespace("alpha") + "/" + name
 	p.srv.workspaces.conns[key] = &pooledSFTP{sftp: sc, lastUsed: used}
 	p.srv.workspaces.mu.Unlock()
 	// Taken out again when the test ends: left in, the pool would close it
@@ -372,5 +378,25 @@ func TestNewFileNotOverOneMadeMeanwhile(t *testing.T) {
 	}
 	if _, err := sc.Lstat(dataRoot + "/ops.json.avsys-upload"); err == nil {
 		t.Error("left behind")
+	}
+}
+
+// Where a file is moved to is in the query, as the page sends it. A body
+// saying so instead is not read, and moves nothing.
+func TestRenameTakesToFromTheQuery(t *testing.T) {
+	p := newPanel(t)
+	sc := filesFrom(t, p, sftp.InMemHandler())
+	put(t, sc, dataRoot+"/a", "a")
+	if code, msg := filesCall(t, p, "POST", "/rename?path=/a", `{"to":"/b"}`); code != http.StatusBadRequest || !strings.Contains(msg, `"to"`) {
+		t.Errorf("to in a body: %d %q, want 400 naming to", code, msg)
+	}
+	if _, err := sc.Stat(dataRoot + "/b"); err == nil {
+		t.Error("to in a body moved the file")
+	}
+	if code, msg := filesCall(t, p, "POST", "/rename?path=/a&to=/b", ""); code != http.StatusNoContent {
+		t.Fatalf("to in the query: %d %q", code, msg)
+	}
+	if got := read(t, sc, dataRoot+"/b"); got != "a" {
+		t.Errorf("moved file holds %q", got)
 	}
 }

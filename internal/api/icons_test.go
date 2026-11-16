@@ -669,3 +669,21 @@ func TestServerIconsLoadAsOf(t *testing.T) {
 		t.Errorf("unchanged: %q %v", data, ok)
 	}
 }
+
+// A server whose files cannot be reached is said to be, as for its files:
+// 502 workspace, whether its picture is set or taken off.
+func TestServerIconWhenFilesUnreachable(t *testing.T) {
+	p := newPanel(t)
+	p.srv.workspaces = newWorkspacePool(&sshgw.Gateway{Dialer: podNotUp{&atomic.Int32{}}, Log: p.srv.Log})
+	for _, c := range []struct {
+		method string
+		body   []byte
+	}{{"PUT", asPNG(t, picture(64, 64))}, {"DELETE", nil}} {
+		rec := p.send("admin", c.method, "/orgs/alpha/servers/world/icon", c.body)
+		var e struct{ Code string }
+		_ = json.Unmarshal(rec.Body.Bytes(), &e)
+		if rec.Code != http.StatusBadGateway || e.Code != "workspace" {
+			t.Errorf("%s: %d %s, want 502 workspace", c.method, rec.Code, rec.Body)
+		}
+	}
+}

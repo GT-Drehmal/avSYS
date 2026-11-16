@@ -74,7 +74,8 @@ func (s *Server) WatchServers(informer ctrlcache.Informer) error {
 		if !ok {
 			return
 		}
-		s.Events.Publish(Event{Type: kind, Namespace: mc.Namespace, Data: s.view(mc)})
+		// Whole: each stream shows it as its user's role allows.
+		s.Events.Publish(Event{Type: kind, Namespace: mc.Namespace, Data: s.view(store.RoleOwner, mc)})
 	}
 	_, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) { publish("server.updated", obj) },
@@ -94,6 +95,8 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, u *store.U
 	allowed := map[string]bool{}
 	// What files others have open is only for those who can open them.
 	seesFiles := map[string]bool{}
+	// A server is shown as the user's role in its organization allows.
+	roles := map[string]store.Role{}
 	slugs := map[string]string{}
 	refresh := func() error {
 		orgs, err := s.Store.OrgsForUser(ctx, u)
@@ -103,9 +106,10 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, u *store.U
 		clear(allowed)
 		clear(seesFiles)
 		clear(slugs)
+		clear(roles)
 		for _, o := range orgs {
 			ns := s.Namespace(o.Slug)
-			allowed[ns], seesFiles[ns], slugs[ns] = true, o.Role.AtLeast(store.RoleOperator), o.Slug
+			allowed[ns], seesFiles[ns], slugs[ns], roles[ns] = true, o.Role.AtLeast(store.RoleOperator), o.Slug, o.Role
 		}
 		return nil
 	}
@@ -148,6 +152,9 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, u *store.U
 			}
 			if v, ok := e.Data.(presenceView); ok && !seesFiles[e.Namespace] {
 				e.Data = v.withoutFiles()
+			}
+			if v, ok := e.Data.(serverView); ok {
+				e.Data = v.forRole(roles[e.Namespace])
 			}
 			if err := send(e.Type, e.Data); err != nil {
 				return nil

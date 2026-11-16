@@ -641,7 +641,7 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 		}
 	}
 	s.audit(r.Context(), u, a.Org, "content.upload", mc.Name, name)
-	writeJSON(w, http.StatusOK, s.view(mc))
+	writeJSON(w, http.StatusOK, s.view(a.Role, mc))
 	return nil
 }
 

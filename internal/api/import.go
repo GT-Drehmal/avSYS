@@ -401,9 +401,9 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	}()
 	select {
 	case <-received:
-		view := s.view(mc)
+		view := s.view(a.Role, mc)
 		if fresh, err := s.fresh(r.Context(), mc); err == nil {
-			view = s.view(fresh)
+			view = s.view(a.Role, fresh)
 		}
 		writeJSON(w, http.StatusAccepted, view)
 		return nil
@@ -416,7 +416,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, s.view(fresh))
+	writeJSON(w, http.StatusOK, s.view(a.Role, fresh))
 	return nil
 }
 
