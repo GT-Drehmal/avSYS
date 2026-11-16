@@ -867,12 +867,30 @@ spec:
                     format: int32
                     type: integer
                   names:
+                    description: 'Names are the players the game says are on: at most
+                      a dozen.'
                     items:
                       type: string
                     type: array
                   online:
                     format: int32
                     type: integer
+                  sample:
+                    description: Sample is the same players with their UUIDs, for
+                      their heads.
+                    items:
+                      description: OnlinePlayer is a player the game says is on.
+                      properties:
+                        id:
+                          description: 'ID is their UUID, as the game gave it: empty
+                            where it hides who they are.'
+                          type: string
+                        name:
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
                 required:
                 - max
                 - online

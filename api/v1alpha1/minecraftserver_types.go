@@ -512,9 +512,19 @@ const (
 )
 
 type PlayersStatus struct {
-	Online int32    `json:"online"`
-	Max    int32    `json:"max"`
-	Names  []string `json:"names,omitempty"`
+	Online int32 `json:"online"`
+	Max    int32 `json:"max"`
+	// Names are the players the game says are on: at most a dozen.
+	Names []string `json:"names,omitempty"`
+	// Sample is the same players with their UUIDs, for their heads.
+	Sample []OnlinePlayer `json:"sample,omitempty"`
+}
+
+// OnlinePlayer is a player the game says is on.
+type OnlinePlayer struct {
+	Name string `json:"name"`
+	// ID is their UUID, as the game gave it: empty where it hides who they are.
+	ID string `json:"id,omitempty"`
 }
 
 // SnapshotStatus is where a server stands with its snapshots.

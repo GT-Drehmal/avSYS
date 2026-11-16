@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, serverPath, type GameLists, type Server } from "../lib/api";
 import { keys, useAction } from "../lib/queries";
-import { BedrockMark } from "./PlayerLists";
+import { BedrockMark, PlayerHead } from "./PlayerLists";
 import { Button } from "./ui";
 import { lines } from "./ServerFields";
 
@@ -30,6 +30,7 @@ export function AddedInGame({ server, list, listed, onKeep }: { server: Server; 
           return (
             <li key={p.name} className="flex items-center justify-between gap-2 py-1 pr-1 pl-3 text-[13px]">
               <span className="flex min-w-0 items-center gap-2">
+                <PlayerHead player={{ name: shown, uuid: p.uuid }} size={20} />
                 <span className="truncate font-mono text-fg">{shown}</span>
                 {p.bedrock && <BedrockMark />}
               </span>

@@ -96,7 +96,8 @@ test("a Bedrock player added in game is shown by gamertag, marked Bedrock, and t
   });
   await page.goto("/o/friends/s/survival/settings");
   const whitelist = page.getByRole("list", { name: "Added in game to the whitelist" });
-  await expect(whitelist.getByRole("listitem")).toHaveText([/^Tim203Bedrock/, /^Steve/]);
+  // After the head, or the initial standing in for it.
+  await expect(whitelist.getByRole("listitem")).toHaveText([/^T?Tim203Bedrock/, /^S?Steve/]);
   // Kept by the name the game has for him.
   await page.getByRole("button", { name: "Keep Tim203 on the whitelist" }).click();
   await expect(page.getByLabel("Whitelisted players")).toHaveValue(".Tim203");
