@@ -659,10 +659,11 @@ is thrown away after.
 
 The routes that take an upload sent here, as `?upload=<id>&size=<bytes>`:
 [`POST /orgs/{org}/worlds/upload`](#post-orgsorgworldsupload),
-[`PUT /orgs/{org}/templates/{template}/world`](#put-orgsorgtemplatestemplateworld),
-[`PUT .../modpack`](#put-orgsorgserversservermodpack) and
-[`PUT .../import`](#put-orgsorgserversserverimport) (with `from=upload`).
-`size` must be the whole file's size.
+[`PUT /orgs/{org}/templates/{template}/world`](#put-orgsorgtemplatestemplateworld)
+and [`PUT .../modpack`](#put-orgsorgserversservermodpack). `size` must be
+the whole file's size. An archive to import into a server is sent in parts
+to the server itself instead, with
+[`PUT .../import/upload`](#put-orgsorgserversserverimportupload).
 
 ### `GET /orgs/{org}/uploads`
 
@@ -978,7 +979,7 @@ Put files into a server from an archive: a whole server folder, or a world.
 | `replace=true` | Replace the world the server has. A snapshot is taken first. |
 | `root` | The folder in the archive to take. |
 | `template=<id>`, `library=<id>` | No archive: the world of a template or of the library. `pack=true` also takes its resource pack. |
-| `from=upload`, `upload`, `size` | The archive was sent [in parts](#uploads). |
+| `from=upload`, `upload`, `size` | The archive was sent in parts with [`PUT .../import/upload`](#put-orgsorgserversserverimportupload). |
 | `version` | The game version the world was last opened in. |
 | `content=listed` | Leave out the archive's mods, plugins and datapacks; those in `spec.mods` are installed instead. |
 | `players=listed` | Trim the archive's operators and whitelist to the server's lists. |
