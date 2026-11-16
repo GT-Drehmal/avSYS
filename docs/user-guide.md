@@ -58,6 +58,10 @@ The **Account** page, from the menu at the bottom left:
 
 - **Profile.** Your picture and display name. Your username cannot be
   changed.
+- **Appearance.** **Theme**: Auto (follows your system), Light or Dark.
+  **Accent**: Amethyst, Gold, Teal, Blue or Rose, or **Default** for the
+  panel's. Both are also in the menu under your name, and follow you to
+  other browsers.
 - **Minecraft accounts.** Link the accounts you play as. Your main one is
   shown beside your name. Servers can let members in by their linked
   accounts (see [Players](#players)). A viewer's account is let in only
@@ -537,6 +541,8 @@ Instance settings**, under **Nodes**.
 - **CurseForge**: the API key that lets people add content and modpacks
   from CurseForge. It is never shown again once saved; **Replace** or
   **Remove** it.
+- **Accent**: the accent for everyone who has not picked their own (see
+  [Your account](#your-account)). Amethyst unless you change it.
 
 ## Updating the panel
 
