@@ -9,17 +9,33 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { Picture } from "./Picture";
 import { Button, cx, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
 
+/** The mark's pixels: a quartz gate with amethyst light inside, on a 16 by 16 grid of 2-unit cells. */
+const gate =
+  "M14 0h4v2h-4ZM12 2h8v2h-8ZM10 4h12v2h-12ZM6 8h20v4h-20ZM8 12h4v16h-4ZM20 12h4v16h-4ZM6 28h20v4h-20Z";
+const light = "M14 14h4v12h-4Z";
+const S = "M9.6 1.2H4.1A2.9 2.9 0 0 0 4.1 7H5.9A2.9 2.9 0 0 1 5.9 12.8H0.4";
+
+/**
+ * The avSYS mark and name. Drawn 32 px high (in px: the page's rem is 14)
+ * so each of the mark's cells is two whole pixels; the empty margin left of
+ * the gate is cut off, so the gate lines up with what is under it.
+ */
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cx("inline-flex items-center gap-2 font-mono text-[15px] font-medium tracking-tight", className)}>
-      <svg viewBox="0 0 20 18" className="h-[15px] w-auto text-accent" fill="currentColor" aria-hidden>
-        <path d="M10 0 20 18h-4.5L10 7.6 4.5 18H0Z" />
-        <rect x="7" y="14" width="6" height="2.6" />
-      </svg>
-      <span>
-        <span className="text-muted">av</span>SYS
-      </span>
-    </span>
+    <svg viewBox="6 0 104.571 32" className={cx("h-[32px] w-auto shrink-0", className)} role="img" aria-label="avSYS">
+      <g shapeRendering="crispEdges">
+        <path className="fill-quartz" d={gate} />
+        <path className="fill-amethyst" d={light} />
+      </g>
+      <g transform="translate(42 8) scale(1.1429)" strokeWidth="2.4">
+        <circle className="fill-none stroke-muted" cx="5" cy="9" r="3.8" />
+        <path className="fill-none stroke-muted" d="M8.8 4V14" />
+        <path className="fill-muted" transform="translate(12.5 0)" d="M0 4H2.7L5 10.13 7.3 4H10L6.25 14H3.75Z" />
+        <path className="fill-none stroke-fg" transform="translate(25 0)" d={S} />
+        <path className="fill-fg" transform="translate(37.5 0)" d="M0 0H2.8L5 4.63 7.2 0H10L6.2 8V14H3.8V8Z" />
+        <path className="fill-none stroke-fg" transform="translate(50 0)" d={S} />
+      </g>
+    </svg>
   );
 }
 
@@ -217,7 +233,7 @@ export function Shell() {
   return (
     <div className="flex min-h-dvh flex-col md:flex-row">
       <aside className="flex shrink-0 flex-col gap-4 border-b border-line bg-surface p-3 md:sticky md:top-0 md:h-dvh md:w-56 md:border-r md:border-b-0">
-        <Link to="/" className="flex h-8 items-center px-1.5">
+        <Link to="/" className="flex items-center self-start px-1.5">
           <Wordmark />
         </Link>
         <OrgSwitcher current={navOrg} />

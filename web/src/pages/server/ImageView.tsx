@@ -14,7 +14,7 @@ const biggest = 512;
 
 /** A transparent picture's edges show against squares, as in an image editor. */
 const checkers: React.CSSProperties = {
-  backgroundImage: "repeating-conic-gradient(#4a5458 0 25%, #333c40 0 50%)",
+  backgroundImage: "repeating-conic-gradient(#505256 0 25%, #393a3e 0 50%)",
   backgroundSize: "16px 16px",
 };
 

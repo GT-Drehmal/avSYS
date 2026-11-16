@@ -5,30 +5,35 @@
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
-  /* Surfaces, darkest first. A faint green-blue cast, like lit stone. */
-  --color-bg: #0a0d0e;
-  --color-surface: #0f1314;
-  --color-raised: #151a1c;
-  --color-hover: #1a2123;
-  --color-line: #1e2629;
-  --color-line-strong: #2c373b;
+  /* Surfaces, darkest first. Near-neutral greys, a touch cool. */
+  --color-bg: #0b0c0f;
+  --color-surface: #111215;
+  --color-raised: #18191c;
+  --color-hover: #1e2023;
+  --color-line: #232528;
+  --color-line-strong: #333538;
 
-  --color-fg: #e3e9e9;
-  --color-muted: #8d989b;
-  --color-faint: #5c676a;
+  --color-fg: #e6e8ec;
+  --color-muted: #94969a;
+  --color-faint: #636568;
 
-  /* The one accent: Avsohmic teal. Used for what is live or primary. */
-  --color-accent: #5fe0c6;
-  --color-accent-strong: #8cf0dc;
-  --color-accent-ink: #04201b;
-  --color-accent-wash: #12302c;
+  /* The one accent: amethyst, the light in the mark's gate. Used for what is
+     live or primary. */
+  --color-accent: #b98cff;
+  --color-accent-strong: #caabff;
+  --color-accent-ink: #1e0637;
+  --color-accent-wash: #2a203b;
+
+  /* The mark's own two: a quartz gate with amethyst light inside. */
+  --color-quartz: #eef3f2;
+  --color-amethyst: #b98cff;
 
   --color-warn: #e3b55a;
   --color-warn-wash: #2e2512;
   --color-danger: #f0707a;
   --color-danger-wash: #331a1d;
-  --color-dormant: #98a2f5;
-  --color-dormant-wash: #1c2040;
+  --color-dormant: #61b7de;
+  --color-dormant-wash: #102731;
 
   --radius-sm: 4px;
   --radius-md: 6px;
