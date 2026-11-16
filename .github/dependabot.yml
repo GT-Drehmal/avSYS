@@ -15,6 +15,12 @@ updates:
     groups:
       web:
         patterns: ["*"]
+  - package-ecosystem: bun
+    directory: /docs
+    schedule: { interval: weekly }
+    groups:
+      docs:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }

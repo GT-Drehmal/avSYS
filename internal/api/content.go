@@ -409,10 +409,14 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	if pack := spec.Modpack; pack != nil && pack.Source == avsysv1.SourceModrinth {
-		unchanged := previous != nil && previous.Modpack != nil && previous.Modpack.Project == pack.Project && previous.Modpack.Version == pack.Version
+	if pack := spec.Modpack; pack != nil && (pack.Source == avsysv1.SourceModrinth || pack.Source == avsysv1.SourceCurseForge) {
+		unchanged := previous != nil && previous.Modpack != nil && previous.Modpack.Source == pack.Source && previous.Modpack.Project == pack.Project && previous.Modpack.Version == pack.Version
 		if !unchanged || pack.GameVersion == "" || pack.Version == "" {
-			if err := s.pinModpack(ctx, pack); err != nil {
+			pin := s.pinModpack
+			if pack.Source == avsysv1.SourceCurseForge {
+				pin = s.pinCurseForgeModpack
+			}
+			if err := pin(ctx, pack); err != nil {
 				return err
 			}
 		}
@@ -440,8 +444,8 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		switch m.Source {
 		case avsysv1.SourceURL:
 			return "url:" + m.Project
-		case avsysv1.SourceModrinth:
-			return "modrinth:" + m.Project + "@" + m.Version
+		case avsysv1.SourceModrinth, avsysv1.SourceCurseForge:
+			return string(m.Source) + ":" + m.Project + "@" + m.Version
 		}
 		return ""
 	}
@@ -464,11 +468,17 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 			continue
 		}
 		switch m.Source {
-		case avsysv1.SourceModrinth:
+		case avsysv1.SourceModrinth, avsysv1.SourceCurseForge:
 			if retarget {
 				m.Version, m.VersionName, m.Java, m.File = "", "", 0, ""
 			}
 			if m.Version != "" && (m.Java != 0 || (m.Kind == avsysv1.KindDatapack && m.File != "")) && m.Title != "" && m.IconURL != "" {
+				continue
+			}
+			// Pinned already, it is left as it is while the panel has no
+			// CurseForge key to learn more of it with: a change to anything
+			// else is not refused for it.
+			if m.Source == avsysv1.SourceCurseForge && m.Version != "" && (m.Kind != avsysv1.KindDatapack || m.File != "") && s.curseForgeKey(ctx) == "" {
 				continue
 			}
 		case avsysv1.SourceURL:
@@ -496,6 +506,8 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 				if java, ierr := javaOfURL(ctx, m.Project); ierr == nil {
 					m.Java = int32(java)
 				}
+			} else if m.Source == avsysv1.SourceCurseForge {
+				err = s.pinCurseForge(ctx, m, t)
 			} else {
 				err = s.pin(ctx, m, t)
 			}
@@ -641,7 +653,7 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 		}
 	}
 	s.audit(r.Context(), u, a.Org, "content.upload", mc.Name, name)
-	writeJSON(w, http.StatusOK, s.view(mc))
+	writeJSON(w, http.StatusOK, s.view(a.Role, mc))
 	return nil
 }
 
@@ -901,11 +913,16 @@ func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 		if m.Source == avsysv1.SourceUpload && !listed[key] {
 			gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
 		}
-		if asDatapack[key] {
+		// One from CurseForge that is still listed may be of another
+		// version now, in a file of another name: the one before is
+		// removed below unless it is still the one in use.
+		if asDatapack[key] && m.Source != avsysv1.SourceCurseForge {
 			continue
 		}
-		// The image removes what it installed from Modrinth itself.
-		if m.Source != avsysv1.SourceURL && m.Source != avsysv1.SourceUpload {
+		// The image removes what it installed from Modrinth itself; a
+		// datapack from CurseForge it was given the address of, as one
+		// from a URL.
+		if m.Source != avsysv1.SourceURL && m.Source != avsysv1.SourceUpload && m.Source != avsysv1.SourceCurseForge {
 			continue
 		}
 		if name := installedDatapack(m); name != "" && was != "" && now != "" {
@@ -928,7 +945,7 @@ func installedDatapack(m avsysv1.ContentRef) string {
 	switch m.Source {
 	case avsysv1.SourceUpload:
 		return path.Base(m.Project)
-	case avsysv1.SourceModrinth:
+	case avsysv1.SourceModrinth, avsysv1.SourceCurseForge:
 		if plainName(m.File) {
 			return m.File
 		}

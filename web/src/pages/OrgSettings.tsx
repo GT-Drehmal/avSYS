@@ -42,7 +42,7 @@ export function OrgSettings() {
           ) : (
             <PictureZoom name={membership.name} url={orgIcon(membership)} size={56} />
           )}
-          <Field label="Name">{(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
+          <Field label="Name" missing="Give it a name.">{(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
           <Field label="Short name" hint="Used in links and SSH logins. Cannot be changed.">
             {(id) => <Input id={id} disabled value={membership.slug} className="font-mono" />}
           </Field>

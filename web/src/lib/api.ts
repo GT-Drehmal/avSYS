@@ -1,6 +1,8 @@
 // Types and a small fetch wrapper for the panel's REST API. Spec and status
 // mirror the MinecraftServer resource, so the same shapes work with kubectl.
 
+import type { Accent, Theme } from "./look";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -227,6 +229,10 @@ export interface Meta {
   ssh: { host: string; port: number };
   /** Whether this panel can take snapshots at all. */
   snapshots: boolean;
+  /** Whether it has a CurseForge API key, which anything from CurseForge needs. */
+  curseforge?: boolean;
+  /** The accent of anyone who has not picked their own. */
+  accent?: Accent;
 }
 
 export interface User {
@@ -284,6 +290,8 @@ export interface Me {
   mustSetUpTwoFactor: boolean;
   /** Whether administrators here have to use two-factor. */
   adminTwoFactor: boolean;
+  /** How the panel looks to them: the accent "" where they go by the panel's. */
+  look: { theme: Theme; accent: Accent | "" };
 }
 
 /** A browser signed in as someone. */
@@ -313,10 +321,13 @@ export type Phase = "Stopped" | "Stopping" | "Starting" | "Running" | "Sleeping"
 export type Loader = "vanilla" | "paper" | "purpur" | "folia" | "fabric" | "quilt" | "forge" | "neoforge";
 export type ContentKind = "mod" | "plugin" | "datapack";
 
+/** Where content is searched for. */
+export type CatalogSource = "modrinth" | "curseforge";
+
 export interface ContentRef {
-  source: "modrinth" | "curseforge" | "url" | "upload";
+  source: CatalogSource | "url" | "upload";
   kind?: ContentKind;
-  /** Modrinth or CurseForge slug, a download URL, or an uploaded file's name. */
+  /** A Modrinth slug, a CurseForge project ID, a download URL, or an uploaded file's name. */
   project: string;
   version?: string;
   /** The Java release the pinned file was compiled for, once the panel has read it. */
@@ -328,8 +339,8 @@ export interface ContentRef {
 
 export interface Modpack {
   /** "upload" is a .mrpack uploaded to the panel. */
-  source: "modrinth" | "curseforge" | "upload";
-  /** The Modrinth project, or the name an uploaded file had. */
+  source: CatalogSource | "upload";
+  /** The Modrinth project or CurseForge slug, or the name an uploaded file had. */
   project: string;
   /** The pinned version; for an upload, its file's SHA-1, empty until it is uploaded. */
   version?: string;
@@ -375,8 +386,8 @@ export interface PackFormats {
 }
 
 export interface PackProject {
-  source: "modrinth";
-  /** Its slug. */
+  source: CatalogSource;
+  /** Its Modrinth slug, or CurseForge ID. */
   id: string;
   version?: string;
   versionName?: string;
@@ -451,7 +462,8 @@ export interface ServerStatus {
   address?: string;
   ports?: PortStatus[];
   version?: string;
-  players?: { online: number; max: number; names?: string[] } | null;
+  /** Who is on: names, and with sample the same players with their UUIDs, at most a dozen. */
+  players?: { online: number; max: number; names?: string[]; sample?: { name: string; id?: string }[] } | null;
   lastActive?: string;
   restarts?: number;
   pendingRestart?: boolean;
@@ -766,6 +778,10 @@ export interface ModrinthHit {
   license?: string;
   client_side?: string;
   server_side?: string;
+  /** Its page, where it is not on Modrinth. */
+  page_url?: string;
+  /** False where its author allows downloads only on CurseForge itself. */
+  downloadable?: boolean;
 }
 
 /** A page of search results. */
@@ -796,6 +812,8 @@ export interface ModrinthVersion {
   files?: { url: string; filename: string; primary: boolean; size: number; hashes: { sha1?: string } }[];
   /** What it needs or clashes with. One names a project, or only a version of one. */
   dependencies?: { project_id: string | null; version_id?: string | null; dependency_type: "required" | "optional" | "incompatible" | "embedded" }[];
+  /** False where its author allows downloads only on CurseForge itself. */
+  downloadable?: boolean;
 }
 
 export interface MinecraftVersions {
@@ -855,10 +873,12 @@ export interface NodeList {
   automatic?: string;
   measuring?: boolean;
   measured?: { at: string; failed?: string[]; error?: string };
-  /** A newer release than the one running, for the panel's administrator. */
+}
+
+/** The panel itself, and a newer release than the one running: for its administrator. */
+export interface PanelState {
+  panel: PanelInfo;
   update?: ReleaseUpdate;
-  /** The panel itself, for its administrator. */
-  panel?: PanelInfo;
 }
 
 export interface PanelInfo {
@@ -870,6 +890,10 @@ export interface PanelInfo {
   autoUpdate: boolean;
   /** The release it is moving to, while it does. */
   updating?: string;
+  /** Where its CurseForge API key comes from: entered here, given when it was installed, or none. */
+  curseforge?: "panel" | "install" | "";
+  /** The accent of anyone who has not picked their own. */
+  accent: Accent;
 }
 
 export interface ReleaseUpdate {

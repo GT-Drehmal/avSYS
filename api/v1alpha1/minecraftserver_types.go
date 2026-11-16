@@ -207,7 +207,7 @@ type ResourcePackSpec struct {
 	// server's files, where snapshots and copies take it along, and the
 	// panel serves it, at an address of its SHA1: URL is that address.
 	Uploaded *UploadedPack `json:"uploaded,omitempty"`
-	// Project is set for a pack picked from Modrinth: URL and SHA1 are of
+	// Project is set for a pack picked from Modrinth or CurseForge: URL and SHA1 are of
 	// the file of the version picked.
 	Project *PackProject `json:"project,omitempty"`
 	// Formats are the pack formats it is made for, where known: read from
@@ -243,7 +243,7 @@ type StackedPack struct {
 // PackProject is the project a resource pack was picked from, and which
 // version of it.
 type PackProject struct {
-	// +kubebuilder:validation:Enum=modrinth
+	// +kubebuilder:validation:Enum=modrinth;curseforge
 	Source string `json:"source"`
 	// ID is the project's slug or ID there.
 	ID          string `json:"id"`
@@ -512,9 +512,19 @@ const (
 )
 
 type PlayersStatus struct {
-	Online int32    `json:"online"`
-	Max    int32    `json:"max"`
-	Names  []string `json:"names,omitempty"`
+	Online int32 `json:"online"`
+	Max    int32 `json:"max"`
+	// Names are the players the game says are on: at most a dozen.
+	Names []string `json:"names,omitempty"`
+	// Sample is the same players with their UUIDs, for their heads.
+	Sample []OnlinePlayer `json:"sample,omitempty"`
+}
+
+// OnlinePlayer is a player the game says is on.
+type OnlinePlayer struct {
+	Name string `json:"name"`
+	// ID is their UUID, as the game gave it: empty where it hides who they are.
+	ID string `json:"id,omitempty"`
 }
 
 // SnapshotStatus is where a server stands with its snapshots.

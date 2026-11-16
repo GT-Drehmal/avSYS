@@ -96,10 +96,18 @@ test("a Bedrock player added in game is shown by gamertag, marked Bedrock, and t
   });
   await page.goto("/o/friends/s/survival/settings");
   const whitelist = page.getByRole("list", { name: "Added in game to the whitelist" });
-  await expect(whitelist.getByRole("listitem")).toHaveText([/^Tim203Bedrock/, /^Steve/]);
-  // Kept by the name the game has for him.
+  // After the head, or the initial standing in for it.
+  await expect(whitelist.getByRole("listitem")).toHaveText([/^T?Tim203Bedrock/, /^S?Steve/]);
+  // Kept by the UUID Floodgate gives him: the image, as the server starts,
+  // would look the name the game has for him up with Mojang, which has no
+  // such player, and the server would not start.
   await page.getByRole("button", { name: "Keep Tim203 on the whitelist" }).click();
-  await expect(page.getByLabel("Whitelisted players")).toHaveValue(".Tim203");
+  await expect(page.getByLabel("Whitelisted players")).toHaveValue("00000000-0000-0000-0009-01f64f65c7c3");
+  await expect(whitelist.getByRole("listitem")).toHaveText([/^S?Steve/]);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].spec.whitelist).toEqual(["00000000-0000-0000-0009-01f64f65c7c3"]);
+  saved.length = 0;
   await page.getByRole("button", { name: "Discard" }).click();
   await page.getByRole("button", { name: "Remove Tim203 from the whitelist" }).click();
   await expect(whitelist.getByRole("listitem")).toHaveText([/Steve/]);

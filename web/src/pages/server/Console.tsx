@@ -392,7 +392,7 @@ function LiveConsole() {
       {!pinned && (
         <button
           onClick={() => setPinned(true)}
-          className="absolute right-4 bottom-14 flex h-7 items-center gap-1.5 rounded-full border border-line-strong bg-raised px-3 text-xs font-medium shadow-lg shadow-black/40 hover:bg-hover"
+          className="absolute right-4 bottom-14 flex h-7 items-center gap-1.5 rounded-full border border-line-strong bg-raised px-3 text-xs font-medium shadow-lg shadow-shade/40 hover:bg-hover"
         >
           <ArrowDown className="size-3.5" />
           Latest

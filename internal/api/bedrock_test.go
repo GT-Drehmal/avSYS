@@ -583,6 +583,84 @@ func TestBedrockPlayersOfAStoppedServer(t *testing.T) {
 	}
 }
 
+// A Bedrock player added in game is kept in the settings by the UUID
+// Floodgate gives them, as Settings keeps one: no longer shown as added in
+// game, nor to be taken off here, and noted as the panel's own by the name
+// the game has for them. Gone from the game's file, he is left to the image
+// to put back as the server starts, by that UUID: the panel runs nothing for
+// him. Taken out of the settings, he is taken off, as one kept by name is.
+func TestBedrockPlayerKeptByUUID(t *testing.T) {
+	p := newPanel(t)
+	g := runningWithLists(t, p)
+	p.srv.catalog.http.Transport = bedrockAccounts(newMojangAccounts("Steve"))
+	g.uuids = map[string]string{".tim203": timUUID}
+	g.joined = []string{".Tim203"}
+	onBoth := func() {
+		g.mu.Lock()
+		g.whitelist = []string{".Tim203"}
+		g.saveWhitelist()
+		g.setOps([]string{".Tim203"})
+		g.mu.Unlock()
+	}
+	onBoth()
+	if got := gameLists(t, p); got["whitelist"] != ".Tim203" || got["ops"] != ".Tim203" {
+		t.Fatalf("added in game: %v", got)
+	}
+	look := func() string {
+		t.Helper()
+		if err := p.srv.syncOps(context.Background(), world(t, p), nil); err != nil {
+			t.Fatal(err)
+		}
+		return g.commands()
+	}
+	notes := func() string {
+		a := world(t, p).Annotations
+		return a[avsysv1.AnnotationAutoWhitelist] + " | " + a[avsysv1.AnnotationAutoOps]
+	}
+	if code, body := call(p, "admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"whitelist":["`+timUUID+`"],"ops":["`+timUUID+`"]}}`); code != http.StatusOK {
+		t.Fatalf("keeping him: %d %s", code, body)
+	}
+	if got := gameLists(t, p); got["whitelist"] != "" || got["ops"] != "" {
+		t.Errorf("added in game once kept: %v", got)
+	}
+	if code, errCode := p.do("admin", "DELETE", "/orgs/alpha/servers/world/lists/whitelist/.Tim203", ""); code != http.StatusConflict || errCode != "listed" {
+		t.Errorf("taking a kept Bedrock player off: %d %s", code, errCode)
+	}
+	waitFor(t, "he is noted as the panel's", func() bool {
+		_ = look()
+		a := world(t, p).Annotations
+		return hasName(splitNames(a[avsysv1.AnnotationAutoWhitelist]), ".Tim203") && hasName(splitNames(a[avsysv1.AnnotationAutoOps]), ".Tim203")
+	})
+	if got := look(); got != "" {
+		t.Errorf("in step: %s", got)
+	}
+
+	// Taken off in game: nothing is run, the image puts him back.
+	g.mu.Lock()
+	g.whitelist = nil
+	g.saveWhitelist()
+	g.mu.Unlock()
+	if got := look(); got != "" {
+		t.Errorf("ran for a player kept by UUID: %s", got)
+	}
+
+	// Put back, as the image does as the server starts, then taken out of
+	// the settings: taken off both.
+	onBoth()
+	_ = look()
+	// Changed directly, so that no look of its own runs after the test.
+	changeWorld(t, p, func(mc *avsysv1.MinecraftServer) { mc.Spec.Whitelist, mc.Spec.Ops = nil, nil })
+	waitFor(t, "he is taken off", func() bool {
+		_ = look()
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return !hasName(g.whitelist, ".Tim203") && !hasName(g.ops(), ".Tim203")
+	})
+	if got := notes(); strings.Contains(got, "Tim203") {
+		t.Errorf("notes at the end: %q", got)
+	}
+}
+
 // A Bedrock player's head is made from the skin GeyserMC made of theirs for
 // Java; one it has none for has none.
 func TestBedrockHead(t *testing.T) {

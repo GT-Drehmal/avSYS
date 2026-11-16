@@ -140,8 +140,10 @@ signups: false
 # administrator.
 passwords: true
 
-# Passed to servers for CurseForge downloads: here, or as the key api-key in
-# an existing Secret.
+# CurseForge's API key, for finding and installing mods and modpacks from
+# CurseForge: as the key api-key in an existing Secret, or here. With
+# neither, it is read from the Secret avsys-curseforge if there is one, or
+# can be entered in the panel, under Instance settings.
 curseforge:
   apiKey: ""
   existingSecret: ""
@@ -194,12 +196,12 @@ namespacePrefix: mc-
 installCRDs: true
 
 # The panel asks GitHub every few hours whether a newer release is out, and
-# tells the instance administrator on the Nodes page, with the command that
+# tells the instance administrator in Instance settings, with the command that
 # upgrades. false for a panel that should not reach the internet.
 updateCheck: true
 
-# The instance administrator can update the panel to a newer release from the
-# Nodes page, and have it install fixes by itself: the panel changes the
+# The instance administrator can update the panel to a newer release from its
+# instance settings, and have it install fixes by itself: the panel changes the
 # image of its own Deployment, which this lets its service account do (that
 # one Deployment, nothing else). false to update only with helm upgrade.
 # After updating from the panel, a later helm upgrade should name that

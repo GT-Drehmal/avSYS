@@ -63,8 +63,9 @@ func main() {
 	metrics := flag.Bool("metrics", false, "stand in a metrics API, and two nodes for it to answer for")
 	offsite := flag.Bool("offsite", false, "copy snapshots offsite, with the older ones of the first organization there already")
 	fresh := flag.Bool("fresh", false, "seed nothing: a panel just installed, waiting for its first account")
+	curseForge := flag.String("curseforge-key", "", "a CurseForge API key the panel is installed with: CurseForge is offered, and answered from --upstream")
 	flag.Parse()
-	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *offsite, *fresh); err != nil {
+	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *offsite, *fresh, *curseForge); err != nil {
 		fmt.Fprintln(os.Stderr, "avsys-uitest:", err)
 		os.Exit(1)
 	}
@@ -73,7 +74,7 @@ func main() {
 // password is the one every seeded person signs in with.
 const password = "correct horse battery staple"
 
-func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite, fresh bool) error {
+func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite, fresh bool, curseForgeKey string) error {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	dir, err := os.MkdirTemp("", "avsys-uitest-")
@@ -116,7 +117,8 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 			// Installed with the chart: see the Service below.
 			RouterService: types.NamespacedName{Namespace: "avsys", Name: "avsys"},
 			// Its own Deployment, which it can move to a newer release.
-			Deployment: types.NamespacedName{Namespace: "avsys", Name: "avsys"}},
+			Deployment:    types.NamespacedName{Namespace: "avsys", Name: "avsys"},
+			CurseForgeKey: curseForgeKey},
 		Store:  db,
 		Client: cluster,
 		Reader: cluster,
@@ -249,7 +251,7 @@ func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir s
 	}
 
 	// Servers in each state a list has to draw.
-	players := &avsysv1.PlayersStatus{Online: 2, Max: 20, Names: []string{"Steve", "Alex"}}
+	players := &avsysv1.PlayersStatus{Online: 2, Max: 20, Names: []string{"Steve", "Alex"}, Sample: []avsysv1.OnlinePlayer{{Name: "Steve", ID: "8667ba71-b85a-4004-af54-457a9734eed7"}, {Name: "Alex", ID: "ec561538-f3fd-461d-aff5-086b22154bce"}}}
 	for _, s := range []seed{
 		{org: "friends", name: "survival", display: "Survival", loader: avsysv1.LoaderPaper, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseRunning, players: players, lastBackup: 3 * time.Hour,
 			mods: []avsysv1.ContentRef{{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindPlugin, Project: "luckperms", Title: "LuckPerms", Version: "lp1", VersionName: "v5.5.0"}}},

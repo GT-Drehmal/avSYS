@@ -718,6 +718,10 @@ func (s *Server) renameFile(w http.ResponseWriter, r *http.Request, u *store.Use
 		return err
 	}
 	defer release()
+	// Where to, as path is: in the query.
+	if !r.URL.Query().Has("to") {
+		return errBadRequest(`Say where to move it: "to" in the query.`)
+	}
 	to, err := dataPath(r.URL.Query().Get("to"))
 	if err != nil {
 		return err

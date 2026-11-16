@@ -1,0 +1,31 @@
+{
+ "data": {
+  "id": 5000003,
+  "gameId": 432,
+  "modId": 715572,
+  "isAvailable": true,
+  "displayName": "All the Mods 9-1.0.0.zip",
+  "fileName": "All the Mods 9-1.0.0.zip",
+  "releaseType": 1,
+  "fileStatus": 4,
+  "hashes": [
+   {
+    "value": "00000000000000000000000000000000004c4b43",
+    "algo": 1
+   }
+  ],
+  "fileDate": "2026-09-01T00:00:00Z",
+  "fileLength": 123456,
+  "downloadCount": 10,
+  "downloadUrl": "https://edge.forgecdn.net/files/5000/3/atm9-1.0.0.zip",
+  "gameVersions": [
+   "1.21.5",
+   "NeoForge"
+  ],
+  "sortableGameVersions": [],
+  "dependencies": [],
+  "alternateFileId": 0,
+  "isServerPack": false,
+  "fileFingerprint": 5000003
+ }
+}

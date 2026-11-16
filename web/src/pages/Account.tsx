@@ -2,8 +2,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
+import { AccentPicker, ThemePicker, useSetLook } from "../components/Look";
 import { PicturePicker } from "../components/Picture";
-import { Button, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
+import { PlayerHead } from "../components/PlayerLists";
+import { ProviderIcon } from "../components/ProviderIcon";
+import { Button, Checked, Chip, CopyText, Field, Input, Modal, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, type APIToken, type SSHKey } from "../lib/api";
 import { ago } from "../lib/format";
 import { keys, useAction, useMe, useMeta } from "../lib/queries";
@@ -42,6 +45,27 @@ function Profile() {
   );
 }
 
+/** How the panel looks to them, wherever they sign in. */
+function Appearance() {
+  const me = useMe().data!;
+  const meta = useMeta().data;
+  const save = useSetLook();
+  return (
+    <Section title="Appearance">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[13px] font-medium">Theme</span>
+          <ThemePicker value={me.look?.theme ?? "auto"} onChange={(theme) => void save({ theme })} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[13px] font-medium">Accent</span>
+          <AccentPicker value={me.look?.accent ?? ""} panel={meta?.accent ?? "amethyst"} onChange={(accent) => void save({ accent })} />
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function Minecraft() {
   const me = useMe().data!;
   const [name, setName] = useState("");
@@ -70,6 +94,7 @@ function Minecraft() {
         <ul className="overflow-hidden rounded-lg border border-line bg-surface">
           {accounts.map((a) => (
             <li key={a.uuid} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
+              <PlayerHead player={a} size={24} />
               <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium">{a.name}</span>
               {a.verified ? (
                 <span className="text-xs text-muted">verified</span>
@@ -122,8 +147,10 @@ function Minecraft() {
             In Minecraft, sign in as <span className="font-mono">{check.name}</span> and join{" "}
             {check.address ? <span className="font-mono">{check.address}</span> : "this panel's address"}. Enter the code the game shows.
           </p>
-          <div className="flex items-center gap-2">
-            <Input required value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-EFGH" className="w-36 font-mono" aria-label="Code" spellCheck={false} autoComplete="off" />
+          <div className="flex items-start gap-2">
+            <Checked missing="Enter the code.">
+              <Input required value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-EFGH" className="w-36 font-mono" aria-label="Code" spellCheck={false} autoComplete="off" />
+            </Checked>
             <Button type="submit" variant="primary" loading={confirm.isPending}>
               Verify
             </Button>
@@ -134,22 +161,24 @@ function Minecraft() {
         </form>
       )}
       <form
-        className="flex items-center gap-2"
+        className="flex items-start gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           link.mutate(undefined, { onSuccess: () => setName("") });
         }}
       >
-        <Input
-          required
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={accounts.length > 0 ? "Another name you play as" : "Your name in game"}
-          className="w-56"
-          aria-label="Minecraft username"
-          spellCheck={false}
-          autoComplete="off"
-        />
+        <Checked missing="Enter a name.">
+          <Input
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={accounts.length > 0 ? "Another name you play as" : "Your name in game"}
+            className="w-56"
+            aria-label="Minecraft username"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </Checked>
         <Button type="submit" loading={link.isPending} disabled={busy && !link.isPending}>
           Link
         </Button>
@@ -192,13 +221,15 @@ function SSHKeys() {
       <div className="flex flex-wrap items-end gap-2">
         <Button onClick={() => setAdding(true)}>Add key</Button>
         <form
-          className="flex items-center gap-2"
+          className="flex items-start gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             importKeys.mutate(undefined, { onSuccess: (r) => toast.info(r.added === 0 ? "No new keys found on GitHub" : `Imported ${r.added} key${r.added === 1 ? "" : "s"}`) });
           }}
         >
-          <Input required value={githubUser} onChange={(e) => setGithubUser(e.target.value)} placeholder="GitHub username" className="w-44" aria-label="GitHub username" />
+          <Checked missing="Enter a GitHub username.">
+            <Input required value={githubUser} onChange={(e) => setGithubUser(e.target.value)} placeholder="GitHub username" className="w-44" aria-label="GitHub username" />
+          </Checked>
           <Button type="submit" loading={importKeys.isPending}>
             Import from GitHub
           </Button>
@@ -219,7 +250,7 @@ function SSHKeys() {
             });
           }}
         >
-          <Field label="Public key">
+          <Field label="Public key" missing="Paste a public key.">
             {(id) => <Textarea id={id} required autoFocus rows={4} value={publicKey} onChange={(e) => setPublicKey(e.target.value)} placeholder="ssh-ed25519 AAAA… you@laptop" className="font-mono text-xs break-all" spellCheck={false} />}
           </Field>
           <Field label="Name" hint="Optional.">
@@ -260,7 +291,7 @@ function APITokens() {
         </ul>
       )}
       <form
-        className="flex items-center gap-2"
+        className="flex items-start gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           create.mutate(undefined, {
@@ -271,7 +302,9 @@ function APITokens() {
           });
         }}
       >
-        <Input required value={name} onChange={(e) => setName(e.target.value)} placeholder="What is it for?" className="w-56" aria-label="Token name" />
+        <Checked missing="Give it a name.">
+          <Input required value={name} onChange={(e) => setName(e.target.value)} placeholder="What is it for?" className="w-56" aria-label="Token name" />
+        </Checked>
         <Button type="submit" loading={create.isPending}>
           Create token
         </Button>
@@ -312,6 +345,7 @@ function SignIn() {
         <ul className="overflow-hidden rounded-md border border-line bg-surface">
           {meta.providers.map((p) => (
             <li key={p.id} className="flex items-center gap-3 border-b border-line px-3 py-2 text-[13px] last:border-b-0">
+              <ProviderIcon id={p.id} />
               <span className="flex-1 font-medium">{p.name}</span>
               {linked.has(p.id) ? (
                 <Chip className="border-accent/40 text-accent">{linked.get(p.id) || "linked"}</Chip>
@@ -340,9 +374,9 @@ function SignIn() {
           }}
         >
           {me.hasPassword && (
-            <Field label="Current password">{(id) => <Input id={id} type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}</Field>
+            <Field label="Current password" missing="Enter your password.">{(id) => <Input id={id} type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}</Field>
           )}
-          <Field label={me.hasPassword ? "New password" : "Set a password"} hint="At least 8 characters.">
+          <Field label={me.hasPassword ? "New password" : "Set a password"} hint="At least 8 characters." missing="Enter a new password.">
             {(id) => <Input id={id} type="password" required minLength={8} autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />}
           </Field>
           <div>
@@ -357,15 +391,18 @@ function SignIn() {
 }
 
 export function Account() {
+  // Two-factor goes with a password: with passwords off, there is none.
+  const passwords = useMeta().data?.passwords !== false;
   return (
     <>
       <PageHeader title="Account" />
       <Profile />
+      <Appearance />
       <Minecraft />
       <SSHKeys />
       <APITokens />
       <SignIn />
-      <TwoFactor />
+      {passwords && <TwoFactor />}
       <Sessions />
     </>
   );

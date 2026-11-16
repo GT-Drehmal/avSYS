@@ -8,16 +8,16 @@ import { describe, ScheduleFields, scheduleOf } from "../components/BackupSchedu
 import { ExtraPorts, fitModPorts, modPortsNote, type PortDraft, portDrafts, portsOf, touchesKnownMods } from "../components/ExtraPorts";
 import { PackStack, SectionHead, VersionDialog } from "../components/ContentParts";
 import { PackDrop, PackFiles, PackIcon } from "../components/Modpack";
-import { ModrinthSearch } from "../components/ModrinthSearch";
+import { CurseForgeOff, ModrinthSearch } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { SavedListsField } from "../components/PlayerLists";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
-import { BottomBar, Button, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
+import { BottomBar, Button, Checked, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { NewerWorldConfirm } from "../components/NewerWorld";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
-import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
+import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type CatalogSource, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes, softwareWords } from "../lib/format";
 import { launchOf } from "../lib/launch";
@@ -30,6 +30,7 @@ import { SetupFailed, type SetupWork, startSetup } from "../lib/setups";
 import { fromGigabytes, loaders, toGigabytes, useGameVersions } from "../lib/software";
 import { toast } from "../lib/toast";
 import { newerThan, newerWorldWarning, runsOn, usePackGame, worldSummary } from "../lib/worlds";
+import { isCatalog, sourceNames, sources, useSearchable } from "../lib/catalog";
 
 const GiB = 1024 ** 3;
 
@@ -669,7 +670,8 @@ export function ServerForm({
     // An imported server keeps the version it ran, listed or not.
     if (source || importing || v.version === "LATEST" || !versions.data || versions.isPlaceholderData || versions.data.all.has(v.version)) return;
     toast.info(`${loaders.find((l) => l.id === v.loader)?.name ?? "This software"} has no build for ${v.version} yet`);
-    setValues((was) => ({ ...was, version: "LATEST" }));
+    // A build is for the version it was picked with.
+    setValues((was) => ({ ...was, version: "LATEST", loaderVersion: "" }));
   }, [source, importing, v.version, versions.data, versions.isPlaceholderData, v.loader, setValues]);
   const [addingMods, setAddingMods] = useState<PickKind | null>(null);
   // A mod whose version is being picked, by where it is in the list.
@@ -687,6 +689,10 @@ export function ServerForm({
   // How much of a template's world has been sent, while it is.
   const [sent, setSent] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
+  // Where modpacks are searched for: Modrinth, or CurseForge where it is set up.
+  const [packSource, setPackSource] = useState<CatalogSource>("modrinth");
+  const searchable = useSearchable();
+  const packSearchable = searchable(packSource);
   const archiveInput = useRef<HTMLInputElement>(null);
   // The archive read last: one read earlier that ends later is not used.
   const reads = useRef(0);
@@ -798,7 +804,13 @@ export function ServerForm({
     // A modpack file is let go of with the modpack, and the picture it brought.
     const dropping = !!v.mrpack && !!change.kind && change.kind !== "modpack";
     if (change.kind && change.kind !== "modpack") pictureFromPack(null);
-    setValues((was) => ({ ...was, ...change, mods: [], uploads: [], loaderVersion: "", ...(dropping ? { modpack: null, mrpack: null } : {}) }));
+    // The pinned build goes with the type and version it is for, and comes
+    // back with them, as in Settings.
+    const from = found ?? start;
+    setValues((was) => {
+      const next = { ...was, ...change, mods: [], uploads: [], ...(dropping ? { modpack: null, mrpack: null } : {}) };
+      return { ...next, loaderVersion: next.kind !== "modpack" && next.loader === from.loader && next.version === from.version ? from.loaderVersion : "" };
+    });
   };
 
   const chooseWorld = (next: WorldChoice) => {
@@ -1727,7 +1739,9 @@ export function ServerForm({
                       {[v.modpack.versionName, softwareWords(v.modpack.loader, v.modpack.gameVersion), v.mrpack ? `${v.mrpack.file.name}, ${bytes(v.mrpack.file.size)}` : v.modpack.project].filter(Boolean).join(" · ")}
                     </p>
                   ) : (
-                    <p className="truncate font-mono text-xs text-muted">modrinth:{v.modpack.project}</p>
+                    <p className="truncate font-mono text-xs text-muted">
+                      {v.modpack.source}:{v.modpack.project}
+                    </p>
                   )}
                 </div>
                 <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label="Choose a different modpack" onClick={dropPack} />
@@ -1737,21 +1751,34 @@ export function ServerForm({
           ) : (
             <>
               {!forTemplate && <PackDrop reading={reading} onFile={(file) => void pickPack(file)} />}
-              <div className="h-[30rem] overflow-hidden rounded-md border border-line bg-surface p-3">
-                <ModrinthSearch
-                  type="modpack"
-                  placeholder="Search modpacks on Modrinth"
-                  onPick={(hit) => {
-                    setValues((was) => ({
-                      ...was,
-                      modpack: { source: "modrinth", project: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined },
-                      mrpack: null,
-                      displayName: was.displayName || hit.title,
-                    }));
-                    void packPictureFrom(hit.icon_url);
-                  }}
-                />
+              <div role="group" aria-label="Search on" className="flex w-fit gap-1 rounded-md border border-line bg-bg p-0.5">
+                {sources.map((s) => (
+                  <button key={s} type="button" aria-pressed={packSource === s} className={segment(packSource === s)} onClick={() => setPackSource(s)}>
+                    {sourceNames[s]}
+                  </button>
+                ))}
               </div>
+              {!packSearchable ? (
+                packSearchable === false && <CurseForgeOff />
+              ) : (
+                <div className="h-[30rem] overflow-hidden rounded-md border border-line bg-surface p-3">
+                  <ModrinthSearch
+                    key={packSource}
+                    source={packSource}
+                    type="modpack"
+                    placeholder={`Search modpacks on ${sourceNames[packSource]}`}
+                    onPick={(hit) => {
+                      setValues((was) => ({
+                        ...was,
+                        modpack: { source: packSource, project: hit.slug, title: hit.title, iconUrl: hit.icon_url ?? undefined },
+                        mrpack: null,
+                        displayName: was.displayName || hit.title,
+                      }));
+                      void packPictureFrom(hit.icon_url);
+                    }}
+                  />
+                </div>
+              )}
             </>
           )}
         </Section>
@@ -1772,14 +1799,14 @@ export function ServerForm({
             }}
           />
         )}
-        <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from this template are called this." : undefined}>
+        <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from this template are called this." : undefined} missing="Give it a name.">
           {(id) => <Input id={id} required maxLength={forTemplate ? 60 : undefined} value={v.displayName} onChange={(e) => set("displayName", e.target.value)} />}
         </Field>
         {forTemplate ? (
           <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
         ) : (
-          <Field label="Short name" hint={nameHint}>
-            {(id) => <Input id={id} required value={name} onChange={(e) => set("customName", e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" className="font-mono" spellCheck={false} />}
+          <Field label="Short name" hint={nameHint} missing="Give it a short name.">
+            {(id) => <Input id={id} required value={name} onChange={(e) => set("customName", e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" title="Use lowercase letters, digits and -, starting with a letter." className="font-mono" spellCheck={false} />}
           </Field>
         )}
         <Field label="Message of the day" hint="Shown under the name in the server list.">
@@ -1818,7 +1845,7 @@ export function ServerForm({
                       }}
                       onRemove={(j) => (j < mods.length ? set("mods", v.mods.filter((_, i) => i !== mods[j])) : set("uploads", v.uploads.filter((_, i) => i !== ups[j - mods.length])))}
                       extra={(m, j) =>
-                        m.source === "modrinth" &&
+                        isCatalog(m.source) && searchable(m.source) &&
                         j < mods.length && (
                           <Button size="sm" onClick={() => setVersioning(mods[j])} className="max-w-40">
                             <span className="truncate">{m.versionName || "Newest"}</span>
@@ -1921,6 +1948,7 @@ export function ServerForm({
         )}
         {versioned && software && versioning !== null && (
           <VersionDialog
+            source={isCatalog(versioned.source) ? versioned.source : undefined}
             title={versioned.title || versioned.project}
             project={versioned.project}
             current={versioned.version}
@@ -2246,16 +2274,18 @@ export function ServerForm({
       {!forTemplate && (
       <Section title={!source ? "Minecraft EULA" : duplicating ? "Duplicate" : "Create"}>
         {!source ? (
-          <label className="flex items-start gap-2.5 text-[13px] leading-relaxed">
-            <input type="checkbox" required checked={eula} onChange={(e) => setEula(e.target.checked)} className="mt-1 size-3.5 accent-(--color-accent)" />
-            <span>
-              I agree to the{" "}
-              <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                Minecraft End User License Agreement
-              </a>
-              .
-            </span>
-          </label>
+          <Checked missing="Check this box to accept the EULA.">
+            <label className="flex items-start gap-2.5 text-[13px] leading-relaxed">
+              <input type="checkbox" required checked={eula} onChange={(e) => setEula(e.target.checked)} className="mt-1 size-3.5 accent-(--color-accent)" />
+              <span>
+                I agree to the{" "}
+                <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                  Minecraft End User License Agreement
+                </a>
+                .
+              </span>
+            </label>
+          </Checked>
         ) : (
           <>
             <Toggle checked={startNow} onChange={setStartNow} label="Start when ready" />

@@ -1,25 +1,42 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, ChevronsUpDown, Cpu, Globe, LayoutTemplate, ListChecks, LogOut, Plus, Server, Settings, UserRound, Users } from "lucide-react";
+import { Archive, BookOpen, Check, ChevronsUpDown, Cpu, Globe, LayoutTemplate, ListChecks, LogOut, Plus, Server, Settings, SlidersHorizontal, UserRound, Users } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router";
 import { orgIcon, api, atLeast, type Meta, type Org } from "../lib/api";
 import { keys, useAction, useCluster, useLiveServers, useMe, useMeta } from "../lib/queries";
 import { clearSetups } from "../lib/setups";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { LookMenu } from "./Look";
 import { Picture } from "./Picture";
 import { Button, cx, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Modal } from "./ui";
 
+/** The mark's pixels: a quartz gate with amethyst light inside, on a 16 by 16 grid of 2-unit cells. */
+const gate =
+  "M14 0h4v2h-4ZM12 2h8v2h-8ZM10 4h12v2h-12ZM6 8h20v4h-20ZM8 12h4v16h-4ZM20 12h4v16h-4ZM6 28h20v4h-20Z";
+const light = "M14 14h4v12h-4Z";
+const S = "M9.6 1.2H4.1A2.9 2.9 0 0 0 4.1 7H5.9A2.9 2.9 0 0 1 5.9 12.8H0.4";
+
+/**
+ * The avSYS mark and name. Drawn 32 px high (in px: the page's rem is 14)
+ * so each of the mark's cells is two whole pixels; the empty margin left of
+ * the gate is cut off, so the gate lines up with what is under it.
+ */
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cx("inline-flex items-center gap-2 font-mono text-[15px] font-medium tracking-tight", className)}>
-      <svg viewBox="0 0 20 18" className="h-[15px] w-auto text-accent" fill="currentColor" aria-hidden>
-        <path d="M10 0 20 18h-4.5L10 7.6 4.5 18H0Z" />
-        <rect x="7" y="14" width="6" height="2.6" />
-      </svg>
-      <span>
-        <span className="text-muted">av</span>SYS
-      </span>
-    </span>
+    <svg viewBox="6 0 104.571 32" className={cx("h-[32px] w-auto shrink-0", className)} role="img" aria-label="avSYS">
+      <g shapeRendering="crispEdges">
+        <path className="fill-quartz" d={gate} />
+        <path className="fill-amethyst" d={light} />
+      </g>
+      <g transform="translate(42 8) scale(1.1429)" strokeWidth="2.4">
+        <circle className="fill-none stroke-muted" cx="5" cy="9" r="3.8" />
+        <path className="fill-none stroke-muted" d="M8.8 4V14" />
+        <path className="fill-muted" transform="translate(12.5 0)" d="M0 4H2.7L5 10.13 7.3 4H10L6.25 14H3.75Z" />
+        <path className="fill-none stroke-fg" transform="translate(25 0)" d={S} />
+        <path className="fill-fg" transform="translate(37.5 0)" d="M0 0H2.8L5 4.63 7.2 0H10L6.2 8V14H3.8V8Z" />
+        <path className="fill-none stroke-fg" transform="translate(50 0)" d={S} />
+      </g>
+    </svg>
   );
 }
 
@@ -68,9 +85,9 @@ export function NewOrgDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           );
         }}
       >
-        <Field label="Name">{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-        <Field label="Short name" hint="Used in links and SSH logins. Cannot be changed later.">
-          {(id) => <Input id={id} required value={effectiveSlug} onChange={(e) => setSlug(e.target.value)} className="font-mono" pattern="[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?" />}
+        <Field label="Name" missing="Give it a name.">{(id) => <Input id={id} autoFocus required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
+        <Field label="Short name" hint="Used in links and SSH logins. Cannot be changed later." missing="Give it a short name.">
+          {(id) => <Input id={id} required value={effectiveSlug} onChange={(e) => setSlug(e.target.value)} className="font-mono" pattern="[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?" title="Use lowercase letters, digits and -." />}
         </Field>
         <div className="flex justify-end gap-2">
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -121,6 +138,9 @@ function OrgSwitcher({ current }: { current?: Org }) {
     </>
   );
 }
+
+/** Where avSYS's documentation is published. */
+const docsURL = "https://gt-drehmal.github.io/avSYS/";
 
 function NavItem({ to, end, icon, children }: { to: string; end?: boolean; icon: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -217,7 +237,7 @@ export function Shell() {
   return (
     <div className="flex min-h-dvh flex-col md:flex-row">
       <aside className="flex shrink-0 flex-col gap-4 border-b border-line bg-surface p-3 md:sticky md:top-0 md:h-dvh md:w-56 md:border-r md:border-b-0">
-        <Link to="/" className="flex h-8 items-center px-1.5">
+        <Link to="/" className="flex items-center self-start px-1.5">
           <Wordmark />
         </Link>
         <OrgSwitcher current={navOrg} />
@@ -249,10 +269,20 @@ export function Shell() {
             )}
           </nav>
         )}
-        <div className="flex flex-col gap-2 md:mt-auto">
+        <div className="flex items-center gap-2 md:mt-auto md:flex-col md:items-stretch">
+          {/* The documentation, in a tab of its own: what is open here stays. */}
+          <a
+            href={docsURL}
+            target="_blank"
+            rel="noreferrer"
+            className="order-last flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-muted transition-colors hover:bg-raised/60 hover:text-fg md:order-first [&>svg]:size-4"
+          >
+            <BookOpen />
+            Help
+          </a>
           <Menu>
             <MenuTrigger asChild>
-              <button className="flex h-10 w-full items-center gap-2.5 rounded-md px-1.5 text-left hover:bg-raised">
+              <button className="flex h-10 w-full min-w-0 flex-1 items-center md:flex-none gap-2.5 rounded-md px-1.5 text-left hover:bg-raised">
                 <Picture name={me.user.username} url={me.user.avatarUrl || undefined} shape="round" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] leading-tight font-medium">{me.user.displayName || me.user.username}</span>
@@ -265,10 +295,17 @@ export function Shell() {
                 Account
               </MenuItem>
               {me.user.isAdmin && (
-                <MenuItem icon={<Cpu />} onSelect={() => navigate("/nodes")}>
-                  Nodes
-                </MenuItem>
+                <>
+                  <MenuItem icon={<Cpu />} onSelect={() => navigate("/nodes")}>
+                    Nodes
+                  </MenuItem>
+                  <MenuItem icon={<SlidersHorizontal />} onSelect={() => navigate("/settings")}>
+                    Instance settings
+                  </MenuItem>
+                </>
               )}
+              <MenuSeparator />
+              <LookMenu />
               <MenuSeparator />
               <MenuItem icon={<LogOut />} onSelect={signOut}>
                 Sign out

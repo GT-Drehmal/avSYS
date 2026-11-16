@@ -241,7 +241,7 @@ func (s *Server) moveServer(w http.ResponseWriter, r *http.Request, u *store.Use
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, s.view(now))
+		writeJSON(w, http.StatusOK, s.view(a.Role, now))
 		return nil
 	}
 	go func() { _ = work(context.Background()) }()
@@ -434,7 +434,7 @@ func (s *Server) moveFromSnapshot(w http.ResponseWriter, r *http.Request, u *sto
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, s.view(now))
+		writeJSON(w, http.StatusOK, s.view(a.Role, now))
 		return nil
 	}
 	go func() { _ = work(context.Background()) }()

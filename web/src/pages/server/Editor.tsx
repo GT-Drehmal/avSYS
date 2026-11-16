@@ -33,12 +33,12 @@ const look = EditorView.theme(
 );
 
 const colors = HighlightStyle.define([
-  { tag: [t.comment, t.meta], color: "#5c676a" },
-  { tag: [t.propertyName, t.attributeName, t.definition(t.variableName)], color: "#8cc8f0" },
-  { tag: [t.string, t.special(t.string)], color: "#a3e6af" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "#edc982" },
-  { tag: [t.keyword, t.operator, t.heading], color: "#5fe0c6" },
-  { tag: t.invalid, color: "#f0707a" },
+  { tag: [t.comment, t.meta], color: "var(--color-faint)" },
+  { tag: [t.propertyName, t.attributeName, t.definition(t.variableName)], color: "var(--code-name)" },
+  { tag: [t.string, t.special(t.string)], color: "var(--code-string)" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--code-number)" },
+  { tag: [t.keyword, t.operator, t.heading], color: "var(--color-accent)" },
+  { tag: t.invalid, color: "var(--color-danger)" },
 ]);
 
 function languageFor(name: string): Extension {

@@ -186,5 +186,145 @@
   "url": "https://api.geysermc.org/v2/skin/",
   "has": "",
   "file": "geyser-no-skin.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/games/432",
+  "has": "",
+  "file": "curseforge-game.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/categories",
+  "has": "",
+  "file": "curseforge-categories.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/search",
+  "has": "classId=4471",
+  "file": "curseforge-search-modpacks.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/search",
+  "has": "classId=12",
+  "file": "curseforge-search-resourcepacks.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/search",
+  "has": "categoryIds=[406]",
+  "file": "curseforge-search-worldgen.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/search",
+  "has": "",
+  "file": "curseforge-search-mods.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/files",
+  "has": "",
+  "file": "curseforge-pack-files.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/238222/files/6000001",
+  "has": "",
+  "file": "curseforge-file-6000001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/238222/files/5900000",
+  "has": "",
+  "file": "curseforge-file-5900000.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/238222/files/4593548",
+  "has": "",
+  "file": "curseforge-file-4593548.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/900001/files/5100001",
+  "has": "",
+  "file": "curseforge-file-5100001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/900002/files/5200001",
+  "has": "",
+  "file": "curseforge-file-5200001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/715572/files/5000003",
+  "has": "",
+  "file": "curseforge-file-5000003.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/715572/files/5000002",
+  "has": "",
+  "file": "curseforge-file-5000002.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/715572/files/5000001",
+  "has": "",
+  "file": "curseforge-file-5000001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/300001/files/4800001",
+  "has": "",
+  "file": "curseforge-file-4800001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/238222/files",
+  "has": "",
+  "file": "curseforge-files-238222.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/238222",
+  "has": "",
+  "file": "curseforge-mod-238222.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/900001/files",
+  "has": "",
+  "file": "curseforge-files-900001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/900001",
+  "has": "",
+  "file": "curseforge-mod-900001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/900002/files",
+  "has": "",
+  "file": "curseforge-files-900002.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/900002",
+  "has": "",
+  "file": "curseforge-mod-900002.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/715572/files",
+  "has": "",
+  "file": "curseforge-files-715572.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/715572",
+  "has": "",
+  "file": "curseforge-mod-715572.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/300001/files",
+  "has": "",
+  "file": "curseforge-files-300001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods/300001",
+  "has": "",
+  "file": "curseforge-mod-300001.json"
+ },
+ {
+  "url": "https://api.curseforge.com/v1/mods",
+  "has": "",
+  "file": "curseforge-mods.json"
+ },
+ {
+  "url": "https://edge.forgecdn.net/files/5000/",
+  "has": "",
+  "file": "curseforge-pack.zip"
  }
 ]

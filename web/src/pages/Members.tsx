@@ -5,10 +5,11 @@ import { useParams } from "react-router";
 import { useOrg } from "../components/Shell";
 import { ListBar } from "../components/ListBar";
 import { Picture } from "../components/Picture";
+import { mainAccount, PlayerHead } from "../components/PlayerLists";
 import { Button, Chip, Confirm, CopyText, Field, Input, Modal, Notice, PageHeader, Select, Loading, Toggle } from "../components/ui";
 import { api, atLeast, roles, roleSummary, type Invite, type Member, type Role } from "../lib/api";
 import { ago } from "../lib/format";
-import { keys, useAction, useMe } from "../lib/queries";
+import { keys, useAction, useMe, useMeta } from "../lib/queries";
 import { byPlace, byText, byTime, type ListOptions, useList } from "../lib/list";
 
 const inviteURL = (token: string) => `${location.origin}/invite/${token}`;
@@ -135,6 +136,8 @@ export function Members() {
   const { org = "" } = useParams();
   const membership = useOrg();
   const me = useMe().data!;
+  // A reset link sets a password: with passwords off, there is none to set.
+  const passwords = useMeta().data?.passwords !== false;
   const canManage = atLeast(membership?.role, "admin");
   const isOwner = membership?.role === "owner";
   const members = useQuery({ queryKey: keys.members(org), queryFn: () => api.get<Member[]>(`/orgs/${org}/members`) });
@@ -192,9 +195,17 @@ export function Members() {
                   {m.displayName || m.username}
                   {m.userId === me.user.id && <span className="ml-2 text-xs font-normal text-faint">you</span>}
                 </p>
-                <p className="truncate font-mono text-xs text-faint">
-                  {m.username}
-                  {m.minecraftName && <span title="Minecraft accounts"> · {inGame(m)} in game</span>}
+                <p className="flex min-w-0 items-center font-mono text-xs text-faint">
+                  <span className="truncate">{m.username}</span>
+                  {m.minecraftName && (
+                    <span title="Minecraft accounts" className="flex min-w-0 items-center">
+                      <span className="shrink-0 whitespace-pre"> · </span>
+                      <span className="mr-1 flex shrink-0">
+                        <PlayerHead player={mainAccount(m)} size={16} />
+                      </span>
+                      <span className="truncate">{inGame(m)} in game</span>
+                    </span>
+                  )}
                 </p>
               </div>
               <span className="text-xs text-faint max-sm:hidden">joined {ago(m.joinedAt)}</span>
@@ -209,7 +220,7 @@ export function Members() {
               ) : (
                 <Chip>{m.role}</Chip>
               )}
-              {me.user.isAdmin && m.userId !== me.user.id && (
+              {passwords && me.user.isAdmin && m.userId !== me.user.id && (
                 <Button size="sm" variant="ghost" icon={<KeyRound className="size-3.5" />} aria-label={`Reset sign-in for ${m.username}`} title="Reset sign-in" onClick={() => setResetting(m)} />
               )}
               {(editable || m.userId === me.user.id) && (

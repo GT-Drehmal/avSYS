@@ -4,7 +4,8 @@
     "includes": [
       "src/**/*.ts",
       "src/**/*.tsx",
-      "tests/**/*.ts"
+      "tests/**/*.ts",
+      "screenshots/**/*.ts"
     ]
   },
   "formatter": {

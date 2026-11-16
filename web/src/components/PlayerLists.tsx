@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { api, ApiError, type ContentRef, playerHead, type ListPlayer, type PlayerList, type PlayerListChange } from "../lib/api";
+import { api, ApiError, type ContentRef, playerHead, type ListPlayer, type Member, type PlayerList, type PlayerListChange } from "../lib/api";
 import { keys, usePlayerLists } from "../lib/queries";
 import { matches } from "../lib/search";
 import { Picture } from "./Picture";
@@ -57,18 +57,29 @@ export function PlayerNamesField({ label, edition, onEdition, value, onChange, o
   );
 }
 
-/** A player's head, or their initial for one with no skin of their own. */
-export function PlayerHead({ player, size = 20 }: { player: ListPlayer; size?: number }) {
-  return <Picture name={player.name} url={playerHead(player.uuid)} size={size} pixelated />;
+/** A player, by name, and by UUID where it is known. */
+export type Player = Pick<ListPlayer, "name"> & { uuid?: string };
+
+/** The account a member plays as: their main one. */
+export const mainAccount = (m: Pick<Member, "minecraftName" | "minecraftAccounts">): Player =>
+  m.minecraftAccounts?.find((a) => a.main) ?? m.minecraftAccounts?.[0] ?? { name: m.minecraftName ?? "" };
+
+/**
+ * A player's head, or their initial for one with no skin of their own, or
+ * whose UUID is not known. Drawn beside their name: it says nothing more.
+ */
+export function PlayerHead({ player, size = 20 }: { player: Player; size?: number }) {
+  return <Picture name={player.name} url={player.uuid ? playerHead(player.uuid) : undefined} size={size} pixelated />;
 }
 
 /** The heads of the first few players of a list, in a row. */
-export function Heads({ players, max = 5, size = 18 }: { players: ListPlayer[]; max?: number; size?: number }) {
+export function Heads({ players, max = 5, size = 18 }: { players: Player[]; max?: number; size?: number }) {
   if (players.length === 0) return null;
   return (
     <span className="flex shrink-0 items-center gap-0.5" aria-hidden>
-      {players.slice(0, max).map((p) => (
-        <PlayerHead key={p.uuid} player={p} size={size} />
+      {players.slice(0, max).map((p, i) => (
+        // Two hidden players have neither a UUID nor a name of their own.
+        <PlayerHead key={`${p.uuid ?? p.name}-${i}`} player={p} size={size} />
       ))}
       {players.length > max && <span className="pl-1 text-[11px] text-faint">+{players.length - max}</span>}
     </span>

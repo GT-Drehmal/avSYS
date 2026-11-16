@@ -1,34 +1,43 @@
 @import "tailwindcss";
 @import "./fonts.css";
 
-@theme {
+@theme static {
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
-  /* Surfaces, darkest first. A faint green-blue cast, like lit stone. */
-  --color-bg: #0a0d0e;
-  --color-surface: #0f1314;
-  --color-raised: #151a1c;
-  --color-hover: #1a2123;
-  --color-line: #1e2629;
-  --color-line-strong: #2c373b;
+  /* Surfaces, darkest first. Near-neutral greys, a touch cool. */
+  --color-bg: #0b0c0f;
+  --color-surface: #111215;
+  --color-raised: #18191c;
+  --color-hover: #1e2023;
+  --color-line: #232528;
+  --color-line-strong: #333538;
 
-  --color-fg: #e3e9e9;
-  --color-muted: #8d989b;
-  --color-faint: #5c676a;
+  --color-fg: #e6e8ec;
+  --color-muted: #94969a;
+  --color-faint: #636568;
 
-  /* The one accent: Avsohmic teal. Used for what is live or primary. */
-  --color-accent: #5fe0c6;
-  --color-accent-strong: #8cf0dc;
-  --color-accent-ink: #04201b;
-  --color-accent-wash: #12302c;
+  /* The one accent: amethyst, the light in the mark's gate. Used for what is
+     live or primary. */
+  --color-accent: #b98cff;
+  --color-accent-strong: #caabff;
+  --color-accent-ink: #1e0637;
+  --color-accent-wash: #2a203b;
+
+  /* The mark's own two: a quartz gate with amethyst light inside. */
+  --color-quartz: #eef3f2;
+  --color-amethyst: #b98cff;
 
   --color-warn: #e3b55a;
   --color-warn-wash: #2e2512;
   --color-danger: #f0707a;
   --color-danger-wash: #331a1d;
-  --color-dormant: #98a2f5;
-  --color-dormant-wash: #1c2040;
+  --color-dormant: #61b7de;
+  --color-dormant-wash: #102731;
+
+  /* Behind what floats: the dark under a dialog, and shadows. */
+  --color-scrim: #000000;
+  --color-shade: #000000;
 
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -45,6 +54,149 @@
     from { opacity: 0; transform: translateY(4px) scale(0.99); }
     to { opacity: 1; transform: none; }
   }
+}
+
+/*
+ * Colours that are not utilities: read by the editor, the image view and
+ * pictures drawn in place of one. Each theme has its own.
+ */
+:root {
+  --code-name: #8cc8f0;
+  --code-string: #a3e6af;
+  --code-number: #edc982;
+  --checker-a: #505256;
+  --checker-b: #393a3e;
+  /* Saturation and lightness of a picture drawn from a name: behind, and the letters. */
+  --placeholder-bg: 30% 16%;
+  --placeholder-fg: 55% 68%;
+}
+
+/*
+ * The light theme. <html data-theme> is "light" or "dark", never "auto":
+ * index.html and lib/look.ts settle what the system prefers. Its values
+ * are checked for contrast by tests/look.spec.ts.
+ */
+[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-raised: #eef0f3;
+  --color-hover: #e5e8ec;
+  --color-line: #e1e4e8;
+  --color-line-strong: #c9cdd3;
+  --color-fg: #16181d;
+  --color-muted: #5b5f66;
+  --color-faint: #80848b;
+  /* The mark on a light page, as favicon.svg draws it there. */
+  --color-quartz: #1b2427;
+  --color-amethyst: #7a45ea;
+  --color-warn: #8a5a00;
+  --color-warn-wash: #fbf0d9;
+  --color-danger: #c3283b;
+  --color-danger-wash: #fde8ea;
+  --color-dormant: #1a6f9c;
+  --color-dormant-wash: #e1f0f8;
+  --color-scrim: rgb(15 18 25 / 0.55);
+  --color-shade: rgb(15 18 25 / 0.3);
+  --code-name: #1a6694;
+  --code-string: #2a7a3b;
+  --code-number: #8a5a00;
+  --checker-a: #e4e6ea;
+  --checker-b: #cfd2d7;
+  --placeholder-bg: 45% 91%;
+  --placeholder-fg: 45% 34%;
+}
+
+/*
+ * The accents. Each has a dark and a light form, and moves a status colour
+ * it could be taken for out of its way. A swatch of one is any element
+ * with its data-accent: it takes the page's theme.
+ */
+[data-accent="amethyst"] {
+  --color-accent: #b98cff;
+  --color-accent-strong: #caabff;
+  --color-accent-ink: #1e0637;
+  --color-accent-wash: #2a203b;
+}
+[data-theme="light"],
+[data-theme="light"][data-accent="amethyst"],
+[data-theme="light"] [data-accent="amethyst"] {
+  --color-accent: #7340e0;
+  --color-accent-strong: #5f2fc4;
+  --color-accent-ink: #ffffff;
+  --color-accent-wash: #f0eafd;
+}
+/* Gold: warnings turn orange. */
+[data-accent="gold"] {
+  --color-accent: #e6c15c;
+  --color-accent-strong: #f0d488;
+  --color-accent-ink: #2a1d00;
+  --color-accent-wash: #2c2712;
+  --color-warn: #f28f4b;
+  --color-warn-wash: #33200f;
+}
+[data-theme="light"][data-accent="gold"],
+[data-theme="light"] [data-accent="gold"] {
+  --color-accent: #7a6500;
+  --color-accent-strong: #645200;
+  --color-accent-ink: #ffffff;
+  --color-accent-wash: #f7f0d9;
+  --color-warn: #a64f00;
+  --color-warn-wash: #fdeedf;
+}
+/* Teal, the panel's first: asleep turns periwinkle, as it was then. */
+[data-accent="teal"] {
+  --color-accent: #5fe0c6;
+  --color-accent-strong: #8cf0dc;
+  --color-accent-ink: #04201b;
+  --color-accent-wash: #12302c;
+  --color-dormant: #98a2f5;
+  --color-dormant-wash: #1c2040;
+}
+[data-theme="light"][data-accent="teal"],
+[data-theme="light"] [data-accent="teal"] {
+  --color-accent: #087363;
+  --color-accent-strong: #055e51;
+  --color-accent-ink: #ffffff;
+  --color-accent-wash: #dcf3ed;
+  --color-dormant: #4c58d0;
+  --color-dormant-wash: #e8eafc;
+}
+/* Blue: asleep turns sea green. */
+[data-accent="blue"] {
+  --color-accent: #7aaaff;
+  --color-accent-strong: #a2c3ff;
+  --color-accent-ink: #04173a;
+  --color-accent-wash: #172339;
+  --color-dormant: #4fcdbf;
+  --color-dormant-wash: #0e2b29;
+}
+[data-theme="light"][data-accent="blue"],
+[data-theme="light"] [data-accent="blue"] {
+  --color-accent: #225dcc;
+  --color-accent-strong: #1b4cab;
+  --color-accent-ink: #ffffff;
+  --color-accent-wash: #e4ecfc;
+  --color-dormant: #0b766c;
+  --color-dormant-wash: #ddf2ef;
+}
+/* Rose: errors turn red-orange. */
+[data-accent="rose"] {
+  --color-accent: #f58cc0;
+  --color-accent-strong: #f9b0d3;
+  --color-accent-ink: #3a0820;
+  --color-accent-wash: #36182a;
+  --color-danger: #ff7b5c;
+  --color-danger-wash: #37190f;
+}
+[data-theme="light"][data-accent="rose"],
+[data-theme="light"] [data-accent="rose"] {
+  --color-accent: #b52b72;
+  --color-accent-strong: #97215e;
+  --color-accent-ink: #ffffff;
+  --color-accent-wash: #fce7f1;
+  --color-danger: #bf3a0e;
+  --color-danger-wash: #fde9e1;
 }
 
 @layer base {

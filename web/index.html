@@ -3,9 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>avSYS</title>
+    <script>
+      // This browser's last theme and accent, on the page before anything
+      // is drawn, so that it never shows first in the other theme.
+      // src/lib/look.ts keeps them from here.
+      (function () {
+        var theme = null;
+        var accent = null;
+        try {
+          theme = localStorage.getItem("avsys.theme");
+          accent = localStorage.getItem("avsys.accent");
+        } catch (e) {}
+        var light = theme === "light" || (theme !== "dark" && window.matchMedia("(prefers-color-scheme: light)").matches);
+        var root = document.documentElement;
+        root.setAttribute("data-theme", light ? "light" : "dark");
+        root.setAttribute("data-accent", /^(amethyst|gold|teal|blue|rose)$/.test(accent || "") ? accent : "amethyst");
+        document.querySelector('meta[name="color-scheme"]').setAttribute("content", light ? "light" : "dark");
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

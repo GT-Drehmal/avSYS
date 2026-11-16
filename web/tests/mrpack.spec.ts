@@ -208,6 +208,34 @@ test("a newer .mrpack is uploaded on the Content page, and one not uploaded yet 
   expect(sent).toEqual({ name: "probe-2.1.mrpack", size: newer.length });
 });
 
+test("an .mrpack built for an older game than the world is asked about first, as another version of a pack is", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await packServer(page, api("owner"), slug);
+  const older = zip({ "modrinth.index.json": index((i) => ((i.versionId = "1.0.0"), (i.dependencies.minecraft = "1.21"))) });
+  const newer = zip({ "modrinth.index.json": index((i) => ((i.versionId = "2.1.0"), (i.dependencies.minecraft = "1.21.5"))) });
+  const sent: string[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers/pack/modpack?*`, async (route) => {
+    sent.push(new URL(route.request().url()).searchParams.get("newerWorld") ?? "");
+    return route.fulfill({ status: 503, json: { code: "test", message: "Not sent by the test." } });
+  });
+  await page.goto(`/o/${slug}/s/pack/content`);
+  await page.getByLabel("Modpack file").setInputFiles(packFile(older, "probe-1.0.mrpack"));
+  const ask = page.getByRole("dialog", { name: "Open a 1.21.4 world in 1.21?" });
+  await expect(ask.getByText("The world was last opened in 1.21.4. 1.21 cannot open the world, so the server will not start.")).toBeVisible();
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  expect(sent).toEqual([]);
+  await page.getByLabel("Modpack file").setInputFiles(packFile(older, "probe-1.0.mrpack"));
+  await ask.getByRole("button", { name: "Change to 1.0.0 anyway" }).click();
+  await expect.poll(() => sent).toEqual(["true"]);
+  await expect(ask).toHaveCount(0);
+  // A newer one is not asked about.
+  await page.getByLabel("Modpack file").setInputFiles(packFile(newer, "probe-2.1.mrpack"));
+  await expect.poll(() => sent).toEqual(["true", ""]);
+  await expect(ask).toHaveCount(0);
+});
+
 /** What the panel says an uploaded pack lists: nine mods, one for players only. */
 const packed = [
   ...["lithium", "ferritecore", "krypton", "c2me", "modernfix", "spark", "chunky", "noisium"].map((n, i) => ({

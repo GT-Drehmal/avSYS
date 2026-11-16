@@ -1,0 +1,70 @@
+{
+  "data": [
+    {
+      "id": 238222,
+      "gameId": 432,
+      "name": "Just Enough Items (JEI)",
+      "slug": "jei",
+      "links": {
+        "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/jei",
+        "wikiUrl": "",
+        "issuesUrl": "https://github.com/mezz/JustEnoughItems/issues",
+        "sourceUrl": "https://github.com/mezz/JustEnoughItems"
+      },
+      "summary": "View Items and Recipes",
+      "status": 4,
+      "downloadCount": 412345678,
+      "isFeatured": false,
+      "primaryCategoryId": 423,
+      "categories": [
+        {"id": 423, "gameId": 432, "name": "Map and Information", "slug": "map-information", "url": "https://www.curseforge.com/minecraft/mc-mods/map-information", "iconUrl": "https://media.forgecdn.net/avatars/6/38/635351497437388438.png", "dateModified": "2014-05-08T17:44:39.433Z", "isClass": false, "classId": 6, "parentCategoryId": 6}
+      ],
+      "classId": 6,
+      "authors": [{"id": 17072, "name": "mezz", "url": "https://www.curseforge.com/members/17072-mezz?username=mezz"}],
+      "logo": {"id": 29069, "modId": 238222, "title": "635838945588716414.jpeg", "description": "", "thumbnailUrl": "https://media.forgecdn.net/avatars/thumbnails/29/69/256/256/635838945588716414.jpeg", "url": "https://media.forgecdn.net/avatars/29/69/635838945588716414.jpeg"},
+      "screenshots": [],
+      "mainFileId": 4593548,
+      "latestFiles": [],
+      "latestFilesIndexes": [
+        {"gameVersion": "1.20.1", "fileId": 4593548, "filename": "jei-1.20.1-forge-15.2.0.27.jar", "releaseType": 1, "gameVersionTypeId": 75125, "modLoader": 1}
+      ],
+      "latestEarlyAccessFilesIndexes": [],
+      "dateCreated": "2015-11-23T06:59:08.003Z",
+      "dateModified": "2024-02-14T05:32:12.33Z",
+      "dateReleased": "2024-02-14T05:24:11.453Z",
+      "allowModDistribution": true,
+      "gamePopularityRank": 2,
+      "isAvailable": true,
+      "thumbsUpCount": 0
+    },
+    {
+      "id": 900001,
+      "gameId": 432,
+      "name": "Hand Only",
+      "slug": "hand-only",
+      "links": {"websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/hand-only", "wikiUrl": "", "issuesUrl": "", "sourceUrl": ""},
+      "summary": "A mod whose author allows downloads only on CurseForge",
+      "status": 4,
+      "downloadCount": 1234,
+      "isFeatured": false,
+      "primaryCategoryId": 423,
+      "categories": [],
+      "classId": 6,
+      "authors": [{"id": 1, "name": "someone", "url": ""}],
+      "logo": null,
+      "screenshots": [],
+      "mainFileId": 5100001,
+      "latestFiles": [],
+      "latestFilesIndexes": [],
+      "latestEarlyAccessFilesIndexes": [],
+      "dateCreated": "2023-01-01T00:00:00Z",
+      "dateModified": "2024-01-01T00:00:00Z",
+      "dateReleased": "2024-01-01T00:00:00Z",
+      "allowModDistribution": false,
+      "gamePopularityRank": 9000,
+      "isAvailable": true,
+      "thumbsUpCount": 0
+    }
+  ],
+  "pagination": {"index": 0, "pageSize": 24, "resultCount": 2, "totalCount": 2}
+}

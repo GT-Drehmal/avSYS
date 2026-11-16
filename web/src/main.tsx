@@ -4,9 +4,10 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import "./app.css";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { LookSync } from "./components/Look";
 import { Shell } from "./components/Shell";
 import { Setups } from "./components/Setups";
-import { Spinner, Toaster } from "./components/ui";
+import { sayProblemsInPlace, Spinner, Toaster } from "./components/ui";
 import { queryClient, useMe } from "./lib/queries";
 
 // Each page is fetched as it is needed, so that the first load is the frame
@@ -17,6 +18,7 @@ const pages = {
   Backups: () => import("./pages/Backups"),
   Console: () => import("./pages/server/Console"),
   Home: () => import("./pages/Home"),
+  InstanceSettings: () => import("./pages/InstanceSettings"),
   Invite: () => import("./pages/Invite"),
   Login: () => import("./pages/Login"),
   Members: () => import("./pages/Members"),
@@ -43,6 +45,7 @@ const Account = page("Account");
 const Backups = page("Backups");
 const Console = page("Console");
 const Home = page("Home");
+const InstanceSettings = page("InstanceSettings");
 const Invite = page("Invite");
 const Login = page("Login");
 const Members = page("Members");
@@ -96,6 +99,7 @@ function RequireAuth() {
   return <Outlet />;
 }
 
+sayProblemsInPlace();
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary full>
@@ -112,6 +116,7 @@ createRoot(document.getElementById("root")!).render(
               <Route index element={<Home />} />
               <Route path="account" element={<Account />} />
               <Route path="nodes" element={<Nodes />} />
+              <Route path="settings" element={<InstanceSettings />} />
               <Route path="o/:org">
                 <Route index element={<Servers />} />
                 <Route path="new" element={<NewServer />} />
@@ -141,6 +146,7 @@ createRoot(document.getElementById("root")!).render(
           </Route>
         </Routes>
         </Suspense>
+        <LookSync />
         <Toaster>
           <Setups />
         </Toaster>

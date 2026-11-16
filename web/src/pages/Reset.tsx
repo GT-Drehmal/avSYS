@@ -26,6 +26,15 @@ export function Reset() {
   }
   if (!link.data) {
     const gone = link.error instanceof ApiError && link.error.status === 404;
+    if (link.error instanceof ApiError && link.error.code === "passwords_off") {
+      return (
+        <AuthFrame title="Passwords are turned off here" subtitle="Sign in another way.">
+          <Link to="/login" className="text-[13px] text-accent hover:underline">
+            Go to avSYS
+          </Link>
+        </AuthFrame>
+      );
+    }
     return (
       <AuthFrame title={gone ? "This link is no longer valid" : "Could not load this link"} subtitle={gone ? "Ask for a new one." : "The panel did not answer. Reload to try again."}>
         <Link to="/login" className="text-[13px] text-accent hover:underline">
@@ -60,7 +69,7 @@ export function Reset() {
         }}
       >
         <input type="text" name="username" autoComplete="username" value={link.data.username} readOnly hidden />
-        <Field label="New password" hint="At least 8 characters.">
+        <Field label="New password" hint="At least 8 characters." missing="Enter a new password.">
           {(id) => <Input id={id} type="password" required autoFocus minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
         </Field>
         {error && <Notice tone="danger">{error}</Notice>}

@@ -1,0 +1,48 @@
+{
+  "data": [
+    {
+      "id": 5000001,
+      "gameId": 432,
+      "modId": 715572,
+      "isAvailable": true,
+      "displayName": "All the Mods 9-0.2.44",
+      "fileName": "All the Mods 9-0.2.44.zip",
+      "releaseType": 1,
+      "fileStatus": 4,
+      "hashes": [{"value": "6666666666666666666666666666666666666666", "algo": 1}],
+      "fileDate": "2024-02-01T00:00:00Z",
+      "fileLength": 4096,
+      "downloadCount": 1000,
+      "downloadUrl": "https://edge.forgecdn.net/files/5000/1/All%20the%20Mods%209-0.2.44.zip",
+      "gameVersions": ["Forge", "1.20.1"],
+      "sortableGameVersions": [],
+      "dependencies": [],
+      "alternateFileId": 0,
+      "isServerPack": false,
+      "serverPackFileId": 5000002,
+      "fileFingerprint": 2
+    },
+    {
+      "id": 5000002,
+      "gameId": 432,
+      "modId": 715572,
+      "isAvailable": true,
+      "displayName": "Server Files 0.2.44",
+      "fileName": "Server-Files-0.2.44.zip",
+      "releaseType": 1,
+      "fileStatus": 4,
+      "hashes": [],
+      "fileDate": "2024-02-02T00:00:00Z",
+      "fileLength": 4096,
+      "downloadCount": 10,
+      "downloadUrl": "https://edge.forgecdn.net/files/5000/2/Server-Files-0.2.44.zip",
+      "gameVersions": ["1.20.1"],
+      "sortableGameVersions": [],
+      "dependencies": [],
+      "alternateFileId": 0,
+      "isServerPack": true,
+      "fileFingerprint": 3
+    }
+  ],
+  "pagination": {"index": 0, "pageSize": 50, "resultCount": 2, "totalCount": 2}
+}

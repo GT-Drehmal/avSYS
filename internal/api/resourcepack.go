@@ -174,7 +174,7 @@ func (s *Server) putResourcePack(w http.ResponseWriter, r *http.Request, u *stor
 		return err
 	}
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, now.Spec.ResourcePack.SHA1)
-	writeJSON(w, http.StatusOK, s.view(now))
+	writeJSON(w, http.StatusOK, s.view(a.Role, now))
 	return nil
 }
 
@@ -220,7 +220,7 @@ func (s *Server) installPack(ctx context.Context, mc *avsysv1.MinecraftServer, b
 	// Into the server's files first, written beside its place and moved in.
 	sc, done, err := s.filesOf(ctx, mc, wait)
 	if err != nil {
-		return nil, err
+		return nil, s.unreachable(mc.Name, err)
 	}
 	defer done()
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
@@ -297,7 +297,7 @@ func (s *Server) deleteResourcePack(w http.ResponseWriter, r *http.Request, u *s
 	}
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, "removed")
 	go s.prunePacksNow(context.WithoutCancel(r.Context()))
-	writeJSON(w, http.StatusOK, s.view(now))
+	writeJSON(w, http.StatusOK, s.view(a.Role, now))
 	return nil
 }
 

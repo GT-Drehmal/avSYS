@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Monitor, Smartphone } from "lucide-react";
 import { useState } from "react";
 import { Navigate } from "react-router";
-import { Button, Chip, CopyText, Field, Input, Modal, Notice, Section, Toggle } from "../components/ui";
+import { Button, Chip, CopyText, Field, Input, Modal, Notice, Section } from "../components/ui";
 import { api, type Session } from "../lib/api";
 import { describeDevice } from "../lib/device";
 import { ago } from "../lib/format";
@@ -74,7 +74,7 @@ export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCan
         <div className="text-xs text-muted">
           Or enter this key: <CopyText value={key.secret} className="text-xs" wrap />
         </div>
-        <Field label="Code">
+        <Field label="Code" missing="Enter the code.">
           {(id) => <Input id={id} required autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} className="w-36 font-mono" />}
         </Field>
         <div className="flex justify-end gap-2">
@@ -94,7 +94,7 @@ export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCan
         start.mutate(undefined, { onSuccess: setKey });
       }}
     >
-      <Field label="Password">
+      <Field label="Password" missing="Enter your password.">
         {(id) => <Input id={id} type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
       </Field>
       <div className="flex justify-end gap-2">
@@ -120,7 +120,7 @@ function WithPassword({ title, action, danger, run, onClose }: { title: string; 
           go.mutate(undefined);
         }}
       >
-        <Field label="Password">
+        <Field label="Password" missing="Enter your password.">
           {(id) => <Input id={id} type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
         </Field>
         <div className="flex justify-end gap-2">
@@ -139,7 +139,6 @@ export function TwoFactor() {
   const qc = useQueryClient();
   const [open, setOpen] = useState<"setup" | "off" | "codes" | null>(null);
   const [codes, setCodes] = useState<string[] | null>(null);
-  const setRequired = useAction((required: boolean) => api.put("/settings/admin-two-factor", { required }), [keys.me]);
   const close = () => setOpen(null);
   const required = me.user.isAdmin && me.adminTwoFactor;
   return (
@@ -164,15 +163,6 @@ export function TwoFactor() {
         <div>
           <Button onClick={() => setOpen("setup")}>Set up</Button>
         </div>
-      )}
-      {me.user.isAdmin && (
-        <Toggle
-          checked={me.adminTwoFactor}
-          disabled={setRequired.isPending}
-          onChange={(on) => setRequired.mutate(on)}
-          label="Require for administrators"
-          hint="Administrators who sign in with a password have to use two-factor."
-        />
       )}
 
       <Modal open={open === "setup"} onOpenChange={close} title="Set up two-factor">

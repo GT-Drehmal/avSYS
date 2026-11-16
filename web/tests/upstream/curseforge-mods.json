@@ -1,0 +1,277 @@
+{
+ "data": [
+  {
+   "id": 238222,
+   "gameId": 432,
+   "name": "Just Enough Items (JEI)",
+   "slug": "jei",
+   "links": {
+    "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/jei",
+    "wikiUrl": "",
+    "issuesUrl": "",
+    "sourceUrl": ""
+   },
+   "summary": "View Items and Recipes",
+   "status": 4,
+   "downloadCount": 412345678,
+   "isFeatured": false,
+   "primaryCategoryId": 0,
+   "categories": [
+    {
+     "id": 423,
+     "gameId": 432,
+     "name": "Map and Information",
+     "slug": "map-information",
+     "url": "",
+     "iconUrl": "",
+     "dateModified": "2014-05-08T17:44:39.433Z",
+     "isClass": false,
+     "classId": 6,
+     "parentCategoryId": 6
+    }
+   ],
+   "classId": 6,
+   "authors": [
+    {
+     "id": 1,
+     "name": "mezz",
+     "url": ""
+    }
+   ],
+   "logo": null,
+   "screenshots": [],
+   "mainFileId": 0,
+   "latestFiles": [],
+   "latestFilesIndexes": [],
+   "latestEarlyAccessFilesIndexes": [],
+   "dateCreated": "2020-01-01T00:00:00Z",
+   "dateModified": "2026-09-01T10:00:00Z",
+   "dateReleased": "2026-09-01T10:00:00Z",
+   "allowModDistribution": true,
+   "gamePopularityRank": 1,
+   "isAvailable": true,
+   "thumbsUpCount": 0
+  },
+  {
+   "id": 900001,
+   "gameId": 432,
+   "name": "Hand Only",
+   "slug": "hand-only",
+   "links": {
+    "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/hand-only",
+    "wikiUrl": "",
+    "issuesUrl": "",
+    "sourceUrl": ""
+   },
+   "summary": "Its author allows downloads only on CurseForge",
+   "status": 4,
+   "downloadCount": 12345,
+   "isFeatured": false,
+   "primaryCategoryId": 0,
+   "categories": [
+    {
+     "id": 423,
+     "gameId": 432,
+     "name": "Map and Information",
+     "slug": "map-information",
+     "url": "",
+     "iconUrl": "",
+     "dateModified": "2014-05-08T17:44:39.433Z",
+     "isClass": false,
+     "classId": 6,
+     "parentCategoryId": 6
+    }
+   ],
+   "classId": 6,
+   "authors": [
+    {
+     "id": 1,
+     "name": "someone",
+     "url": ""
+    }
+   ],
+   "logo": null,
+   "screenshots": [],
+   "mainFileId": 0,
+   "latestFiles": [],
+   "latestFilesIndexes": [],
+   "latestEarlyAccessFilesIndexes": [],
+   "dateCreated": "2020-01-01T00:00:00Z",
+   "dateModified": "2026-09-01T10:00:00Z",
+   "dateReleased": "2026-09-01T10:00:00Z",
+   "allowModDistribution": false,
+   "gamePopularityRank": 1,
+   "isAvailable": true,
+   "thumbsUpCount": 0
+  },
+  {
+   "id": 900002,
+   "gameId": 432,
+   "name": "Biomes Galore",
+   "slug": "biomes-galore",
+   "links": {
+    "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/biomes-galore",
+    "wikiUrl": "",
+    "issuesUrl": "",
+    "sourceUrl": ""
+   },
+   "summary": "More biomes",
+   "status": 4,
+   "downloadCount": 50000,
+   "isFeatured": false,
+   "primaryCategoryId": 0,
+   "categories": [
+    {
+     "id": 406,
+     "gameId": 432,
+     "name": "World Gen",
+     "slug": "world-gen",
+     "url": "",
+     "iconUrl": "",
+     "dateModified": "2014-05-08T17:44:39.433Z",
+     "isClass": false,
+     "classId": 6,
+     "parentCategoryId": 6
+    }
+   ],
+   "classId": 6,
+   "authors": [
+    {
+     "id": 1,
+     "name": "terra",
+     "url": ""
+    }
+   ],
+   "logo": null,
+   "screenshots": [],
+   "mainFileId": 0,
+   "latestFiles": [],
+   "latestFilesIndexes": [],
+   "latestEarlyAccessFilesIndexes": [],
+   "dateCreated": "2020-01-01T00:00:00Z",
+   "dateModified": "2026-09-01T10:00:00Z",
+   "dateReleased": "2026-09-01T10:00:00Z",
+   "allowModDistribution": true,
+   "gamePopularityRank": 1,
+   "isAvailable": true,
+   "thumbsUpCount": 0
+  },
+  {
+   "id": 419699,
+   "gameId": 432,
+   "name": "Architectury API",
+   "slug": "architectury-api",
+   "links": {
+    "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/architectury-api",
+    "wikiUrl": "",
+    "issuesUrl": "",
+    "sourceUrl": ""
+   },
+   "summary": "An intermediary api",
+   "status": 4,
+   "downloadCount": 9000000,
+   "isFeatured": false,
+   "primaryCategoryId": 0,
+   "categories": [],
+   "classId": 6,
+   "authors": [
+    {
+     "id": 1,
+     "name": "shedaniel",
+     "url": ""
+    }
+   ],
+   "logo": null,
+   "screenshots": [],
+   "mainFileId": 0,
+   "latestFiles": [],
+   "latestFilesIndexes": [],
+   "latestEarlyAccessFilesIndexes": [],
+   "dateCreated": "2020-01-01T00:00:00Z",
+   "dateModified": "2026-09-01T10:00:00Z",
+   "dateReleased": "2026-09-01T10:00:00Z",
+   "allowModDistribution": true,
+   "gamePopularityRank": 1,
+   "isAvailable": true,
+   "thumbsUpCount": 0
+  },
+  {
+   "id": 715572,
+   "gameId": 432,
+   "name": "All the Mods 9",
+   "slug": "all-the-mods-9",
+   "links": {
+    "websiteUrl": "https://www.curseforge.com/minecraft/modpacks/all-the-mods-9",
+    "wikiUrl": "",
+    "issuesUrl": "",
+    "sourceUrl": ""
+   },
+   "summary": "All the mods 9 is the next in the All the Mods series",
+   "status": 4,
+   "downloadCount": 5600000,
+   "isFeatured": false,
+   "primaryCategoryId": 0,
+   "categories": [],
+   "classId": 4471,
+   "authors": [
+    {
+     "id": 1,
+     "name": "ATMTeam",
+     "url": ""
+    }
+   ],
+   "logo": null,
+   "screenshots": [],
+   "mainFileId": 0,
+   "latestFiles": [],
+   "latestFilesIndexes": [],
+   "latestEarlyAccessFilesIndexes": [],
+   "dateCreated": "2020-01-01T00:00:00Z",
+   "dateModified": "2026-09-01T10:00:00Z",
+   "dateReleased": "2026-09-01T10:00:00Z",
+   "allowModDistribution": true,
+   "gamePopularityRank": 1,
+   "isAvailable": true,
+   "thumbsUpCount": 0
+  },
+  {
+   "id": 300001,
+   "gameId": 432,
+   "name": "Stay True",
+   "slug": "stay-true",
+   "links": {
+    "websiteUrl": "https://www.curseforge.com/minecraft/texture-packs/stay-true",
+    "wikiUrl": "",
+    "issuesUrl": "",
+    "sourceUrl": ""
+   },
+   "summary": "A vanilla-like resource pack",
+   "status": 4,
+   "downloadCount": 800000,
+   "isFeatured": false,
+   "primaryCategoryId": 0,
+   "categories": [],
+   "classId": 12,
+   "authors": [
+    {
+     "id": 1,
+     "name": "haysay",
+     "url": ""
+    }
+   ],
+   "logo": null,
+   "screenshots": [],
+   "mainFileId": 0,
+   "latestFiles": [],
+   "latestFilesIndexes": [],
+   "latestEarlyAccessFilesIndexes": [],
+   "dateCreated": "2020-01-01T00:00:00Z",
+   "dateModified": "2026-09-01T10:00:00Z",
+   "dateReleased": "2026-09-01T10:00:00Z",
+   "allowModDistribution": true,
+   "gamePopularityRank": 1,
+   "isAvailable": true,
+   "thumbsUpCount": 0
+  }
+ ]
+}

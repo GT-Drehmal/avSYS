@@ -87,6 +87,29 @@ test("the server form shows the loader build of the server it starts from, and c
   await expect(build).toHaveValue("");
   await type.getByRole("button", { name: /^Paper/ }).click();
   await expect(build).toHaveCount(0);
+  // Back on the type it is for, it is back too, as in Settings.
+  await type.getByRole("button", { name: /^Fabric/ }).click();
+  await expect(build).toHaveValue("0.16.5");
+});
+
+test("a template whose version is no longer listed goes to Latest without its loader build", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await api("owner").post(`/orgs/${slug}/templates`, {
+    name: "Pinned",
+    description: "",
+    spec: { loader: "fabric", version: "1.21.4", loaderVersion: "0.16.5", resources: { memory: "2Gi" }, storage: { size: "2Gi" } },
+  });
+  // 1.21.4 has left the list of versions Fabric has a build for.
+  await page.route("**/api/v1/catalog/minecraft/versions?loader=fabric", async (route) => {
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...list, versions: list.versions.filter((v: { id: string }) => v.id !== "1.21.4") } });
+  });
+  await as("owner");
+  await page.goto(`/o/${slug}/templates`);
+  await page.getByRole("listitem", { name: "Pinned" }).getByRole("button", { name: "New server" }).click();
+  await expect(page.getByText("Fabric has no build for 1.21.4 yet")).toBeVisible();
+  await expect(page.getByLabel("Game version")).toHaveValue("LATEST");
+  await expect(page.getByLabel("Loader build")).toHaveValue("");
 });
 
 test("a world from another game version clears the loader build typed for the one picked", async ({ page, as, org }) => {

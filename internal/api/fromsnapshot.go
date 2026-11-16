@@ -487,7 +487,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	} else {
 		go func() { _ = work() }()
 	}
-	writeJSON(w, http.StatusCreated, s.view(mc))
+	writeJSON(w, http.StatusCreated, s.view(a.Role, mc))
 	return nil
 }
 
@@ -633,7 +633,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	} else {
 		go func() { _ = work() }()
 	}
-	writeJSON(w, http.StatusCreated, s.view(created))
+	writeJSON(w, http.StatusCreated, s.view(a.Role, created))
 	return nil
 }
 

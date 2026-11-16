@@ -18,14 +18,19 @@ type User struct {
 	PasswordHash string    `json:"-"`
 	IsAdmin      bool      `json:"isAdmin"`
 	CreatedAt    time.Time `json:"createdAt"`
+	// Theme and Accent are how the panel looks to them: "auto", "light" or
+	// "dark", and one of the accents, or "" for the panel's. Only they are
+	// told, by /me.
+	Theme  string `json:"-"`
+	Accent string `json:"-"`
 }
 
-const userColumns = `id, username, display_name, email, avatar_url, password_hash, is_admin, created_at`
+const userColumns = `id, username, display_name, email, avatar_url, password_hash, is_admin, created_at, theme, accent`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var created int64
-	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.AvatarURL, &u.PasswordHash, &u.IsAdmin, &created)
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.AvatarURL, &u.PasswordHash, &u.IsAdmin, &created, &u.Theme, &u.Accent)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -112,8 +117,11 @@ func (s *Store) SignUp(ctx context.Context, u *User, how Signup) (*Org, error) {
 	if count == 0 {
 		u.IsAdmin = true
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO users (`+userColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.DisplayName, u.Email, u.AvatarURL, u.PasswordHash, u.IsAdmin, u.CreatedAt.Unix())
+	if u.Theme == "" {
+		u.Theme = "auto"
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO users (`+userColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.DisplayName, u.Email, u.AvatarURL, u.PasswordHash, u.IsAdmin, u.CreatedAt.Unix(), u.Theme, u.Accent)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -169,6 +177,13 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (*User, err
 
 func (s *Store) UpdateUserProfile(ctx context.Context, id, displayName string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET display_name = ? WHERE id = ?`, displayName, id)
+	return err
+}
+
+// SetUserLook sets how the panel looks to someone: its theme, its accent,
+// or both, leaving the one not given as it is.
+func (s *Store) SetUserLook(ctx context.Context, id string, theme, accent *string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET theme = COALESCE(?, theme), accent = COALESCE(?, accent) WHERE id = ?`, theme, accent, id)
 	return err
 }
 

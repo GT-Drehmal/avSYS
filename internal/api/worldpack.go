@@ -284,8 +284,8 @@ func changedPack(was *avsysv1.ResourcePackSpec, raw json.RawMessage) (*avsysv1.R
 		if !strings.HasPrefix(in.URL, "http://") && !strings.HasPrefix(in.URL, "https://") {
 			return nil, errBadRequest("The resource pack URL must start with http:// or https://.")
 		}
-		if in.Project != nil && (in.Project.Source != "modrinth" || in.Project.ID == "") {
-			return nil, errBadRequest("A resource pack picked from a project names the project: source modrinth, and the project's id.")
+		if in.Project != nil && !packSource(in.Project) {
+			return nil, errBadRequest("A resource pack picked from a project names the project: source modrinth or curseforge, and the project's id.")
 		}
 		next = &avsysv1.ResourcePackSpec{URL: strings.TrimSpace(in.URL), SHA1: in.SHA1, Project: in.Project, Formats: in.Formats}
 		if err := checkPackSHA1(next, nil); err != nil {

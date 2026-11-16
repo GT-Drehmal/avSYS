@@ -1,0 +1,8 @@
+{
+  "data": [
+    {"id": 6, "gameId": 432, "name": "Mods", "slug": "mc-mods", "url": "https://www.curseforge.com/minecraft/mc-mods", "iconUrl": "", "dateModified": "2014-05-08T17:44:39.433Z", "isClass": true, "classId": 6, "parentCategoryId": 0},
+    {"id": 423, "gameId": 432, "name": "Map and Information", "slug": "map-information", "url": "https://www.curseforge.com/minecraft/mc-mods/map-information", "iconUrl": "", "dateModified": "2014-05-08T17:44:39.433Z", "isClass": false, "classId": 6, "parentCategoryId": 6},
+    {"id": 406, "gameId": 432, "name": "World Gen", "slug": "world-gen", "url": "https://www.curseforge.com/minecraft/mc-mods/world-gen", "iconUrl": "", "dateModified": "2014-05-08T17:44:39.433Z", "isClass": false, "classId": 6, "parentCategoryId": 6},
+    {"id": 436, "gameId": 432, "name": "Food", "slug": "mc-food", "url": "https://www.curseforge.com/minecraft/mc-mods/mc-food", "iconUrl": "", "dateModified": "2014-05-08T17:44:39.433Z", "isClass": false, "classId": 6, "parentCategoryId": 6}
+  ]
+}

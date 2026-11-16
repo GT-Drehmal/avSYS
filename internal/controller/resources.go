@@ -261,6 +261,9 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		if mc.Spec.Modpack.Version != "" {
 			env["CF_FILE_ID"] = mc.Spec.Modpack.Version
 		}
+		// Files of the pack whose authors allow downloads only on
+		// CurseForge itself are looked for here, where they can be uploaded.
+		env["CF_DOWNLOADS_REPO"] = CurseForgeDownloads
 	default:
 		env["TYPE"] = strings.ToUpper(string(mc.Spec.Loader))
 		env["VERSION"] = mc.Spec.Version
@@ -277,10 +280,6 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 			}
 		}
 	}
-	if cfg.CurseForgeAPIKey != "" {
-		env["CF_API_KEY"] = cfg.CurseForgeAPIKey
-	}
-
 	var modrinth, curseforge, modURLs, pluginURLs, datapackURLs []string
 	for _, m := range mc.Spec.Mods {
 		switch m.Source {
@@ -294,6 +293,15 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 			}
 			modrinth = append(modrinth, ref)
 		case avsysv1.SourceCurseForge:
+			// The image installs mods and plugins from CurseForge itself,
+			// but not datapacks: those are fetched from where CurseForge
+			// keeps the file, as one from a URL is.
+			if m.Kind == avsysv1.KindDatapack {
+				if u := CurseForgeFileURL(m.Version, m.File); u != "" {
+					datapackURLs = append(datapackURLs, u)
+				}
+				continue
+			}
 			ref := m.Project
 			if m.Version != "" {
 				ref += ":" + m.Version
@@ -351,11 +359,11 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		}
 		env["CUSTOM_SERVER_PROPERTIES"] = b.String()
 	}
-	if len(mc.Spec.Ops) > 0 {
-		env["OPS"] = strings.Join(mc.Spec.Ops, "\n")
+	if ops := forImage(mc.Spec.Ops); len(ops) > 0 {
+		env["OPS"] = strings.Join(ops, "\n")
 	}
-	if len(mc.Spec.Whitelist) > 0 {
-		env["WHITELIST"] = strings.Join(mc.Spec.Whitelist, "\n")
+	if whitelist := forImage(mc.Spec.Whitelist); len(whitelist) > 0 {
+		env["WHITELIST"] = strings.Join(whitelist, "\n")
 	}
 
 	// Set only where a port was opened for a mod, so that other servers
@@ -374,6 +382,9 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		out = append(out, corev1.EnvVar{Name: k, Value: env[k]})
 	}
 	out = append(out, rconPasswordEnv(mc))
+	if UsesCurseForge(&mc.Spec) {
+		out = append(out, curseForgeKeyEnv())
+	}
 	// A server's own environment comes last and wins, except over launch
 	// flags set in their own fields: an older entry for those would
 	// otherwise override what its settings now say.
@@ -991,6 +1002,23 @@ func addressFor(mc *avsysv1.MinecraftServer, svc *corev1.Service, cfg Config) st
 // server.properties: a JSON text component. Plain text, as typed in the
 // panel, is made a JSON string; one written as a component already, an
 // object, list or string, is left as it is.
+// forImage is the players of a server's operators or whitelist that the
+// image is given, to put on them as it starts: all but Bedrock players
+// named as Floodgate names them, behind a prefix such as ".". The image
+// looks a name it does not find in the game's file up with Mojang, which
+// has no such account, and the server would not start. A Bedrock player
+// goes by the UUID Floodgate gives them, which the image takes as it is.
+func forImage(players []string) []string {
+	out := make([]string, 0, len(players))
+	for _, p := range players {
+		if p != "" && strings.ContainsRune(".*!~+-", rune(p[0])) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func packPrompt(prompt string) string {
 	if t := strings.TrimSpace(prompt); t != "" && strings.ContainsAny(t[:1], "{[\"") && json.Valid([]byte(t)) {
 		return t

@@ -52,15 +52,25 @@ type serverView struct {
 	Unfinished string `json:"unfinished,omitempty"`
 }
 
+// forRole is the view as someone with this role is shown it.
+func (v serverView) forRole(role store.Role) serverView {
+	v.Spec = recordFor(role, v.Spec)
+	return v
+}
+
 type javaView struct {
 	Game      int `json:"game"`
 	Effective int `json:"effective"`
 }
 
-func (s *Server) view(mc *avsysv1.MinecraftServer) serverView {
+// view is the server as someone with this role is shown it: without its
+// image, extra environment and extra JVM flags unless they could change
+// them, as a snapshot's or template's settings are shown.
+func (s *Server) view(role store.Role, mc *avsysv1.MinecraftServer) serverView {
 	org, _ := s.orgOfNamespace(mc.Namespace)
 	v := serverView{Org: org, Name: mc.Name, CreatedAt: mc.CreationTimestamp.Time, Revision: mc.ResourceVersion, Generation: mc.Generation, Spec: mc.Spec, Status: mc.Status}
 	v.Java.Game, v.Java.Effective = controller.JavaOf(&mc.Spec)
+	v = v.forRole(role)
 	var why *Error
 	if errors.As(unfinished(mc), &why) {
 		v.Unfinished = why.Message
@@ -314,8 +324,8 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		return errBadRequest("The resource pack URL must start with http:// or https://.")
 	}
 	if rp := spec.ResourcePack; rp != nil && rp.Project != nil {
-		if rp.Project.Source != "modrinth" || rp.Project.ID == "" {
-			return errBadRequest("A resource pack picked from a project names the project: source modrinth, and the project's id.")
+		if !packSource(rp.Project) {
+			return errBadRequest("A resource pack picked from a project names the project: source modrinth or curseforge, and the project's id.")
 		}
 	}
 	// These end up in the game's commands, one per name.
@@ -388,7 +398,7 @@ func (s *Server) listServers(w http.ResponseWriter, r *http.Request, u *store.Us
 	out := make([]serverView, len(list.Items))
 	names := make([]string, len(list.Items))
 	for i := range list.Items {
-		out[i] = s.view(&list.Items[i])
+		out[i] = s.view(a.Role, &list.Items[i])
 		names[i] = list.Items[i].Name
 	}
 	// A list of servers is followed by their pictures: they are read now.
@@ -414,11 +424,11 @@ func (s *Server) server(r *http.Request, u *store.User, min store.Role) (*access
 }
 
 func (s *Server) getServer(w http.ResponseWriter, r *http.Request, u *store.User) error {
-	_, mc, err := s.server(r, u, store.RoleViewer)
+	a, mc, err := s.server(r, u, store.RoleViewer)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, s.view(mc))
+	writeJSON(w, http.StatusOK, s.view(a.Role, mc))
 	return nil
 }
 
@@ -592,7 +602,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "server.create", in.Name, "")
-	writeJSON(w, http.StatusCreated, s.view(mc))
+	writeJSON(w, http.StatusCreated, s.view(a.Role, mc))
 	return nil
 }
 
@@ -762,7 +772,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		!slices.Equal(previous.OpLists, mc.Spec.OpLists) || !slices.Equal(previous.WhitelistLists, mc.Spec.WhitelistLists) {
 		s.syncOpsFor(a.Org, mc)
 	}
-	writeJSON(w, http.StatusOK, s.view(mc))
+	writeJSON(w, http.StatusOK, s.view(a.Role, mc))
 	return nil
 }
 
@@ -1018,7 +1028,7 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.audit(r.Context(), u, a.Org, "server."+action, mc.Name, "")
-	writeJSON(w, http.StatusOK, s.view(mc))
+	writeJSON(w, http.StatusOK, s.view(a.Role, mc))
 	return nil
 }
 

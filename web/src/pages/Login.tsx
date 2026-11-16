@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { Navigate, useSearchParams } from "react-router";
+import { ProviderIcon } from "../components/ProviderIcon";
 import { Wordmark } from "../components/Shell";
 import { SignInCode } from "../components/SignInCode";
 import { Button, Field, Input, Notice, Spinner } from "../components/ui";
@@ -14,7 +15,7 @@ export function AuthFrame({ title, subtitle, children }: { title: string; subtit
       {/* A single soft light from above; the only decoration on the page. */}
       <div className="pointer-events-none absolute -top-64 left-1/2 size-[640px] -translate-x-1/2 rounded-full bg-accent/[0.07] blur-3xl" />
       <div className="relative w-full max-w-[340px]">
-        <Wordmark className="mb-8 text-lg" />
+        <Wordmark className="mb-8" />
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         {subtitle && <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{subtitle}</p>}
         <div className="mt-6">{children}</div>
@@ -82,8 +83,9 @@ export function AuthForm({ meta, mode, invite, next, setup }: AuthFormProps) {
         <a
           key={p.id}
           href={`/api/v1/auth/${p.id}/start?${qs({ invite, next, setup })}`}
-          className="flex h-9 items-center justify-center rounded-md border border-line-strong bg-raised text-[13px] font-medium hover:bg-hover"
+          className="flex h-9 items-center justify-center gap-2 rounded-md border border-line-strong bg-raised text-[13px] font-medium hover:bg-hover"
         >
+          <ProviderIcon id={p.id} />
           Continue with {p.name}
         </a>
       ))}
@@ -104,10 +106,10 @@ export function AuthForm({ meta, mode, invite, next, setup }: AuthFormProps) {
         </>
       )}
       <form onSubmit={submit} className="flex flex-col gap-4">
-        <Field label="Username">
+        <Field label="Username" missing="Enter your username.">
           {(id) => <Input id={id} autoFocus required autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(e) => setUsername(e.target.value)} />}
         </Field>
-        <Field label="Password" hint={mode === "register" ? "At least 8 characters." : undefined}>
+        <Field label="Password" hint={mode === "register" ? "At least 8 characters." : undefined} missing="Enter your password.">
           {(id) => (
             <Input id={id} type="password" required minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "register" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} />
           )}

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { api, atLeast, type Member, type NodeInfo, type Role } from "../lib/api";
 import { difficulties, gameModes } from "../lib/properties";
 import { fromGigabytes } from "../lib/software";
+import { mainAccount, PlayerHead } from "./PlayerLists";
 import { Field, Input, Select, Textarea, Toggle } from "./ui";
 
 /** The server.properties entries that have a control of their own here. */
@@ -282,8 +283,18 @@ export function MemberLists({ members, whitelistFrom, opFrom, whitelist, ops, on
               <tr key={m.userId} className="border-t border-line">
                 <td className="px-3 py-2">
                   <div className="font-medium text-fg">{name}</div>
-                  <div className="text-xs text-muted">
-                    {m.role} · {m.minecraftName ? <span className="font-mono">{(m.minecraftAccounts ?? []).map((a) => a.name).join(", ") || m.minecraftName}</span> : "no Minecraft account linked"}
+                  <div className="flex items-center text-xs text-muted">
+                    <span className="shrink-0 whitespace-pre">{m.role} · </span>
+                    {m.minecraftName ? (
+                      <>
+                        <span className="mr-1 flex shrink-0">
+                          <PlayerHead player={mainAccount(m)} size={16} />
+                        </span>
+                        <span className="min-w-0 truncate font-mono">{(m.minecraftAccounts ?? []).map((a) => a.name).join(", ") || m.minecraftName}</span>
+                      </>
+                    ) : (
+                      "no Minecraft account linked"
+                    )}
                   </div>
                 </td>
                 {columns.map((c) => {

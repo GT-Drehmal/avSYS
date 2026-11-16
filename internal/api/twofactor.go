@@ -47,7 +47,9 @@ func (s *Server) adminTwoFactor(ctx context.Context) (bool, error) {
 // password, where administrators are to have two-factor, and has not. Who
 // signs in through a provider is not asked: the provider sees to it.
 func (s *Server) mustSetUpTwoFactor(ctx context.Context, u *store.User, session *store.Session) (bool, error) {
-	if session == nil || !u.IsAdmin || u.PasswordHash == "" || session.Method == store.SignedInWithProvider {
+	// With passwords off, two-factor is not asked for: it goes with a
+	// password, and none is taken.
+	if s.Config.NoPasswords || session == nil || !u.IsAdmin || u.PasswordHash == "" || session.Method == store.SignedInWithProvider {
 		return false, nil
 	}
 	if required, err := s.adminTwoFactor(ctx); err != nil || !required {
@@ -185,6 +187,9 @@ func (s *Server) useCode(ctx context.Context, userID, secret, code string) (bool
 // signInCode is the second step of signing in with a password, for an
 // account with two-factor: the code.
 func (s *Server) signInCode(w http.ResponseWriter, r *http.Request) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Code string }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -244,6 +249,9 @@ func (s *Server) signInCode(w http.ResponseWriter, r *http.Request) error {
 // setUpTwoFactor starts turning two-factor on: a new secret, shown as a QR
 // code and as text, kept until a code from it confirms it.
 func (s *Server) setUpTwoFactor(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Password string }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -279,6 +287,9 @@ func (s *Server) setUpTwoFactor(w http.ResponseWriter, r *http.Request, u *store
 // enableTwoFactor confirms the secret being set up with a code from it, and
 // gives the recovery codes, shown this once.
 func (s *Server) enableTwoFactor(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Code string }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -311,6 +322,9 @@ func (s *Server) enableTwoFactor(w http.ResponseWriter, r *http.Request, u *stor
 
 // disableTwoFactor turns two-factor off, with the password.
 func (s *Server) disableTwoFactor(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Password string }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -335,6 +349,9 @@ func (s *Server) disableTwoFactor(w http.ResponseWriter, r *http.Request, u *sto
 
 // newRecoveryCodes replaces the recovery codes, with the password.
 func (s *Server) newRecoveryCodes(w http.ResponseWriter, r *http.Request, u *store.User) error {
+	if s.Config.NoPasswords {
+		return errPasswordsOff
+	}
 	var in struct{ Password string }
 	if err := decode(r, &in); err != nil {
 		return err
@@ -362,6 +379,9 @@ func (s *Server) newRecoveryCodes(w http.ResponseWriter, r *http.Request, u *sto
 func (s *Server) putAdminTwoFactor(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	if !u.IsAdmin {
 		return &Error{Status: http.StatusForbidden, Code: "forbidden", Message: "Only the panel's administrator can change this."}
+	}
+	if s.Config.NoPasswords {
+		return errPasswordsOff
 	}
 	var in struct{ Required bool }
 	if err := decode(r, &in); err != nil {

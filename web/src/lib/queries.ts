@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type PlayerList, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
+import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type PanelState, type PlayerList, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
 import { presenceKey, tab, tellAgain, type Present } from "./presence";
 import { toast } from "./toast";
 
@@ -19,6 +19,8 @@ export const queryClient = new QueryClient({
 export const keys = {
   meta: ["meta"] as const,
   me: ["me"] as const,
+  /** The panel itself and a newer release, for its administrator. */
+  panel: ["panel"] as const,
   cluster: ["cluster"] as const,
   servers: (org: string) => ["servers", org] as const,
   members: (org: string) => ["members", org] as const,
@@ -40,6 +42,15 @@ export const keys = {
   /** An organization's saved lists of players. */
   playerLists: (org: string) => ["player-lists", org] as const,
 };
+
+/** What the panel says of itself and of a newer release, for its administrator. */
+export const usePanel = (enabled: boolean) =>
+  useQuery({
+    queryKey: keys.panel,
+    queryFn: () => api.get<PanelState>("/panel"),
+    enabled,
+    refetchInterval: 15_000,
+  });
 
 export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => api.get<Meta>("/meta"), staleTime: Infinity });
 
