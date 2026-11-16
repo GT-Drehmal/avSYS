@@ -123,7 +123,7 @@ func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	sc, done, err := s.filesOf(r.Context(), now, wait)
 	if err != nil {
-		return err
+		return s.unreachable(now.Name, err)
 	}
 	defer done()
 	stack, err := s.stackOf(r.Context(), sc, now.Spec.ResourcePack, limit)
@@ -153,7 +153,7 @@ func (s *Server) addPackTo(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, "added "+top.SHA1)
 	go s.prunePacksNow(context.WithoutCancel(r.Context()))
-	writeJSON(w, http.StatusOK, s.view(now))
+	writeJSON(w, http.StatusOK, s.view(a.Role, now))
 	return nil
 }
 
@@ -208,12 +208,12 @@ func (s *Server) orderStack(w http.ResponseWriter, r *http.Request, u *store.Use
 		same = same && order[i].SHA1 == rp.Stack[i].SHA1
 	}
 	if same {
-		writeJSON(w, http.StatusOK, s.view(now))
+		writeJSON(w, http.StatusOK, s.view(a.Role, now))
 		return nil
 	}
 	sc, done, err := s.filesOf(r.Context(), now, wait)
 	if err != nil {
-		return err
+		return s.unreachable(now.Name, err)
 	}
 	defer done()
 	if now, err = s.restack(r.Context(), now, sc, order); err != nil {
@@ -221,7 +221,7 @@ func (s *Server) orderStack(w http.ResponseWriter, r *http.Request, u *store.Use
 	}
 	s.audit(context.WithoutCancel(r.Context()), u, a.Org, "server.resource-pack", mc.Name, "ordered "+strings.Join(in.Order, ","))
 	go s.prunePacksNow(context.WithoutCancel(r.Context()))
-	writeJSON(w, http.StatusOK, s.view(now))
+	writeJSON(w, http.StatusOK, s.view(a.Role, now))
 	return nil
 }
 

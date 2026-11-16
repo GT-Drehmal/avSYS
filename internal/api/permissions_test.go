@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -339,7 +340,9 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET " + server + "/files/upload", "", "", store.RoleOperator, 0},
 		{"DELETE " + server + "/files/upload", "", "", store.RoleOperator, 0},
 		{"POST " + server + "/files/mkdir", "", "", store.RoleOperator, 0},
-		{"POST " + server + "/files/rename", "", `{"to":"/b"}`, store.RoleOperator, 0},
+		// 204: allowed, and renamed: each caller's own file, in the files of
+		// a server set aside for it.
+		{"POST " + server + "/files/rename", "/orgs/alpha/servers/renames/files/rename?path=/{who}-a&to=/{who}-b", "", store.RoleOperator, 204},
 		{"POST " + server + "/files/extract", "", "", store.RoleOperator, 0},
 		{"GET " + server + "/files/archive", "", "", store.RoleOperator, 0},
 		{"GET " + server + "/files/search", "", "", store.RoleOperator, 0},
@@ -355,6 +358,11 @@ func TestOrganizationRoutes(t *testing.T) {
 		if who != "" {
 			p.addServer("alpha", "doomed-"+who, "")
 		}
+	}
+	p.addServer("alpha", "renames", "")
+	renames := serverFilesFrom(t, p, "renames", sftp.InMemHandler())
+	for _, who := range everyone {
+		put(t, renames, dataRoot+"/"+who+"-a", who)
 	}
 	fill := strings.NewReplacer("{org}", "alpha", "{server}", "world", "{user}", p.users["viewer"].ID, "{token}", "none", "{id}", "abcdef12")
 
@@ -386,6 +394,14 @@ func TestOrganizationRoutes(t *testing.T) {
 				}
 				t.Errorf("%s %s as %s: got %d %s, want %d", method, path, name, got, code, want)
 			}
+		}
+	}
+	// Renamed for those allowed to, and for no one else.
+	for _, who := range everyone {
+		allowed := who == "root" || (who != "" && who != "outsider" && store.Role(who).AtLeast(store.RoleOperator))
+		_, err := renames.Stat(dataRoot + "/" + who + "-b")
+		if moved := err == nil; moved != allowed {
+			t.Errorf("rename as %q: moved %v, want %v", who, moved, allowed)
 		}
 	}
 	for _, registered := range p.srv.routes {

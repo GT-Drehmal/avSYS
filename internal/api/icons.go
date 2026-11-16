@@ -770,7 +770,7 @@ func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 	if !wait {
 		sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
 		if err != nil {
-			return err
+			return s.unreachable(mc.Name, err)
 		}
 		if err := writeServerIcon(sc, data); err != nil {
 			return err
@@ -918,7 +918,7 @@ func (s *Server) deleteServerIcon(w http.ResponseWriter, r *http.Request, u *sto
 	defer release()
 	sc, err := s.workspaces.get(r.Context(), a.Namespace, mc.Name)
 	if err != nil {
-		return err
+		return s.unreachable(mc.Name, err)
 	}
 	if err := sc.Remove(serverIconPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fileError(err)

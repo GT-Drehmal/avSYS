@@ -86,6 +86,13 @@ var uploadLocks sync.Map
 
 var errWorkspace = &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. Try again."}
 
+// unreachable notes why a server's files could not be reached, and says so
+// as every route does: 502 workspace.
+func (s *Server) unreachable(server string, err error) error {
+	s.Log.Warn("workspace unreachable", "server", server, "error", err)
+	return errWorkspace
+}
+
 type uploaded struct {
 	Received int64 `json:"received"`
 }
@@ -155,8 +162,7 @@ func (s *Server) importUploadPart(w http.ResponseWriter, r *http.Request, u *sto
 
 	sc, done, err := s.filesOf(r.Context(), mc, wait && offset == 0)
 	if err != nil {
-		s.Log.Warn("workspace unreachable", "server", mc.Name, "error", err)
-		return errWorkspace
+		return s.unreachable(mc.Name, err)
 	}
 	defer done()
 	owner, had, last, err := uploadOf(sc)
