@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { Download, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { api, ApiError, type LibraryWorld, qs, serverPath, type Server, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
@@ -11,9 +12,9 @@ import { newerThan, newerWorldWarning, runsOn, worldSummary } from "../lib/world
 import { packTitle } from "./Content";
 import { NewerWorldConfirm } from "./NewerWorld";
 import { Picture } from "./Picture";
-import { libraryWorldOf, WorldNow } from "./WorldNow";
+import { libraryWorldOf, useWorldFacts, WorldNow } from "./WorldNow";
 import { WorldPicker } from "./StartPicker";
-import { Button, cx, Field, Input, Modal, Notice, Select, Toggle } from "./ui";
+import { Button, ButtonLink, Confirm, cx, Field, Input, Modal, Notice, Select, Toggle } from "./ui";
 import { cancelled, UploadProgress, useUpload } from "./Uploading";
 
 /** How a new world is to be made, as the server's settings have it to begin with. */
@@ -144,10 +145,56 @@ export function ReplaceWorld({ server }: { server: Server }) {
   const ready = from === "new" || (from === "library" ? !!picked : !!world && !!file);
   const segment = (on: boolean) => cx("h-7 rounded-sm px-3 text-xs font-medium", on ? "bg-hover text-fg" : "text-muted hover:text-fg");
   const action = puttingBack ? "Put back" : "Replace the world";
+  const title = server.spec.displayName || server.name;
+
+  // Downloaded as it is now, running or stopped, while its files can be read.
+  const facts = useWorldFacts(server);
+  const phase = server.status.phase ?? "";
+  const noDownload = server.unfinished
+    ? "The server's files are not all in."
+    : !["Running", "Stopped", "Sleeping"].includes(phase)
+      ? "Wait for the server to start or stop."
+      : facts.isError
+        ? "Can't reach the server's files."
+        : facts.data && !facts.data.exists
+          ? "No world yet."
+          : null;
+
+  // Deleted: a new world in its place, made as the server's settings say when it next starts.
+  const [deleting, setDeleting] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteWorld = async () => {
+    setRemoving(true);
+    setDeleteError(null);
+    const watch = watchReplace(server.org, server.name, title, true);
+    try {
+      await api.put<Server>(`${serverPath(server.org, server.name)}/import?${qs({ world: "new", replace: "true" })}`, undefined);
+      watch.taken();
+      setDeleting(false);
+    } catch (err) {
+      watch.refused();
+      setDeleteError(err instanceof ApiError ? err.message : "Could not delete the world.");
+    } finally {
+      setRemoving(false);
+      void qc.invalidateQueries({ queryKey: keys.servers(server.org) });
+      void qc.invalidateQueries({ queryKey: keys.snapshots(server.org) });
+    }
+  };
+
   return (
     <>
       <WorldNow server={server} library={back} />
       <div className="flex flex-wrap items-center gap-3">
+        {noDownload ? (
+          <Button icon={<Download className="size-3.5" />} disabled>
+            Download
+          </Button>
+        ) : (
+          <ButtonLink href={`/api/v1${serverPath(server.org, server.name)}/world/archive`} download icon={<Download className="size-3.5" />}>
+            Download
+          </ButtonLink>
+        )}
         <Button onClick={() => setOpen(true)} disabled={!stopped || !!held}>
           Replace the world
         </Button>
@@ -156,9 +203,32 @@ export function ReplaceWorld({ server }: { server: Server }) {
             Put back {back.name}
           </Button>
         )}
-        {!stopped && <p className="text-xs text-muted">Stop the server first.</p>}
-        {held && <p className="text-xs text-muted">{held}</p>}
+        <Button variant="danger" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleting(true)} disabled={!stopped || !!held}>
+          Delete the world
+        </Button>
       </div>
+      {(noDownload || !stopped || held) && (
+        <div className="flex flex-col gap-0.5 text-xs text-muted" data-testid="world-why">
+          {noDownload && <p>{noDownload}</p>}
+          {!stopped && <p>Stop the server to replace or delete the world.</p>}
+          {held && <p>{held}</p>}
+        </div>
+      )}
+      <Confirm
+        open={deleting}
+        onOpenChange={(o) => {
+          if (removing) return;
+          setDeleting(o);
+          setDeleteError(null);
+        }}
+        title={`Delete the world of ${title}?`}
+        description="A snapshot is taken first, so it can be put back from Backups. The next start makes a new world."
+        action="Delete the world"
+        loading={removing}
+        onConfirm={() => void deleteWorld()}
+      >
+        {deleteError && <Notice tone="danger">{deleteError}</Notice>}
+      </Confirm>
       <Modal
         open={open}
         onOpenChange={close}

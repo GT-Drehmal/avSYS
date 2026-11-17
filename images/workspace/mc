@@ -53,7 +53,8 @@ console() {
   [ -t 0 ] || sleep 1
 }
 
-# While the panel takes a snapshot it holds the game's saves, and the copy is
+# While the panel takes a snapshot, or sends the world as a download, it holds
+# the game's saves, and the copy is
 # only whole if nothing switches them back on or writes the world out under
 # it. Those commands wait until it is done.
 held=/tmp/avsys/saving-paused
@@ -72,7 +73,7 @@ saving() (
   return 1
 )
 holding() {
-  echo "A snapshot is being taken, which holds the game's saves until it is done. Try again once it has finished." >&2
+  echo "The world is being copied, which holds the game's saves until it is done. Try again once it has finished." >&2
 }
 
 case "${1:-}" in

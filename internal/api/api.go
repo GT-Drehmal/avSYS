@@ -513,6 +513,7 @@ func (s *Server) Handler() http.Handler {
 	api("PUT /orgs/{org}/servers/{server}/import/upload", s.authed(s.importUploadPart))
 	api("DELETE /orgs/{org}/servers/{server}/import/upload", s.authed(s.importDiscardUpload))
 	api("GET /orgs/{org}/servers/{server}/world", s.authed(s.getServerWorld))
+	api("GET /orgs/{org}/servers/{server}/world/archive", s.authed(s.downloadServerWorld))
 	api("GET /orgs/{org}/servers/{server}/activity", s.authed(s.serverActivity))
 	api("GET /orgs/{org}/servers/{server}/lists", s.authed(s.getGameLists))
 	api("DELETE /orgs/{org}/servers/{server}/lists/{list}/{name}", s.authed(s.removeFromGameList))

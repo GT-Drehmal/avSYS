@@ -490,14 +490,20 @@ func zipWorld(zw *zip.Writer, archive io.Reader, root, name string, skip map[str
 	}
 }
 
+// saveZip is the zip a world is downloaded in, as a single-player save.
+func saveZip(out io.Writer) *zip.Writer {
+	zw := zip.NewWriter(out)
+	// Region files are compressed already: as fast as it goes, not as small.
+	zw.RegisterCompressor(zip.Deflate, func(w io.Writer) (io.WriteCloser, error) { return flate.NewWriter(w, flate.BestSpeed) })
+	return zw
+}
+
 // writeWorldZip writes a world of the library, kept in snap as its own
 // files or as a tar of its folders, to out as a zip of a single-player
 // save, made as it is sent. An uploaded pack it names goes in it as the
 // world's own.
 func (s *Server) writeWorldZip(ctx context.Context, a *access, world *store.World, snap *backup.Snapshot, out io.Writer) error {
-	zw := zip.NewWriter(out)
-	// Region files are compressed already: as fast as it goes, not as small.
-	zw.RegisterCompressor(zip.Deflate, func(w io.Writer) (io.WriteCloser, error) { return flate.NewWriter(w, flate.BestSpeed) })
+	zw := saveZip(out)
 	name := saveName(world.Name)
 	// The pack it names is the world's own, in place of any its files have.
 	var kept *backup.Snapshot

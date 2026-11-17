@@ -152,11 +152,11 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 	if mc.Status.Phase != avsysv1.PhaseRunning {
 		return &Error{Status: http.StatusConflict, Code: "not_running", Message: "The server is not running."}
 	}
-	// While a snapshot holds the game's saves, none is let undo that or
-	// write the world out under it: the copy would hold files from before
-	// and after one another.
+	// While a snapshot or a download holds the game's saves, none is let
+	// undo that or write the world out under it: the copy would hold files
+	// from before and after one another.
 	if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; paused && savesCommand(command) {
-		return &Error{Status: http.StatusConflict, Code: "snapshotting", Message: "A snapshot is being taken. Try again when the snapshot is done."}
+		return &Error{Status: http.StatusConflict, Code: "snapshotting", Message: "The world is being copied. Try again when that is done."}
 	}
 	output := ""
 	typed := false

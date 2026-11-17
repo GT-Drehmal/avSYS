@@ -507,7 +507,7 @@ test("a stopped server's world can be replaced with one of one's own, saying wha
   // Not while it runs.
   await page.goto("/o/friends/s/survival/settings");
   await expect(page.getByRole("button", { name: "Replace the world" })).toBeDisabled();
-  await expect(page.getByText("Stop the server first.")).toBeVisible();
+  await expect(page.getByText("Stop the server to replace or delete the world.")).toBeVisible();
 
   await page.goto("/o/friends/s/creative/settings");
   await page.getByRole("button", { name: "Replace the world" }).click();

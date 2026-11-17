@@ -60,16 +60,20 @@ func carriedOrigin(was *avsysv1.WorldOrigin, via avsysv1.WorldOrigin) *avsysv1.W
 // importedOrigin is where the world an import puts in comes from, as its
 // request says: ?world= "new" or "none" (a server's archive whose world is
 // left out) is one the game makes, with the seed the new world is asked to
-// be made with; ?library= and ?template= are the library's world and the
-// template's own, given here; ?world=true is a world uploaded, and none a
-// server's archive with its world, each named by ?file=.
-func importedOrigin(q url.Values, library *store.World, template *store.Template, own *ownWorld, made map[string]*string) *avsysv1.WorldOrigin {
+// be made with, or that the server's settings (props) have where it is not
+// asked for: a world deleted is made again as they say; ?library= and
+// ?template= are the library's world and the template's own, given here;
+// ?world=true is a world uploaded, and none a server's archive with its
+// world, each named by ?file=.
+func importedOrigin(q url.Values, library *store.World, template *store.Template, own *ownWorld, made map[string]*string, props map[string]string) *avsysv1.WorldOrigin {
 	o := &avsysv1.WorldOrigin{Time: metav1.Now()}
 	switch world := q.Get("world"); {
 	case world == "new" || world == "none":
 		o.Kind = avsysv1.WorldNew
-		if seed := made["level-seed"]; seed != nil {
+		if seed, asked := made["level-seed"]; asked && seed != nil {
 			o.Seed = strings.TrimSpace(*seed)
+		} else if !asked && world == "new" {
+			o.Seed = strings.TrimSpace(props["level-seed"])
 		}
 	case library != nil:
 		o.Kind, o.Library = avsysv1.WorldLibrary, &avsysv1.WorldRef{ID: library.ID, Name: library.Name}
@@ -149,13 +153,7 @@ func (s *Server) getServerWorld(w http.ResponseWriter, r *http.Request, u *store
 // fallback is the world's folder as the server's settings say, for when
 // server.properties does not.
 func readWorldFacts(ctx context.Context, sc *sftp.Client, fallback string) (worldFacts, error) {
-	level := levelInProperties(sc)
-	if level == "" {
-		level = fallback
-	}
-	if level == "" {
-		level = "world"
-	}
+	level := worldLevel(levelInProperties(sc), fallback)
 	facts := worldFacts{Level: level}
 	f, err := sc.Open(path.Join(dataRoot, level, "level.dat"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -177,6 +175,18 @@ func readWorldFacts(ctx context.Context, sc *sftp.Client, fallback string) (worl
 	return facts, nil
 }
 
+// worldLevel is a server's world's folder: as its server.properties names it,
+// else as its settings say (fallback), else the game's own, world.
+func worldLevel(named, fallback string) string {
+	switch {
+	case named != "":
+		return named
+	case fallback != "":
+		return fallback
+	}
+	return "world"
+}
+
 // levelInProperties is the world's folder as server.properties names it, or
 // "" where it does not, or names no plain folder.
 func levelInProperties(sc *sftp.Client) string {
@@ -185,8 +195,14 @@ func levelInProperties(sc *sftp.Client) string {
 		return ""
 	}
 	defer f.Close()
+	return levelNamed(f)
+}
+
+// levelNamed is the world's folder as server.properties, read from r, names
+// it, or "" where it does not, or names no plain folder.
+func levelNamed(r io.Reader) string {
 	level := ""
-	scan := bufio.NewScanner(io.LimitReader(f, 1<<20))
+	scan := bufio.NewScanner(io.LimitReader(r, 1<<20))
 	for scan.Scan() {
 		line := strings.TrimSpace(scan.Text())
 		if v, ok := strings.CutPrefix(line, "level-name="); ok {

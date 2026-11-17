@@ -247,10 +247,26 @@ world** while it is stopped. A snapshot is taken first.
   game version it was last opened in, when it was last played, and its
   size. Nothing while its files cannot be reached.
 
-**Put back** next to **Replace the world** puts the library world back, as
-it is in the library, for a server whose world came from there: the same as
-**Replace the world** with that world picked, a snapshot taken first. Use it
-to reset a map between event rounds.
+Its buttons:
+
+- **Download** saves the world as it is now to your computer, as a `.zip`
+  of a single-player save: unzip it into Minecraft's `saves` folder to play
+  it. It works while the server runs: the game saves everything first and
+  holds its saves until the download ends, then saves again. A Nether and
+  End that Paper keeps beside the world go in it, where single-player has
+  them. It is off while the server's files cannot be reached, before the
+  game has made a world, and while the server starts or stops.
+- **Replace the world** (above).
+- **Put back** puts the library world back, as it is in the library, for a
+  server whose world came from there: the same as **Replace the world**
+  with that world picked, a snapshot taken first. Use it to reset a map
+  between event rounds.
+- **Delete the world** removes the world, its Nether and End included, after
+  asking. A snapshot is taken first, so it can be put back from
+  **Backups**. The server's settings stay as they are: the next start makes
+  a new world from them, with the seed, world type and the rest set there.
+
+Replacing, putting back and deleting the world need the server stopped.
 
 ## A server's page
 

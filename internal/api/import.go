@@ -365,7 +365,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 	}
 	// What the server is to say of where its world came from, once it is in.
-	origin := importedOrigin(r.URL.Query(), fromLibrary, theirs, theirWorld, made)
+	origin := importedOrigin(r.URL.Query(), fromLibrary, theirs, theirWorld, made, mc.Spec.Properties)
 	if withPack && archive == nil && folders == "" {
 		return errBadRequest("A resource pack comes with a world from a template or from the library.")
 	}
