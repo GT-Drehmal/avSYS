@@ -449,6 +449,126 @@ if [ -z "${PAPER_CUSTOM_JAR:-}${PAPER_DOWNLOAD_URL:-}${FOLIA_DOWNLOAD_URL:-}$loa
 fi
 `
 
+// The sites the image asks, on every start, about the loaders it installs,
+// as it asks them: Mojang's list of game versions, Fabric's, Quilt's,
+// Forge's, NeoForge's and Purpur's.
+const (
+	mojangVersions = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+	fabricMeta     = "https://meta.fabricmc.net"
+	quiltLoaders   = "https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-loader/maven-metadata.xml"
+	forgeVersions  = "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
+	neoForgeBuilds = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+	purpurAPI      = "https://api.purpurmc.org"
+)
+
+// keepLoader lets a Fabric, Quilt, Forge, NeoForge or Purpur server start on
+// the loader it already has when the sites it came from do not answer, as
+// keepBuild does for Paper. On every start, with the loader installed, the
+// image still asks:
+//   - Fabric's site for its newest installer, and its newest loader when
+//     none is given. Once it knows both are the ones it has, it asks
+//     nothing more.
+//   - Forge's site, or NeoForge's, for the build when none is given. A
+//     build given that is the one installed is asked about nowhere.
+//   - Mojang's list of game versions, for Quilt, and Quilt's site for its
+//     newest loader when none is given.
+//   - Purpur's site, for its newest build.
+//
+// So the site is asked first, for a few seconds, only where the image would
+// ask it, and only when what the image recorded it installed is the game
+// version and the build asked for, and still there. When it answers, the
+// image goes on as it always does. When it does not, the image is told the
+// versions it has, for Fabric, Forge and NeoForge, and asks nothing; Quilt
+// and Purpur, which it cannot be told that, are started as a server of the
+// image's own (TYPE=CUSTOM) on the jar installed, with the mods or plugins
+// where they were. A first start, another game version or build, a
+// download, installer or file of settings of the server's own, or a
+// reinstall asked for, are left to the image as before. NeoForge for
+// 1.20.1, which the image always looks up, is too. FABRIC_META_BASE_URL,
+// in a server's own environment, is where the image and this ask Fabric.
+// Vanilla needs none of this: installed, the image asks nothing.
+const keepLoader = `# The value of "key":"value" in a record the image keeps as JSON, on one line.
+recorded() { [ -f "$2" ] && sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$2" | tail -n 1; }
+# The jar a record of KEY="value" lines says the image installed, if it is there.
+jarOf() { j=$(sed -n 's/^SERVER="\(.*\)"$/\1/p' "$1" 2>/dev/null | tail -n 1); case $j in /*) ;; ?*) j=/data/${j#./} ;; esac; [ -f "$j" ] && echo "$j"; }
+# Whether a version is one of its own, and not the newest or whatever is recommended.
+given() { case $(echo "$1" | tr A-Z a-z) in "" | latest | recommended | beta) return 1 ;; esac; }
+# Whether what is asked for is what is installed: the same, or none given.
+same() { ! given "$1" || [ "$1" = "$2" ]; }
+truthy() { case $(echo "${1:-}" | tr A-Z a-z) in true | yes | on | 1) return 0 ;; esac; return 1; }
+unanswered() { h=${1#*://}; echo "[avsys] ${h%%/*} does not answer: starting with the installed $2"; }
+# Started as a server of the image's own, on the jar installed.
+custom() { export TYPE=CUSTOM CUSTOM_SERVER="$1" FAMILY="$2" MODRINTH_LOADER="${MODRINTH_LOADER:-$3}"; }
+# loaded is from keepBuild: settings the image loads from a file of its own.
+if [ -z "$loaded" ]; then
+  case $kind in
+  FABRIC)
+    m=/data/.fabric-manifest.json
+    loader=$(recorded loader "$m") installer=$(recorded installer "$m") jar=$(recorded launcherPath "$m")
+    case $jar in /*) ;; ?*) jar=/data/${jar#./} ;; esac
+    want=${FABRIC_LAUNCHER_VERSION:-${FABRIC_INSTALLER_VERSION:-}}
+    if [ -z "${FABRIC_LAUNCHER:-}${FABRIC_LAUNCHER_URL:-}" ] && ! truthy "${FABRIC_FORCE_REINSTALL:-}" &&
+      grep -q '"origin":{"@type":"versions"' "$m" 2>/dev/null && [ -n "$loader" ] && [ -n "$installer" ] && [ -f "$jar" ] &&
+      [ "$(recorded game "$m")" = "${VERSION:-}" ] && same "${FABRIC_LOADER_VERSION:-}" "$loader" && same "$want" "$installer" &&
+      { ! given "${FABRIC_LOADER_VERSION:-}" || ! given "$want"; }; then
+      site=${FABRIC_META_BASE_URL:-` + fabricMeta + `}
+      if ! answers "$site/v2/versions/installer"; then
+        unanswered "$site" "Fabric loader $loader"
+        export FABRIC_LOADER_VERSION="$loader" FABRIC_LAUNCHER_VERSION="$installer"
+      fi
+    fi
+    ;;
+  FORGE | NEOFORGE)
+    if [ "$kind" = FORGE ]; then
+      m=/data/.forge-manifest.json want=${FORGE_VERSION:-${FORGEVERSION:-}} site=` + forgeVersions + ` own=${FORGE_INSTALLER:-}${FORGE_INSTALLER_URL:-} again=${FORGE_FORCE_REINSTALL:-}
+    else
+      m=/data/.neoforge-manifest.json want=${NEOFORGE_VERSION:-} site=` + neoForgeBuilds + ` own=${NEOFORGE_INSTALLER:-} again=${NEOFORGE_FORCE_REINSTALL:-}
+      [ "${VERSION:-}" = 1.20.1 ] && own=always
+    fi
+    have=$(recorded forgeVersion "$m") entry=$(recorded serverEntry "$m")
+    case $entry in /*) ;; ?*) entry=/data/$entry ;; esac
+    if [ -z "$own" ] && ! truthy "$again" && ! given "$want" && [ -n "$have" ] && [ -f "$entry" ] &&
+      [ "$(recorded minecraftVersion "$m")" = "${VERSION:-}" ] && ! grep -q '"installerUrl":"' "$m"; then
+      if ! answers "$site"; then
+        if [ "$kind" = FORGE ]; then
+          unanswered "$site" "Forge $have"
+          export FORGE_VERSION="$have"
+        else
+          unanswered "$site" "NeoForge $have"
+          export NEOFORGE_VERSION="$have"
+        fi
+      fi
+    fi
+    ;;
+  QUILT)
+    m=/data/.quilt-manifest.json
+    loader=$(recorded loaderVersion "$m") jar=$(jarOf /data/.quilt.env)
+    if [ -z "${QUILT_LAUNCHER:-}${QUILT_LAUNCHER_URL:-}${QUILT_INSTALLER_URL:-}${CURSEFORGE_FILES:-}" ] && ! truthy "${QUILT_FORCE_REINSTALL:-}" &&
+      [ -n "$loader" ] && [ -n "$jar" ] && [ "$(recorded minecraftVersion "$m")" = "${VERSION:-}" ] && same "${QUILT_LOADER_VERSION:-}" "$loader"; then
+      silent=
+      answers "` + mojangVersions + `" || silent=` + mojangVersions + `
+      [ -n "$silent" ] || given "${QUILT_LOADER_VERSION:-}" || answers "` + quiltLoaders + `" || silent=` + quiltLoaders + `
+      if [ -n "$silent" ]; then
+        unanswered "$silent" "Quilt loader $loader"
+        custom "$jar" FABRIC quilt
+      fi
+    fi
+    ;;
+  PURPUR)
+    m=/data/.purpur-manifest.json
+    build=$(recorded build "$m") jar=$(jarOf /data/.purpur.env)
+    if [ -z "${PURPUR_DOWNLOAD_URL:-}" ] && [ -n "$build" ] && [ -n "$jar" ] &&
+      [ "$(recorded minecraftVersion "$m")" = "${VERSION:-}" ] && same "${PURPUR_BUILD:-}" "$build"; then
+      if ! answers "` + purpurAPI + `/v2/purpur/$VERSION"; then
+        unanswered ` + purpurAPI + ` "${jar##*/}"
+        custom "$jar" SPIGOT purpur
+      fi
+    fi
+    ;;
+  esac
+fi
+`
+
 // The records the image keeps, in /data, of what it installed from Modrinth
 // for MODRINTH_PROJECTS, and, in the folder plugins or mods go to, of what
 // it got for the MODS and PLUGINS lists. Each is written once all of its
@@ -640,7 +760,7 @@ mkdir -p "${known%/*}" 2>/dev/null && { [ -z "$asked" ] || printf '%s\n' "$asked
 const startScript = `kind=$(echo "${TYPE:-}" | tr a-z A-Z)
 # Whether a site answers, within a few seconds.
 answers() { curl -fsS -o /dev/null --connect-timeout 3 -m 5 "$@" 2>/dev/null; }
-` + keepBuild + keepContent + modConfig + `exec ` + imageStart + `
+` + keepBuild + keepLoader + keepContent + modConfig + `exec ` + imageStart + `
 `
 
 // modpackManifest is the image's record of what it installed from a Modrinth

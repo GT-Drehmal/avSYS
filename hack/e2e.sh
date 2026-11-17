@@ -239,9 +239,9 @@ print("\n".join("  | " + line for line in lines[-40:]))' || true
 # the cluster starts the game again by itself. Only the image's own line
 # about a download counts: a timeout mentioned anywhere else in the log, by
 # the game or a plugin, says nothing about why the game stopped.
-FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload|Failed to download mojang_[^ ]*\.jar'
+FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload|Failed to download mojang_[^ ]*\.jar|IOException: Request to https://[a-z.-]*mojang\.com/[^ ]* (using DIRECT )?failed'
 # Paper's own launcher says it its own way, as it fetches the game's jar from
-# Mojang.
+# Mojang, and so does Fabric's.
 # How many times that happened in this run, said at the end so that it shows.
 REFETCHED=0
 
@@ -1686,6 +1686,31 @@ for _ in $(seq 1 30); do
   [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
   sleep 2
 done
+
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  step "a Fabric server's restart while Fabric's site does not answer"
+  # Fabric installed, a restart asked to ask a site that answers nothing
+  # for its loader starts with the loader it has, and fetches nothing.
+  FAB=$API/orgs/$ORG/servers/fabric
+  made=$(call -d '{"name":"fabric","spec":{"eula":true,"loader":"fabric","version":"1.21.4","resources":{"memory":"2Gi"},"storage":{"size":"2Gi"}}}' "$API/orgs/$ORG/servers")
+  case "$made" in *'"spec"'*) ;; *) fail "the server was not made: $made" ;; esac
+  wait_phase Running "$FAB"
+  loader=$(call "$FAB/files/content?path=/.fabric-manifest.json" | field "d['origin']['loader']") || fail "Fabric was not installed"
+  set_spec '{"spec":{"env":[{"name":"FABRIC_META_BASE_URL","value":"http://127.0.0.1:9"}]}}' "$FAB"
+  act restart "$FAB"
+  for _ in $(seq 1 90); do [ "$(phase_now "$FAB")" != Running ] && break; sleep 1; done
+  wait_phase Running "$FAB"
+  started=$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" fabric 2>/dev/null)
+  expect "it starts with the loader it has" "$started" "[avsys] 127.0.0.1:9 does not answer: starting with the installed Fabric loader $loader"
+  case "$started" in *"'install-fabric-loader' command failed"* | *"Downloading"*"fabric-server-mc"*) fail "and the image asked for Fabric anyway" ;; esac
+  expect "and the game runs on it" "$(call -f "$FAB/files/content?path=/logs/latest.log")" "Loading Minecraft 1.21.4 with Fabric Loader $loader"
+  game_clean "and its log is clean" "$FAB"
+  call -o /dev/null -X DELETE "$FAB?snapshot=false"
+  for _ in $(seq 1 30); do
+    [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
+    sleep 2
+  done
+fi
 
 step "a new server from a .mrpack"
 # A Modrinth pack file made here: Fabric on 1.21.4, one mod for the server

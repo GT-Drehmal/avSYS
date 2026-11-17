@@ -263,6 +263,18 @@ Content is settled when it is added, not when the server starts.
 A restart never changes what is installed. Changing the game version or
 loader pins each entry again for the new one.
 
+**Starting while a site is down.** The image asks the sites it installs
+from about the loader and the content on every start, even when the server
+has them, and the start fails when one does not answer. So the game
+container's command, before the image starts, asks first, for a few
+seconds. When a site does not answer and the server already has what it
+asks for, the image is told to start with that: the Paper or Folia build,
+the Fabric, Forge or NeoForge loader, the Quilt or Purpur jar (started as
+the image's `CUSTOM` type), Modrinth content and files from an address. The
+container's log says so, as `[avsys] <site> does not answer: starting with
+the installed …`. A first start, another game version or build, and a
+modpack still need the sites. Vanilla asks nothing once installed.
+
 **Modpacks** are the image's own: `MODPACK_PLATFORM=MODRINTH` with the
 pinned version, `AUTO_CURSEFORGE` with the pinned file, or an uploaded
 `.mrpack` kept in the server's files. Each start puts the pack's own files
