@@ -156,7 +156,9 @@ func (s *Server) unpackLibraryWorld(ctx context.Context, org *store.Org, w *stor
 		}
 		return
 	}
-	if err := s.unpackArchived(ctx, org, w, &mine[0]); err != nil {
+	// One cut short by the panel stopping is tried again as it starts, and
+	// is not said to have failed.
+	if err := s.unpackArchived(ctx, org, w, &mine[0]); err != nil && ctx.Err() == nil {
 		s.Log.Warn("a world of the library could not be unpacked; it is kept as it was", "org", org.Slug, "world", w.ID, "name", w.Name, "error", err)
 		if ferr := s.Store.SetWorldUnpackFailed(context.WithoutCancel(ctx), org.ID, w.ID, sentence(plainly(err))); ferr != nil && !errors.Is(ferr, store.ErrNotFound) {
 			s.Log.Warn("could not say why a world was not unpacked", "world", w.ID, "error", ferr)
