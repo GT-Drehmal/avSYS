@@ -860,6 +860,8 @@ const curseForgeAPI = "https://api.curseforge.com"
 // NeoForge for 1.20.1, which the image always looks up, is too.
 // MODRINTH_API_BASE_URL and CF_API_BASE_URL, in a server's own
 // environment, are where the image and this ask Modrinth and CurseForge.
+// FABRIC_META_BASE_URL is not: the image's pack step asks Fabric's own site
+// whatever it says, and only its Fabric step, for TYPE=FABRIC, reads it.
 const keepPack = `platform=$(echo "${MODPACK_PLATFORM:-${MOD_PLATFORM:-}}" | tr a-z A-Z)
 # The pack's record, and of the server set up from it; the site the image
 # asks about the pack, and about its loader; the game version and the
