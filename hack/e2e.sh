@@ -1256,7 +1256,7 @@ PY
   expect "a world kept as an archive is kept unpacked once the panel starts, under the same ID" "$(call "$API/orgs/$ORG/worlds/$OLD" | field "(d['id'] == '$OLD', d['ready'], d['kept'], d['root'], d['size'], d.get('unpackError'))")" "(True, True, 'folders', 'world', $(((4 << 20) + 1)), None)"
   expect "and its archive is gone" "$(panel_restic snapshots --json --host "world-$OLD" | field "[('form=folders' in s['tags'], 'world.archive' in str(s['paths'])) for s in d]")" "[(True, False)]"
   call -o "$WORK/old-download.zip" "$API/orgs/$ORG/worlds/$OLD/archive"
-  expect "it is downloaded as a save" "$(python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); print(sorted(z.namelist()))' "$WORK/old-download.zip")" "'E2E old/level.dat', 'E2E old/region/r.0.0.mca'"
+  expect "it is downloaded as a save" "$(python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); print(sorted(n for n in z.namelist() if not n.endswith("/")))' "$WORK/old-download.zip")" "['E2E old/level.dat', 'E2E old/region/r.0.0.mca']"
   call -X DELETE "$API/orgs/$ORG/worlds/$OLD" >/dev/null
 else
   echo "skipped: a world kept as an archive kept unpacked as the panel starts (AVSYS_E2E_PANEL_EXEC and AVSYS_E2E_PANEL_RESTART are not set)"
