@@ -427,6 +427,10 @@ and rsync work the same way. To copy a world in, stop the server and:
 rsync -av -e 'ssh -p 2222' ./world/ creative.friends@panel.example.com:world/
 ```
 
+When your connection ends, what you ran over it is stopped, as it is when
+a terminal closes. For something that should keep going, start it in
+`tmux` and detach.
+
 **Open in VS Code** (under **Connect**, or on the **Files** tab) opens the
 server in VS Code with Remote SSH.
 
