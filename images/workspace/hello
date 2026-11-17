@@ -1,0 +1,78 @@
+#!/bin/bash
+# avsys-hello — what someone opening a terminal on a server sees first: the
+# avSYS gate, a few facts about the server, and what the mc command does.
+# Everything here is quick to find out (a file's first lines, the volume's
+# size, one RCON question with a short wait), so a login is not held up.
+. /tmp/avsys/env 2>/dev/null
+
+q=$'\e[38;5;255m'   # quartz
+v=$'\e[38;5;141m'   # amethyst
+d=$'\e[2m'          # dim
+b=$'\e[1m'          # bold
+r=$'\e[0m'
+
+# The game and its loader, as its log last said them.
+game=
+log=/data/logs/latest.log
+if [ -r "$log" ]; then
+  head=$(head -n 400 "$log" 2>/dev/null)
+  game=$(printf '%s\n' "$head" | sed -n \
+    -e 's/.*Loading Minecraft \([^ ]*\) with Fabric Loader \([^ ]*\).*/Fabric \1|loader \2/p' \
+    -e 's/.*Loading Minecraft \([^ ]*\) with Quilt Loader \([^ ]*\).*/Quilt \1|loader \2/p' \
+    -e 's/.*NeoForge mod loading, version \([^ ,]*\), for MC \([^ ,]*\).*/NeoForge \2|build \1/p' \
+    -e 's/.*Forge mod loading, version \([^ ,]*\), for MC \([^ ,]*\).*/Forge \2|build \1/p' \
+    -e 's/.*This server is running \([A-Za-z]*\) version \([^ ]*\).*/\1 \2/p' \
+    | head -n 1)
+  [ -n "$game" ] || game=$(printf '%s\n' "$head" | sed -n 's/.*Starting minecraft server version \([^ ]*\).*/Minecraft \1/p' | head -n 1)
+fi
+# The build after the version, quieter.
+case $game in *"|"*) game="${game%%|*}  ${d}${game#*|}${r}" ;; esac
+
+# Running, and who is on: the game's own answer, if it gives one quickly.
+state="${d}not running${r}"
+if list=$(timeout 1.5 rcon-cli list 2>/dev/null) && [ -n "$list" ]; then
+  players=$(printf '%s' "$list" | sed -n 's/.*There are \([0-9]*\) of a max of \([0-9]*\) players online.*/\1 of \2 online/p')
+  state="${v}running${r}${players:+ · $players}"
+fi
+
+# The world it plays, and how full its storage is.
+world=$(sed -n 's/^level-name=//p' /data/server.properties 2>/dev/null | head -n 1)
+# The usual folder name says nothing; another one is worth showing.
+[ "$world" = world ] && world=
+disk=$(df -h /data 2>/dev/null | awk 'NR == 2 { print $3 " of " $2 " used" }')
+
+info=(
+  "${b}avSYS${r}  ${d}·${r}  ${b}${AVSYS_SERVER:-workspace}${r}"
+  "${game:-${d}not started yet${r}}"
+  "$state"
+  "${world:+world ${world}}${world:+${disk:+  ${d}·${r}  }}${disk}"
+  ""
+  "${d}/data is the server's folder${r}"
+)
+
+gate=(
+  "   ${q}▄██▄${r}   "
+  "  ${q}▀▀▀▀▀▀${r}  "
+  "${q}██████████${r}"
+  " ${q}██${r} ${v}▄▄${r} ${q}██${r} "
+  " ${q}██${r} ${v}██${r} ${q}██${r} "
+  " ${q}██${r} ${v}██${r} ${q}██${r} "
+  " ${q}██${r} ${v}▀▀${r} ${q}██${r} "
+  "${q}██████████${r}"
+)
+
+echo
+for i in "${!gate[@]}"; do
+  printf '  %s    %s\n' "${gate[$i]}" "${info[$i]:-}"
+done
+echo
+printf '  %s\n' \
+  "${b}mc console${r}       the server console: its log, and a line to type commands on" \
+  "                   ${d}Ctrl-D leaves it; the server keeps running${r}" \
+  "${b}mc run${r} list      run one command and print its answer" \
+  "${b}mc logs${r}          follow the server log" \
+  "${b}mc restart${r}       save and restart the game" \
+  "${b}tools install${r}    add a program to your home, no root needed"
+echo
+printf '  %s\n' "${d}Start, stop and change the server from the panel. ~/.hushlogin hides this.${r}"
+echo

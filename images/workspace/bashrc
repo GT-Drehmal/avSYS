@@ -15,11 +15,5 @@ alias ls='ls --color=auto' ll='ls -lah' grep='grep --color=auto'
 # session (not again in a shell started inside it). ~/.hushlogin turns it off.
 if [ -z "${AVSYS_GREETED:-}" ] && [ -t 1 ] && [ ! -e "$HOME/.hushlogin" ]; then
   export AVSYS_GREETED=1
-  printf '\n  \e[1m%s\e[0m  ·  this is the server'"'"'s folder\n\n' "${AVSYS_SERVER:-workspace}"
-  printf '  \e[1mmc console\e[0m       the server console (Ctrl-D to leave)\n'
-  printf '  \e[1mmc run\e[0m list      run one command and see its answer\n'
-  printf '  \e[1mmc logs\e[0m          follow the server log\n'
-  printf '  \e[1mmc restart\e[0m       restart the game\n'
-  printf '  \e[1mtools install\e[0m    add a program, no root needed\n\n'
-  printf '  Start, stop and change the server from the panel.\n\n'
+  avsys-hello 2>/dev/null
 fi
