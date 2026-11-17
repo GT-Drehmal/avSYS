@@ -409,6 +409,48 @@ const (
 // paperAPI is where Paper and Folia's builds are listed, as the image asks.
 const paperAPI = "https://fill.papermc.io"
 
+// startHelpers is what the game container's commands below share: asking a
+// site, and reading the records the image keeps in /data.
+const startHelpers = `# Whether a site answers, within a few seconds.
+answers() { curl -fsS -o /dev/null --connect-timeout 3 -m 5 "$@" 2>/dev/null; }
+unanswered() { h=${1#*://}; echo "[avsys] ${h%%/*} does not answer: starting with the installed $2"; }
+truthy() { case $(echo "${1:-}" | tr A-Z a-z) in true | yes | on | 1) return 0 ;; esac; return 1; }
+# Settings the image loads from a file of the server's own before it installs.
+loaded=${LOAD_ENV_FROM_FILE:-}${LOAD_ENV_FROM_ARCHIVE:-}
+[ "${LOAD_ENV_FROM_GENERIC_PACK:-false}" = false ] || loaded=pack
+# The value of "key":"value" in a record the image keeps as JSON.
+recorded() { [ -f "$2" ] && sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$2" | tail -n 1; }
+# The value of KEY="value" in a record the image keeps as lines of those.
+setting() { [ -f "$2" ] && sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$2" | tail -n 1; }
+# The jar a record of KEY="value" lines says the image installed, if it is there.
+jarOf() { j=$(setting SERVER "$1" 2>/dev/null); case $j in /*) ;; ?*) j=/data/${j#./} ;; esac; [ -f "$j" ] && echo "$j"; }
+# The strings in the array $1 of the image's record $2, a line each. It
+# fails on a record it cannot read plainly.
+listed() {
+  [ -f "$2" ] || return 1
+  awk -v k="\"$1\"" '{ s = s $0 "\n" } END {
+    i = index(s, k); if (!i) exit 1
+    s = substr(s, i + length(k))
+    sub(/^[ \t\n]*:[ \t\n]*\[/, "[", s)
+    if (substr(s, 1, 1) != "[") exit 1
+    s = substr(s, 2)
+    for (;;) {
+      sub(/^[ \t\n]+/, "", s); c = substr(s, 1, 1)
+      if (c == "]") exit 0
+      if (c == ",") { s = substr(s, 2); continue }
+      if (c != "\"") exit 1
+      s = substr(s, 2); j = index(s, "\"")
+      if (!j) exit 1
+      v = substr(s, 1, j - 1)
+      if (index(v, "\\")) exit 1
+      print v; s = substr(s, j + 1)
+    }
+  }' "$2"
+}
+# Started as a server of the image's own, on the jar installed.
+custom() { export TYPE=CUSTOM CUSTOM_SERVER="$1" FAMILY="$2" MODRINTH_LOADER="${MODRINTH_LOADER:-$3}"; }
+`
+
 // keepBuild lets a Paper or Folia server start on the build it already has
 // when Paper's site does not answer. The image asks that site for the newest
 // build of the server's game version on every start, even with a build
@@ -430,9 +472,6 @@ const keepBuild = `f=` + paperEnv + `
 build=${PAPERBUILD:-}
 [ "$kind" = FOLIA ] && [ -n "${FOLIABUILD:-}" ] && build=$FOLIABUILD
 build=${PAPER_BUILD:-$build}
-# Settings the image loads from a file of the server's own before it installs.
-loaded=${LOAD_ENV_FROM_FILE:-}${LOAD_ENV_FROM_ARCHIVE:-}
-[ "${LOAD_ENV_FROM_GENERIC_PACK:-false}" = false ] || loaded=pack
 if [ -z "${PAPER_CUSTOM_JAR:-}${PAPER_DOWNLOAD_URL:-}${FOLIA_DOWNLOAD_URL:-}$loaded" ] && [ -f "$f" ]; then
   get() { sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$f" | tail -n 1; }
   jar=$(get SERVER)
@@ -487,19 +526,10 @@ const (
 // 1.20.1, which the image always looks up, is too. FABRIC_META_BASE_URL,
 // in a server's own environment, is where the image and this ask Fabric.
 // Vanilla needs none of this: installed, the image asks nothing.
-const keepLoader = `# The value of "key":"value" in a record the image keeps as JSON, on one line.
-recorded() { [ -f "$2" ] && sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$2" | tail -n 1; }
-# The jar a record of KEY="value" lines says the image installed, if it is there.
-jarOf() { j=$(sed -n 's/^SERVER="\(.*\)"$/\1/p' "$1" 2>/dev/null | tail -n 1); case $j in /*) ;; ?*) j=/data/${j#./} ;; esac; [ -f "$j" ] && echo "$j"; }
-# Whether a version is one of its own, and not the newest or whatever is recommended.
+const keepLoader = `# Whether a version is one of its own, and not the newest or whatever is recommended.
 given() { case $(echo "$1" | tr A-Z a-z) in "" | latest | recommended | beta) return 1 ;; esac; }
 # Whether what is asked for is what is installed: the same, or none given.
 same() { ! given "$1" || [ "$1" = "$2" ]; }
-truthy() { case $(echo "${1:-}" | tr A-Z a-z) in true | yes | on | 1) return 0 ;; esac; return 1; }
-unanswered() { h=${1#*://}; echo "[avsys] ${h%%/*} does not answer: starting with the installed $2"; }
-# Started as a server of the image's own, on the jar installed.
-custom() { export TYPE=CUSTOM CUSTOM_SERVER="$1" FAMILY="$2" MODRINTH_LOADER="${MODRINTH_LOADER:-$3}"; }
-# loaded is from keepBuild: settings the image loads from a file of its own.
 if [ -z "$loaded" ]; then
   case $kind in
   FABRIC)
@@ -616,26 +646,6 @@ const keepContent = `level=${LEVEL:-world}
 # Lines of a list as the image reads one: split at commas and line ends,
 # without comments, trimmed.
 lines() { printf '%s\n' "$1" | tr , '\n' | sed 's/#.*//; s/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d'; }
-# The strings in the array $1 of the image's record $2, a line each. It
-# fails on a record it cannot read plainly.
-listed() {
-  [ -f "$2" ] || return 1
-  awk -v k="\"$1\":[" '{ s = s $0 "\n" } END {
-    i = index(s, k); if (!i) exit 1
-    s = substr(s, i + length(k))
-    for (;;) {
-      sub(/^[ \t\n]+/, "", s); c = substr(s, 1, 1)
-      if (c == "]") exit 0
-      if (c == ",") { s = substr(s, 2); continue }
-      if (c != "\"") exit 1
-      s = substr(s, 2); j = index(s, "\"")
-      if (!j) exit 1
-      v = substr(s, 1, j - 1)
-      if (index(v, "\\")) exit 1
-      print v; s = substr(s, j + 1)
-    }
-  }' "$2"
-}
 # The file a URL is saved as, as far as it can be told: the last part of its path.
 saved() { n=${1%%[?]*}; echo "${n##*/}"; }
 offline() { h=${1#*://}; echo "[avsys] ${h%%/*} does not answer: starting with the installed $2" >&2; }
@@ -737,7 +747,7 @@ if [ -n "${DATAPACKS:-}" ] && [ -z "$removes" ]; then
   was=$(printf '%s\n' "$DATAPACKS" | tr ', \t' '\n\n\n' | sed '/^$/d')
   now=$(printf '%s\n' "$was" | while IFS= read -r e; do
     case $e in
-      http://* | https://*)
+      (http://* | https://*)
         n=$(saved "$e")
         if [ -n "$n" ] && [ -f "$packs/$n" ] && installed datapack "$e" && down "$e"; then
           offline "$e" "$n"
@@ -758,9 +768,7 @@ mkdir -p "${known%/*}" 2>/dev/null && { [ -z "$asked" ] || printf '%s\n' "$asked
 // sites it came from do not answer, the mods ports were opened for are set
 // up to use them, and then the image starts as it does by itself.
 const startScript = `kind=$(echo "${TYPE:-}" | tr a-z A-Z)
-# Whether a site answers, within a few seconds.
-answers() { curl -fsS -o /dev/null --connect-timeout 3 -m 5 "$@" 2>/dev/null; }
-` + keepBuild + keepLoader + keepContent + modConfig + `exec ` + imageStart + `
+` + startHelpers + keepBuild + keepLoader + keepContent + modConfig + `exec ` + imageStart + `
 `
 
 // modpackManifest is the image's record of what it installed from a Modrinth
@@ -810,25 +818,174 @@ if [ -n "$level" ] && [ -f "/data/$level/level.dat" ] && command -v jq >/dev/nul
 fi
 `
 
-// packScript is the game container's command for a server that runs a
-// modpack in the Modrinth format: keepWorld, and then the image installs
-// and starts the pack as it does by itself.
-const packScript = keepWorld + `exec ` + imageStart + `
+// The image's records of what it installed from a CurseForge modpack, as
+// JSON, and of the server it set up from a modpack in either format, as
+// KEY="value" lines: the jar or script it starts, the game version, the
+// pack's name and version.
+const (
+	curseForgeManifest = "/data/.curseforge-manifest.json"
+	modrinthPackEnv    = "/data/.install-modrinth.env"
+	curseForgePackEnv  = "/data/.install-curseforge.env"
+)
+
+// curseForgeAPI is CurseForge's API, as the image asks it.
+const curseForgeAPI = "https://api.curseforge.com"
+
+// keepPack lets a server from a modpack start with the pack it has when the
+// sites the image asks about it do not answer, as keepLoader does for a
+// loader. On every start, with the pack installed, the image still asks:
+//   - for a pack from Modrinth, Modrinth, about the version. Once it knows
+//     it is the one installed, with all its files, it asks nothing more,
+//     and puts nothing back.
+//   - for an uploaded pack, which it reads again from the server's files
+//     and whose own files it puts back, the loader's site: Fabric's, for its
+//     newest installer, or Mojang's list of game versions, for Quilt. For
+//     Forge or NeoForge, it asks nothing.
+//   - for a pack from CurseForge, CurseForge, about the pack, and then
+//     Fabric's site, for a Fabric pack. Its key is not needed to tell
+//     whether CurseForge answers.
+//
+// So those sites are asked first, for a few seconds, only where the image
+// would ask them, and only when what the image recorded it installed is the
+// pack and version asked for, with every file of it there, and the loader
+// it set up for it. When they answer, the image goes on as it always does.
+// When one does not, the image is not given the pack, and starts the loader
+// the pack has as a server of that loader, told the versions it has, as
+// keepLoader would: Fabric, Forge and NeoForge asking nothing, and Quilt
+// started as the image's own server (TYPE=CUSTOM) on its jar. The files are
+// left as they are, the pack's own too, and REMOVE_OLD_MODS, which the image
+// turns off for a pack, stays off. A first start, another pack or version,
+// a file of it gone, a pack from an address or a file of settings of the
+// server's own, or a reinstall asked for, are left to the image as before.
+// NeoForge for 1.20.1, which the image always looks up, is too.
+// MODRINTH_API_BASE_URL and CF_API_BASE_URL, in a server's own
+// environment, are where the image and this ask Modrinth and CurseForge.
+const keepPack = `platform=$(echo "${MODPACK_PLATFORM:-${MOD_PLATFORM:-}}" | tr a-z A-Z)
+# The pack's record, and of the server set up from it; the site the image
+# asks about the pack, and about its loader; the game version and the
+# loader the pack is for, and that loader's version.
+m= env= api= meta= game= loader= want=
+# The image's own TYPE is VANILLA: another one is a server's own.
+case $(echo "${TYPE:-}" | tr a-z A-Z) in "" | VANILLA) own= ;; *) own=yes ;; esac
+if [ -z "$own$loaded" ]; then
+  case $platform in
+  MODRINTH)
+    m=` + modpackManifest + ` env=` + modrinthPackEnv + `
+    ref=${MODRINTH_MODPACK:-${MODRINTH_PROJECT:-}} version=${MODRINTH_VERSION:-${MODRINTH_VERSION_ID:-}}
+    if ! truthy "${MODRINTH_FORCE_SYNCHRONIZE:-}" && ! truthy "${MODRINTH_FORCE_MODLOADER_REINSTALL:-${FORCE_MODLOADER_REINSTALL:-}}"; then
+      case $ref in
+      /*.mrpack)
+        # A pack file in the server's own files, recorded under its name.
+        n=${ref##*/}
+        if [ -f "$ref" ] && [ "$(recorded projectSlug "$m")" = "${n%.mrpack}" ]; then
+          api=none
+        fi
+        ;;
+      *[/:]*) ;;
+      ?*)
+        if { [ -n "$version" ] && [ "$(recorded versionId "$m")" = "$version" ]; } ||
+          { [ -z "$version" ] && [ "$(recorded projectSlug "$m")" = "$ref" ]; }; then
+          api=${MODRINTH_API_BASE_URL:-` + modrinthAPI + `}/v2/tag/project_type
+        fi
+        ;;
+      esac
+      game=$(recorded minecraft "$m")
+      for l in fabric-loader quilt-loader forge neoforge; do
+        want=$(recorded "$l" "$m")
+        [ -z "$want" ] || { loader=$l; break; }
+      done
+      case ${VERSION:-} in "" | [Ll][Aa][Tt][Ee][Ss][Tt] | [Ss][Nn][Aa][Pp][Ss][Hh][Oo][Tt]) ;; *) [ "$VERSION" = "$game" ] || api= ;; esac
+    fi
+    ;;
+  AUTO_CURSEFORGE)
+    m=` + curseForgeManifest + ` env=` + curseForgePackEnv + `
+    if [ -n "${CF_SLUG:-}" ] && [ -z "${CF_PAGE_URL:-}${CF_MODPACK_ZIP:-}${CF_MODPACK_MANIFEST:-}${CF_MOD_LOADER_VERSION:-}" ] &&
+      ! truthy "${CF_FORCE_SYNCHRONIZE:-}" && ! truthy "${CF_FORCE_REINSTALL_MODLOADER:-}" &&
+      [ "$(recorded slug "$m")" = "$CF_SLUG" ] &&
+      { [ -z "${CF_FILE_ID:-}" ] || [ "$(sed -n 's/.*"fileId"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$m" | tail -n 1)" = "$CF_FILE_ID" ]; }; then
+      api=${CF_API_BASE_URL:-` + curseForgeAPI + `}/v1/categories?gameId=432
+      game=$(recorded minecraftVersion "$m") want=$(recorded modLoaderId "$m")
+      case $want in fabric-*) loader=fabric-loader ;; forge-*) loader=forge ;; neoforge-*) loader=neoforge ;; esac
+    fi
+    ;;
+  esac
+fi
+# Every file of the pack there, as the image recorded them.
+if [ -n "$api" ] && [ -n "$game" ] && files=$(listed files "$m") &&
+  printf '%s\n' "$files" | { while IFS= read -r p; do [ -z "$p" ] || [ -e "/data/$p" ] || exit 1; done; }; then
+  # The loader the image set up for the pack, still there.
+  have= jar=
+  case $loader in
+  fabric-loader)
+    l=/data/.fabric-manifest.json
+    have=$(recorded loader "$l") installer=$(recorded installer "$l") jar=$(recorded launcherPath "$l")
+    case $jar in /*) ;; ?*) jar=/data/${jar#./} ;; esac
+    [ "$(recorded @type "$l")" = versions ] && [ "$(recorded game "$l")" = "$game" ] && [ -n "$installer" ] && [ -f "$jar" ] || have=
+    # Fabric's site is asked for an uploaded pack, and for one from CurseForge.
+    [ "$platform" = MODRINTH ] && [ "$api" != none ] || meta=` + fabricMeta + `/v2/versions/installer
+    ;;
+  quilt-loader)
+    l=/data/.quilt-manifest.json
+    have=$(recorded loaderVersion "$l") jar=$(jarOf "$env")
+    { [ "$(recorded minecraftVersion "$l")" = "$game" ] && [ -n "$jar" ] && [ -z "${CURSEFORGE_FILES:-}" ]; } || have=
+    [ "$api" != none ] || meta=` + mojangVersions + `
+    ;;
+  forge | neoforge)
+    l=/data/.$loader-manifest.json
+    have=$(recorded forgeVersion "$l") jar=$(recorded serverEntry "$l")
+    case $jar in /*) ;; ?*) jar=/data/${jar#./} ;; esac
+    { [ "$(recorded minecraftVersion "$l")" = "$game" ] && [ -f "$jar" ] && ! { [ "$loader" = neoforge ] && [ "$game" = 1.20.1 ]; }; } || have=
+    ;;
+  esac
+  # As the pack asks: its own version of the loader, or for CurseForge, an ID that ends with it.
+  case $platform in
+  MODRINTH) [ "$want" = "$have" ] || have= ;;
+  *) case $want in *-"$have") ;; *) have= ;; esac ;;
+  esac
+  [ "$api" = none ] && api=
+  silent=
+  if [ -n "$have" ]; then
+    if [ -n "$api" ]; then
+      if [ "$platform" = MODRINTH ]; then
+        answers "$api" || silent=$api
+      else
+        # CurseForge answers this without the key the image sends: any
+        # answer but a server error is one.
+        case $(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 3 -m 5 "$api" 2>/dev/null) in
+        [1234][0-9][0-9]) ;;
+        *) silent=$api ;;
+        esac
+      fi
+    fi
+    [ -n "$silent" ] || [ -z "$meta" ] || answers "$meta" || silent=$meta
+  fi
+  if [ -n "$silent" ]; then
+    name=$(setting MODPACK_NAME "$env") version=$(setting MODPACK_VERSION "$env")
+    [ "$version" != local ] || version=
+    unanswered "$silent" "${name:-modpack}${version:+ $version}"
+    unset MODPACK_PLATFORM MOD_PLATFORM
+    export VERSION="$game" REMOVE_OLD_MODS=false
+    case $loader in
+    fabric-loader) kind=FABRIC && export TYPE=FABRIC FABRIC_LOADER_VERSION="$have" FABRIC_LAUNCHER_VERSION="$installer" ;;
+    quilt-loader) kind=QUILT && custom "$jar" FABRIC quilt ;;
+    forge) kind=FORGE && export TYPE=FORGE FORGE_VERSION="$have" ;;
+    neoforge) kind=NEOFORGE && export TYPE=NEOFORGE NEOFORGE_VERSION="$have" ;;
+    esac
+    # The world the image names in the record of a pack from CurseForge.
+    level=$(recorded levelName "$m")
+    [ -z "$level" ] || export LEVEL="$level"
+  fi
+fi
 `
 
-// startsThroughPackScript says whether a server's game is started through
-// packScript: one run by the image from a modpack in the Modrinth format.
-func startsThroughPackScript(mc *avsysv1.MinecraftServer) bool {
-	return mc.Spec.Modpack != nil && mc.Spec.Modpack.Source != avsysv1.SourceCurseForge && mc.Spec.Image == ""
-}
-
-// modpackScript is the game container's command for a server from a
-// modpack with ports opened for mods: those are set up, a pack in the
-// Modrinth format leaves the world alone as packScript does, and the image
-// installs and starts the pack as it does by itself. The pack's loader, as
-// the panel recorded it, says where its mods keep their config: the image
-// only finds out once the script has run.
-func modpackScript(pack *avsysv1.ModpackSpec) string {
+// packScript is the game container's command for a server from a modpack
+// the image installs: a pack in the Modrinth format leaves the world alone
+// (keepWorld), the pack and content it has are kept when the sites they
+// came from do not answer, the mods ports were opened for are set up to use
+// them, and then the image installs and starts the pack as it does by
+// itself. The pack's loader, as the panel recorded it, says where its mods
+// keep their config: the image only finds out once the script has run.
+func packScript(pack *avsysv1.ModpackSpec) string {
 	kind := strings.Map(func(r rune) rune {
 		if r >= 'a' && r <= 'z' {
 			return r - 'a' + 'A'
@@ -842,17 +999,20 @@ func modpackScript(pack *avsysv1.ModpackSpec) string {
 	if pack.Source != avsysv1.SourceCurseForge {
 		world = keepWorld
 	}
-	return world + "kind=" + kind + "\n" + modConfig + "exec " + imageStart + "\n"
+	return world + "kind=" + kind + "\n" + startHelpers + keepPack + keepContent + modConfig + "exec " + imageStart + "\n"
 }
 
 // startsThroughScript says whether a server's game is started through
 // startScript: one run by the image it is written for, and not from a
-// modpack, which the image installs its own way. That includes an uploaded
-// one: the image installs it again on every start, and asks the loader's
-// own site for the loader each time, so a start without that site is left
-// to the image, as for a modpack from Modrinth.
+// modpack, which the image installs its own way.
 func startsThroughScript(mc *avsysv1.MinecraftServer) bool {
 	return mc.Spec.Modpack == nil && mc.Spec.Image == ""
+}
+
+// startsThroughPackScript says whether a server's game is started through
+// packScript: one run by the image it is written for, from a modpack.
+func startsThroughPackScript(mc *avsysv1.MinecraftServer) bool {
+	return mc.Spec.Modpack != nil && mc.Spec.Image == ""
 }
 
 func rconPasswordEnv(mc *avsysv1.MinecraftServer) corev1.EnvVar {
@@ -965,19 +1125,18 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 	// Also after the hash, so that servers already running are not asked to
 	// restart for it: the end of the game's log is kept when it fails, and
 	// that is how the status can say why it stopped (see startFailure).
-	// So is starting on the build and content a server has, and a modpack's
-	// install leaving the world alone: it changes nothing a running game
-	// would be restarted for, and is what each start after this one does.
+	// So is starting on the build, pack and content a server has, and a
+	// modpack's install leaving the world alone: it changes nothing a
+	// running game would be restarted for, and is what each start after
+	// this one does.
 	// Whatever changes it, its software or content, changes the hash itself.
 	for i := range spec.Containers {
 		if spec.Containers[i].Name == MinecraftContainer {
 			spec.Containers[i].TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
 			if startsThroughScript(mc) {
 				spec.Containers[i].Command = []string{"/bin/sh", "-c", startScript}
-			} else if mc.Spec.Image == "" && modPortsEnv(mc, mc.Status.Ports) != "" {
-				spec.Containers[i].Command = []string{"/bin/sh", "-c", modpackScript(mc.Spec.Modpack)}
 			} else if startsThroughPackScript(mc) {
-				spec.Containers[i].Command = []string{"/bin/sh", "-c", packScript}
+				spec.Containers[i].Command = []string{"/bin/sh", "-c", packScript(mc.Spec.Modpack)}
 			}
 		}
 	}

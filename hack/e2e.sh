@@ -1752,6 +1752,27 @@ wait_phase Running "$PACKED"
 expect "started, it has the pack's mod for the server and not the one for players" "$(call "$PACKED/files?path=/mods" | field "sorted(e['name'] for e in d['entries'])")" "['lithium-fabric-0.15.3+mc1.21.4.jar']"
 expect "and the game loaded it" "$(call "$PACKED/files/content?path=/logs/latest.log" | grep -q -- '- lithium ' && echo loaded)" loaded
 expect "and the pack's own files" "$(call "$PACKED/files/content?path=/config/e2e.txt") / $(call "$PACKED/files/content?path=/e2e-server.txt")" "from the pack / for the server"
+
+step "a pack's restart while Fabric's site does not answer"
+# The image reads an uploaded pack again on every start, puts its own files
+# back, and asks Fabric's site for its loader. With that site out of the
+# start's reach (a proxy that is not there, which only the start's own
+# questions go through), the pack is started with what it has, Fabric
+# asking nothing, and its files left as they are.
+echo "changed here" | call -X PUT --data-binary @- "$PACKED/files/content?path=/config/e2e.txt" >/dev/null
+set_spec '{"spec":{"env":[{"name":"https_proxy","value":"http://127.0.0.1:9"}]}}' "$PACKED"
+act restart "$PACKED"
+for _ in $(seq 1 90); do [ "$(phase_now "$PACKED")" != Running ] && break; sleep 1; done
+wait_phase Running "$PACKED"
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  started=$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" packed 2>/dev/null)
+  expect "it starts with the pack it has" "$started" "[avsys] meta.fabricmc.net does not answer: starting with the installed E2E Pack"
+  case "$started" in *"Processing modpack files"* | *"'install-modrinth-modpack' command failed"*) fail "and the image installed the pack anyway" ;; esac
+fi
+expect "on the pack's loader" "$(call -f "$PACKED/files/content?path=/logs/latest.log")" "Loading Minecraft 1.21.4 with Fabric Loader 0.16.10"
+expect "with the pack's mod" "$(call "$PACKED/files/content?path=/logs/latest.log" | grep -q -- '- lithium ' && echo loaded)" loaded
+expect "and the files as they were" "$(call "$PACKED/files/content?path=/config/e2e.txt")" "changed here"
+game_clean "and its log is clean" "$PACKED"
 call -o /dev/null -X DELETE "$PACKED?snapshot=false"
 for _ in $(seq 1 30); do
   [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
