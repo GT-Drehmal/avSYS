@@ -259,7 +259,10 @@ test.describe("with a key", () => {
     const { spec } = await api("owner").get(`/orgs/${slug}/servers/all-the-mods-9`);
     expect(spec.modpack).toMatchObject({ source: "curseforge", project: "all-the-mods-9", version: "5000003", versionName: "All the Mods 9-1.0.0.zip", gameVersion: "1.21.5", loader: "neoforge" });
 
-    await page.goto(`/o/${slug}/s/all-the-mods-9/content`);
+    // Through the tab, not by address: the form may still be moving on to
+    // the new server, and a second navigation would cut this one short.
+    await page.getByRole("link", { name: "Content", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/all-the-mods-9/content$`));
     await expect(page.getByRole("button", { name: "All the Mods 9-1.0.0.zip" })).toBeVisible();
     // One of its files has to be put in by hand, which shows the list at once.
     await expect(page.getByText("One file in this pack can only be downloaded on CurseForge.")).toBeVisible();
