@@ -31,8 +31,12 @@ func relayRequests(dst ssh.Conn, reqs <-chan *ssh.Request, allow func(reqType st
 // chans and splices the two together. env is set on session channels before
 // anything else is forwarded, and is only given for channels the person
 // opens, whose sessions run commands in the workspace. sessions, if set,
-// counts the channels being relayed.
+// counts the channels being relayed, and holds one count for this, which it
+// gives up once chans has ended.
 func relayChannels(dst ssh.Conn, chans <-chan ssh.NewChannel, env map[string]string, sessions *sync.WaitGroup, waits timing) {
+	if sessions != nil {
+		defer sessions.Done()
+	}
 	for nc := range chans {
 		if sessions != nil {
 			sessions.Add(1)

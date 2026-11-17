@@ -198,7 +198,10 @@ func (g *Gateway) handle(ctx context.Context, nc net.Conn, cfg *ssh.ServerConfig
 	go watch(up, workspace, waits, stop)
 
 	env := map[string]string{"AVSYS_USER": ext[extUsername]}
+	// The relaying counts itself until it has taken the last channel, so
+	// that the count cannot reach nothing while more may still be added.
 	var sessions sync.WaitGroup
+	sessions.Add(1)
 	go relayChannels(up, downChans, env, &sessions, waits)
 	go relayChannels(down, upChans, nil, nil, waits)
 	go relayRequests(up, downReqs, nil)
