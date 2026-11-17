@@ -69,32 +69,40 @@ test("a server made in the panel says its world is new, and nothing more while i
   await expect(page.getByRole("button", { name: "Replace the world" })).toBeVisible();
 });
 
-test("Settings say where the world came from, of every kind", async ({ page, org }) => {
+// Each kind of origin, as its own test: opening Settings once each keeps
+// every test well inside its time, WebKit included.
+for (const [origin, words, more] of [
+  [{ kind: "library", library: { id: "w1", name: "Island" } }, "Island · from the world library", null],
+  [{ kind: "library", library: { id: "gone", name: "Old map" } }, "Old map · from the world library", null],
+  [{ kind: "upload", file: "my-save.zip" }, "Uploaded · my-save.zip", null],
+  [{ kind: "archive", file: "server.tar.gz" }, "Imported · server.tar.gz", null],
+  [{ kind: "new", seed: "1234" }, "New world · seed 1234", null],
+  [{ kind: "new" }, "New world", null],
+  [{ kind: "copy", server: "survival" }, "Copied from survival", null],
+  [{ kind: "snapshot", server: "survival", snapshot: "abcd1234" }, "From a snapshot of survival", null],
+  [{ kind: "template", template: { id: "t1", name: "Event base" } }, "From the template Event base", null],
+  [{ kind: "library", library: { id: "w1", name: "Island" }, server: "survival" }, "Island · from the world library", "Copied from survival"],
+  [{ kind: "new", seed: "7", template: { id: "t1", name: "Event base" } }, "New world · seed 7", "From the template Event base"],
+] as const) {
+  test(`Settings say where the world came from: ${words}${more ? `, ${more}` : ""}`, async ({ page, org }) => {
+    const slug = await org(["event"]);
+    await library(page, slug, [libraryWorld("w1", "Island")]);
+    const shown: Shown = { origin: { ...origin, time: hourAgo() } };
+    await server(page, slug, "event", shown);
+    const line = page.getByTestId("world-now");
+    await page.goto(`/o/${slug}/s/event/settings`);
+    await expect(line.locator("p").first()).toHaveText(words);
+    await expect(line).toContainText("Put in 1 hour ago");
+    if (more) await expect(line).toContainText(more);
+  });
+}
+
+test("only a library world that is still there has its picture and a link to it", async ({ page, org }) => {
   const slug = await org(["event"]);
   await library(page, slug, [libraryWorld("w1", "Island")]);
   const shown: Shown = {};
   await server(page, slug, "event", shown);
   const line = page.getByTestId("world-now");
-  for (const [origin, words, more] of [
-    [{ kind: "library", library: { id: "w1", name: "Island" } }, "Island · from the world library", null],
-    [{ kind: "library", library: { id: "gone", name: "Old map" } }, "Old map · from the world library", null],
-    [{ kind: "upload", file: "my-save.zip" }, "Uploaded · my-save.zip", null],
-    [{ kind: "archive", file: "server.tar.gz" }, "Imported · server.tar.gz", null],
-    [{ kind: "new", seed: "1234" }, "New world · seed 1234", null],
-    [{ kind: "new" }, "New world", null],
-    [{ kind: "copy", server: "survival" }, "Copied from survival", null],
-    [{ kind: "snapshot", server: "survival", snapshot: "abcd1234" }, "From a snapshot of survival", null],
-    [{ kind: "template", template: { id: "t1", name: "Event base" } }, "From the template Event base", null],
-    [{ kind: "library", library: { id: "w1", name: "Island" }, server: "survival" }, "Island · from the world library", "Copied from survival"],
-    [{ kind: "new", seed: "7", template: { id: "t1", name: "Event base" } }, "New world · seed 7", "From the template Event base"],
-  ] as const) {
-    shown.origin = { ...origin, time: hourAgo() };
-    await page.goto(`/o/${slug}/s/event/settings`);
-    await expect(line.locator("p").first()).toHaveText(words);
-    await expect(line).toContainText("Put in 1 hour ago");
-    if (more) await expect(line).toContainText(more);
-  }
-  // Only a library world that is still there has its picture and a link to it.
   shown.origin = { kind: "library", library: { id: "w1", name: "Island" }, time: hourAgo() };
   await page.goto(`/o/${slug}/s/event/settings`);
   await expect(line.getByRole("link", { name: "Island" })).toHaveAttribute("href", `/o/${slug}/worlds?q=Island`);
