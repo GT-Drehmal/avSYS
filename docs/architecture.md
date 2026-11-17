@@ -272,13 +272,20 @@ asks for, the image is told to start with that: the Paper or Folia build,
 the Fabric, Forge or NeoForge loader, the Quilt or Purpur jar (started as
 the image's `CUSTOM` type), Modrinth content and files from an address. The
 container's log says so, as `[avsys] <site> does not answer: starting with
-the installed …`. A first start, another game version or build, and a
-modpack still need the sites. Vanilla asks nothing once installed.
+the installed …`. A first start, and another game version, build or pack
+version, still need the sites. Vanilla asks nothing once installed.
+
+A modpack's start asks Modrinth or CurseForge about the pack, an uploaded
+pack's asks the loader's site (Fabric's, or Mojang's for Quilt), and a
+CurseForge Fabric pack's asks both. When one does not answer and the
+server has that pack version with all its files, the image is not given
+the pack: it starts the loader the pack set up, as for a server of that
+loader, and leaves the files as they are.
 
 **Modpacks** are the image's own: `MODPACK_PLATFORM=MODRINTH` with the
 pinned version, `AUTO_CURSEFORGE` with the pinned file, or an uploaded
-`.mrpack` kept in the server's files. Each start puts the pack's own files
-back.
+`.mrpack` kept in the server's files. A new pack version is installed with
+its own files; an uploaded pack's own files are put back on each start.
 
 **Resource packs.** A server offers players one pack. Several are joined
 into one by the panel (`internal/packmerge`). An uploaded or joined pack is

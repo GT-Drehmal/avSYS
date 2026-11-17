@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
 
 // antMatcher is the image's own reading of MODRINTH_OVERRIDES_EXCLUSIONS
@@ -39,7 +41,7 @@ func packStarted(t *testing.T, dir string, env ...string) string {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("no jq")
 	}
-	script := strings.ReplaceAll(packScript, "/data/", dir+"/")
+	script := strings.ReplaceAll(packScript(&avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth}), "/data/", dir+"/")
 	script = strings.ReplaceAll(script, "exec "+imageStart, `exec sh -c 'printf "EXCLUDED<%s>\n" "${MODRINTH_OVERRIDES_EXCLUSIONS-unset}"'`)
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH")}, env...)
