@@ -169,13 +169,21 @@ func (s *Server) passwordSignedIn(w http.ResponseWriter, r *http.Request, u *sto
 	return nil
 }
 
+// codeTime is the time two-factor codes are checked at: see TwoFactorClock.
+func (s *Server) codeTime() time.Time {
+	if s.TwoFactorClock != nil {
+		return s.TwoFactorClock()
+	}
+	return time.Now()
+}
+
 // useCode takes a code from the app, or a recovery code, for a user with
 // two-factor on: each is taken once.
 func (s *Server) useCode(ctx context.Context, userID, secret, code string) (bool, error) {
 	if secret == "" {
 		return false, nil
 	}
-	if step, ok := auth.TOTPStep(secret, code, time.Now()); ok {
+	if step, ok := auth.TOTPStep(secret, code, s.codeTime()); ok {
 		return s.Store.UseTwoFactorStep(ctx, userID, step)
 	}
 	if rc := auth.RecoveryCode(code); rc != "" {
@@ -304,7 +312,7 @@ func (s *Server) enableTwoFactor(w http.ResponseWriter, r *http.Request, u *stor
 	if logins.blocked(key) {
 		return errRateLimited
 	}
-	step, ok := auth.TOTPStep(pending, in.Code, time.Now())
+	step, ok := auth.TOTPStep(pending, in.Code, s.codeTime())
 	if !ok {
 		logins.fail(key)
 		return errWrongCode
