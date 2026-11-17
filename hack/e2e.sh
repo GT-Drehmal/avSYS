@@ -1010,6 +1010,14 @@ expect "a program put in ~/.local/bin is found by a login shell" "$own" "a tool 
 expect "the panel's own commands do not look in anyone's home" "$own" "restic is /usr/local/bin/restic"
 expect "python is there" "$own" "42"
 expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
+# Someone opening a terminal is told what they can do there; a command run
+# over ssh, as rsync and scripts are, is not.
+hello=$(printf 'exit\n' | ssh -tt -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 2>&1) || true
+expect "a terminal says what it can do" "$hello" "mc console"
+plain=$(ssh -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'echo plain' 2>&1) || true
+if [ "$plain" = plain ]; then echo "ok: a command over ssh gets only its own output"; else fail "a command over ssh got more than its own output: $plain"; fi
 told=$(ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
   -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'sudo true' 2>&1) || true
 expect "and point to tools" "$told" "tools install <name>"
