@@ -1067,8 +1067,9 @@ in it as `DIM-1` and `DIM1`, as for a
 save everything and then hold its saves (`save-all flush`, `save-off`) while
 the files are read, and to save again (`save-on`) as the download ends,
 however it ends; a game that does not answer is read as its files are. Saves
-are held for an hour at most: a download that takes longer is cut off.
-While it is sent no snapshot, restore or import begins, and a game restarted
+are held for an hour at most: a download that takes longer is cut off, also
+one to a client that stopped reading. One download of a server's world at a
+time (`409 busy`). While it is sent no snapshot, restore or import begins, and a game restarted
 meanwhile cuts it off, which the browser shows as a failed download. Errors:
 `404 no_world` before the game has made a world; `409` while another
 operation runs, or while the server starts or stops; `502 workspace` when

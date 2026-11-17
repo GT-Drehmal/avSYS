@@ -490,6 +490,68 @@ func TestDownloadAcrossARestartIsCutOff(t *testing.T) {
 	p.savesBack(t)
 }
 
+// One download at a time: a second would write the world out under the
+// first, and let the game save again before the first was done.
+func TestOneDownloadAtATime(t *testing.T) {
+	p, ws, _ := worldPanel(t, map[string]string{"world/level.dat": "the level", "world/region/r.0.0.mca": strings.Repeat("region ", 4096)})
+	ws.stall, ws.stalled = make(chan struct{}), make(chan struct{})
+	p.setPhase("alpha", "world", avsysv1.PhaseRunning)
+	first := make(chan []byte, 1)
+	go func() {
+		res, err := download(t, p, context.Background(), "operator")
+		if err != nil {
+			first <- nil
+			return
+		}
+		defer res.Body.Close()
+		body, _ := io.ReadAll(res.Body)
+		first <- body
+	}()
+	<-ws.stalled
+	if code, e := p.do("admin", "GET", "/orgs/alpha/servers/world/world/archive", ""); code != 409 || e != "busy" {
+		t.Errorf("a second download: %d %s", code, e)
+	}
+	close(ws.stall)
+	got := unzipped(t, <-first)
+	if got["Survival SMP/level.dat"] != "the level" {
+		t.Errorf("the first: %v", got)
+	}
+	if ev := p.worldEvents(); !slices.Equal(ev, []string{"rcon save-off", "rcon save-all flush", "tar, saves held: true", "rcon save-on"}) {
+		t.Errorf("%v", ev)
+	}
+	p.savesBack(t)
+}
+
+// A browser that stops reading, but stays, does not keep the game from saving
+// past the limit: the game saves again, and the download is given up on.
+func TestDownloadToABrowserThatStopsReading(t *testing.T) {
+	was := worldHoldLimit
+	worldHoldLimit = time.Second
+	t.Cleanup(func() { worldHoldLimit = was })
+	// More than every buffer between the game's files and the browser holds.
+	region := make([]byte, 48<<20)
+	if _, err := rand.Read(region); err != nil {
+		t.Fatal(err)
+	}
+	p, _, _ := worldPanel(t, map[string]string{"world/level.dat": "the level", "world/region/r.0.0.mca": string(region)})
+	p.setPhase("alpha", "world", avsysv1.PhaseRunning)
+	srv := httptest.NewServer(p.h)
+	t.Cleanup(srv.Close)
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "GET /api/v1/orgs/alpha/servers/world/world/archive HTTP/1.1\r\nHost: panel\r\nAuthorization: Bearer %s\r\n\r\n", p.tokens["operator"])
+	// Never read.
+	for deadline := time.Now().Add(10 * time.Second); !slices.Contains(p.worldEvents(), "tar, saves held: true"); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the world was not read: %v", p.worldEvents())
+		}
+	}
+	p.savesBack(t)
+}
+
 // A game that does not answer is not saving either: its world is sent as its
 // files are.
 func TestDownloadFromAGameThatDoesNotAnswer(t *testing.T) {

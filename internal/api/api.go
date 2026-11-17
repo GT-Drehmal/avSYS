@@ -104,6 +104,10 @@ type Server struct {
 	// saveLocks holds a lock per server, by namespace/name, for a file saved
 	// from the editor: looked at and written as one.
 	saveLocks sync.Map
+	// worldDownloads holds, by namespace/name, the servers whose world is
+	// being downloaded: one download at a time, as each holds the game's
+	// saves and lets them go as it ends.
+	worldDownloads sync.Map
 	// hostnames holds the panel to one change at a time of who may have
 	// which hostname: a domain claimed, or a server given a name. A claim
 	// and a server taking a name under it then cannot pass each other.

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -36,6 +37,9 @@ import (
 // paused in the browser does not keep a game from saving for hours.
 var worldHoldLimit = time.Hour
 
+// errDownloading is said while the server's world is being downloaded.
+var errDownloading = &Error{Status: http.StatusConflict, Code: "busy", Message: "The world is being downloaded. Try again when that is done."}
+
 // errNoWorldYet is said of a server whose game has not made its world yet.
 var errNoWorldYet = &Error{Status: http.StatusNotFound, Code: "no_world", Message: "This server has no world yet. The game makes it when the server first starts."}
 
@@ -61,6 +65,13 @@ func (s *Server) downloadServerWorld(w http.ResponseWriter, r *http.Request, u *
 		return err
 	}
 	defer release()
+	// And one download at a time: another would write the world out again
+	// under this one, and let the game save again before this one was done.
+	key := mc.Namespace + "/" + mc.Name
+	if _, busy := s.worldDownloads.LoadOrStore(key, true); busy {
+		return errDownloading
+	}
+	defer s.worldDownloads.Delete(key)
 	ctx := r.Context()
 	// As it is now: it may have been started or stopped since it was read.
 	if mc, err = s.fresh(ctx, mc); err != nil {
@@ -89,8 +100,9 @@ func (s *Server) downloadServerWorld(w http.ResponseWriter, r *http.Request, u *
 		return s.unreachable(mc.Name, err)
 	}
 	if mc.Status.Phase == avsysv1.PhaseRunning {
+		deadline := time.Now().Add(worldHoldLimit)
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, worldHoldLimit)
+		ctx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 		hold, _, err := s.holdSaves(ctx, mc, ws)
 		if err != nil {
@@ -98,7 +110,20 @@ func (s *Server) downloadServerWorld(w http.ResponseWriter, r *http.Request, u *
 			// are sent as they are.
 			s.Log.Warn("a world is downloaded without the game's saves held", "server", mc.Name, "error", err)
 		} else {
-			defer hold()
+			var once sync.Once
+			letGo := func() { once.Do(hold) }
+			// The game saves again at the limit, or as the browser goes,
+			// even while the download is held up writing to a browser that
+			// stopped reading; and that write is then given up on, so that
+			// the download ends.
+			stop := context.AfterFunc(ctx, letGo)
+			defer func() {
+				stop()
+				letGo()
+			}()
+			if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil {
+				s.Log.Warn("a world's download has no limit on its writes", "server", mc.Name, "error", err)
+			}
 		}
 	}
 	before := s.gameInstance(ctx, mc)
