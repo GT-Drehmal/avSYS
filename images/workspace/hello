@@ -37,17 +37,32 @@ fi
 
 # The world it plays, and how full its storage is.
 world=$(sed -n 's/^level-name=//p' /data/server.properties 2>/dev/null | head -n 1)
-# The usual folder name says nothing; another one is worth showing.
-[ "$world" = world ] && world=
 disk=$(df -h /data 2>/dev/null | awk 'NR == 2 { print $3 " of " $2 " used" }')
 
+# What it runs: mods or plugins, as files in their folders.
+count() { find "$1" -maxdepth 1 -name '*.jar' 2>/dev/null | wc -l | tr -d ' '; }
+content=
+mods=$(count /data/mods); plugins=$(count /data/plugins)
+packs=$(find "/data/${world:-world}/datapacks" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d ' ')
+for part in "$mods mod" "$plugins plugin" "$packs datapack"; do
+  n=${part%% *}
+  [ "${n:-0}" -gt 0 ] || continue
+  word=${part#* }; [ "$n" = 1 ] || word="${word}s"
+  content="${content:+$content · }$n $word"
+done
+
+name=${AVSYS_SERVER:-workspace}
+line=$(printf '%*s' "$(( ${#name} + 6 ))" '' | tr ' ' '-')
+label() { printf '%s%-8s%s %s' "$v" "$1" "$r" "$2"; }
 info=(
-  "${b}avSYS${r}  ${d}·${r}  ${b}${AVSYS_SERVER:-workspace}${r}"
-  "${game:-${d}not started yet${r}}"
-  "$state"
-  "${world:+world ${world}}${world:+${disk:+  ${d}·${r}  }}${disk}"
-  ""
-  "${d}/data is the server's folder${r}"
+  "${b}${name}${r}${d}@${r}${b}avSYS${r}"
+  "${d}${line}${r}"
+  "$(label game "${game:-${d}not started yet${r}}")"
+  "$(label status "$state")"
+  "$(label content "${content:-${d}none${r}}")"
+  "$(label world "${world:-world}")"
+  "$(label storage "${disk:-${d}unknown${r}}")"
+  "$(label folder /data)"
 )
 
 gate=(
