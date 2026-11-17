@@ -1254,7 +1254,11 @@ PY
   for _ in $(seq 1 90); do curl -fsS -o /dev/null "$API/meta" 2>/dev/null && break; sleep 2; done
   for _ in $(seq 1 90); do [ "$(call "$API/orgs/$ORG/worlds/$OLD" 2>/dev/null | field "(d.get('kept'), d.get('ready'))" 2>/dev/null)" = "('folders', True)" ] && break; sleep 2; done
   expect "a world kept as an archive is kept unpacked once the panel starts, under the same ID" "$(call "$API/orgs/$ORG/worlds/$OLD" | field "(d['id'] == '$OLD', d['ready'], d['kept'], d['root'], d['size'], d.get('unpackError'))")" "(True, True, 'folders', 'world', $(((4 << 20) + 1)), None)"
-  expect "and its archive is gone" "$(panel_restic snapshots --json --host "world-$OLD" | field "[('form=folders' in s['tags'], 'world.archive' in str(s['paths'])) for s in d]")" "[(True, False)]"
+  # The archive goes once the world is no longer held, as the panel prunes
+  # it.
+  kept_as() { panel_restic snapshots --json --host "world-$OLD" | field "[('form=folders' in s['tags'], 'world.archive' in str(s['paths'])) for s in d]"; }
+  for _ in $(seq 1 60); do [ "$(kept_as 2>/dev/null)" = "[(True, False)]" ] && break; sleep 2; done
+  expect "and its archive is gone" "$(kept_as)" "[(True, False)]"
   call -o "$WORK/old-download.zip" "$API/orgs/$ORG/worlds/$OLD/archive"
   expect "it is downloaded as a save" "$(python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); print(sorted(n for n in z.namelist() if not n.endswith("/")))' "$WORK/old-download.zip")" "['E2E old/level.dat', 'E2E old/region/r.0.0.mca']"
   call -X DELETE "$API/orgs/$ORG/worlds/$OLD" >/dev/null
