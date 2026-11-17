@@ -1252,7 +1252,7 @@ PY
   panel_restic forget "$unpacked" >/dev/null
   sh -c "$AVSYS_E2E_PANEL_RESTART" >/dev/null || fail "the panel did not come back"
   for _ in $(seq 1 90); do curl -fsS -o /dev/null "$API/meta" 2>/dev/null && break; sleep 2; done
-  for _ in $(seq 1 90); do [ "$(call "$API/orgs/$ORG/worlds/$OLD" 2>/dev/null | field "d.get('kept')" 2>/dev/null)" = folders ] && break; sleep 2; done
+  for _ in $(seq 1 90); do [ "$(call "$API/orgs/$ORG/worlds/$OLD" 2>/dev/null | field "(d.get('kept'), d.get('ready'))" 2>/dev/null)" = "('folders', True)" ] && break; sleep 2; done
   expect "a world kept as an archive is kept unpacked once the panel starts, under the same ID" "$(call "$API/orgs/$ORG/worlds/$OLD" | field "(d['id'] == '$OLD', d['ready'], d['kept'], d['root'], d['size'], d.get('unpackError'))")" "(True, True, 'folders', 'world', $(((4 << 20) + 1)), None)"
   expect "and its archive is gone" "$(panel_restic snapshots --json --host "world-$OLD" | field "[('form=folders' in s['tags'], 'world.archive' in str(s['paths'])) for s in d]")" "[(True, False)]"
   call -o "$WORK/old-download.zip" "$API/orgs/$ORG/worlds/$OLD/archive"

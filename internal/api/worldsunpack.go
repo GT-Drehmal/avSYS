@@ -147,8 +147,9 @@ func (s *Server) unpackLibraryWorld(ctx context.Context, org *store.Org, w *stor
 			if err != nil {
 				return
 			}
-			defer release()
-			if err := s.Store.SetWorldUnpacked(ctx, org.ID, w.ID, keptRoot(w, &mine[0]), mine[0].Size); err != nil {
+			err = s.Store.SetWorldUnpacked(ctx, org.ID, w.ID, keptRoot(w, &mine[0]), mine[0].Size)
+			release()
+			if err != nil {
 				s.Log.Warn("could not note a world as unpacked", "world", w.ID, "error", err)
 				return
 			}
@@ -239,7 +240,12 @@ func (s *Server) unpackArchived(ctx context.Context, org *store.Org, w *store.Wo
 		case <-time.After(5 * time.Second):
 		}
 	}
-	defer release()
+	held := true
+	defer func() {
+		if held {
+			release()
+		}
+	}()
 	if _, err := s.Store.World(ctx, org.ID, w.ID); errors.Is(err, store.ErrNotFound) {
 		drop()
 		return nil
@@ -266,6 +272,11 @@ func (s *Server) unpackArchived(ctx context.Context, org *store.Org, w *store.Wo
 	if err := s.Store.SetWorldUnpacked(ctx, org.ID, w.ID, keptWorld, unpacked.Bytes); err != nil {
 		s.Log.Warn("could not note a world as unpacked", "world", w.ID, "error", err)
 	}
+	// The archive is let go of with the world no longer held: its files are
+	// the world now, and removing the archive, which prunes the repository,
+	// can take a while. An import reading it meanwhile is waited for.
+	release()
+	held = false
 	s.dropSnapshots(ctx, org, []backup.Snapshot{*pending, *old}, "could not remove a world's archive once it was unpacked")
 	s.Log.Info("unpacked a world of the library", "org", org.Slug, "world", w.ID, "name", w.Name, "files", unpacked.Files, "size", unpacked.Bytes, "took", time.Since(began).Round(time.Second))
 	return nil
