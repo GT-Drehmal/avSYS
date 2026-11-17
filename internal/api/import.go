@@ -295,6 +295,10 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	// The pack that comes with it, given once it is in.
 	var givePack func(ctx context.Context) error
 	var given *avsysv1.ResourcePackSpec
+	// Where the world put in comes from: the library, or a template's own.
+	var fromLibrary *store.World
+	var theirs *store.Template
+	var theirWorld *ownWorld
 	withPack := r.URL.Query().Get("pack") == "true"
 	// The version the world was last opened in: as the request says, for an
 	// archive sent with it, or as it was kept.
@@ -303,11 +307,12 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		if r.URL.Query().Get("world") != "true" {
 			return errBadRequest("A template's world is imported as a world: add world=true.")
 		}
-		snap, info, err := s.ownWorldOf(r.Context(), a, from)
+		snap, info, t, err := s.ownWorldOf(r.Context(), a, from)
 		if err != nil {
 			return err
 		}
 		root, version = info.Root, info.Version
+		theirs, theirWorld = t, &info
 		org := a.Org.Slug
 		archive = func(dst io.Writer) error {
 			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
@@ -330,6 +335,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 			return err
 		}
 		root, version = world.Root, world.Version
+		fromLibrary = world
 		org := a.Org.Slug
 		archive = func(dst io.Writer) error {
 			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
@@ -339,6 +345,8 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 			givePack = func(ctx context.Context) error { return s.giveKeptPack(ctx, a, mc, rp, libraryHost(world.ID)) }
 		}
 	}
+	// What the server is to say of where its world came from, once it is in.
+	origin := importedOrigin(r.URL.Query(), fromLibrary, theirs, theirWorld, made)
 	if withPack && archive == nil {
 		return errBadRequest("A resource pack comes with a world from a template or from the library.")
 	}
@@ -375,7 +383,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 	}
 	go func() {
-		undo, err := s.importInto(r, w, mc, root, archive, op, replace, made, a.Org.Slug, u.Username, onReceived)
+		undo, err := s.importInto(r, w, mc, root, archive, op, replace, made, origin, a.Org.Slug, u.Username, onReceived)
 		ctx := context.WithoutCancel(r.Context())
 		if err == nil && givePack != nil {
 			if perr := givePack(ctx); perr != nil {
@@ -423,7 +431,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 // importInto returns the snapshot it took of what a world replaced, once there
 // is one, whether or not the rest then succeeded. received, if given, is
 // called once the archive is in.
-func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, archive func(io.Writer) error, op *operation, replace bool, made map[string]*string, org, by string, received func()) (undo *backup.Snapshot, err error) {
+func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, archive func(io.Writer) error, op *operation, replace bool, made map[string]*string, origin *avsysv1.WorldOrigin, org, by string, received func()) (undo *backup.Snapshot, err error) {
 	ctx := r.Context()
 	key := client.ObjectKeyFromObject(mc)
 	wasMarked := importUnfinished(mc)
@@ -655,6 +663,16 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		if err := s.setWorldSettings(ctx, key, made); err != nil {
 			return undo, err
 		}
+	}
+	// And says where it came from. A server's archive whose world is left
+	// out has a new one, made as its settings say.
+	if err := s.patchSpec(ctx, key, func(spec *avsysv1.MinecraftServerSpec) {
+		spec.WorldOrigin = origin.DeepCopy()
+		if r.URL.Query().Get("world") == "none" {
+			spec.WorldOrigin.Seed = strings.TrimSpace(spec.Properties["level-seed"])
+		}
+	}); err != nil {
+		return undo, err
 	}
 	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
 	return undo, s.markImporting(ctx, key, "")

@@ -1064,8 +1064,11 @@ refused=$(call -X PUT --data-binary "@$WORK/escape.tar" "$IMPORTED/import?root=O
 expect "an archive with a path out of its folder is refused" "$(echo "$refused" | field "d['message']")" "Could not unpack the archive"
 expect "and nothing of it is kept" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/server.properties")" 404
 expect "nor is the game started on what an import left" "$(call -X POST "$IMPORTED/start" | field "d['code']")" import_incomplete
-imported=$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old&players=listed&wait=true")
+expect "a new server's world is one the game makes" "$(call "$IMPORTED" | field "d['spec']['worldOrigin']['kind']")" new
+imported=$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old&players=listed&file=import.tar.gz&wait=true")
 expect "a server's folder is imported" "$(echo "$imported" | field "d['name']")" imported
+expect "and its world is said to come with it" "$(call "$IMPORTED" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['file'])")" "('archive', 'import.tar.gz')"
+expect "what its world says of itself is read" "$(call "$IMPORTED/world" | field "(d['level'], d['exists'])")" "('world', True)"
 listing=$(call "$IMPORTED/files?path=/" | field "sorted(f['name'] for f in d['entries'])")
 expect "its world is the one the game opens" "$listing" "'world', 'world_nether'"
 expect "its plugins come with it" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/plugins/Foo.jar")" 200
@@ -1089,9 +1092,12 @@ call -X DELETE "$IMPORTED?snapshot=false" >/dev/null
 BARE=$API/orgs/$ORG/servers/imported-bare
 call -d '{"name":"imported-bare","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
 call -X PUT --data-binary "@$WORK/import.tar.gz" "$BARE/import?root=Old&world=none&players=listed&wait=true" >/dev/null
+expect "a server's folder without its world has a new one" "$(call "$BARE" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin'].get('seed'))")" "('new', None)"
+expect "which the game has not made yet" "$(call "$BARE/world" | field "d['exists']")" False
 expect "a server's folder is imported without its world" "$(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world/level.dat") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world_nether/level.dat") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/plugins/Foo.jar")" "404 404 200"
 case "$(call "$BARE/files/content?path=/server.properties")" in *level-seed*) fail "the seed of the world left out was kept" ;; *) echo "ok: not with the seed of the world left out" ;; esac
-call -X PUT --data-binary "@$WORK/save.tar.gz" "$BARE/import?root=saves%2FMy%20World&world=true&wait=true" >/dev/null
+call -X PUT --data-binary "@$WORK/save.tar.gz" "$BARE/import?root=saves%2FMy%20World&world=true&file=save.tar.gz&wait=true" >/dev/null
+expect "and the world given it is said to be uploaded" "$(call "$BARE" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['file'])")" "('upload', 'save.tar.gz')"
 expect "and is given another" "$(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/plugins/Foo.jar")" "200 200"
 call -X DELETE "$BARE?snapshot=false" >/dev/null
 # A world of one's own, a single-player save here, becomes a new server's:
@@ -1116,7 +1122,7 @@ expect "and taken off again" "$(call "$OWN/import/upload?upload=$UP")" "\"receiv
 expect "the last part is taken" "$(call -X PUT --data-binary "@$WORK/save.2" "$OWN/import/upload?upload=$UP&offset=$half&length=$((size - half))")" "\"received\":$size"
 expect "an import of less than was sent is turned down" "$(call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$UP&size=$((size + 1))&wait=true" | field "d['code']")" invalid
 expect "as is one of another upload" "$(call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=e2e-upload-two&size=$size&wait=true" | field "d['code']")" invalid
-call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$UP&size=$size&wait=true" >/dev/null
+call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$UP&size=$size&file=save.tar.gz&wait=true" >/dev/null
 expect "a world of one's own is the server's" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat")" 200
 expect "with its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" 200
 expect "and not locked" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/session.lock")" 404
@@ -1143,6 +1149,7 @@ PY
 )" "None ['E2E island'] True True True"
 call -d '{"name":"from-library","spec":{"eula":true,"loader":"vanilla","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
 call -X PUT "$API/orgs/$ORG/servers/from-library/import?world=true&library=$LIB&pack=true&wait=true" >/dev/null
+expect "a world from the library is said to be from there" "$(call "$API/orgs/$ORG/servers/from-library" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['library']['id'] == '$LIB', d['spec']['worldOrigin']['library']['name'])")" "('library', True, 'E2E island')"
 expect "a world from the library is a new server's" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/from-library/files/content?path=/world/level.dat")" 200
 expect "with its Nether where the game itself keeps it" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/from-library/files/content?path=/world/DIM-1/region/r.0.0.mca")" 200
 expect "and its resource pack" "$(call "$API/orgs/$ORG/servers/from-library" | field "(d['spec']['resourcePack']['sha1'], d['spec']['resourcePack']['uploaded']['name'])")" "('$PACK_SHA', 'e2e-pack.zip')"
@@ -1160,9 +1167,11 @@ expect "and then replaced" "$(call "$OWN/operation")" null
 expect "a world is replaced" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" "200 404 404"
 expect "and the server's other files are kept" "$(call "$OWN/files/content?path=/kept.txt")" kept
 expect "and the server can start" "$(call "$OWN" | field "d['status'].get('message', '')")" ""
+expect "the world put in its place is said to be uploaded" "$(call "$OWN" | field "d['spec']['worldOrigin']['kind']")" upload
 before=$(call "$OWN/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'pre-replace'][0]") || fail "no snapshot was taken before the world was replaced"
 call -X POST "$OWN/snapshots/$before/restore?wait=true" >/dev/null
 expect "the snapshot before it puts the old world back" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca")" "200 404"
+expect "and where it came from" "$(call "$OWN" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['file'])")" "('upload', 'save.tar.gz')"
 # Or by a new one, which the game makes as the server next starts, with the
 # settings asked for.
 expect "a new world takes the place of another" "$(call -o /dev/null -w '%{http_code}' -X PUT -d '{"properties":{"level-seed":"42"}}' "$OWN/import?world=new&replace=true")" 202
@@ -1170,6 +1179,7 @@ for _ in $(seq 1 120); do [ "$(call "$OWN/operation")" = null ] && break; sleep 
 expect "its world is gone, for the game to make" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" "404 404"
 expect "the rest is kept" "$(call "$OWN/files/content?path=/kept.txt")" kept
 expect "and the new one is made with the seed asked for" "$(call "$OWN" | field "d['spec']['properties'].get('level-seed')")" 42
+expect "which it says" "$(call "$OWN" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['seed'])")" "('new', '42')"
 expect "with a snapshot of the old one taken first" "$(call "$OWN/snapshots" | field "len([s for s in d['snapshots'] if s['trigger'] == 'pre-replace'])")" 2
 ids=$(call "$OWN/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
 call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
@@ -1536,6 +1546,7 @@ twin=$(cat "$WORK/twin.json")
 case "$twin" in *'"spec"'*) ;; *) fail "the server was not duplicated: $twin" ;; esac
 expect "a copy has the original's software" "$(echo "$twin" | field "(d['spec']['version'], d['spec']['loader'], sorted(m['project'] for m in d['spec']['mods']))")" "('1.21.4', 'paper', ['luckperms', 'worldedit'])"
 expect "and its files as they were a moment ago" "$(call "$TWIN/files/content?path=/twin.txt")" "only in the original"
+expect "and its world, from where the original's came, copied from it" "$(echo "$twin" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['server'])")" "('new', 'probe')"
 [ "$asked" = 404 ] || echo "note: the copy's picture was not asked for before its files were in (got '$asked')"
 expect "and the picture that came with them, though it was asked for before" "$(call "$TWIN/icon" | python3 -c 'import hashlib, sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$shown"
 copies="len([s for s in d['snapshots'] if s['trigger'] == 'copy'])"
@@ -1591,6 +1602,7 @@ case "$made" in *'"spec"'*) ;; *) fail "no server was made from the template: $m
 FROM=$API/orgs/$ORG/servers/from-template
 expect "a server made from a template has the files of the version used" "$(call "$FROM/files/content?path=/template.txt")" "kept in the template"
 expect "and its software" "$(echo "$made" | field "(d['spec']['loader'], d['spec']['version'])")" "('paper', '1.21.4')"
+expect "and its world, by way of the template" "$(echo "$made" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['template']['id'] == '$TPL')")" "('new', True)"
 expect "a template's version is not deleted as a server's snapshot" "$(call -X DELETE "$API/orgs/$ORG/snapshots/$FIRST" | field "d['code']")" template
 call -X DELETE "$FROM?snapshot=false" >/dev/null
 # One made with a new world has the template's files but not its world,
@@ -1598,6 +1610,7 @@ call -X DELETE "$FROM?snapshot=false" >/dev/null
 fresh=$(call -d "{\"name\":\"fresh-world\",\"fromTemplate\":\"$TPL\",\"world\":\"new\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"fresh-world.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
 case "$fresh" in *'"spec"'*) ;; *) fail "no server was made from the template with a new world: $fresh" ;; esac
 FRESH=$API/orgs/$ORG/servers/fresh-world
+expect "a new world is said to be new" "$(echo "$fresh" | field "(d['spec']['worldOrigin']['kind'], 'template' in d['spec']['worldOrigin'])")" "('new', False)"
 expect "a server made with a new world has the template's files and not its world" "$(call "$FRESH/files/content?path=/template.txt") $(call -o /dev/null -w '%{http_code}' "$FRESH/files/content?path=/world/level.dat")" "kept in the template 404"
 expect "but the datapacks that were in it" "$(call "$FRESH/files/content?path=/world/datapacks/e2e.zip")" "a datapack"
 expect "and not the old world's seed" "$(call "$FRESH/files/content?path=/server.properties" | grep -c '^level-seed=' || true)" 0
@@ -1613,6 +1626,7 @@ OWNT=$API/orgs/$ORG/servers/own-from-template
 expect "a server made from it has its files and not its version's world" "$(call "$OWNT/files/content?path=/template.txt") $(call -o /dev/null -w '%{http_code}' "$OWNT/files/content?path=/world/level.dat")" "kept in the template 404"
 call -X PUT "$OWNT/import?world=true&template=$TPL&wait=true" >/dev/null
 expect "and is given the template's world" "$(call -o /dev/null -w '%{http_code}' "$OWNT/files/content?path=/world/level.dat") $(call "$OWNT/files/content?path=/world/datapacks/e2e.zip")" "200 a datapack"
+expect "which it says came with the template" "$(call "$OWNT" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['template']['id'] == '$TPL')")" "('template', True)"
 call -X DELETE "$OWNT?snapshot=false" >/dev/null
 expect "its world is taken away" "$(call -X DELETE "$API/orgs/$ORG/templates/$TPL/world" | field "d.get('world')")" None
 # Duplicated from the version used, and made from a snapshot: copies, under

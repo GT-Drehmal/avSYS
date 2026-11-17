@@ -125,7 +125,7 @@ test("a new modpack server starts with a world of one's own", async ({ page, org
   await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page.getByText("Island is set up")).toBeVisible();
-  expect(seen).toEqual(["POST /servers", "PUT /servers/island/import?world=true&version=1.21.4&from=upload", "PUT /servers/island/icon?start=true"]);
+  expect(seen).toEqual(["POST /servers", "PUT /servers/island/import?world=true&version=1.21.4&from=upload&file=save.zip", "PUT /servers/island/icon?start=true"]);
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/island`);
   expect(spec.modpack).toMatchObject({ source: "modrinth", project: "adventure-pack", gameVersion: "1.21.4" });
 });

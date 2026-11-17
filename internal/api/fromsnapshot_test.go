@@ -675,6 +675,8 @@ var notCopied = map[string]string{
 	"Backups":        "when it is snapshotted is not recorded",
 	"NodeSelector":   "a record, which the server could have written, does not say where a server runs",
 	"JVM.ExtraFlags": "they run code; a record, which the server could have written, does not say what",
+	// Said apart from the settings, as the world is kept or not.
+	"WorldOrigin": "where the world came from is decided by snapshotWorldOrigin and carriedOrigin",
 }
 
 // TestEverySettingIsDecided fills in every setting of a server, makes a new

@@ -192,7 +192,7 @@ func (s *Server) packSource(r *http.Request, a *access) (body io.Reader, name st
 		}
 		rp, host = worldPackOf(w), libraryHost(w.ID)
 	} else {
-		_, info, err := s.ownWorldOf(r.Context(), a, template)
+		_, info, _, err := s.ownWorldOf(r.Context(), a, template)
 		if err != nil {
 			return nil, "", nil, err
 		}

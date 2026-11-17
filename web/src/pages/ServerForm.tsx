@@ -1172,7 +1172,7 @@ export function ServerForm({
       // was sent, and an archive of any size goes.
       await w.sendParts(`Sending ${toImport.file.name}`, path, toImport.file, (upload) =>
         api.put<Server>(
-          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: toImport.world } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world === "true" ? {} : { players: "listed" }), version: toImport.version, ...meant, from: "upload", upload, size: toImport.file.size, wait: "true" })}`,
+          `${path}/import?${qs({ root: toImport.root, ...(toImport.world ? { world: toImport.world } : {}), ...(toImport.listed ? { content: "listed" } : {}), ...(toImport.world === "true" ? {} : { players: "listed" }), version: toImport.version, ...meant, from: "upload", file: toImport.file.name, upload, size: toImport.file.size, wait: "true" })}`,
           {},
         ),
       );
@@ -2054,11 +2054,15 @@ export function ServerForm({
               </div>
             ) : keepTheirs && theirs ? (
               <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
-                <ArchiveIcon className="size-5 shrink-0 text-muted" />
+                {theirs.library ? (
+                  <Picture name={theirs.library.name || theirs.name || "World"} url={worldIcon(org, theirs.library.id)} size={32} />
+                ) : (
+                  <ArchiveIcon className="size-5 shrink-0 text-muted" />
+                )}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium">{theirs.name || theirs.file || "The template's world"}</p>
+                  <p className="truncate text-[13px] font-medium">{theirs.library?.name || theirs.name || theirs.file || "The template's world"}</p>
                   <p className="truncate text-xs text-muted" data-testid="world-summary">
-                    {[theirs.version && `Last opened in ${theirs.version}`, bytes(theirs.size), "kept with the template"].filter(Boolean).join(" · ")}
+                    {[theirs.version && `Last opened in ${theirs.version}`, bytes(theirs.size), theirs.library ? "from the world library" : null, "kept with the template"].filter(Boolean).join(" · ")}
                   </p>
                 </div>
                 <Button size="sm" disabled={readingWorld} onClick={() => worldInput.current?.click()}>

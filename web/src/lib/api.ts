@@ -432,8 +432,46 @@ export interface ServerSpec {
   opLists?: string[] | null;
   /** Where the server's scheduled snapshots depart from its organization's. Absent, it follows them. */
   backups?: BackupOverride | null;
+  /** Where its world came from, as the panel put it in. None for a server made before that was kept. */
+  worldOrigin?: WorldOrigin | null;
   image?: string;
   env?: { name: string; value?: string }[];
+}
+
+/** A world of the library, or a template, by ID and its name when the world was put in. */
+export interface WorldRef {
+  id: string;
+  name?: string;
+}
+
+/** Where a server's world came from. */
+export interface WorldOrigin {
+  kind: "new" | "library" | "upload" | "archive" | "copy" | "snapshot" | "template";
+  library?: WorldRef;
+  /** What a new world was made with; none for a random one. */
+  seed?: string;
+  /** The archive's name, for one uploaded. */
+  file?: string;
+  /** What it came by way of: the server copied, or whose snapshot it was, that snapshot, or the template. */
+  server?: string;
+  snapshot?: string;
+  template?: WorldRef;
+  /** When it was put in. */
+  time?: string | null;
+}
+
+/** What a server's world says of itself, read from its files. */
+export interface WorldFacts {
+  level: string;
+  /** False until the game makes it. */
+  exists: boolean;
+  name?: string;
+  seed?: string;
+  /** The game version it was last opened in. */
+  version?: string;
+  lastPlayed?: string;
+  /** Bytes, where they could be counted. */
+  size?: number;
 }
 
 /** A port a mod or plugin listens on in the server. */
@@ -519,6 +557,8 @@ export interface OwnWorld {
   size: number;
   /** The resource pack uploaded to the library world it was given, kept with it. */
   resourcePack?: ResourcePack | null;
+  /** The library world it was given, as it was named then. */
+  library?: WorldRef;
 }
 
 export interface Template {
