@@ -271,6 +271,57 @@ type UploadedPack struct {
 	Time metav1.Time `json:"time"`
 }
 
+// WorldKind is how a server's world came to it.
+type WorldKind string
+
+const (
+	// WorldNew is a world the game made, with the seed asked for if any.
+	WorldNew WorldKind = "new"
+	// WorldLibrary is one of the organization's library of worlds.
+	WorldLibrary WorldKind = "library"
+	// WorldUpload is a world uploaded as an archive of its folder.
+	WorldUpload WorldKind = "upload"
+	// WorldArchive is the world of a server's archive, imported with it.
+	WorldArchive WorldKind = "archive"
+	// WorldCopy, WorldSnapshot and WorldTemplate are a world that came with
+	// a copy of a server, with a snapshot or with a template, where nothing
+	// was known of where it came from before that.
+	WorldCopy     WorldKind = "copy"
+	WorldSnapshot WorldKind = "snapshot"
+	WorldTemplate WorldKind = "template"
+)
+
+// WorldRef names a world of the library, or a template, by its ID, with the
+// name it had when the world was put in: it still reads once that is
+// renamed or deleted.
+type WorldRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// WorldOrigin is where a server's world came from. The panel writes it
+// whenever it puts a world in: a server made, its world replaced, a copy, a
+// restore. It is for showing, and decides nothing about how the server runs.
+type WorldOrigin struct {
+	// +kubebuilder:validation:Enum=new;library;upload;archive;copy;snapshot;template
+	Kind WorldKind `json:"kind"`
+	// Library is the library's world, for kind library.
+	Library *WorldRef `json:"library,omitempty"`
+	// Seed is what a new world was made with; empty for a random one.
+	Seed string `json:"seed,omitempty"`
+	// File is the archive's name, for kinds upload and archive.
+	File string `json:"file,omitempty"`
+	// Server, Snapshot and Template say what the world came by way of: the
+	// server it was copied from, or whose snapshot it came out of, and that
+	// snapshot, or the template. Of kinds copy, snapshot and template they
+	// are all that is known; of another kind, the world was that before.
+	Server   string    `json:"server,omitempty"`
+	Snapshot string    `json:"snapshot,omitempty"`
+	Template *WorldRef `json:"template,omitempty"`
+	// Time is when it was put in this server.
+	Time metav1.Time `json:"time,omitempty"`
+}
+
 type ExposeType string
 
 const (
@@ -489,6 +540,12 @@ type MinecraftServerSpec struct {
 	WhitelistLists []string `json:"whitelistLists,omitempty"`
 	// +kubebuilder:validation:MaxItems=50
 	OpLists []string `json:"opLists,omitempty"`
+
+	// WorldOrigin is where its world came from, written by the panel as it
+	// puts one in. A server made before it was kept, or outside the panel,
+	// has none. It goes with the files: into snapshots, copies and back
+	// with a restore.
+	WorldOrigin *WorldOrigin `json:"worldOrigin,omitempty"`
 
 	// Image overrides the server image. By default a tag of itzg/minecraft-server
 	// with the right Java for the game version is chosen.

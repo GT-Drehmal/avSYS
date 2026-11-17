@@ -469,6 +469,8 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return errBadRequest(`"world" is "new" or "kept".`)
 	}
 	newWorld := raw.World == "new"
+	// The template it is made from, if it is.
+	var template *avsysv1.WorldRef
 	if newWorld && raw.FromSnapshot == "" && raw.FromServer == "" && raw.FromTemplate == "" {
 		return errBadRequest("A new server has a new world already.")
 	}
@@ -487,6 +489,11 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		}
 		// Its servers start a new world unless this one is to keep its own.
 		newWorld = newWorld || (raw.World == "" && newWorldIn(string(changes)))
+		t, err := s.Store.Template(r.Context(), a.Org.ID, raw.FromTemplate)
+		if err != nil {
+			return err
+		}
+		template = &avsysv1.WorldRef{ID: t.ID, Name: t.Name}
 	}
 	in := struct {
 		Name string
@@ -497,6 +504,8 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return errBadRequest("Invalid spec: %v", err)
 		}
 	}
+	// Where its world came from is the panel's to say, by how it is made.
+	in.Spec.WorldOrigin = nil
 	if !serverNamePattern.MatchString(in.Name) {
 		return errBadRequest("Server names are up to 40 characters: lowercase letters, digits and dashes, starting with a letter.")
 	}
@@ -537,7 +546,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if raw.FromServer != "" {
 			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture, newWorld, raw.Node)
 		}
-		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, picture, newWorld, raw.Node)
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, template, picture, newWorld, raw.Node)
 	}
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given a picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once the server is made.")
@@ -589,6 +598,8 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := s.ensureNamespace(r.Context(), a.Org.Slug); err != nil {
 		return err
 	}
+	// A world the game makes, unless one is put in after.
+	in.Spec.WorldOrigin = newWorldOrigin(&in.Spec)
 	mc := &avsysv1.MinecraftServer{
 		ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: in.Name},
 		Spec:       in.Spec,
@@ -792,6 +803,8 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	if err := json.Unmarshal(merged, &spec); err != nil {
 		return nil, errBadRequest("Invalid spec: %v", err)
 	}
+	// Where its world came from changes only with its world.
+	spec.WorldOrigin = mc.Spec.WorldOrigin.DeepCopy()
 	var named map[string]json.RawMessage
 	_ = json.Unmarshal(patch, &named)
 	// A loader build goes with the type and game version it is for.

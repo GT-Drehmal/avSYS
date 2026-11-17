@@ -37,6 +37,9 @@ type ownWorld struct {
 	// given, kept with it, for each server made from the template. One
 	// from an address is in the template's settings instead.
 	Pack *avsysv1.ResourcePackSpec `json:"resourcePack,omitempty"`
+	// Library is the world of the library it was given, by its ID and name
+	// then, or another template's that was.
+	Library *avsysv1.WorldRef `json:"library,omitempty"`
 }
 
 // worldsOf are a template's own world's snapshots, newest first: one, but
@@ -52,23 +55,23 @@ func worldsOf(list []backup.Snapshot, id string) []backup.Snapshot {
 }
 
 // ownWorldOf is a template's own world, and the snapshot it is in.
-func (s *Server) ownWorldOf(ctx context.Context, a *access, id string) (*backup.Snapshot, ownWorld, error) {
+func (s *Server) ownWorldOf(ctx context.Context, a *access, id string) (*backup.Snapshot, ownWorld, *store.Template, error) {
 	var info ownWorld
 	t, err := s.Store.Template(ctx, a.Org.ID, id)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, info, &Error{Status: http.StatusNotFound, Code: "not_found", Message: "There is no such template."}
+		return nil, info, nil, &Error{Status: http.StatusNotFound, Code: "not_found", Message: "There is no such template."}
 	} else if err != nil {
-		return nil, info, err
+		return nil, info, nil, err
 	}
 	list, err := s.templateSnapshots(ctx, a.Org)
 	if err != nil {
-		return nil, info, err
+		return nil, info, nil, err
 	}
 	worlds := worldsOf(list, t.ID)
 	if t.World == "" || len(worlds) == 0 || json.Unmarshal([]byte(t.World), &info) != nil {
-		return nil, info, &Error{Status: http.StatusNotFound, Code: "no_world", Message: "That template has no world of its own."}
+		return nil, info, nil, &Error{Status: http.StatusNotFound, Code: "no_world", Message: "That template has no world of its own."}
 	}
-	return &worlds[0], info, nil
+	return &worlds[0], info, t, nil
 }
 
 // putTemplateWorld gives a template a world of its own: the archive sent,
@@ -104,7 +107,7 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 	var pack *avsysv1.ResourcePackSpec
 	var packFrom string
 	if from := q.Get("from"); from != "" {
-		snap, theirs, err := s.ownWorldOf(r.Context(), a, from)
+		snap, theirs, _, err := s.ownWorldOf(r.Context(), a, from)
 		if err != nil {
 			return err
 		}
@@ -124,7 +127,7 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 		if kept, err = s.Backups.CopyAs(ctx, a.Org.Slug, snap.ID, worldHost(t.ID), u.Username); err != nil {
 			return snapshotError(err)
 		}
-		info = ownWorld{Root: world.Root, Name: world.Name, Version: world.Version, File: world.File}
+		info = ownWorld{Root: world.Root, Name: world.Name, Version: world.Version, File: world.File, Library: &avsysv1.WorldRef{ID: world.ID, Name: world.Name}}
 		pack, packFrom = worldPackOf(world), libraryHost(world.ID)
 	} else {
 		root, err := archiveRoot(q.Get("root"))
@@ -290,7 +293,7 @@ func (s *Server) patchTemplateWorld(w http.ResponseWriter, r *http.Request, u *s
 		return err
 	}
 	defer unclaim()
-	_, info, err := s.ownWorldOf(r.Context(), a, t.ID)
+	_, info, _, err := s.ownWorldOf(r.Context(), a, t.ID)
 	if err != nil {
 		return err
 	}

@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { api, ApiError, type LibraryWorld, qs, serverPath, type Server, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { bytes } from "../lib/format";
-import { keys, useMeta, watchReplace } from "../lib/queries";
+import { keys, useMeta, useWorlds, watchReplace } from "../lib/queries";
 import { useGameVersions } from "../lib/software";
 import { type FoundWorld, inspectWorld } from "../lib/serverImport";
 import { levelTypes } from "../lib/properties";
@@ -11,6 +11,7 @@ import { newerThan, newerWorldWarning, runsOn, worldSummary } from "../lib/world
 import { packTitle } from "./Content";
 import { NewerWorldConfirm } from "./NewerWorld";
 import { Picture } from "./Picture";
+import { libraryWorldOf, WorldNow } from "./WorldNow";
 import { WorldPicker } from "./StartPicker";
 import { Button, cx, Field, Input, Modal, Notice, Select, Toggle } from "./ui";
 import { cancelled, UploadProgress, useUpload } from "./Uploading";
@@ -24,10 +25,11 @@ const madeOf = (p: Record<string, string> | undefined) => ({
 });
 
 /**
- * Puts another world in place of a stopped server's: a new one, one from
- * the organization's library, or one of one's own, a save or a world folder
- * in an archive. A snapshot is taken first, so it can be undone from the
- * server's backups.
+ * What a server's world is, and puts another in its place while it is
+ * stopped: a new one, one from the organization's library, or one of one's
+ * own, a save or a world folder in an archive. One from the library can be
+ * put back as it is there. A snapshot is taken first, so it can be undone
+ * from the server's backups.
  */
 export function ReplaceWorld({ server }: { server: Server }) {
   const qc = useQueryClient();
@@ -47,6 +49,12 @@ export function ReplaceWorld({ server }: { server: Server }) {
   const [asking, setAsking] = useState(false);
   const { sending, sendParts, cancel } = useUpload();
   const reads = useRef(0);
+  // The library world it came from, while the library has it: it can be put back.
+  const origin = server.spec.worldOrigin;
+  const worlds = useWorlds(server.org, !!meta?.snapshots && origin?.kind === "library");
+  const back = libraryWorldOf(origin, worlds.data);
+  // Putting that one back: the same as picking it from the library.
+  const [puttingBack, setPuttingBack] = useState(false);
   const stopped = server.spec.state === "Stopped" && server.status.phase === "Stopped";
   // Stopped, but held while the panel works on its files, which it says.
   const held = stopped && server.status.message ? server.status.message : null;
@@ -77,7 +85,16 @@ export function ReplaceWorld({ server }: { server: Server }) {
       setFrom("upload");
       setMade(madeOf(server.spec.properties));
       setError(null);
+      setPuttingBack(false);
     }
+  };
+
+  const putBack = () => {
+    if (!back) return;
+    setFrom("library");
+    setPicked(back);
+    setPuttingBack(true);
+    setOpen(true);
   };
 
   const replace = async (sure = false) => {
@@ -103,14 +120,14 @@ export function ReplaceWorld({ server }: { server: Server }) {
         };
         await api.put<Server>(`${path}/import?${qs({ world: "new", replace: "true" })}`, { properties });
       } else if (from === "library" && picked) await api.put<Server>(`${path}/import?${qs({ world: "true", replace: "true", library: picked.id, ...(picked.resourcePack && withPack ? { pack: "true" } : {}), ...meant })}`, undefined);
-      else if (file && world) await sendParts<Server>(file.name, path, file, (upload) => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", version: world.version, ...meant, from: "upload", upload, size: file.size })}`, {}));
+      else if (file && world) await sendParts<Server>(file.name, path, file, (upload) => api.put<Server>(`${path}/import?${qs({ root: world.root, world: "true", replace: "true", version: world.version, ...meant, from: "upload", file: file.name, upload, size: file.size })}`, {}));
       watch.taken();
       setBusy(false);
       close(false);
     } catch (err) {
       watch.refused();
       setBusy(false);
-      setError(cancelled(err) ? "The upload was stopped. Nothing was changed." : err instanceof ApiError ? err.message : "Could not replace the world.");
+      setError(cancelled(err) ? "The upload was stopped. Nothing was changed." : err instanceof ApiError ? err.message : puttingBack ? "Could not put the world back." : "Could not replace the world.");
     } finally {
       void qc.invalidateQueries({ queryKey: keys.servers(server.org) });
       void qc.invalidateQueries({ queryKey: keys.snapshots(server.org) });
@@ -126,16 +143,28 @@ export function ReplaceWorld({ server }: { server: Server }) {
   const newer = newerThan(order, given, version);
   const ready = from === "new" || (from === "library" ? !!picked : !!world && !!file);
   const segment = (on: boolean) => cx("h-7 rounded-sm px-3 text-xs font-medium", on ? "bg-hover text-fg" : "text-muted hover:text-fg");
+  const action = puttingBack ? "Put back" : "Replace the world";
   return (
     <>
+      <WorldNow server={server} library={back} />
       <div className="flex flex-wrap items-center gap-3">
         <Button onClick={() => setOpen(true)} disabled={!stopped || !!held}>
           Replace the world
         </Button>
+        {back && (
+          <Button onClick={putBack} disabled={!stopped || !!held}>
+            Put back {back.name}
+          </Button>
+        )}
         {!stopped && <p className="text-xs text-muted">Stop the server first.</p>}
         {held && <p className="text-xs text-muted">{held}</p>}
       </div>
-      <Modal open={open} onOpenChange={close} title="Replace the world?" description="A snapshot is taken first. The server's other files stay as they are.">
+      <Modal
+        open={open}
+        onOpenChange={close}
+        title={puttingBack && picked ? `Put back ${picked.name}?` : "Replace the world?"}
+        description="A snapshot is taken first. The server's other files stay as they are."
+      >
         <form
           className="flex flex-col gap-4"
           onSubmit={(e) => {
@@ -146,7 +175,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
             void replace();
           }}
         >
-          {meta?.snapshots && (
+          {meta?.snapshots && !puttingBack && (
             <div role="group" aria-label="World" className="flex w-fit flex-wrap gap-1 rounded-md border border-line bg-bg p-0.5">
               <button type="button" aria-pressed={from === "new"} className={segment(from === "new")} disabled={busy} onClick={() => setFrom("new")}>
                 New world
@@ -191,9 +220,11 @@ export function ReplaceWorld({ server }: { server: Server }) {
                     {worldSummary(picked)}
                   </p>
                 </div>
-                <Button size="sm" disabled={busy} onClick={() => setPicked(null)}>
-                  Change
-                </Button>
+                {!puttingBack && (
+                  <Button size="sm" disabled={busy} onClick={() => setPicked(null)}>
+                    Change
+                  </Button>
+                )}
               </div>
             ) : (
               <WorldPicker org={server.org} onPick={setPicked} />
@@ -234,7 +265,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
               Cancel
             </Button>
             <Button type="submit" variant="danger" disabled={!ready} loading={busy}>
-              Replace the world
+              {action}
             </Button>
           </div>
         </form>
@@ -244,7 +275,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
         onOpenChange={setAsking}
         world={given ?? ""}
         version={version}
-        action="Replace the world anyway"
+        action={`${action} anyway`}
         loading={busy}
         onConfirm={() => void replace(true)}
       />

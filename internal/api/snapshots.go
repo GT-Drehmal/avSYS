@@ -960,6 +960,8 @@ func restoreSoftware(dst, src *avsysv1.MinecraftServerSpec) {
 	dst.Ports = controller.FitModPortsLike(dst.Mods, src.Mods, dst.Ports, src.Ports)
 	dst.Modpack, dst.Mods, dst.ResourcePack = src.Modpack, src.Mods, src.ResourcePack
 	dst.Properties, dst.Ops, dst.Whitelist = src.Properties, src.Ops, src.Whitelist
+	// The world is the one it was then, from where it came then.
+	dst.WorldOrigin = src.WorldOrigin.DeepCopy()
 }
 
 // getOperation says what is being done to a server's snapshots now, as a
