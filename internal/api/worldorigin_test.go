@@ -111,9 +111,17 @@ func TestReadLevelDat(t *testing.T) {
 			t.Errorf("older %v: %+v", older, info)
 		}
 	}
-	for _, bad := range [][]byte{nil, []byte("not a world"), {0x1f, 0x8b, 1, 2}, {nbtCompound, 0, 0, nbtList, 0, 1, 'x', 99, 0, 0, 0, 1}} {
+	// A list that says it has more in it than the file does is not read
+	// on and on: of nothing, or of numbers, it ends at once.
+	endless := []byte{nbtCompound, 0, 0, nbtList, 0, 1, 'x', nbtEnd, 0x7f, 0xff, 0xff, 0xff, nbtEnd}
+	numbers := []byte{nbtCompound, 0, 0, nbtList, 0, 1, 'x', nbtLong, 0x7f, 0xff, 0xff, 0xff, nbtEnd}
+	for _, bad := range [][]byte{nil, []byte("not a world"), {0x1f, 0x8b, 1, 2}, {nbtCompound, 0, 0, nbtList, 0, 1, 'x', 99, 0, 0, 0, 1}, endless, numbers} {
+		start := time.Now()
 		if _, err := readLevelDat(bytes.NewReader(bad)); err == nil {
 			t.Errorf("%q was read as a world", bad)
+		}
+		if time.Since(start) > time.Second {
+			t.Errorf("%q took %v to turn down", bad, time.Since(start))
 		}
 	}
 }

@@ -310,6 +310,10 @@ const (
 	nbtLongArray
 )
 
+// nbtWidths are the sizes of the values of fixed size, which a list of them
+// is read past as a whole.
+var nbtWidths = map[byte]int64{nbtByte: 1, nbtShort: 2, nbtInt: 4, nbtFloat: 4, nbtLong: 8, nbtDouble: 8}
+
 // nbtReader reads the game's NBT. Of the values, only strings, longs and
 // compounds are kept, which is all a level.dat is read for; the rest are
 // read past.
@@ -394,6 +398,18 @@ func (n *nbtReader) payload(t byte, depth int) (any, error) {
 		size, err := n.length()
 		if err != nil {
 			return nil, err
+		}
+		// Every element reads at least a byte, so that a list cannot go
+		// on longer than the file does: one of numbers is read past as a
+		// whole, and one of nothing has nothing in it.
+		if width, fixed := nbtWidths[of]; fixed {
+			return nil, n.skip(size * width)
+		}
+		if of == nbtEnd {
+			if size > 0 {
+				return nil, errors.New("a list of nothing with something in it")
+			}
+			return nil, nil
 		}
 		for range size {
 			if _, err := n.payload(of, depth+1); err != nil {
