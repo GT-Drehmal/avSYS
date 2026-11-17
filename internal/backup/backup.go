@@ -162,7 +162,17 @@ type Snapshot struct {
 	// Offsite is set on a snapshot that has a copy in the offsite
 	// repository, as of the last time that was read; see offsiteCopies.
 	Offsite bool `json:"offsite,omitempty"`
+	// Form is FormFolders for a world kept as its own files, and "" for
+	// anything else.
+	Form string `json:"form,omitempty"`
 }
+
+// FormFolders is a snapshot that keeps a world as its own files, laid out
+// as a server's are, under /data: the world's folder, and the Nether and
+// the End beside it where they were kept apart. restic finds what such a
+// world has in common with a server's snapshots, chunk by chunk, which it
+// cannot for an archive of it.
+const FormFolders = "folders"
 
 // Meta describes the server a snapshot is being taken of.
 type Meta struct {
@@ -351,6 +361,10 @@ func (m *Manager) Reachable(org string) error {
 // together: beside its repository, on the same disk.
 func (m *Manager) UploadsDir(org string) string { return filepath.Join(m.Dir, ".uploads", org) }
 
+// WorkDir is where an organization's worlds are unpacked to be kept as
+// their own files: beside its repository, on the same disk.
+func (m *Manager) WorkDir(org string) string { return filepath.Join(m.Dir, ".work", org) }
+
 // exists reports whether the organization has a repository yet.
 func (m *Manager) exists(org string) bool {
 	_, err := os.Stat(filepath.Join(m.repoDir(org), "config"))
@@ -466,6 +480,8 @@ func (r resticSnapshot) snapshot() Snapshot {
 			// A copy made here under another host says whose it is: it
 			// remembers the one it was made from as its original too.
 			s.Lineage = value
+		case "form":
+			s.Form = value
 		}
 	}
 	if r.Summary != nil {
@@ -576,6 +592,40 @@ func (m *Manager) get(ctx context.Context, org, id string) (*Snapshot, error) {
 // same files. It is dated now, and has a lineage of its own, so that
 // removing either one never takes the other's copy offsite with it.
 func (m *Manager) CopyAs(ctx context.Context, org, id, host, by string) (*Snapshot, error) {
+	return m.copyAs(ctx, org, id, host, by, nil)
+}
+
+// CopyFolders is CopyAs of only the folders of id named, full paths in it
+// such as /data/world, as a world kept as its own files (FormFolders): what
+// a server's snapshot has of its world, kept for a library without a byte
+// of it copied. ErrNotFound if it has none of them.
+func (m *Manager) CopyFolders(ctx context.Context, org, id string, folders []string, host, by string) (*Snapshot, error) {
+	if len(folders) == 0 {
+		return nil, ErrNotFound
+	}
+	return m.copyAs(ctx, org, id, host, by, folders)
+}
+
+// literalPattern is a path as a restic pattern that matches it alone: its
+// wildcards and escapes escaped.
+func literalPattern(p string) string {
+	var b strings.Builder
+	for _, c := range p {
+		if strings.ContainsRune(`*?[]\`, c) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}
+
+// copyAs is CopyAs, of only the folders named where any are.
+func (m *Manager) copyAs(ctx context.Context, org, id, host, by string, only []string) (*Snapshot, error) {
+	for _, folder := range only {
+		if !path.IsAbs(folder) || path.Clean(folder) != folder || folder == "/" {
+			return nil, fmt.Errorf("%q is not a folder of a snapshot", folder)
+		}
+	}
 	lock := m.lock(org)
 	lock.Lock()
 	defer lock.Unlock()
@@ -600,17 +650,22 @@ func (m *Manager) CopyAs(ctx context.Context, org, id, host, by string) (*Snapsh
 		was[s.ID] = true
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	if _, err := m.restic(ctx, org, "rewrite", "--new-host", host, "--new-time", now.Format("2006-01-02 15:04:05"), src.ID); err != nil {
+	args := []string{"rewrite", "--new-host", host, "--new-time", now.Format("2006-01-02 15:04:05")}
+	for _, folder := range only {
+		args = append(args, "--include", literalPattern(folder))
+	}
+	if _, err := m.restic(ctx, org, append(args, src.ID)...); err != nil {
 		return nil, err
 	}
-	// The one just made. Held as this is, there is no other.
+	// The one just made. Held as this is, there is no other. Of folders it
+	// has none of, restic makes none.
 	made, err := m.find(ctx, org, func(s Snapshot) bool { return s.Server == host && !was[s.ID] })
 	if err != nil {
 		return nil, err
 	}
 	// restic removes after it adds: a tag the copy keeps is not removed. A
 	// copy of a copy brought its original's lineage along with its tags.
-	args := []string{"tag", "--remove", "lineage=" + src.Lineage, "--add", "trigger=" + TriggerTemplate, "--add", "lineage=" + made.ID}
+	args = []string{"tag", "--remove", "lineage=" + src.Lineage, "--add", "trigger=" + TriggerTemplate, "--add", "lineage=" + made.ID}
 	if src.Trigger != TriggerTemplate {
 		args = append(args, "--remove", "trigger="+src.Trigger)
 	}
@@ -619,6 +674,9 @@ func (m *Manager) CopyAs(ctx context.Context, org, id, host, by string) (*Snapsh
 	}
 	if by != "" {
 		args = append(args, "--add", "by="+by)
+	}
+	if only != nil && src.Form != FormFolders {
+		args = append(args, "--add", "form="+FormFolders)
 	}
 	if _, err := m.restic(ctx, org, append(args, made.ID)...); err != nil {
 		return nil, err
@@ -870,35 +928,80 @@ func (m *Manager) Archive(ctx context.Context, org, id string, folders []Folder,
 	return m.archive(ctx, org, id, folders, w)
 }
 
-// KeepArchive keeps the folders of a snapshot asked for, as Archive puts
-// them in one tar, as a file of its own, as KeepFile does: under one hold
-// of the repository, so that nothing waiting to change it comes between
-// the two halves of the copy, each waiting for the other.
-func (m *Manager) KeepArchive(ctx context.Context, org, id string, folders []Folder, host, name, by string) (*Snapshot, error) {
+// KeepFolders saves folders of dir, named as they are in it, as a snapshot
+// of their files under host, as a template's that by made: a world of a
+// library, kept as its own files (FormFolders). The folders are kept under
+// the names they have in dir, from its top: "data/world" in it is
+// /data/world in the snapshot, where a server's snapshot has its world.
+// Nothing is kept if any of their files could not be read.
+func (m *Manager) KeepFolders(ctx context.Context, org, dir string, folders []string, host, by string) (*Snapshot, error) {
 	if !m.Available() {
 		return nil, ErrUnavailable
 	}
+	if len(folders) == 0 {
+		return nil, ErrNotFound
+	}
+	for _, f := range folders {
+		if !filepath.IsLocal(f) {
+			return nil, fmt.Errorf("%q is not a folder in %s", f, dir)
+		}
+	}
+	if err := m.ensure(ctx, org); err != nil {
+		return nil, err
+	}
+	id, err := m.keepFolders(ctx, org, dir, folders, host, by)
+	if err != nil {
+		// What was saved before the error came is not the folders: removed,
+		// which takes the repository to itself.
+		if id != "" {
+			if derr := m.Delete(context.WithoutCancel(ctx), org, id); derr != nil {
+				m.Log.Error("could not remove folders kept in part", "org", org, "snapshot", id, "error", derr)
+			}
+		}
+		return nil, err
+	}
+	m.touch(org)
+	return m.Get(ctx, org, id)
+}
+
+// keepFolders runs the backup of KeepFolders holding the repository's read
+// lock, and says which snapshot it saved, if any, whether or not it went
+// wrong.
+func (m *Manager) keepFolders(ctx context.Context, org, dir string, folders []string, host, by string) (string, error) {
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	pr, pw := io.Pipe()
-	archived := make(chan error, 1)
-	go func() {
-		err := m.archive(ctx, org, id, folders, pw)
-		pw.CloseWithError(err)
-		archived <- err
-	}()
-	kept, err := m.keepFile(ctx, org, host, name, by, pr)
-	// Whatever it was in the middle of, the archive is let go.
-	pr.CloseWithError(io.ErrClosedPipe)
-	if aerr := <-archived; aerr != nil && !errors.Is(aerr, io.ErrClosedPipe) {
-		// What was kept of it, if anything, is incomplete: the caller's to
-		// remove, which takes the repository to itself.
-		return kept, aerr
+	args := []string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache",
+		"backup", "--json", "--host", host, "--tag", "avsys", "--tag", "trigger=" + TriggerTemplate, "--tag", "form=" + FormFolders}
+	if by != "" && tagPattern.MatchString(by) {
+		args = append(args, "--tag", "by="+by)
 	}
-	return kept, err
+	args = append(append(args, "--"), folders...)
+	cmd := exec.CommandContext(ctx, m.Restic, args...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	f := &follow{}
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		f.line(line)
+	}
+	for _, line := range strings.Split(stderr.String(), "\n") {
+		f.line([]byte(line))
+	}
+	if err != nil {
+		detail := lastLine(stderr.String())
+		if len(f.errors) > 0 {
+			detail = strings.Join(f.errors, "; ")
+		}
+		// restic exits with 3 when it could not read some files, and saves a
+		// snapshot of the rest all the same.
+		return f.snapshotID, fmt.Errorf("restic backup: %w: %s", err, detail)
+	}
+	if f.snapshotID == "" {
+		return "", errors.New("restic backup: no snapshot was saved")
+	}
+	return f.snapshotID, nil
 }
 
 // archive is Archive, with the repository's read lock held by the caller.
@@ -1202,6 +1305,9 @@ func (m *Manager) Destroy(org string) error {
 	if err := os.RemoveAll(m.UploadsDir(org)); err != nil {
 		return err
 	}
+	if err := os.RemoveAll(m.WorkDir(org)); err != nil {
+		return err
+	}
 	// The offsite copy is left as it is: nothing here says to remove it.
 	for _, file := range []string{m.removedFile(org), m.statusFile(org), m.copiesFile(org)} {
 		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -1496,6 +1602,45 @@ func (m *Manager) RestoreWithout(ctx context.Context, org string, ws *ssh.Client
 // a server's new, empty volume.
 func (m *Manager) RestoreWhole(ctx context.Context, org string, ws *ssh.Client, id string, progress func(Progress)) error {
 	return m.restore(ctx, org, ws, id, true, nil, nil, progress)
+}
+
+// RestoreFolders puts what a snapshot has in its folder from into target,
+// a folder of the server's emptied first: a world kept as its own files,
+// put where an import unpacks an archive. Nothing else of the server's
+// files is touched.
+func (m *Manager) RestoreFolders(ctx context.Context, org string, ws *ssh.Client, id, from, target string, progress func(Progress)) error {
+	if !path.IsAbs(from) || path.Clean(from) != from {
+		return fmt.Errorf("%q is not a folder of a snapshot", from)
+	}
+	if path.Clean(target) != target || !strings.HasPrefix(target, dataDir+"/") {
+		return fmt.Errorf("%q is not a folder of the server's", target)
+	}
+	snap, err := m.Get(ctx, org, id)
+	if err != nil {
+		return err
+	}
+	secret, err := m.password(org)
+	if err != nil {
+		return err
+	}
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	socket, stop, err := m.serve(ws, org)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	if progress == nil {
+		progress = func(Progress) {}
+	}
+	f := &follow{progress: progress}
+	command := "rm -rf " + quote(target) + " && mkdir -p " + quote(target) + " && " +
+		resticIn(socket, "restore", snap.ID+":"+from, "--target", target, "--json")
+	if stderr, err := runCtx(ctx, ws, command, strings.NewReader(secret+"\n"), f.line); err != nil {
+		return f.failure(stderr, err)
+	}
+	return nil
 }
 
 // restore puts back a snapshot, less what leave names. With only, it puts

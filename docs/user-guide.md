@@ -550,6 +550,20 @@ The **Worlds** page keeps maps to start servers from.
 - **New server** on a world opens the form with it chosen. **Download**
   gives it back as a single-player save.
 
+A world in the library is kept unpacked, as its own files, with the
+organization's snapshots. An uploaded archive is unpacked on the panel
+when it is added; its size in the list is the world's own. A server made
+from a library world, its snapshots, **Replace the world** and **Put back**
+all share those files with the library, so a 4 GB map stored once does not
+take another 4 GB with each server and snapshot that has it.
+
+Worlds added before the library kept them unpacked are unpacked once,
+under the same name and link, after the panel is updated. Each shows
+*Unpacking* in the list meanwhile and can be used as before. If one cannot
+be unpacked, for example when the panel's disk is too full, it says *Could
+not unpack* with the reason, still works as before, and is tried again the
+next time the panel starts.
+
 ## Nodes and moving servers
 
 A new server goes to the fastest node with room, unless you pick one on the

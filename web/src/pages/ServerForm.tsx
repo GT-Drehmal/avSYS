@@ -268,11 +268,13 @@ async function contentOf(f: Found): Promise<ArchiveContent> {
 }
 
 /**
- * The gigabytes a server needs for a world from the library: its archive,
- * and the world unpacked beside it, as large as it is out of it where that
- * is known, and else a guess.
+ * The gigabytes a server needs for a world from the library: for one kept as
+ * its own files, which go straight where the world goes, the world and half
+ * as much again for it to grow; for one kept as an archive, the archive and
+ * the world unpacked beside it, as large as it is out of it where that is
+ * known, and else a guess.
  */
-const roomFor = (w: LibraryWorld) => Math.ceil((w.size + (w.unpacked || w.size * 4)) / GiB);
+const roomFor = (w: LibraryWorld) => Math.ceil((w.kept === "folders" ? w.size * 1.5 : w.size + (w.unpacked || w.size * 4)) / GiB);
 
 /** Which world a server starts with: its original's, a new one, one from the library, or one uploaded. */
 type WorldChoice = "kept" | "new" | "library" | "mine";

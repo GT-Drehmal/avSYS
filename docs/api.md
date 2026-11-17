@@ -743,9 +743,13 @@ Take one off. **Admin.** Returns the list.
 ## World library
 
 Worlds kept to give to servers. A world is
-`{id, name, description, createdBy, createdAt, updatedAt, root, version?, file?, size, unpacked?, source, saving?, ready, error?, resourcePack?}`.
+`{id, name, description, createdBy, createdAt, updatedAt, root, version?, file?, size, unpacked?, source, saving?, ready, error?, kept?, unpacking?, unpackError?, resourcePack?}`.
 `source` is `upload`, `server:<name>` or `snapshot:<server>`; `ready` is
-false while it is being saved.
+false while it is being saved. `kept` is `folders` for a world kept as its
+own files, whose `size` is the world's, or `archive` for one kept as the
+archive it came in, as worlds were before; such a one says `unpacking`
+while it is being kept as its own files instead, and `unpackError` if it
+could not be, and is used as it is meanwhile.
 
 ### `GET /orgs/{org}/worlds`
 
@@ -763,8 +767,10 @@ with `?wait=true`, `201` once saved.
 
 Add a world from an archive. **Operator.** Query: `name`, `description?`,
 `root?` (the folder in the archive that is the world), `version?`,
-`file?`, `unpacked?`. Body: the archive (up to 2 GB), or
-`?upload=<id>&size=<bytes>`. Returns `201` with the world.
+`file?`. Body: the archive, a `.zip`, `.tar` or `.tar.gz` (up to 2 GB), or
+`?upload=<id>&size=<bytes>`. The archive is unpacked and the world kept as
+its own files: `400` if `root` has no `level.dat`, `507` if it does not fit
+on the panel's disk. Returns `201` with the world, once it is kept.
 
 ### `GET /orgs/{org}/worlds/{world}`
 
@@ -782,8 +788,9 @@ Add a world from an archive. **Operator.** Query: `name`, `description?`,
 
 ### `GET /orgs/{org}/worlds/{world}/archive`
 
-Download it. **Operator.** An uploaded world comes back as the file that
-was uploaded; a saved one as a zip of a single-player save.
+Download it. **Operator.** A zip of a single-player save, made as it is
+sent. One uploaded and still kept as an archive comes back as the file that
+was uploaded.
 
 ### `GET /orgs/{org}/worlds/{world}/icon`
 

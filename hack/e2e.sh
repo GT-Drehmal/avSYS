@@ -26,6 +26,12 @@
 # AVSYS_E2E_NODE_UP brings back, commands run with sh -c, for moving a server
 # off a node that is down; AVSYS_E2E_ON_DOWN_NODE runs a command on that node.
 # The panel must not be on it. Unset, that is skipped.
+# AVSYS_E2E_PANEL_EXEC is a command that runs a program in the panel's
+# container, given it and its arguments, with its input; and
+# AVSYS_E2E_PANEL_RESTART restarts the panel and waits for it, run with sh
+# -c: a world kept the way the library kept them before is made with the
+# panel's restic, and the panel restarted to keep it as its own files.
+# Unset, that is skipped.
 # AVSYS_E2E_LIST_BUDGET_MS (200) is how long the panel may take over a read
 # of a list, such as the servers or the templates, before the run fails. The
 # few that read the repository's snapshots have budgets of their own; see
@@ -1191,6 +1197,71 @@ expect "and its resource pack" "$(call "$API/orgs/$ORG/servers/from-library" | f
 expect "kept in the server's files" "$(call "$API/orgs/$ORG/servers/from-library/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
 call -X DELETE "$API/orgs/$ORG/servers/from-library?snapshot=false" >/dev/null
 expect "a world is taken out of the library" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/worlds/$LIB")" 204
+# A world uploaded to the library is kept unpacked, as its own files: a
+# server made from it, and putting it back in that server, share them with
+# it, and the server's snapshots add next to nothing of the world.
+python3 - "$WORK/big.zip" <<'PY'
+import os, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("Big/level.dat", b"x")
+    z.writestr("Big/region/r.0.0.mca", os.urandom(16 << 20))
+    z.writestr("Big/region/r.0.1.mca", os.urandom(8 << 20))
+    z.writestr("Big_nether/DIM-1/region/r.0.0.mca", os.urandom(2 << 20))
+PY
+BIGSIZE=$(((26 << 20) + 1))
+big=$(call --data-binary "@$WORK/big.zip" "$API/orgs/$ORG/worlds/upload?name=E2E%20big&root=Big&file=big.zip")
+BIG=$(echo "$big" | field "d['id']") || fail "the world was not uploaded to the library: $big"
+expect "an uploaded world is kept unpacked, as large as it is" "$(echo "$big" | field "(d['ready'], d['kept'], d['root'], d['size'])")" "(True, 'folders', 'world', $BIGSIZE)"
+FROMBIG=$API/orgs/$ORG/servers/from-big
+call -d '{"name":"from-big","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
+call -X PUT "$FROMBIG/import?world=true&library=$BIG&wait=true" >/dev/null
+expect "a server is made from it, its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$FROMBIG/files/content?path=/world/region/r.0.1.mca") $(call -o /dev/null -w '%{http_code}' "$FROMBIG/files/content?path=/world_nether/DIM-1/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$FROMBIG/files/content?path=/world/level.dat")" "200 200 200"
+expect "and says it is from there" "$(call "$FROMBIG" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['library']['id'] == '$BIG')")" "('library', True)"
+added=$(call -X POST "$FROMBIG/snapshots?wait=true" | field "d['added']")
+echo "the server's first snapshot added $added bytes; the world is $BIGSIZE"
+[ "$added" -lt $((BIGSIZE / 10)) ] || fail "the server's first snapshot added $added bytes of a world of $BIGSIZE it shares with the library"
+echo "ok: its first snapshot adds next to nothing of the world"
+echo "changed" | call -X PUT --data-binary @- "$FROMBIG/files/content?path=/world/region/r.0.1.mca" >/dev/null
+call -X PUT "$FROMBIG/import?world=true&replace=true&library=$BIG&wait=true" >/dev/null
+expect "put back, it is the library's again" "$(call "$FROMBIG/files/content?path=/world/region/r.0.1.mca" | wc -c | tr -d ' ')" $((8 << 20))
+added=$(call "$FROMBIG/snapshots" | field "[s['added'] for s in d['snapshots'] if s['trigger'] == 'pre-replace'][0]")
+echo "the snapshot taken before it was put back added $added bytes"
+[ "$added" -lt $((BIGSIZE / 10)) ] || fail "the snapshot before putting the world back added $added bytes"
+echo "ok: and so does the one before it was put back"
+ids=$(call "$FROMBIG/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
+call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
+call -X DELETE "$FROMBIG?snapshot=false" >/dev/null
+# A world kept as the library kept them before, as its archive, is kept as
+# its own files once the panel starts again, under the same ID. That needs
+# restic in the panel, and the panel restarted.
+if [ -n "${AVSYS_E2E_PANEL_EXEC:-}" ] && [ -n "${AVSYS_E2E_PANEL_RESTART:-}" ]; then
+  panel_restic() {
+    # shellcheck disable=SC2086 # a command and its arguments
+    $AVSYS_E2E_PANEL_EXEC /usr/local/bin/restic --repo "/backups/$ORG" --password-file "/backups/$ORG.key" --no-cache "$@"
+  }
+  python3 - "$WORK/old.zip" <<'PY'
+import os, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("world/level.dat", b"x")
+    z.writestr("world/region/r.0.0.mca", os.urandom(4 << 20))
+PY
+  old=$(call --data-binary "@$WORK/old.zip" "$API/orgs/$ORG/worlds/upload?name=E2E%20old&root=world&file=old.zip")
+  OLD=$(echo "$old" | field "d['id']") || fail "the world was not uploaded to the library: $old"
+  unpacked=$(panel_restic snapshots --json --host "world-$OLD" | field "d[0]['id']") || fail "the panel's restic could not be run"
+  panel_restic backup --stdin --stdin-filename world.archive --host "world-$OLD" --tag avsys --tag trigger=template --tag by=e2e < "$WORK/old.zip" >/dev/null
+  panel_restic forget "$unpacked" >/dev/null
+  sh -c "$AVSYS_E2E_PANEL_RESTART" >/dev/null || fail "the panel did not come back"
+  for _ in $(seq 1 90); do curl -fsS -o /dev/null "$API/meta" 2>/dev/null && break; sleep 2; done
+  for _ in $(seq 1 90); do [ "$(call "$API/orgs/$ORG/worlds/$OLD" 2>/dev/null | field "d.get('kept')" 2>/dev/null)" = folders ] && break; sleep 2; done
+  expect "a world kept as an archive is kept unpacked once the panel starts, under the same ID" "$(call "$API/orgs/$ORG/worlds/$OLD" | field "(d['id'] == '$OLD', d['ready'], d['kept'], d['root'], d['size'], d.get('unpackError'))")" "(True, True, 'folders', 'world', $(((4 << 20) + 1)), None)"
+  expect "and its archive is gone" "$(panel_restic snapshots --json --host "world-$OLD" | field "[('form=folders' in s['tags'], 'world.archive' in str(s['paths'])) for s in d]")" "[(True, False)]"
+  call -o "$WORK/old-download.zip" "$API/orgs/$ORG/worlds/$OLD/archive"
+  expect "it is downloaded as a save" "$(python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); print(sorted(z.namelist()))' "$WORK/old-download.zip")" "'E2E old/level.dat', 'E2E old/region/r.0.0.mca'"
+  call -X DELETE "$API/orgs/$ORG/worlds/$OLD" >/dev/null
+else
+  echo "skipped: a world kept as an archive kept unpacked as the panel starts (AVSYS_E2E_PANEL_EXEC and AVSYS_E2E_PANEL_RESTART are not set)"
+fi
+call -X DELETE "$API/orgs/$ORG/worlds/$BIG" >/dev/null
 # Its world replaced by another: a snapshot is taken first, only the world's
 # folders are replaced, and the snapshot puts the old one back.
 echo "kept" | call -X PUT --data-binary @- "$OWN/files/content?path=/kept.txt" >/dev/null

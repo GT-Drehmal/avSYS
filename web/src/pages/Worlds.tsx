@@ -118,6 +118,14 @@ export function Worlds() {
                         `Not saved${w.error ? `: ${w.error}` : "."}`
                       )}
                     </p>
+                    {/* One kept as an archive, as worlds were before, is unpacked as the panel starts; it is used as it is meanwhile. */}
+                    {w.ready && w.unpacking && (
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-faint">
+                        <Spinner className="size-3" />
+                        Unpacking
+                      </p>
+                    )}
+                    {w.ready && !w.unpacking && w.unpackError && <p className="mt-0.5 text-xs text-warn">Could not unpack: {w.unpackError}</p>}
                   </div>
                   {canMake && (
                     <Button size="sm" disabled={!w.ready} onClick={() => navigate(`/o/${org}/new?${qs({ world: w.id })}`)}>
@@ -233,7 +241,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
         // got to if the connection drops.
         const uploads = (q: Record<string, string | number | undefined>) => `/orgs/${org}/uploads?${qs(q)}`;
         made = await sendStaged(file.name, file, uploads, uploads, (upload) =>
-          api.post<LibraryWorld>(`/orgs/${org}/worlds/upload?${qs({ name, description, root: found.root, version: found.version, file: file.name, unpacked: found.size, upload, size: file.size })}`, undefined),
+          api.post<LibraryWorld>(`/orgs/${org}/worlds/upload?${qs({ name, description, root: found.root, version: found.version, file: file.name, upload, size: file.size })}`, undefined),
         );
       } else {
         if (!picked) return setError(from === "server" ? "Pick a server." : "Pick a snapshot.");

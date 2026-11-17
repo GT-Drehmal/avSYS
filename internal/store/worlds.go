@@ -9,8 +9,8 @@ import (
 )
 
 // A world in an organization's library is a map kept to start servers
-// from: its files are an archive kept as a snapshot in the organization's
-// repository, and what it is called is kept here.
+// from: its files are kept as a snapshot in the organization's repository,
+// and what it is called is kept here.
 
 // ErrWorldNameTaken is returned for a world named as another of the same
 // organization is, whatever their case.
@@ -25,14 +25,17 @@ type World struct {
 	CreatedBy   string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
-	// Root is the world's folder in its archive.
+	// Root is the world's folder: in its archive, for one kept as an
+	// archive, and under /data in its snapshot, for one kept as its own
+	// files.
 	Root string
 	// Version is the game version it was last opened in, where known.
 	Version string
 	// File is the name of the archive it came in, for one uploaded.
 	File string
-	// Size is how large its archive is, and Unpacked how large the world
-	// is out of it, where known.
+	// Size is how large what is kept of it is, and Unpacked how large the
+	// world is, where known: the two are the same for one kept as its own
+	// files.
 	Size, Unpacked int64
 	// Source says where it was saved from: "upload", "server:<name>" or
 	// "snapshot:<server>".
@@ -41,14 +44,18 @@ type World struct {
 	Failed string
 	// Pack is the resource pack it names, as JSON, or "" for none.
 	Pack string
+	// UnpackFailed says why one kept as an archive, as the library kept
+	// worlds before, could not be kept as its own files instead. It is
+	// still used as it is.
+	UnpackFailed string
 }
 
-const worldColumns = `id, org_id, name, description, created_by, created_at, updated_at, root, version, file, size, unpacked, source, failed, pack`
+const worldColumns = `id, org_id, name, description, created_by, created_at, updated_at, root, version, file, size, unpacked, source, failed, pack, unpack_failed`
 
 func scanWorld(row interface{ Scan(...any) error }) (*World, error) {
 	var w World
 	var created, updated int64
-	if err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.CreatedBy, &created, &updated, &w.Root, &w.Version, &w.File, &w.Size, &w.Unpacked, &w.Source, &w.Failed, &w.Pack); err != nil {
+	if err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.CreatedBy, &created, &updated, &w.Root, &w.Version, &w.File, &w.Size, &w.Unpacked, &w.Source, &w.Failed, &w.Pack, &w.UnpackFailed); err != nil {
 		return nil, err
 	}
 	w.CreatedAt, w.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
@@ -60,8 +67,8 @@ func (s *Store) CreateWorld(ctx context.Context, w *World) error {
 	w.ID = NewID(8)
 	w.CreatedAt = time.Now().Truncate(time.Second)
 	w.UpdatedAt = w.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO worlds (`+worldColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.OrgID, w.Name, w.Description, w.CreatedBy, w.CreatedAt.Unix(), w.UpdatedAt.Unix(), w.Root, w.Version, w.File, w.Size, w.Unpacked, w.Source, w.Failed, w.Pack)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO worlds (`+worldColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.OrgID, w.Name, w.Description, w.CreatedBy, w.CreatedAt.Unix(), w.UpdatedAt.Unix(), w.Root, w.Version, w.File, w.Size, w.Unpacked, w.Source, w.Failed, w.Pack, w.UnpackFailed)
 	return worldNameTaken(err)
 }
 
@@ -111,6 +118,34 @@ func (s *Store) UpdateWorld(ctx context.Context, w *World) error {
 // saved, leaving the rest of it as it is now.
 func (s *Store) SetWorldArchive(ctx context.Context, orgID, id, root, version string, size, unpacked int64) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE worlds SET root = ?, version = ?, size = ?, unpacked = ?, failed = '', updated_at = ? WHERE org_id = ? AND id = ?`, root, version, size, unpacked, time.Now().Unix(), orgID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetWorldUnpacked keeps what is known of a world once it is kept as its own
+// files in place of an archive: its folder, how large it is, and that it
+// did not fail to be. It is not a change to the world, and does not say it
+// was changed.
+func (s *Store) SetWorldUnpacked(ctx context.Context, orgID, id, root string, size int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE worlds SET root = ?, size = ?, unpacked = ?, unpack_failed = '' WHERE org_id = ? AND id = ?`, root, size, size, orgID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetWorldUnpackFailed says why a world kept as an archive could not be
+// kept as its own files instead.
+func (s *Store) SetWorldUnpackFailed(ctx context.Context, orgID, id, why string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE worlds SET unpack_failed = ? WHERE org_id = ? AND id = ?`, why, orgID, id)
 	if err != nil {
 		return err
 	}

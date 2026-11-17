@@ -592,15 +592,20 @@ export interface LibraryWorld {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
-  /** Its folder in its archive, "" for the top. */
+  /** Its folder where it is kept: "world", or for one kept as an archive its folder in it, "" for the top. */
   root: string;
   /** The game version it was last opened in, where known. */
   version?: string;
   /** The archive's name, for one uploaded. */
   file?: string;
-  /** How large its archive is, and the world out of it, where known. */
+  /** How large what is kept of it is, and the world out of it, where known: the same for one kept as its own files. */
   size: number;
   unpacked?: number;
+  /** How it is kept, once it is: as its own files, or as the archive it came in, as worlds were before. */
+  kept?: "folders" | "archive";
+  /** For one kept as an archive: being unpacked now, while it is used as it is, or why it could not be. */
+  unpacking?: boolean;
+  unpackError?: string;
   /** Where it came from: "upload", "server:<name>" or "snapshot:<server>". */
   source: string;
   /** While its archive is still being made. */

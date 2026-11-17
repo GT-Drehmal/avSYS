@@ -24,9 +24,12 @@ type TemplateSnapshot struct {
 	By, Version, Loader string
 	Size, Added, Files  int64
 	Lineage             string
+	// Form is how it keeps what it keeps: "folders" for a world kept as its
+	// own files, "" otherwise.
+	Form string
 }
 
-const templateSnapshotColumns = `id, host, time, by_user, version, loader, size, added, files, lineage`
+const templateSnapshotColumns = `id, host, time, by_user, version, loader, size, added, files, lineage, form`
 
 // TemplateSnapshots are an organization's, newest first.
 func (s *Store) TemplateSnapshots(ctx context.Context, orgID string) ([]TemplateSnapshot, error) {
@@ -39,7 +42,7 @@ func (s *Store) TemplateSnapshots(ctx context.Context, orgID string) ([]Template
 	for rows.Next() {
 		var t TemplateSnapshot
 		var at string
-		if err := rows.Scan(&t.ID, &t.Host, &at, &t.By, &t.Version, &t.Loader, &t.Size, &t.Added, &t.Files, &t.Lineage); err != nil {
+		if err := rows.Scan(&t.ID, &t.Host, &at, &t.By, &t.Version, &t.Loader, &t.Size, &t.Added, &t.Files, &t.Lineage, &t.Form); err != nil {
 			return nil, err
 		}
 		// Kept as the repository says it, zone and all.
@@ -69,8 +72,8 @@ func (s *Store) NoteTemplateSnapshot(ctx context.Context, orgID string, t Templa
 func noteTemplateSnapshot(ctx context.Context, db interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, orgID string, t TemplateSnapshot) error {
-	_, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO template_snapshots (org_id, `+templateSnapshotColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		orgID, t.ID, t.Host, t.Time.Format(time.RFC3339Nano), t.By, t.Version, t.Loader, t.Size, t.Added, t.Files, t.Lineage)
+	_, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO template_snapshots (org_id, `+templateSnapshotColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		orgID, t.ID, t.Host, t.Time.Format(time.RFC3339Nano), t.By, t.Version, t.Loader, t.Size, t.Added, t.Files, t.Lineage, t.Form)
 	return err
 }
 

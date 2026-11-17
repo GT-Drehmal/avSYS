@@ -151,7 +151,7 @@ func (l *libraryRepo) fill() {
 	l.made("admin", "POST", "/orgs/alpha/templates/"+l.template+"/versions", `{"snapshot":"`+l.src+`"}`, http.StatusCreated)
 	l.made("admin", "PUT", "/orgs/alpha/templates/"+l.template+"/world?root=Island&name=Island", "a world", http.StatusOK)
 	l.made("admin", "POST", "/orgs/alpha/templates", `{"name":"Alone","spec":{"loader":"paper","version":"1.21.4","resources":{"memory":"4Gi"},"storage":{"size":"10Gi"}}}`, http.StatusCreated)
-	world := l.made("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&root=Island&version=1.21.4&file=island.zip", "a world", http.StatusCreated)
+	world := l.made("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&root=saves%2FIsland&version=1.21.4&file=island.zip", string(islandZip(l.t)), http.StatusCreated)
 	l.world = world["id"].(string)
 	l.made("operator", "POST", "/orgs/alpha/worlds?wait=true", `{"name":"Survival","snapshot":"`+l.src+`"}`, http.StatusCreated)
 }

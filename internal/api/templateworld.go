@@ -12,9 +12,11 @@ import (
 )
 
 // A template can have a world of its own: an archive of one, as it was
-// uploaded, kept as a snapshot of its own beside the template's versions.
-// Each server made from the template is given it in place of the world its
-// version has, by the same import that puts any uploaded world in place.
+// uploaded, kept as a snapshot of its own beside the template's versions,
+// or a copy of a world of the library, kept as the library keeps it: as its
+// own files, or as an archive, for one copied when the library kept them
+// so. Each server made from the template is given it in place of the world
+// its version has, by the same import that puts any uploaded world in place.
 
 // ownWorldFile is what the archive is called in its snapshot.
 const ownWorldFile = "world.archive"
@@ -24,7 +26,8 @@ func worldHost(id string) string { return templateHost(id) + "-world" }
 
 // ownWorld is what is known of a template's own world.
 type ownWorld struct {
-	// Root is the world's folder in the archive, "" for its top.
+	// Root is the world's folder in the archive, "" for its top, or under
+	// /data in its snapshot, for one kept as its own files.
 	Root string `json:"root"`
 	// Name and Version are what the world says it is called and was last
 	// opened in, as read where it was chosen.
@@ -127,7 +130,7 @@ func (s *Server) putTemplateWorld(w http.ResponseWriter, r *http.Request, u *sto
 		if kept, err = s.Backups.CopyAs(ctx, a.Org.Slug, snap.ID, worldHost(t.ID), u.Username); err != nil {
 			return snapshotError(err)
 		}
-		info = ownWorld{Root: world.Root, Name: world.Name, Version: world.Version, File: world.File, Library: &avsysv1.WorldRef{ID: world.ID, Name: world.Name}}
+		info = ownWorld{Root: keptRoot(world, snap), Name: world.Name, Version: world.Version, File: world.File, Library: &avsysv1.WorldRef{ID: world.ID, Name: world.Name}}
 		pack, packFrom = worldPackOf(world), libraryHost(world.ID)
 	} else {
 		root, err := archiveRoot(q.Get("root"))

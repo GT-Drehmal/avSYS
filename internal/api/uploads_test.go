@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -79,19 +80,20 @@ func TestWorldSentInParts(t *testing.T) {
 	if left, _ := os.ReadDir(filepath.Join(dir, ".uploads", "alpha")); len(left) != 0 {
 		t.Errorf("left behind by a refusal: %v", left)
 	}
-	if code, out := call("operator", "PUT", up+"&offset=0", "a world, zipped"); code != http.StatusOK || out["received"] != float64(15) {
+	zipped := islandZip(t)
+	if code, out := call("operator", "PUT", up+"&offset=0", string(zipped)); code != http.StatusOK || out["received"] != float64(len(zipped)) {
 		t.Fatalf("sent again: %d %v", code, out)
 	}
-	code, made := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&root=Island&upload=island0123456789&size=15", "")
-	if code != http.StatusCreated || made["size"] != float64(15) {
+	code, made := call("operator", "POST", fmt.Sprintf("/orgs/alpha/worlds/upload?name=Island&root=saves%%2FIsland&upload=island0123456789&size=%d", len(zipped)), "")
+	if code != http.StatusCreated || made["size"] != float64(len("the island")+len("sand")) {
 		t.Fatalf("kept: %d %v", code, made)
 	}
 	req := httptest.NewRequest("GET", "/api/v1/orgs/alpha/worlds/"+made["id"].(string)+"/archive", nil)
 	req.Header.Set("Authorization", "Bearer "+p.tokens["operator"])
 	rec := httptest.NewRecorder()
 	p.h.ServeHTTP(rec, req)
-	if rec.Body.String() != "a world, zipped" {
-		t.Errorf("kept as %q", rec.Body.String())
+	if got := unzipped(t, rec.Body.Bytes()); got["Island/level.dat"] != "the island" {
+		t.Errorf("kept as %v", keysOf(got))
 	}
 	if left, _ := os.ReadDir(filepath.Join(dir, ".uploads", "alpha")); len(left) != 0 {
 		t.Errorf("left behind: %v", left)
@@ -145,11 +147,12 @@ func TestRefusedWorldLeavesNothing(t *testing.T) {
 	}
 	staged := filepath.Join(dir, ".uploads", "alpha")
 	const up = "/orgs/alpha/uploads?upload=island0123456789"
-	const world = "/orgs/alpha/worlds/upload?root=Island&upload=island0123456789&size=5"
-	if send("PUT", up+"&offset=0", "first") != http.StatusOK || send("POST", world+"&name=Island", "") != http.StatusCreated {
+	zipped := string(islandZip(t))
+	world := fmt.Sprintf("/orgs/alpha/worlds/upload?root=saves%%2FIsland&upload=island0123456789&size=%d", len(zipped))
+	if send("PUT", up+"&offset=0", zipped) != http.StatusOK || send("POST", world+"&name=Island", "") != http.StatusCreated {
 		t.Fatal("the first world was not kept")
 	}
-	if send("PUT", up+"&offset=0", "again") != http.StatusOK {
+	if send("PUT", up+"&offset=0", zipped) != http.StatusOK {
 		t.Fatal("the second was not sent")
 	}
 	if code := send("POST", world+"&name=island", ""); code != http.StatusConflict {

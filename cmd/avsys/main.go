@@ -496,6 +496,9 @@ func run(opts options, log *slog.Logger) error {
 	}
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		server.ReadTemplateSnapshots(ctx)
+		// Then the worlds of the library still kept as archives are kept as
+		// their own files, one at a time.
+		server.UnpackLibrary(ctx)
 		return nil
 	})); err != nil {
 		return err

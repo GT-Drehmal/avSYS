@@ -148,7 +148,7 @@ func TestNewerWorldKeptByThePanel(t *testing.T) {
 	const world = "/orgs/alpha/servers/world"
 
 	// In the library, last opened in 26.2; "world" runs 1.21.4.
-	code, lib := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Newer&root=Newer&version=26.2", "a world")
+	code, lib := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Newer&root=saves%2FIsland&version=26.2", string(islandZip(t)))
 	if code != http.StatusCreated {
 		t.Fatalf("uploaded: %d %v", code, lib)
 	}

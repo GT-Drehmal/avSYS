@@ -75,32 +75,40 @@ var kept = []string{".avsys", ".workspace", "lost+found"}
 // there, and empties the server directory but for what is kept. Then rest
 // runs, and the staging folder is removed. The next lines of stdin say how:
 // "split", "listed", "replace" or "fill" and the world's folder, and
-// "without" for a server's archive whose world is not taken, or nothing.
+// "without" for a server's archive whose world is not taken, or nothing,
+// and "restored" for a world put in the staging folder already, from the
+// library, with no archive to unpack.
 // With "replace", only the world's folders are emptied, for the one unpacked
 // to take their place; the world's folder is "world" unless said. With
 // "fill", for a server with no world yet, the datapacks that are there go
 // into the world unpacked, where it has none of their names.
 func unpacked(rest string) string {
 	return `set -eu
-command -v bsdtar >/dev/null || exit 127
 IFS= read -r root || true
 IFS= read -r split || true
 IFS= read -r listed || true
 IFS= read -r replace || true
 IFS= read -r level || true
 IFS= read -r without || true
+IFS= read -r restored || true
 lv=${level:-world}
 a=` + importArchive + `
 s=` + importStaging + `
-rm -rf "$s" "$s.err"
+rm -rf "$s.err"
 if [ "$replace" != fill ]; then rm -rf "$s.datapacks"; fi
-mkdir -p "$s"
-if ! bsdtar -xf "$a" -C "$s" 2>"$s.err"; then
-  head -n 1 "$s.err" >&2
-  rm -rf "$s" "$s.err" "$a"
-  exit 4
+if [ "$restored" = restored ]; then
+  [ -d "$s" ] || { echo "The world did not arrive." >&2; exit 5; }
+else
+  command -v bsdtar >/dev/null || exit 127
+  rm -rf "$s"
+  mkdir -p "$s"
+  if ! bsdtar -xf "$a" -C "$s" 2>"$s.err"; then
+    head -n 1 "$s.err" >&2
+    rm -rf "$s" "$s.err" "$a"
+    exit 4
+  fi
+  rm -f "$a" "$s.err"
 fi
-rm -f "$a" "$s.err"
 find "$s" -type l -delete
 find "$s" -name session.lock -type f -delete
 if [ ! -d "$s/$root" ]; then
@@ -290,8 +298,11 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		return err
 	}
 	// A template's own world comes out of its snapshot rather than with the
-	// request, its folder in it as it was kept.
+	// request, its folder in it as it was kept: put back, for one kept as
+	// its own files, from the snapshot named here, and streamed, for an
+	// archive.
 	var archive func(io.Writer) error
+	var folders string
 	// The pack that comes with it, given once it is in.
 	var givePack func(ctx context.Context) error
 	var given *avsysv1.ResourcePackSpec
@@ -314,8 +325,12 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		root, version = info.Root, info.Version
 		theirs, theirWorld = t, &info
 		org := a.Org.Slug
-		archive = func(dst io.Writer) error {
-			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
+		if snap.Form == backup.FormFolders {
+			folders = snap.ID
+		} else {
+			archive = func(dst io.Writer) error {
+				return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
+			}
 		}
 		if withPack && info.Pack != nil {
 			given = info.Pack
@@ -324,7 +339,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	// So does one from the organization's library.
 	if from := r.URL.Query().Get("library"); from != "" {
-		if archive != nil {
+		if archive != nil || folders != "" {
 			return errBadRequest("A world comes from a template or from the library, not both.")
 		}
 		if r.URL.Query().Get("world") != "true" {
@@ -334,11 +349,15 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		if err != nil {
 			return err
 		}
-		root, version = world.Root, world.Version
+		root, version = keptRoot(world, snap), world.Version
 		fromLibrary = world
 		org := a.Org.Slug
-		archive = func(dst io.Writer) error {
-			return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
+		if snap.Form == backup.FormFolders {
+			folders = snap.ID
+		} else {
+			archive = func(dst io.Writer) error {
+				return s.Backups.Stream(context.WithoutCancel(r.Context()), org, snap.ID, "/"+ownWorldFile, dst)
+			}
 		}
 		if rp := worldPackOf(world); withPack && rp != nil {
 			given = rp
@@ -347,7 +366,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	// What the server is to say of where its world came from, once it is in.
 	origin := importedOrigin(r.URL.Query(), fromLibrary, theirs, theirWorld, made)
-	if withPack && archive == nil {
+	if withPack && archive == nil && folders == "" {
 		return errBadRequest("A resource pack comes with a world from a template or from the library.")
 	}
 	// Said before the world is put in, rather than after.
@@ -383,7 +402,7 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 	}
 	go func() {
-		undo, err := s.importInto(r, w, mc, root, archive, op, replace, made, origin, a.Org.Slug, u.Username, onReceived)
+		undo, err := s.importInto(r, w, mc, root, archive, folders, op, replace, made, origin, a.Org.Slug, u.Username, onReceived)
 		ctx := context.WithoutCancel(r.Context())
 		if err == nil && givePack != nil {
 			if perr := givePack(ctx); perr != nil {
@@ -430,8 +449,9 @@ func (s *Server) importFiles(w http.ResponseWriter, r *http.Request, u *store.Us
 
 // importInto returns the snapshot it took of what a world replaced, once there
 // is one, whether or not the rest then succeeded. received, if given, is
-// called once the archive is in.
-func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, archive func(io.Writer) error, op *operation, replace bool, made map[string]*string, origin *avsysv1.WorldOrigin, org, by string, received func()) (undo *backup.Snapshot, err error) {
+// called once the archive is in. With folders, the world is the one kept as
+// its own files in that snapshot, put back where an archive is unpacked.
+func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.MinecraftServer, root string, archive func(io.Writer) error, folders string, op *operation, replace bool, made map[string]*string, origin *avsysv1.WorldOrigin, org, by string, received func()) (undo *backup.Snapshot, err error) {
 	ctx := r.Context()
 	key := client.ObjectKeyFromObject(mc)
 	wasMarked := importUnfinished(mc)
@@ -518,6 +538,18 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 	fresh := r.URL.Query().Get("world") == "new"
 	if fresh {
 		// Nothing to receive: the game makes it.
+	} else if folders != "" {
+		// Its files, put back from its snapshot where an archive is
+		// unpacked: nothing to unpack, nor room for an archive besides.
+		s.setOperation(mc.Namespace, op, "Getting the world", 0)
+		_ = sc.Remove(importArchive)
+		progress := func(p backup.Progress) { s.setOperation(mc.Namespace, op, "Getting the world", p.Percent) }
+		if err := s.Backups.RestoreFolders(ctx, org, ws, folders, "/"+keptData, importStaging, progress); err != nil {
+			if errors.Is(err, backup.ErrOldWorkspace) {
+				return undo, err
+			}
+			return undo, &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: sentence("the world could not be got from the library: " + plainly(err))}
+		}
 	} else if r.URL.Query().Get("from") == "upload" {
 		// Sent before in parts, by this upload: all of it, as large as the
 		// page said.
@@ -577,19 +609,24 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		undo, err = s.takeSnapshot(ctx, org, mc, op, backup.TriggerPreReplace, by)
 		if err != nil {
 			_ = sc.Remove(importArchive)
+			_ = sc.RemoveAll(importStaging)
 			s.Log.Error("snapshot before replacing a world failed", "server", mc.Name, "error", err)
 			return nil, &Error{Status: http.StatusBadGateway, Code: "snapshot_failed", Message: sentence("the current world could not be saved first, so nothing was changed: " + plainly(err))}
 		}
 		// It is the way back until the world is in: not to be deleted before.
 		if !s.ops.carry(mc.Namespace, op, undo.ID) {
 			_ = sc.Remove(importArchive)
+			_ = sc.RemoveAll(importStaging)
 			return undo, &Error{Status: http.StatusConflict, Code: "snapshot_deleting", Message: "The snapshot just taken of the server is being deleted, so nothing was changed."}
 		}
 	}
 	touched = true
-	if fresh {
+	switch {
+	case fresh:
 		s.setOperation(mc.Namespace, op, "Clearing the world", 0)
-	} else {
+	case folders != "":
+		s.setOperation(mc.Namespace, op, "Putting the world in", 0)
+	default:
 		s.setOperation(mc.Namespace, op, "Unpacking", 0)
 	}
 	session, err := backup.CommandSession(ws)
@@ -633,7 +670,11 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		}
 		without = strings.Join(defaults, " ")
 	}
-	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n" + level + "\n" + without + "\n")
+	restored := ""
+	if folders != "" {
+		restored = "restored"
+	}
+	session.Stdin = strings.NewReader(root + "\n" + split + "\n" + listed + "\n" + again + "\n" + level + "\n" + without + "\n" + restored + "\n")
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 	if err := session.Run(script); err != nil {

@@ -102,7 +102,9 @@ test("a world is uploaded to the library, named as its file is, with its own pic
   await dialog.getByRole("button", { name: "Add world" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("listitem", { name: "Island" })).toBeVisible();
-  expect(calls[0]).toMatchObject({ method: "POST", path: "/worlds/upload", query: { name: "Island", description: "Where we started", root: "Island Save", version: "1.21.4", file: "island.zip", unpacked: expect.stringMatching(/^\d+$/) } });
+  expect(calls[0]).toMatchObject({ method: "POST", path: "/worlds/upload", query: { name: "Island", description: "Where we started", root: "Island Save", version: "1.21.4", file: "island.zip" } });
+  // How large it is unpacked is the panel's to find out, as it unpacks it.
+  expect(calls[0].query.unpacked).toBeUndefined();
   expect(calls[1]).toMatchObject({ method: "PUT", path: "/worlds/w9/icon" });
 });
 
@@ -162,6 +164,46 @@ test("a world that could not be saved says why, until it is deleted", async ({ p
   await page.getByRole("menuitem", { name: "Delete" }).click();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByText("No worlds yet")).toBeVisible();
+});
+
+test("a world kept as an archive says so while it is unpacked, and why it could not be, and is used as it is meanwhile", async ({ page, as }) => {
+  await as("admin");
+  const worlds = [
+    world("w1", "Drehmal", { kept: "archive", size: 4 * 2 ** 30, unpacking: true }),
+    world("w2", "Broken", { kept: "archive", unpackError: "The archive has no folder Drehmal." }),
+    world("w3", "Island", { kept: "folders" }),
+  ];
+  await library(page, worlds);
+  await page.goto("/o/friends/worlds");
+  const unpacking = page.getByRole("listitem", { name: "Drehmal" });
+  await expect(unpacking).toContainText("1.21.4 · 4.0 GB · uploaded");
+  await expect(unpacking).toContainText("Unpacking");
+  await expect(unpacking.getByRole("button", { name: "New server" })).toBeEnabled();
+  const broken = page.getByRole("listitem", { name: "Broken" });
+  await expect(broken).toContainText("Could not unpack: The archive has no folder Drehmal.");
+  await expect(broken.getByRole("button", { name: "New server" })).toBeEnabled();
+  await broken.getByRole("button", { name: "Actions for Broken" }).click();
+  await expect(page.getByRole("menuitem", { name: "Download" })).not.toHaveAttribute("data-disabled", "");
+  await page.keyboard.press("Escape");
+  const kept = page.getByRole("listitem", { name: "Island" });
+  await expect(kept).toContainText("1.21.4 · 12 MB · uploaded");
+  await expect(kept).not.toContainText("unpack");
+  // Once it is unpacked, it says so on its own: the list is asked again
+  // while one is being unpacked.
+  worlds[0] = world("w1", "Drehmal", { kept: "folders", size: 7 * 2 ** 30, unpacked: 7 * 2 ** 30 });
+  await expect(unpacking).toContainText("1.21.4 · 7.0 GB · uploaded", { timeout: 10_000 });
+  await expect(unpacking).not.toContainText("Unpacking");
+});
+
+test("a new server from a world kept as its own files has room for the world, and for it to grow", async ({ page, as }) => {
+  await as("owner");
+  await library(page, [world("w1", "Island", { kept: "folders", size: 8 * 2 ** 30, unpacked: 8 * 2 ** 30 })]);
+  await page.goto("/o/friends/worlds");
+  await page.getByRole("listitem", { name: "Island" }).getByRole("button", { name: "New server" }).click();
+  await expect(page.getByRole("heading", { name: "New server" })).toBeVisible();
+  await expect(page.getByTestId("world-summary")).toContainText("1.21.4 · 8.0 GB · uploaded");
+  // Not room for an archive besides: its files go straight where the world goes.
+  await expect(page.getByLabel("Storage (GB)")).toHaveValue("12");
 });
 
 test("a server's world, or a snapshot's, is saved to the library", async ({ page, as }) => {

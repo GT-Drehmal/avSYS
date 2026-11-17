@@ -327,6 +327,46 @@ says.
 with `restic restore --delete` inside the workspace, and puts the
 server's software settings back from the record.
 
+**Templates and the world library** live in the same repository, as
+snapshots the organization's snapshot list does not show (tag
+`trigger=template`). A library world is one snapshot under the host
+`world-<id>`, of the world's own files laid out as a server has them:
+`/data/world`, and `/data/world_nether` and `/data/world_the_end` where the
+Nether and the End were kept apart (tag `form=folders`). restic stores data
+in content-defined chunks, once per repository, so a server made from that
+world, and every snapshot of it, store only what changed from the library's
+copy.
+
+- **Upload.** The archive (`.zip`, `.tar`, `.tar.gz`) is unpacked on the
+  panel, in Go, into `/backups/.work/<org>/<random>/data/world`, and that
+  folder is backed up there with the panel's restic. The rules are the
+  import's: only files and folders, never links or `session.lock`, nothing
+  outside the folder, the world's folder as the page found it and the
+  Nether and End beside it, a `level.dat` in it, and no more than the free
+  space on the panel's volume. The snapshot is checked against what was
+  unpacked (file count, bytes, `level.dat`) before it is kept.
+- **Save from a server or a snapshot.** The server's snapshot (taken first,
+  for a running server) is copied with `restic rewrite --include` of its
+  world folders under the world's host: no file data is read or copied.
+- **Use** (new server, **Replace the world**, **Put back**, a template's
+  copy of the world, `import?library=`). The workspace restores the
+  world's snapshot with `restic restore` straight into the import's
+  staging folder, and the import's script moves it into place as it does
+  for an unpacked archive: the Nether and End where the server's software
+  keeps them, links dropped, the snapshot first for a replace.
+- **Download** builds a single-player save zip as it is sent, from
+  `restic dump` of the world's folders.
+
+Before, a library world was one file in its snapshot, the archive as it was
+uploaded or a tar of the saved folders, which shares nothing with a
+server's snapshots. As the panel starts it converts each such world, one at
+a time and under the same ID: the archive is unpacked and kept under
+`world-<id>-unpacking`, checked, copied under `world-<id>` with the world
+held, and only then is the archive removed. A world that fails keeps its
+archive, works as before, and shows why in the library; leftovers of a run
+that was cut short are removed on the next start. Templates' own uploaded
+worlds are still kept as archives.
+
 **Offsite.** The panel copies each organization's repository to a second
 place with `restic copy`, a couple of minutes after it changes, and removes
 there what was removed here. The offsite password is the operator's, not

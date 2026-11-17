@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,9 +23,9 @@ import (
 )
 
 // The library: worlds uploaded or saved from a snapshot, named, given a
-// picture, downloaded, and taken out again. One uploaded is downloaded as it
-// was sent; one saved, as a zip of a single-player save, with the resource
-// pack its server had.
+// picture, downloaded, and taken out again. Each is kept as its own files,
+// and downloaded as a zip of a single-player save; one saved, with the
+// resource pack its server had.
 func TestWorldLibrary(t *testing.T) {
 	if _, err := exec.LookPath("restic"); err != nil {
 		t.Skip("restic is not installed")
@@ -50,35 +51,65 @@ func TestWorldLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Uploaded, by an operator and not a viewer.
-	if code, _ := call("viewer", "POST", "/orgs/alpha/worlds/upload?name=Island&root=Island", "a world"); code != http.StatusForbidden {
+	// Uploaded, by an operator and not a viewer, and kept unpacked: as large
+	// as it is, whatever the page said.
+	zipped := string(islandZip(t))
+	if code, _ := call("viewer", "POST", "/orgs/alpha/worlds/upload?name=Island&root=Island", zipped); code != http.StatusForbidden {
 		t.Errorf("a viewer uploaded one: %d", code)
 	}
-	code, raw := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&description=Small&root=saves%2FIsland&version=1.21.4&file=island.zip&unpacked=100", "a world")
+	code, raw := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&description=Small&root=saves%2FIsland&version=1.21.4&file=island.zip&unpacked=100", zipped)
 	if code != http.StatusCreated {
 		t.Fatalf("uploaded: %d %s", code, raw)
 	}
 	island := object(raw)
 	id := island["id"].(string)
-	if island["ready"] != true || island["root"] != "saves/Island" || island["version"] != "1.21.4" || island["file"] != "island.zip" || island["size"] != float64(len("a world")) || island["source"] != "upload" || island["unpacked"] != float64(100) {
+	unpacked := float64(len("the island") + len("sand"))
+	if island["ready"] != true || island["root"] != "world" || island["version"] != "1.21.4" || island["file"] != "island.zip" || island["size"] != unpacked || island["source"] != "upload" || island["unpacked"] != unpacked || island["kept"] != "folders" {
 		t.Errorf("uploaded as %v", island)
 	}
-	if code, _ := call("operator", "POST", "/orgs/alpha/worlds/upload?name=ISLAND&root=Island", "another"); code != http.StatusConflict {
+	if code, _ := call("operator", "POST", "/orgs/alpha/worlds/upload?name=ISLAND&root=saves%2FIsland", zipped); code != http.StatusConflict {
 		t.Errorf("a name taken: %d", code)
+	}
+	// Kept as its own files, where a server has its world.
+	if list, err := p.srv.Backups.List(t.Context(), "alpha"); err != nil || len(list) != 1 || list[0].Server != libraryHost(id) || list[0].Form != backup.FormFolders || list[0].Files != 2 {
+		t.Errorf("kept as %+v, %v", list, err)
+	} else if level, err := p.srv.Backups.File(t.Context(), "alpha", list[0].ID, "/data/world/level.dat", 1<<10); err != nil || string(level) != "the island" {
+		t.Errorf("its level.dat: %q, %v", level, err)
+	}
+	// One that is not a world is turned down, and nothing is kept of it:
+	// neither a world in the library, nor what was unpacked.
+	for _, bad := range []struct{ root, body, says string }{
+		{"saves%2FIsland", "a world, they said", "Use a .zip or .tar.gz file"},
+		{"saves%2FElsewhere", zipped, "no folder saves/Elsewhere"},
+		{"saves", zipped, "no level.dat"},
+	} {
+		code, got := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Bad&root="+bad.root, bad.body)
+		if code != http.StatusBadRequest || !strings.Contains(string(got), bad.says) {
+			t.Errorf("not a world (%s): %d %s", bad.says, code, got)
+		}
+	}
+	if _, got := call("viewer", "GET", "/orgs/alpha/worlds", ""); strings.Contains(string(got), `"Bad"`) {
+		t.Errorf("one turned down is in the library: %s", got)
+	}
+	if left, _ := os.ReadDir(filepath.Join(dir, ".work", "alpha")); len(left) != 0 {
+		t.Errorf("left unpacked: %v", left)
+	}
+	if list, _ := p.srv.Backups.List(t.Context(), "alpha"); len(list) != 1 {
+		t.Errorf("kept of what was turned down: %+v", list)
 	}
 	// Not among the organization's snapshots.
 	if code, list := call("admin", "GET", "/orgs/alpha/snapshots", ""); code != http.StatusOK || len(object(list)["snapshots"].([]any)) != 0 {
 		t.Errorf("listed with the snapshots: %d %s", code, list)
 	}
-	// Seen by every member; downloaded by operators, as it went in.
+	// Seen by every member; downloaded by operators, as a single-player save.
 	if code, list := call("viewer", "GET", "/orgs/alpha/worlds", ""); code != http.StatusOK || !strings.Contains(string(list), `"Island"`) {
 		t.Errorf("listed: %d %s", code, list)
 	}
 	if code, _ := call("viewer", "GET", "/orgs/alpha/worlds/"+id+"/archive", ""); code != http.StatusForbidden {
 		t.Errorf("a viewer downloaded it: %d", code)
 	}
-	if code, got := call("operator", "GET", "/orgs/alpha/worlds/"+id+"/archive", ""); code != http.StatusOK || string(got) != "a world" {
-		t.Errorf("downloaded: %d %q", code, got)
+	if code, got := call("operator", "GET", "/orgs/alpha/worlds/"+id+"/archive", ""); code != http.StatusOK || !maps.Equal(unzipped(t, got), map[string]string{"Island/level.dat": "the island", "Island/region/r.0.0.mca": "sand"}) {
+		t.Errorf("downloaded: %d %v", code, keysOf(unzipped(t, got)))
 	}
 	// Renamed.
 	if code, got := call("operator", "PATCH", "/orgs/alpha/worlds/"+id, `{"name":"Atoll"}`); code != http.StatusOK || object(got)["name"] != "Atoll" || object(got)["description"] != "Small" {
@@ -145,7 +176,7 @@ func TestWorldLibrary(t *testing.T) {
 	}
 	saved := object(raw)
 	savedID := saved["id"].(string)
-	if saved["ready"] != true || saved["root"] != "world" || saved["version"] != "1.21.4" || saved["source"] != "snapshot:survival" || saved["unpacked"] != saved["size"] {
+	if saved["ready"] != true || saved["root"] != "world" || saved["version"] != "1.21.4" || saved["source"] != "snapshot:survival" || saved["unpacked"] != saved["size"] || saved["kept"] != "folders" || saved["size"] != float64(len("the world")+len("a pack the map came with")+len("the nether")+len("Paper's copy")) {
 		t.Errorf("saved as %v", saved)
 	}
 	rp, _ := saved["resourcePack"].(map[string]any)
@@ -226,7 +257,7 @@ func TestWorldLibrary(t *testing.T) {
 	// library's is deleted.
 	_, made := call("admin", "POST", "/orgs/alpha/templates", `{"name":"Island base","spec":{"loader":"paper","version":"1.21.4","resources":{"memory":"4Gi"},"storage":{"size":"10Gi"}}}`)
 	tid := object(made)["id"].(string)
-	if code, got := call("admin", "PUT", "/orgs/alpha/templates/"+tid+"/world?library="+id, ""); code != http.StatusOK || object(got)["ownWorld"].(map[string]any)["root"] != "saves/Island" || object(got)["ownWorld"].(map[string]any)["name"] != "Atoll" {
+	if code, got := call("admin", "PUT", "/orgs/alpha/templates/"+tid+"/world?library="+id, ""); code != http.StatusOK || object(got)["ownWorld"].(map[string]any)["root"] != "world" || object(got)["ownWorld"].(map[string]any)["name"] != "Atoll" {
 		t.Fatalf("given to a template: %d %s", code, got)
 	}
 	if code, _ := call("admin", "PUT", "/orgs/alpha/templates/"+tid+"/world?library=nope", ""); code != http.StatusNotFound {
