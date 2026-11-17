@@ -9,6 +9,7 @@ q=$'\e[38;5;255m'   # quartz
 v=$'\e[38;5;141m'   # amethyst
 d=$'\e[2m'          # dim
 b=$'\e[1m'          # bold
+g=$'\e[38;5;114m'   # green: running
 r=$'\e[0m'
 
 # The game and its loader, as its log last said them.
@@ -29,10 +30,10 @@ fi
 case $game in *"|"*) game="${game%%|*}  ${d}${game#*|}${r}" ;; esac
 
 # Running, and who is on: the game's own answer, if it gives one quickly.
-state="${d}not running${r}"
+state="${d}○ not running${r}"
 if list=$(timeout 1.5 rcon-cli list 2>/dev/null) && [ -n "$list" ]; then
   players=$(printf '%s' "$list" | sed -n 's/.*There are \([0-9]*\) of a max of \([0-9]*\) players online.*/\1 of \2 online/p')
-  state="${v}running${r}${players:+ · $players}"
+  state="${g}● running${r}${players:+  ${d}·${r}  $players}"
 fi
 
 # The world it plays, and how full its storage is.
@@ -48,14 +49,14 @@ for part in "$mods mod" "$plugins plugin" "$packs datapack"; do
   n=${part%% *}
   [ "${n:-0}" -gt 0 ] || continue
   word=${part#* }; [ "$n" = 1 ] || word="${word}s"
-  content="${content:+$content · }$n $word"
+  content="${content:+$content  ${d}·${r}  }$n $word"
 done
 
 name=${AVSYS_SERVER:-workspace}
-line=$(printf '%*s' "$(( ${#name} + 6 ))" '' | tr ' ' '-')
+line=$(printf '%*s' "$(( ${#name} + 6 ))" '' | sed 's/ /─/g')
 label() { printf '%s%-8s%s %s' "$v" "$1" "$r" "$2"; }
 info=(
-  "${b}${name}${r}${d}@${r}${b}avSYS${r}"
+  "${b}${name}${r}${d}@${r}${b}${v}avSYS${r}"
   "${d}${line}${r}"
   "$(label game "${game:-${d}not started yet${r}}")"
   "$(label status "$state")"
@@ -82,12 +83,12 @@ for i in "${!gate[@]}"; do
 done
 echo
 printf '  %s\n' \
-  "${b}mc console${r}       the server console: its log, and a line to type commands on" \
+  "${v}mc console${r}       the server console: its log, and a line to type commands on" \
   "                   ${d}Ctrl-D leaves it; the server keeps running${r}" \
-  "${b}mc run${r} list      run one command and print its answer" \
-  "${b}mc logs${r}          follow the server log" \
-  "${b}mc restart${r}       save and restart the game" \
-  "${b}tools install${r}    add a program to your home, no root needed"
+  "${v}mc run${r} list      run one command and print its answer" \
+  "${v}mc logs${r}          follow the server log" \
+  "${v}mc restart${r}       save and restart the game" \
+  "${v}tools install${r}    add a program to your home, no root needed"
 echo
 printf '  %s\n' "${d}Start, stop and change the server from the panel. ~/.hushlogin hides this.${r}"
 echo
