@@ -110,7 +110,10 @@ curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/crea
 Wrong passwords are counted per address and username: eight within ten
 minutes hold that pair off (`429 rate_limited`) until the oldest is ten
 minutes old. Two-factor codes are counted the same way per account, from
-anywhere. The address is the connection's own; forwarded-for headers are
+anywhere. The address is the connection's own. Only from a proxy the panel
+is set to trust (see
+[Behind a reverse proxy](install.md#behind-a-reverse-proxy)) is it read
+from `X-Forwarded-For` instead; forwarded-for headers from anyone else are
 not read.
 
 ## Sign-in and the public routes

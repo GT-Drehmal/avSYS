@@ -1,7 +1,6 @@
 package api
 
 import (
-	"net"
 	"net/http"
 	"strings"
 
@@ -11,23 +10,13 @@ import (
 
 var errRateLimited = &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Message: "Too many attempts. Wait a few minutes and try again."}
 
-// clientAddress is the address a request came from, without its port. It
-// is the connection's: a header saying otherwise could be sent by anyone.
-func clientAddress(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 // sessionInfo is what a session made or used by r notes of it.
-func sessionInfo(r *http.Request, method string) store.SessionInfo {
+func (s *Server) sessionInfo(r *http.Request, method string) store.SessionInfo {
 	ua := r.UserAgent()
 	if len(ua) > 512 {
 		ua = ua[:512]
 	}
-	return store.SessionInfo{UserAgent: ua, Address: clientAddress(r), Method: method}
+	return store.SessionInfo{UserAgent: ua, Address: s.clientAddress(r), Method: method}
 }
 
 // sessionToken is the session token a request carries in its cookie, or "".
@@ -52,7 +41,7 @@ func (s *Server) checkCurrentPassword(r *http.Request, u *store.User, password s
 	if u.PasswordHash == "" {
 		return nil
 	}
-	key := clientAddress(r) + "|" + strings.ToLower(u.Username)
+	key := s.clientAddress(r) + "|" + strings.ToLower(u.Username)
 	if logins.blocked(key) {
 		return errRateLimited
 	}

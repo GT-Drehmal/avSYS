@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,11 @@ type Config struct {
 	// with. One entered in the panel goes before it. With neither, nothing
 	// of CurseForge is offered.
 	CurseForgeKey string
+	// TrustedProxies are the reverse proxies the panel stands behind. A
+	// request from one of them is taken to come from the address it
+	// forwarded for; see clientAddress. Empty: every request comes from
+	// its connection's address, and forwarded-for headers are not read.
+	TrustedProxies []netip.Prefix
 }
 
 type Server struct {
@@ -267,7 +273,7 @@ func (s *Server) currentSession(r *http.Request) (*store.User, *store.Session, e
 	if err != nil {
 		return nil, nil, errUnauthorized
 	}
-	u, session, err := s.Store.SessionByToken(r.Context(), c.Value, sessionInfo(r, ""))
+	u, session, err := s.Store.SessionByToken(r.Context(), c.Value, s.sessionInfo(r, ""))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil, errUnauthorized
 	}
@@ -641,7 +647,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID str
 // openSession signs a browser in as a user, by method: one of the
 // store.SignedInWith values.
 func (s *Server) openSession(w http.ResponseWriter, r *http.Request, userID, method string) error {
-	token, err := s.Store.OpenSession(r.Context(), userID, sessionTTL, sessionInfo(r, method))
+	token, err := s.Store.OpenSession(r.Context(), userID, sessionTTL, s.sessionInfo(r, method))
 	if err != nil {
 		return err
 	}

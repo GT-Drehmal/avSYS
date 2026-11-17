@@ -72,6 +72,7 @@ type options struct {
 	packURL             string
 	packCache           int
 	publicURL           string
+	trustedProxies      string
 	sshPublicHost       string
 	sshPublicPort       int
 	routerPort          int
@@ -127,6 +128,7 @@ func parseFlags() options {
 	str(&o.sshAddr, "ssh-addr", ":2222", "address the SSH gateway listens on (empty disables it)")
 	str(&o.routerAddr, "router-addr", ":25565", "address the Minecraft router listens on (empty disables it)")
 	str(&o.publicURL, "public-url", "http://localhost:8080", "URL people open the panel at")
+	str(&o.trustedProxies, "trusted-proxies", "", "addresses and ranges, separated by commas, as 127.0.0.1,100.64.0.0/10, of the reverse proxies in front of the panel: a request from one is taken to come from the address its X-Forwarded-For gives (empty: every request comes from its connection's address, and no header is read)")
 	str(&o.packAddr, "pack-addr", "", "address of a listener that serves nothing but uploaded resource packs, to open to players where the panel is not (empty: the panel serves them at its own address)")
 	flag.IntVar(&o.packCache, "pack-cache", envInt("pack-cache", 512), "most MiB the uploaded resource packs kept in the data directory may take (0: no limit); over it the least recently served are let go of and read from their servers' files again when asked for")
 	str(&o.packURL, "pack-url", "", "URL players' games fetch uploaded resource packs from, at /packs/<sha1>.zip under it (default: public-url)")
@@ -225,6 +227,10 @@ func oidcProvider(opts options) (*auth.Provider, error) {
 func run(opts options, log *slog.Logger) error {
 	ctx := ctrl.SetupSignalHandler()
 
+	trustedProxies, err := api.ParseTrustedProxies(opts.trustedProxies)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(opts.dataDir, 0o700); err != nil {
 		return err
 	}
@@ -423,6 +429,7 @@ func run(opts options, log *slog.Logger) error {
 			PackURL:         opts.packURL,
 			PackCache:       int64(opts.packCache) << 20,
 			CurseForgeKey:   curseForgeKey,
+			TrustedProxies:  trustedProxies,
 			RouterService:   routerService(),
 			Deployment:      selfDeployment(),
 		},

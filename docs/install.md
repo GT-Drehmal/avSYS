@@ -129,9 +129,66 @@ Nothing else needs to be reachable from outside. Game servers, their
 workspaces and RCON are reached by the panel inside the cluster.
 
 The panel speaks plain HTTP. For HTTPS, put the http port behind an
-ingress or a reverse proxy (or `tailscale serve`, Caddy, and the like) and
-set `publicURL` to the `https://` address. SSH and the router are plain TCP
-and go around the proxy.
+ingress or a reverse proxy (or `tailscale serve`, Caddy, and the like), set
+`publicURL` to the `https://` address, and list the proxy in
+`trustedProxies`: see [Behind a reverse proxy](#behind-a-reverse-proxy).
+SSH and the router are plain TCP and go around the proxy.
+
+### Behind a reverse proxy
+
+Behind a proxy, every request reaches the panel from the proxy's address.
+`trustedProxies` (`--trusted-proxies`, `AVSYS_TRUSTED_PROXIES`, addresses
+and ranges separated by commas) names the proxies. A request from one of
+them is taken to come from the address in its `X-Forwarded-For`: the
+right-most entry that is not itself a trusted proxy, or `X-Real-IP` when
+there is no `X-Forwarded-For`. That address is what the limits on wrong
+passwords count, and what **Account → Sessions** shows. Headers from any
+other address are ignored; with `trustedProxies` empty, the default, none
+are read. List only proxies you run: whoever connects from a listed address
+can claim any address.
+
+List the address the panel sees the proxy connect from. Until
+`trustedProxies` is set, **Account → Sessions** shows it.
+
+- `tailscale serve` on the panel's machine, to `http://127.0.0.1:8080`:
+  `127.0.0.1`. With the chart's `hostPort` on k3s, such a connection can
+  arrive from the node's pod network gateway instead (as `10.42.0.1`).
+- A proxy on another machine: that machine's address as the panel sees it,
+  such as its Tailscale address (`tailscale ip -4` there).
+
+For example, Caddy on a public machine, reaching the panel over Tailscale:
+
+```text
+avsys.example.com {
+	# The panel's machine, by its Tailscale name or address.
+	reverse_proxy http://panel-host:8080 {
+		header_up Host {host}
+	}
+}
+```
+
+```yaml
+publicURL: https://avsys.example.com
+# Caddy's Tailscale address, and 127.0.0.1 if tailscale serve stays too.
+trustedProxies: [100.101.102.103, 127.0.0.1]
+```
+
+Caddy puts the client's address in `X-Forwarded-For` and drops what the
+client sent there. Point it at the panel's port itself, not at a
+`tailscale serve` address: `tailscale serve` replaces `X-Forwarded-For`
+with the address of whoever reached it, Caddy's, and the client's is lost.
+The proxy must pass the `Host` the browser sent (Caddy does;
+`header_up Host {host}` says so): the terminal checks it against the page's
+address. Whether the session cookie is `Secure` follows `publicURL`, not
+the proxy's headers.
+
+SSH (2222) and the router (25565) are plain TCP, not HTTP. Forward them
+with a TCP proxy of their own (Caddy's layer4 module, nginx `stream`, or a
+port forward) and set `sshPublicHost` to match, or leave SSH reachable only
+on the tailnet.
+
+A panel open to the internet should have **Require two-factor for
+administrators** on, in **Instance settings**.
 
 ### `expose.mode`
 
@@ -506,6 +563,7 @@ its values; `extraEnv` passes any other. `avsys --help` lists them.
 | `expose.annotations` | `{}` | Annotations of the `LoadBalancer` Service. |
 | `expose.loadBalancerIP`, `expose.loadBalancerClass` | none | Passed to the Service. |
 | `expose.externalTrafficPolicy` | none | `Local` keeps players' addresses visible. |
+| `trustedProxies` | `[]` | Reverse proxies in front of the panel, as `[127.0.0.1, 100.64.0.0/10]`. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
 | `sshPublicHost` | host of `publicURL` | Hostname shown in SSH instructions. |
 | `router.domain` | none | Wildcard domain for new servers' addresses. |
 | `extraPorts.range` | none | Public ports for servers' [extra ports](#extra-ports), as `25600-25699`. |
@@ -554,6 +612,7 @@ false` with no provider; an offsite repository with no password; and
 | Flag | Environment | Default | What it does |
 | --- | --- | --- | --- |
 | `--public-url` | `AVSYS_PUBLIC_URL` | `http://localhost:8080` | Address people open the panel at. |
+| `--trusted-proxies` | `AVSYS_TRUSTED_PROXIES` | none | Reverse proxies in front of the panel: addresses and ranges, separated by commas. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
 | `--data-dir` | `AVSYS_DATA_DIR` | `./data` (`/data` in the image) | The database, kept resource packs, and by default snapshots. |
 | `--backup-dir` | `AVSYS_BACKUP_DIR` | `<data-dir>/backups` (`/backups` in the chart) | Organizations' snapshot repositories. |
 | `--restic` | `AVSYS_RESTIC` | `restic` | restic binary. Without one, snapshots are off. |
@@ -662,7 +721,9 @@ turned away.
 address within ten minutes hold that pair off until the oldest is ten
 minutes old; two-factor codes are held the same way per account. The
 address is the connection's own: behind a reverse proxy every attempt comes
-from the proxy, so the limit counts per username for everyone.
+from the proxy, so the limit counts per username for everyone, unless the
+proxy is listed in `trustedProxies` (see
+[Behind a reverse proxy](#behind-a-reverse-proxy)).
 
 **Someone forgot their password.** The instance administrator makes a
 one-time reset link for them from an organization's **Members** page. It

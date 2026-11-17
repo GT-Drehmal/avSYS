@@ -18,6 +18,7 @@ expose:
     metallb.universe.tf/allow-shared-ip: avsys
   loadBalancerIP: 192.0.2.10
   externalTrafficPolicy: Local
+trustedProxies: [10.0.0.5, 100.64.0.0/10]
 sshPublicHost: ssh.example.org
 router:
   domain: mc.example.org

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -204,8 +203,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	key := host + "|" + strings.ToLower(in.Username)
+	key := s.clientAddress(r) + "|" + strings.ToLower(in.Username)
 	if logins.blocked(key) {
 		return &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Message: "Too many attempts. Wait a few minutes and try again."}
 	}
@@ -274,8 +272,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) error {
 		if count, err := s.Store.CountUsers(r.Context()); err != nil {
 			return err
 		} else if count == 0 {
-			host, _, _ := net.SplitHostPort(r.RemoteAddr)
-			key := host + "|setup"
+			key := s.clientAddress(r) + "|setup"
 			if logins.blocked(key) {
 				http.Redirect(w, r, "/login?error="+url.QueryEscape("Too many attempts. Wait a few minutes and try again."), http.StatusFound)
 				return nil
