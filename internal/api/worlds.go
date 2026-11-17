@@ -49,11 +49,6 @@ import (
 // libraryHost is what a world in the library is kept under.
 func libraryHost(id string) string { return "world-" + id }
 
-// libraryRoot is the folder a world saved from a server or a snapshot was
-// in, in its archive, when the library kept archives: the folder of the one
-// uploaded is now its Root, as it is in its snapshot.
-const libraryRoot = keptWorld
-
 // keptRoot is the world's folder in a world's snapshot: in its archive, for
 // one kept as one, and under /data, for one kept as its own files. One
 // uploaded, or kept as an archive before, is at /data/world: it was
