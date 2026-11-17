@@ -104,8 +104,14 @@ jobs:
           bun install --frozen-lockfile
           # Asked of npm's registry, which now and then does not answer:
           # tried three times. An advisory fails all three.
+          # Skipped, each with why, until a fixed release exists:
+          # - GHSA-fc5q-39xc-vjpf, picomatch <= 4.0.7 (ReDoS on crafted
+          #   extglobs): no fixed release as of 2026-11-17. Only the build
+          #   tools (Vite, tinyglobby) use it, with this repository's own
+          #   patterns; it is not in what the panel serves. Remove once
+          #   Dependabot brings a picomatch past 4.0.7.
           for try in 1 2 3; do
-            bun audit --audit-level=moderate && break
+            bun audit --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf && break
             [ "$try" = 3 ] && exit 1
             sleep 15
           done
