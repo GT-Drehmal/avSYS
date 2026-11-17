@@ -1030,6 +1030,41 @@ for _ in 1 2 3 4 5; do
   case "$said" in *"No such file or directory"*) ;; *) fail "a command's error did not come through the gateway: '$said'" ;; esac
 done
 echo "ok: a command's errors come through, every time"
+# A big file both ways with rsync, as a world is copied in and out, whole and
+# in good time: the gateway once stalled partway through such a copy.
+SSH_E="ssh -i $WORK/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $SSH_PORT"
+head -c 200000000 /dev/urandom > "$WORK/big.bin"
+started=$(date +%s)
+timeout 180 rsync -a -e "$SSH_E" "$WORK/big.bin" "probe.$ORG@$ssh_host:e2e-big.bin" || fail "rsync of 200 MB into the server failed or stalled"
+timeout 180 rsync -a -e "$SSH_E" "probe.$ORG@$ssh_host:e2e-big.bin" "$WORK/big-back.bin" || fail "rsync of 200 MB out of the server failed or stalled"
+took=$(($(date +%s) - started))
+sums=$(python3 -c 'import hashlib,sys; print(len({hashlib.sha256(open(p,"rb").read()).hexdigest() for p in sys.argv[1:]}))' "$WORK/big.bin" "$WORK/big-back.bin")
+[ "$sums" = 1 ] || fail "200 MB copied in and out with rsync came back different"
+[ "$took" -le 120 ] || fail "200 MB in and out with rsync took ${took}s"
+$SSH_E -n "probe.$ORG@$ssh_host" 'rm -f e2e-big.bin' || true
+rm -f "$WORK/big.bin" "$WORK/big-back.bin"
+echo "ok: rsync copies 200 MB in and out whole, in ${took}s"
+# What someone leaves running when their ssh goes away is hung up on, as a
+# terminal's is, and not left behind in the workspace.
+$SSH_E -n "probe.$ORG@$ssh_host" 'sleep 3003' >/dev/null 2>&1 &
+held=$!
+for _ in $(seq 1 20); do
+  $SSH_E -n "probe.$ORG@$ssh_host" 'pgrep -fx "sleep 3003"' >/dev/null 2>&1 && break
+  sleep 1
+done
+kill -9 "$held" 2>/dev/null || true
+left=yes
+for _ in $(seq 1 20); do
+  if ! $SSH_E -n "probe.$ORG@$ssh_host" 'pgrep -fx "sleep 3003"' >/dev/null 2>&1; then left=; break; fi
+  sleep 1
+done
+[ -z "$left" ] || fail "a command was left running in the workspace after its ssh was killed"
+echo "ok: a command is hung up on when its ssh goes away"
+# A command that leaves something running behind it, holding its output,
+# still ends its ssh.
+said=$(timeout 60 $SSH_E -n "probe.$ORG@$ssh_host" 'sleep 3004 & echo started' 2>&1) || fail "ssh did not end when its command did: '$said'"
+expect "a command that leaves something running ends its ssh" "$said" started
+$SSH_E -n "probe.$ORG@$ssh_host" 'pkill -fx "sleep 3004"' >/dev/null 2>&1 || true
 
 fi
 

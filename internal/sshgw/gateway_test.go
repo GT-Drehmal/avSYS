@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/GT-Drehmal/avSYS/internal/kube"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -64,12 +65,17 @@ func (a allow) AuthorizeWorkspace(_ context.Context, u *store.User, org, server 
 // workspace stands in for a server's workspace sshd: it takes only the
 // gateway's key, runs "say <text>" by echoing it with the user it was told,
 // "fail" by writing to stderr and exiting 3, and offers its own host keys,
-// which must not reach the person connecting.
+// which must not reach the person connecting. It also runs the commands in
+// relay_test.go: "echo", "hold" and "orphan".
 type workspace struct {
 	key   ssh.Signer
 	mu    sync.Mutex
 	dials int
 	down  bool
+	// seen is what happened to commands, as hold and orphan tell it.
+	seen chan string
+	// conns are the gateway's connections to it, which a test may cut.
+	conns []*cuttable
 }
 
 func (w *workspace) DialPod(_ context.Context, namespace, pod string, port int) (net.Conn, error) {
@@ -141,6 +147,17 @@ func (w *workspace) DialPod(_ context.Context, namespace, pod string, port int) 
 						var cmd struct{ Command string }
 						_ = ssh.Unmarshal(req.Payload, &cmd)
 						_ = req.Reply(true, nil)
+						switch cmd.Command {
+						case "echo":
+							echo(ch, chReqs)
+							return
+						case "hold":
+							hold(ch, chReqs, w.seen)
+							return
+						case "orphan":
+							orphan(ch, chReqs, w.seen)
+							return
+						}
 						status := uint32(0)
 						if text, ok := strings.CutPrefix(cmd.Command, "say "); ok {
 							_, _ = io.WriteString(ch, text+" to "+env["AVSYS_USER"]+"\n")
@@ -157,12 +174,27 @@ func (w *workspace) DialPod(_ context.Context, namespace, pod string, port int) 
 			}()
 		}
 	}()
-	return ours, nil
+	cut := newCuttable(ours)
+	w.mu.Lock()
+	w.conns = append(w.conns, cut)
+	w.mu.Unlock()
+	return cut, nil
 }
 
 // gateway is a gateway on a port of its own, with steve, who has a key, let
-// into world.alpha only.
-func gateway(t *testing.T) (addr string, steve ssh.Signer, ws *workspace, st *store.Store) {
+// into world.alpha only. waits, if given, are the gateway's.
+func gateway(t *testing.T, waits ...timing) (addr string, steve ssh.Signer, ws *workspace, st *store.Store) {
+	t.Helper()
+	ws = &workspace{key: signer(t), seen: make(chan string, 100)}
+	steve = signer(t)
+	addr, st = gatewayTo(t, ws, ws.key, steve, waits...)
+	return addr, steve, ws, st
+}
+
+// gatewayTo is a gateway on a port of its own that reaches workspaces with
+// dialer and signs in to them with key, with steve, who has the key given,
+// let into world.alpha only.
+func gatewayTo(t *testing.T, dialer kube.PodDialer, key, steve ssh.Signer, waits ...timing) (addr string, st *store.Store) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -174,12 +206,13 @@ func gateway(t *testing.T) (addr string, steve ssh.Signer, ws *workspace, st *st
 	if err := st.CreateUser(ctx, u); err != nil {
 		t.Fatal(err)
 	}
-	steve = signer(t)
 	if err := st.AddSSHKey(ctx, &store.SSHKey{UserID: u.ID, Name: "laptop", PublicKey: string(ssh.MarshalAuthorizedKey(steve.PublicKey())), Fingerprint: ssh.FingerprintSHA256(steve.PublicKey())}); err != nil {
 		t.Fatal(err)
 	}
-	ws = &workspace{key: signer(t)}
-	g := &Gateway{Store: st, Authz: allow{"steve", "alpha", "world"}, Dialer: ws, HostKey: signer(t), WorkspaceKey: ws.key, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	g := &Gateway{Store: st, Authz: allow{"steve", "alpha", "world"}, Dialer: dialer, HostKey: signer(t), WorkspaceKey: key, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if len(waits) > 0 {
+		g.timing = &waits[0]
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +220,7 @@ func gateway(t *testing.T) (addr string, steve ssh.Signer, ws *workspace, st *st
 	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	go func() { _ = g.Serve(ctx, ln) }()
-	return ln.Addr().String(), steve, ws, st
+	return ln.Addr().String(), st
 }
 
 // connect signs in to the gateway as user with key, and returns what the
