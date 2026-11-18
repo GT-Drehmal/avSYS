@@ -311,7 +311,7 @@ export function useUpdateServer(org: string, name: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (change: SpecPatch | NewerWorldMeant | ServerChange) => {
-      const whole: ServerChange = "newerWorld" in change || "notes" in change ? (change as ServerChange) : { spec: change as SpecPatch };
+      const whole: ServerChange = "spec" in change || "notes" in change || "newerWorld" in change ? (change as ServerChange) : { spec: change as SpecPatch };
       return api.patch<Server>(`${serverPath(org, name)}${whole.newerWorld ? "?newerWorld=true" : ""}`, {
         ...(whole.spec ? { spec: whole.spec } : {}),
         ...(whole.notes !== undefined ? { notes: whole.notes } : {}),
