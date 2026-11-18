@@ -1274,9 +1274,13 @@ call -X DELETE "$FROMBIG?snapshot=false" >/dev/null
 # its own files once the panel starts again, under the same ID. That needs
 # restic in the panel, and the panel restarted.
 if [ -n "${AVSYS_E2E_PANEL_EXEC:-}" ] && [ -n "${AVSYS_E2E_PANEL_RESTART:-}" ]; then
+  # Lists are read without a lock on the repository, as the panel reads
+  # them: one held here would get in the way of the panel's forget and
+  # prune. What is written waits for the panel's lock, as the panel waits
+  # for anyone else's.
   panel_restic() {
     # shellcheck disable=SC2086 # a command and its arguments
-    $AVSYS_E2E_PANEL_EXEC /usr/local/bin/restic --repo "/backups/$ORG" --password-file "/backups/$ORG.key" --no-cache "$@"
+    $AVSYS_E2E_PANEL_EXEC /usr/local/bin/restic --repo "/backups/$ORG" --password-file "/backups/$ORG.key" --no-cache --retry-lock 1m "$@"
   }
   python3 - "$WORK/old.zip" <<'PY'
 import os, sys, zipfile
@@ -1286,7 +1290,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
 PY
   old=$(call --data-binary "@$WORK/old.zip" "$API/orgs/$ORG/worlds/upload?name=E2E%20old&root=world&file=old.zip")
   OLD=$(echo "$old" | field "d['id']") || fail "the world was not uploaded to the library: $old"
-  unpacked=$(panel_restic snapshots --json --host "world-$OLD" | field "d[0]['id']") || fail "the panel's restic could not be run"
+  unpacked=$(panel_restic snapshots --no-lock --json --host "world-$OLD" | field "d[0]['id']") || fail "the panel's restic could not be run"
   panel_restic backup --stdin --stdin-filename world.archive --host "world-$OLD" --tag avsys --tag trigger=template --tag by=e2e < "$WORK/old.zip" >/dev/null
   panel_restic forget "$unpacked" >/dev/null
   sh -c "$AVSYS_E2E_PANEL_RESTART" >/dev/null || fail "the panel did not come back"
@@ -1295,7 +1299,7 @@ PY
   expect "a world kept as an archive is kept unpacked once the panel starts, under the same ID" "$(call "$API/orgs/$ORG/worlds/$OLD" | field "(d['id'] == '$OLD', d['ready'], d['kept'], d['root'], d['size'], d.get('unpackError'))")" "(True, True, 'folders', 'world', $(((4 << 20) + 1)), None)"
   # The archive goes once the world is no longer held, as the panel prunes
   # it.
-  kept_as() { panel_restic snapshots --json --host "world-$OLD" | field "[('form=folders' in s['tags'], 'world.archive' in str(s['paths'])) for s in d]"; }
+  kept_as() { panel_restic snapshots --no-lock --json --host "world-$OLD" | field "[('form=folders' in s['tags'], 'world.archive' in str(s['paths'])) for s in d]"; }
   for _ in $(seq 1 60); do [ "$(kept_as 2>/dev/null)" = "[(True, False)]" ] && break; sleep 2; done
   expect "and its archive is gone" "$(kept_as)" "[(True, False)]"
   call -o "$WORK/old-download.zip" "$API/orgs/$ORG/worlds/$OLD/archive"
