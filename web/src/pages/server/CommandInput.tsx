@@ -103,7 +103,7 @@ export function CommandInput({ value, onChange, onHistory, tree, players, disabl
 
   /** Puts a line in place, as typed or taken back. */
   const set = (e: Edit, kind: EditKind | null, show: boolean, typed = "") => {
-    if (kind) history.current = record(history.current, selection.current, kind, Date.now(), typed);
+    if (kind) history.current = record(history.current, selection.current, kind, Date.now(), typed, e);
     own.current = e.value;
     place.current = e.cursor;
     selection.current = e;

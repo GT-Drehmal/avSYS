@@ -153,6 +153,19 @@ describe("insert", () => {
     expect(insert(text, text.length, complete(tree, text), "time")).toEqual({ value: "/execute run time ", cursor: 18 });
   });
 
+  test("a position put in the middle takes the place of the one there, and keeps what is after it", () => {
+    const text = "setblock ~ ~ ~ stone";
+    const c = complete(tree, text, 10);
+    expect(c.suggestions).toContain("~ ~ ~");
+    expect(insert(text, 10, c, "~ ~ ~")).toEqual({ value: "setblock ~ ~ ~ stone", cursor: 15 });
+    // Only coordinates are taken: what is not one stays.
+    expect(insert("setblock ~ stone", 10, complete(tree, "setblock ~ stone", 10), "~ ~ ~")).toEqual({ value: "setblock ~ ~ ~ stone", cursor: 15 });
+    expect(insert("setblock 1 -2.5 ^3 stone", 10, complete(tree, "setblock 1 -2.5 ^3 stone", 10), "~ ~ ~")).toEqual({
+      value: "setblock ~ ~ ~ stone",
+      cursor: 15,
+    });
+  });
+
   test("replaces the rest of the word at the cursor, and keeps what is after it", () => {
     const text = "time sxx day";
     const c = complete(tree, text, 6);
@@ -199,6 +212,20 @@ describe("undo", () => {
     u = record(u, at("a "), "type", 20, "b");
     u = record(u, at("a b"), "type", 5000, "c");
     expect(u.past.map((e) => e.value)).toEqual(["", "a ", "a b"]);
+  });
+
+  test("moving the cursor ends a step of typing", () => {
+    const edit = (value: string, cursor = value.length) => ({ value, cursor });
+    let u = emptyUndo;
+    u = record(u, edit("say hell"), "type", 0, "o", edit("say hello"));
+    // Home, then x, at once.
+    u = record(u, edit("say hello", 0), "type", 100, "x", edit("xsay hello", 1));
+    expect(undo(u, edit("xsay hello", 1))[1]).toEqual(edit("say hello", 0));
+    // Typing on where the last left off is the same step.
+    let v = emptyUndo;
+    v = record(v, edit("sa"), "type", 0, "y", edit("say"));
+    v = record(v, edit("say"), "type", 100, "s", edit("says"));
+    expect(v.past).toEqual([edit("sa")]);
   });
 
   test("redo does again what was undone, and a change forgets it", () => {

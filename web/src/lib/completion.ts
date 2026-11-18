@@ -355,7 +355,14 @@ export function ghostOf(c: Completion, suggestion: string | undefined): string {
 
 /** The text and cursor once a suggestion is put in place of the word being typed, with a space after it. */
 export function insert(text: string, cursor: number, c: Completion, suggestion: string): { value: string; cursor: number } {
-  const rest = text.slice(cursor).replace(/^\S*/, "");
+  let rest = text.slice(cursor).replace(/^\S*/, "");
+  // A position or rotation of several words takes the place of the rest of
+  // the one there, as far as those words are coordinates.
+  for (let more = suggestion.split(" ").length - 1; more > 0; more--) {
+    const next = /^ ([~^][-\d.]*|-?\d[\d.]*|-?\.\d+)(?= |$)/.exec(rest);
+    if (!next) break;
+    rest = rest.slice(next[0].length);
+  }
   const head = text.slice(0, c.start) + suggestion;
   return { value: head + (rest.startsWith(" ") ? rest : ` ${rest}`), cursor: head.length + 1 };
 }
@@ -375,6 +382,8 @@ export interface Undo {
   future: Edit[];
   last: EditKind | null;
   at: number;
+  /** The line as the last change left it, where it was told. */
+  end?: Edit;
 }
 
 export const emptyUndo: Undo = { past: [], future: [], last: null, at: 0 };
@@ -383,17 +392,20 @@ export const emptyUndo: Undo = { past: [], future: [], last: null, at: 0 };
 const pause = 1000;
 
 /**
- * The undo history once a change is made: before is the line as it was.
- * Typing runs on into the same step up to a space, a pause, or a change of
- * another kind; a completion is always a step of its own.
+ * The undo history once a change is made: before is the line as it was,
+ * after as the change leaves it. Typing runs on into the same step up to a
+ * space, a pause, a move of the cursor, or a change of another kind; a
+ * completion is always a step of its own.
  */
-export function record(u: Undo, before: Edit, kind: EditKind, now: number, typed = ""): Undo {
-  const joins = kind !== "complete" && kind !== "other" && u.last === kind && now - u.at < pause;
+export function record(u: Undo, before: Edit, kind: EditKind, now: number, typed = "", after?: Edit): Undo {
+  const moved = !!u.end && (u.end.value !== before.value || u.end.cursor !== before.cursor);
+  const joins = kind !== "complete" && kind !== "other" && u.last === kind && now - u.at < pause && !moved;
   return {
     past: joins ? u.past : [...u.past, before].slice(-100),
     future: [],
     last: typed.endsWith(" ") ? null : kind,
     at: now,
+    end: after,
   };
 }
 

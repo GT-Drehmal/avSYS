@@ -75,6 +75,14 @@ test("undo takes a completion out, and keeps what was typed", async ({ page }) =
   await expect(box).toHaveValue("weather ");
   await box.press("ControlOrMeta+z");
   await expect(box).toHaveValue("wea");
+  // Typing somewhere else in the line at once is a step of its own.
+  await box.fill("");
+  await box.pressSequentially("say hello");
+  await box.press("Home");
+  await box.pressSequentially("x");
+  await expect(box).toHaveValue("xsay hello");
+  await box.press("ControlOrMeta+z");
+  await expect(box).toHaveValue("say hello");
 });
 
 test("a click puts a suggestion in, and the line keeps the focus", async ({ page }) => {
