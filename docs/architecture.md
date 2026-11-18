@@ -21,9 +21,13 @@ The panel also keeps, on its own volumes:
 - a SQLite database (`internal/store`) for people: accounts, sessions,
   organizations and roles, invites, API tokens, SSH keys, linked Minecraft
   accounts, saved player lists, templates and the world library's records,
-  and the panel's settings, including its two SSH keys;
+  notes on servers, names and colours of snapshots (by snapshot ID), and
+  the panel's settings, including its two SSH keys. Notes and names are
+  the panel's alone: never in a `MinecraftServer`, its files or the game;
 - one [restic](https://restic.net) repository per organization
-  (`internal/backup`) for snapshots.
+  (`internal/backup`) for snapshots;
+- the game's command tree of each game version its servers run, in
+  `commands/`, for the console to complete commands from.
 
 Servers themselves live in Kubernetes. An organization `friends` gets the
 namespace `mc-friends`, and each of its servers is a `MinecraftServer`
@@ -134,6 +138,70 @@ The pod has two containers and no init containers:
 
 Both share `/data` and a small in-memory volume holding the console's
 input pipe, which is how a command typed "as the server" reaches the game.
+
+### The console's commands
+
+The console completes commands from the game's own command tree: every
+command, subcommand and argument, as the game's parser has them. The game
+writes it out as `reports/commands.json` when its data generator is run
+with `--reports`, so the panel does that once for each game version, the
+first time someone at a console of that version asks:
+
+1. It looks up the version's server jar and its Java in Mojang's list.
+   Versions before 1.13 have no command tree, and get none.
+2. It makes a pod `avsys-commands-<random>` in the server's namespace,
+   owned by the server and preferring its node: the server image of that
+   Java, which downloads the jar, checks its SHA-1, runs the generator
+   (`-DbundlerMainClass=net.minecraft.data.Main` from 1.18 on, the jar's
+   own `net.minecraft.data.Main` before) and prints the tree, gzipped. It
+   asks for 512 MiB, may use 1 GiB, and takes 5 to 20 seconds.
+3. The panel reads the tree from the pod's log, checks it, removes the
+   pod, and keeps the tree, compacted and gzipped (10 to 25 KB), in
+   `commands/<version>.json.gz` on its volume. Browsers are sent it as it
+   is kept, and keep it by its ETag.
+
+One version is made at a time. One that could not be made is tried again
+ten minutes later; meanwhile, and for versions without a tree, the console
+works as before, with nothing to complete.
+
+Commands that mods and plugins add are not in that tree. The game sends
+its whole tree only to players, as a packet when they join; what it tells
+anyone else is its `help`, one line per command in Brigadier's short form
+of usage:
+
+```
+/bingo [card|difficulty|reroll|lobby|goal|mode|options|timelimit|start]
+/bingostats [<player>|reset]
+/xp -> experience
+```
+
+`[a|b]` are subcommands the command runs without, `(a|b)` one it needs,
+`<name>` an argument, `-> name` another name for a command, and `...` a
+command starting again. So when a console asks for a running server's
+commands, the panel reads its help over RCON (`internal/api/modcommands.go`):
+
+1. `help`, or on Paper and its kind, where `help` is Bukkit's pages of
+   topics, `minecraft:help`. Over RCON the lines come with nothing between
+   them, so they are split at each `/` outside brackets.
+2. It keeps the commands the version's tree does not have, leaving out a
+   namespaced name (`luckperms:lp`) of one there is without.
+3. For each subcommand named only among others (`card` in `bingo
+   [card|…]`), it asks for the help of the command it is under
+   (`help bingo`, then `help bingo card`, …), which says what comes after
+   each of them, as far down as words go: an argument cannot be asked
+   about. At most 256 asks, 6 words deep, and 20 seconds.
+4. What it read is added to the version's tree after the game's own
+   commands, as nodes of the same kinds; an argument of no known kind has
+   no `parser`, and the console offers it by its name only. A command the
+   game has stays as the game has it.
+
+Where `minecraft:help` says nothing, the command names on Bukkit's pages
+are taken, as commands with nothing known after them. Only `help` and
+`minecraft:help` are ever run. What was read is kept in memory for that
+run of the game (its container), and read again once it is started again.
+A server that is not running has the game's commands only; one whose help
+could not be read too, and it is asked again a minute later. Requests wait
+up to 4 seconds for the help, then are answered `202` to ask again.
 
 ## The life of a server
 
@@ -321,7 +389,12 @@ A snapshot is taken **inside the server's workspace**, which has the files:
 Through that channel a server can add to its organization's repository and
 read from it, but not delete or overwrite anything. Only the panel removes
 snapshots, with `restic forget` and `prune`, as retention or a person
-says.
+says. Retention asks restic what the policy would remove (`--dry-run`),
+leaves out snapshots that have a name in the panel (read while it holds
+the repository, which naming a snapshot holds too), and forgets the rest
+by ID. A snapshot's name goes when it does; any left for a snapshot the
+repository no longer lists are dropped the next time the organization's
+snapshots are listed.
 
 **Restore** takes a snapshot first, stops the server, restores the files
 with `restic restore --delete` inside the workspace, and puts the

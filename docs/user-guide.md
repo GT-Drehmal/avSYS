@@ -94,7 +94,7 @@ organization**).
 | --- | --- |
 | Viewer | See servers, their status, console and snapshots |
 | Operator | Also start, stop and restart servers, run commands, use files, the terminal and SSH, take snapshots, and save worlds to the library |
-| Admin | Also make, change, copy and delete servers; restore and delete snapshots; make servers from them; set the backup schedule; manage templates and player lists; invite people and change their roles |
+| Admin | Also make, change, copy and delete servers; restore, name and delete snapshots; make servers from them; set the backup schedule; manage templates and player lists; invite people and change their roles |
 | Owner | Also make and change other owners, change the organization's name and picture, and delete it |
 
 The panel's administrator acts as an owner in every organization they are
@@ -108,8 +108,9 @@ names they play as.
 
 - **Invite**: choose a role (up to your own), how long the link works and
   how many times, then **Create link** and send it.
-- **Change a role** from the list. Only an owner can make someone an owner
-  or change an owner. An organization always keeps at least one owner.
+- **Change a role** from the list; each role in it says in a few words what
+  it can do. Only an owner can make someone an owner or change an owner.
+  An organization always keeps at least one owner.
 - **Remove** someone with the trash button; on your own row it is
   **Leave**. Their account is kept.
 - The panel's administrator sees a key button on each row, to make a
@@ -181,7 +182,7 @@ build**, newest unless you choose.
 
 - **Name and picture.** The display name, the short name (used in
   addresses and SSH; it cannot be changed later), a picture for the server
-  list, and the message of the day.
+  list, the message of the day, and [notes](#notes).
 - **Content.** Mods, plugins, datapacks and resource packs to start with.
   See [Content](#content-mods-plugins-datapacks-resource-packs).
 - **World.** See [The World choice](#the-world-choice).
@@ -243,9 +244,10 @@ world** while it is stopped. A snapshot is taken first.
   Event*, and when it was put in. A copy, a server made from a snapshot or
   a template, and a restore keep where the world first came from. Servers
   made before the panel kept this show none.
-- What the world says of itself, read from its files: its name, seed, the
-  game version it was last opened in, when it was last played, and its
-  size. Nothing while its files cannot be reached.
+- What the world says of itself, read from its files: its name (in the
+  colours and styles the game gives it), seed, the game version it was
+  last opened in, when it was last played, and its size. Nothing while
+  its files cannot be reached.
 
 Its buttons:
 
@@ -274,7 +276,7 @@ Replacing, putting back and deleting the world need the server stopped.
 
 At the top: the server's picture, name and status, who else has the page
 open, and what was done to it last (press it for the **Activity** list).
-The buttons:
+Its [notes](#notes) are under them. The buttons:
 
 - **Connect**: the address to add in Minecraft (**Multiplayer → Add
   Server**), the Bedrock address if it has Geyser, and the SSH command.
@@ -298,10 +300,11 @@ The tabs:
 | Settings | Admins | Everything else |
 
 Most settings apply at the next restart. **Settings** has: **General**
-(picture, name, message of the day), **Software** (type, version, loader
+(picture, name, message of the day, notes), **Software** (type, version, loader
 build), **Gameplay**, **Players**, **Resources**, **Node**, **Network**,
 **Sleep**, **Advanced** (the image's environment and image), **World**, and
-**Delete server**.
+**Delete server**. **Other properties** (under **Gameplay**) and
+**Environment** (under **Advanced**) link to the docs for what they take.
 
 **Changing the game version.** Under **Settings → Software**. Going to an
 older version asks first, since a world opened in a newer game may not
@@ -317,6 +320,23 @@ deletes them.
 list. Upload any picture and it is cropped square; players see a new one
 after the next restart. Organizations and people have pictures too. Phone
 photos come out the right way up.
+
+### Notes
+
+Servers, templates and library worlds each have **Notes**: a few lines,
+up to 500 characters, to say what each is for. They are seen only in the
+panel, never in game, and nothing about the server changes with them.
+
+- A server's notes are under its name on its page, and on the server list,
+  whose search finds them. Admins write them on the form a server is made
+  with and change them in **Settings → General**.
+- A template's and a world's are on their rows, written and changed on
+  their forms.
+- A copy of a server, a server made from a snapshot or a template, and a
+  template made from a server start with the original's notes. Change them
+  on the form before you make it.
+- A deleted server keeps its notes while it has snapshots: bringing it back
+  brings them back.
 
 ## Content: mods, plugins, datapacks, resource packs
 
@@ -377,8 +397,9 @@ operators in game, unless you choose otherwise.
 Both keep up by themselves: when the server starts, and within seconds of
 someone linking an account, joining, leaving, or changing role.
 
-- **Members** lists every member: whitelisted or operator by role, picked
-  by you, or left out. Untick a member to keep them off.
+- **Members** lists every member: whitelisted or operator **by role**
+  (following their role), **picked** by you, or **left out**. Untick a
+  member to keep them off. Point at a tick to see what it means.
 - **Whitelisted players** and **Operators**: players who are not members,
   one name or UUID per line. These stay.
 - **Saved lists**: tick lists from the **Players** page to use them on this
@@ -414,8 +435,18 @@ players cannot join.
 
 ## Console, files and terminal
 
-**Console.** The live log of the server. Operators type commands in the
+**Console.** The live log of the server, with the game's colour codes
+(`§6`, `§l` and the rest) shown as colours. Operators type commands in the
 box at the bottom (no `/` needed); up and down bring back earlier ones.
+As you type, the commands and subcommands that fit are listed above the
+box, with the argument that comes next: up and down pick one, **Tab** or a
+click puts it in, and Ctrl/Cmd-Z takes it out again. The list has the
+game's own commands for the server's version, ready a minute or so after a
+version's first start, and those of its mods and plugins, from the
+server's own help while it runs: their names and options, with each
+argument by its name only, not what it takes.
+
+![Completing a command at the console](images/console-completion.png)
 The **Log** menu opens earlier runs and crash reports, with search,
 **First error**, and **Download**.
 
@@ -500,7 +531,9 @@ such as a voice chat client connecting or someone opening the map.
 
 A **snapshot** is a server's files and settings at one moment. Taking one
 does not stop the server. Snapshots of an organization's servers share
-storage, so each costs only what changed.
+storage, so each costs only what changed. **+1.2 GB new when taken**
+beside a snapshot is what it added then; later snapshots and library
+worlds can share those files, so deleting it may free less.
 
 ![The Backups page: the daily schedule and each server's snapshots](images/backups.png)
 
@@ -516,8 +549,16 @@ A server can have its own schedule, on its **Backups** tab: off, or its
 own time and how many to keep.
 
 **What is never removed for you.** Snapshots taken by hand, the ones taken
-before a restore or a delete, and every snapshot of a deleted server stay
-until someone deletes them.
+before a restore or a delete, named ones, and every snapshot of a deleted
+server stay until someone deletes them.
+
+**Names and colours.** An admin can name a snapshot, such as *Before the
+1.22 update*, and mark it with a colour: the tag button on its row, or
+**Name** in its details. The name is shown first, on the **Backups** pages
+and wherever a snapshot is picked, and search finds it; the **Backups**
+page can also show only named ones. A named snapshot is kept until someone
+deletes it, even a scheduled one; a colour alone does not keep it. To take
+a name away, clear it and choose **None**.
 
 **Restore.** On a server's **Backups** tab, an admin's **Restore** on a snapshot puts
 the server back to it: its world, settings, game version and mods. The
@@ -553,6 +594,7 @@ minigame, a modded setup. The **Templates** page.
 - A template can give its servers a world of its own, from the library or
   uploaded, or a new world each time.
 - **New server** on a template opens the form filled in from it.
+- A template has [notes](#notes), written and changed on its form.
 
 ## The world library
 
@@ -563,6 +605,8 @@ The **Worlds** page keeps maps to start servers from.
   server's **Backups** tab does the same. The nether and the end come
   along, and so does the server's resource pack.
 - A world can carry a resource pack, with **Required** and **Prompt**.
+- A world has [notes](#notes), written as it is added and changed with
+  **Edit**.
 - **New server** on a world opens the form with it chosen. **Download**
   gives it back as a single-player save.
 

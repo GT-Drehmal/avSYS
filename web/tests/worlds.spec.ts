@@ -88,6 +88,8 @@ test("a world is uploaded to the library, named as its file is, with its own pic
     buffer: zip({ "Island Save/level.dat": levelDat("1.21.4", "§6§lIsland§r Save"), "Island Save/region/r.0.0.mca": "land", "Island Save/icon.png": icon }),
   });
   await expect(dialog.getByTestId("world-summary")).toContainText('World "Island Save" · last opened in 1.21.4');
+  await expect(dialog.getByTestId("world-summary").locator("span[style]")).toHaveText("Island");
+  await expect(dialog.getByTestId("world-summary").locator("span[style]")).toHaveCSS("font-weight", "700");
   await expect(dialog.getByLabel("Name")).toHaveValue("Island Adventure");
   // A name typed in is kept when another file is chosen.
   await dialog.getByLabel("Name").fill("Island");
@@ -98,7 +100,7 @@ test("a world is uploaded to the library, named as its file is, with its own pic
   });
   await expect(dialog.getByTestId("world-summary")).toContainText('World "Island"');
   await expect(dialog.getByLabel("Name")).toHaveValue("Island");
-  await dialog.getByLabel("Description").fill("Where we started");
+  await dialog.getByLabel("Notes").fill("Where we started");
   await dialog.getByRole("button", { name: "Add world" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("listitem", { name: "Island" })).toBeVisible();
@@ -242,7 +244,7 @@ test("a world is renamed, and deleted by an admin", async ({ page, as }) => {
   await page.getByRole("menuitem", { name: "Edit" }).click();
   const dialog = page.getByRole("dialog", { name: "Edit Island" });
   await dialog.getByLabel("Name").fill("Atoll");
-  await dialog.getByLabel("Description").fill("Smaller now");
+  await dialog.getByLabel("Notes").fill("Smaller now");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toHaveCount(0);
   expect(calls[0]).toMatchObject({ method: "PATCH", path: "/worlds/w1", body: { name: "Atoll", description: "Smaller now" } });

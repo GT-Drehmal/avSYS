@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CloudCheck, CopyPlus, Globe, History, LayoutTemplate, Trash2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { CloudCheck, CopyPlus, Globe, History, LayoutTemplate, Tag, Trash2 } from "lucide-react";
+import { useId, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { newFrom } from "../lib/origin";
-import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, type Snapshot, type SnapshotDetail } from "../lib/api";
+import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, type Snapshot, type SnapshotColor, type SnapshotDetail } from "../lib/api";
+import { accents } from "../lib/look";
 import { ago, bytes, softwareWords } from "../lib/format";
 import { keys, useAction, useOffsite, usePlayerLists, useServers } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
@@ -13,8 +14,69 @@ import { toast } from "../lib/toast";
 import { Picture } from "./Picture";
 import { SaveTemplate } from "./SaveTemplate";
 import { SaveWorld } from "./SaveWorld";
-import { Button, Chip, Confirm, CopyText, Loading, Modal, Notice, RowCheckbox, SelectAllRow, SelectionBar } from "./ui";
+import { Button, Chip, Confirm, CopyText, Field, Input, Loading, Modal, Notice, RowCheckbox, SelectAllRow, SelectionBar } from "./ui";
 import { sourceNames } from "../lib/catalog";
+import { Choice, Swatch } from "./Look";
+
+/** What a snapshot's colour is called: as the accent it is. */
+export const colorName = (color?: SnapshotColor) => accents.find((a) => a.id === color)?.name;
+
+/** A dot of a snapshot's colour, in the page's theme. */
+export function SnapshotColorDot({ color }: { color: SnapshotColor }) {
+  return (
+    <span role="img" aria-label={colorName(color)} title={colorName(color)} className="inline-flex shrink-0">
+      <Swatch accent={color} className="size-2.5" />
+    </span>
+  );
+}
+
+/**
+ * Names a snapshot and gives it a colour, or changes or takes them away. A
+ * named one is kept until someone deletes it.
+ */
+export function NameSnapshot({ org, snapshot, onClose }: { org: string; snapshot: Snapshot; onClose: () => void }) {
+  const [name, setName] = useState(snapshot.name ?? "");
+  const [color, setColor] = useState<SnapshotColor | "">(snapshot.color ?? "");
+  const colorLabel = useId();
+  const save = useAction(() => api.patch<Snapshot>(`/orgs/${org}/snapshots/${snapshot.id}`, { name: name.trim(), color }), [keys.snapshots(org), ["snapshot", org, snapshot.id]]);
+  return (
+    <Modal open onOpenChange={(open) => !open && onClose()} title="Name this snapshot" description={`${snapshot.server}, ${new Date(snapshot.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}>
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save.mutate(undefined, { onSuccess: onClose });
+        }}
+      >
+        <Field label="Name" hint="A named snapshot is kept until you delete it.">
+          {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder="Before the update" />}
+        </Field>
+        <div className="flex flex-col gap-1.5">
+          <span id={colorLabel} className="text-[13px] font-medium">
+            Colour
+          </span>
+          <div role="radiogroup" aria-labelledby={colorLabel} className="flex flex-wrap gap-2">
+            <Choice checked={color === ""} onPick={() => setColor("")}>
+              None
+            </Choice>
+            {accents.map((a) => (
+              <Choice key={a.id} checked={color === a.id} onPick={() => setColor(a.id)}>
+                <Swatch accent={a.id} />
+                {a.name}
+              </Choice>
+            ))}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={save.isPending}>
+            Save
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
 export const triggerLabel = (s: Snapshot) => {
   if (s.trigger === "scheduled") return "Scheduled";
@@ -100,6 +162,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
   const [looking, setLooking] = useState<Snapshot | null>(null);
   const [templating, setTemplating] = useState<Snapshot | null>(null);
   const [saving, setSaving] = useState<Snapshot | null>(null);
+  const [naming, setNaming] = useState<Snapshot | null>(null);
   const servers = useServers(org);
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
   return (
@@ -122,9 +185,21 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-medium" title={new Date(s.time).toLocaleString()}>
                 {/* The way into what the snapshot holds. */}
-                <button type="button" onClick={() => setLooking(s)} className="rounded-sm text-left hover:text-accent" aria-label={`About the snapshot of ${s.server} from ${ago(s.time)}`}>
-                  {ago(s.time)}
-                  <span className="ml-2 font-normal text-muted">{new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</span>
+                <button type="button" onClick={() => setLooking(s)} className="inline-flex max-w-full items-center gap-2 rounded-sm text-left hover:text-accent" aria-label={`About the snapshot of ${s.server} from ${ago(s.time)}${s.name ? `, ${s.name}` : ""}`}>
+                  {s.color && <SnapshotColorDot color={s.color} />}
+                  {/* A named one by its name first, which is what it is found by. */}
+                  {s.name ? (
+                    <>
+                      <span className="min-w-0 truncate">{s.name}</span>
+                      {/* The date is on hover, as the row's title. */}
+                      <span className="shrink-0 font-normal text-muted">{ago(s.time)}</span>
+                    </>
+                  ) : (
+                    <>
+                      {ago(s.time)}
+                      <span className="truncate font-normal text-muted">{new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</span>
+                    </>
+                  )}
                 </button>
               </p>
               <p className="flex items-center gap-1.5 truncate text-xs text-faint">
@@ -141,8 +216,8 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
             </div>
             <div className="text-right max-sm:hidden">
               <p className="font-mono text-[13px] tabular-nums">{bytes(s.size)}</p>
-              <p className="text-xs text-faint" title="What this snapshot added to storage when it was taken">
-                +{bytes(s.added)} stored
+              <p className="text-xs text-faint" title="What this snapshot added to storage when it was taken. Later snapshots and worlds may share it.">
+                +{bytes(s.added)} new when taken
               </p>
             </div>
             {(s.trigger === "pre-restore" || s.trigger === "pre-replace") && <Chip className="max-md:hidden">undo point</Chip>}
@@ -162,6 +237,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
                 <span className="max-lg:hidden">New server</span>
               </Button>
             )}
+            {canAdmin && <Button size="sm" variant="ghost" icon={<Tag className="size-3.5" />} title="Name" aria-label={`Name the snapshot of ${s.server} from ${ago(s.time)}`} onClick={() => setNaming(s)} />}
             {canAdmin && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} aria-label={`Delete the snapshot of ${s.server} from ${ago(s.time)}`} onClick={() => setDeleting(s)} />}
           </li>
         ))}
@@ -207,6 +283,15 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
                   >
                     Save as template
                   </Button>
+                  <Button
+                    icon={<Tag className="size-3.5" />}
+                    onClick={() => {
+                      setLooking(null);
+                      setNaming(looking);
+                    }}
+                  >
+                    Name
+                  </Button>
                 </>
               )}
               {/* Its world, kept to start servers with, is operators' to save too. */}
@@ -238,12 +323,13 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
         }
       />
       {saving && <SaveWorld key={saving.id} org={org} snapshot={saving} onClose={() => setSaving(null)} />}
+      {naming && <NameSnapshot key={naming.id} org={org} snapshot={naming} onClose={() => setNaming(null)} />}
       {templating && <SaveTemplate key={templating.id} org={org} open onOpenChange={(o) => !o && setTemplating(null)} snapshot={templating} servers={servers.data} />}
       <Confirm
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
         title="Delete this snapshot?"
-        description={deleting ? `The snapshot of ${deleting.server} from ${new Date(deleting.time).toLocaleString()} is removed for good.` : ""}
+        description={deleting ? `The snapshot of ${deleting.server} from ${new Date(deleting.time).toLocaleString()}${deleting.name ? `, “${deleting.name}”,` : ""} is removed for good.` : ""}
         action="Delete snapshot"
         loading={remove.isPending}
         onConfirm={() => deleting && remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}
@@ -259,7 +345,8 @@ const listed = (words: string[]) => (words.length < 2 ? words.join("") : `${word
 
 /** How long a snapshot will be here, in a sentence. */
 function keptFor(detail: SnapshotDetail) {
-  const { scheduled, kept = [], paused } = detail.retention;
+  const { scheduled, kept = [], paused, named } = detail.retention;
+  if (named) return "Until you delete it, as it is named.";
   if (!scheduled) {
     return "Until you delete it.";
   }
@@ -316,11 +403,19 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
       {s && (
         <div className="flex flex-col gap-5">
           <dl className="divide-y divide-line">
+            {(s.name || s.color) && (
+              <Fact label="Name">
+                <span className="flex min-w-0 items-center gap-2">
+                  {s.color && <SnapshotColorDot color={s.color} />}
+                  <span className="truncate">{s.name || <span className="text-muted">No name</span>}</span>
+                </span>
+              </Fact>
+            )}
             <Fact label="Taken">{new Date(s.time).toLocaleString(undefined, { dateStyle: "full", timeStyle: "medium" })}</Fact>
             <Fact label="Why">{s.trigger === "manual" ? (s.by ? `Taken manually, by ${s.by}` : "Taken manually") : triggerLabel(s)}</Fact>
             <Fact label="Size">
               {bytes(s.size)} in {s.files.toLocaleString()} file{s.files === 1 ? "" : "s"}.{" "}
-              <span className="text-muted">This snapshot added {bytes(s.added)} to storage.</span>
+              <span className="text-muted">It added {bytes(s.added)} to storage when it was taken.</span>
             </Fact>
             {detail.data && <Fact label="Kept">{keptFor(detail.data)}</Fact>}
             {offsite.data?.configured && <Fact label="Offsite">{copied ? "In the offsite copy." : "Not in the offsite copy yet."}</Fact>}
@@ -459,7 +554,7 @@ export function RestoreDialog({ server, snapshot, onClose }: { server: Server; s
       open={!!snapshot}
       onOpenChange={(open) => !open && onClose()}
       title={`Restore ${server.name}?`}
-      description={snapshot ? `Back to how the server was ${ago(snapshot.time)}, on ${new Date(snapshot.time).toLocaleString()}.` : ""}
+      description={snapshot ? `Back to ${snapshot.name ? `“${snapshot.name}”, ` : ""}how the server was ${ago(snapshot.time)}, on ${new Date(snapshot.time).toLocaleString()}.` : ""}
     >
       <div className="flex flex-col gap-4">
         <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-relaxed text-muted">

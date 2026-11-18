@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
-import { Check, ChevronRight, Copy, LoaderCircle, Search, X } from "lucide-react";
+import { Check, ChevronRight, Copy, ExternalLink, LoaderCircle, Search, X } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -15,6 +15,7 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import type { Phase } from "../lib/api";
 import type { Selection } from "../lib/selection";
 import { dismiss, toast, useToasts } from "../lib/toast";
@@ -111,6 +112,8 @@ const chevron = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/sv
 interface FieldProps {
   label: string;
   hint?: ReactNode;
+  /** A page elsewhere that tells more, linked at the end of the label's line. */
+  docs?: { href: string; about: string };
   children: (id: string) => ReactNode;
   className?: string;
   /** What is said when it is left empty, where "Fill this in." is not enough. */
@@ -118,14 +121,24 @@ interface FieldProps {
 }
 
 /** A labelled form control. The child receives the id to put on its input. */
-export function Field({ label, hint, children, className, missing }: FieldProps) {
+export function Field({ label, hint, docs, children, className, missing }: FieldProps) {
   const id = useId();
   const { ref, problem } = useProblem(missing);
+  const name = (
+    <label htmlFor={id} className="text-[13px] font-medium text-fg">
+      {label}
+    </label>
+  );
   return (
     <div ref={ref} className={cx("flex flex-col gap-1.5", className)}>
-      <label htmlFor={id} className="text-[13px] font-medium text-fg">
-        {label}
-      </label>
+      {docs ? (
+        <div className="flex items-baseline justify-between gap-3">
+          {name}
+          <DocsLink {...docs} />
+        </div>
+      ) : (
+        name
+      )}
       {children(id)}
       {problem && <p className="text-xs text-danger">{problem}</p>}
       {hint && <p className="text-xs leading-relaxed text-muted empty:hidden">{hint}</p>}
@@ -264,6 +277,151 @@ export function Toggle({ checked, onChange, label, hint, disabled }: ToggleProps
   );
 }
 
+/**
+ * A page elsewhere that tells more about a setting, opened in a tab of its
+ * own. about says what it is about to a screen reader: "Docs" alone does not.
+ */
+export function DocsLink({ href, about }: { href: string; about: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`Docs: ${about}`}
+      className="inline-flex w-fit shrink-0 items-center gap-1 text-xs font-normal text-accent hover:underline"
+    >
+      Docs
+      <ExternalLink className="size-3" />
+    </a>
+  );
+}
+
+/** What a Tip gives the control it is about. */
+export interface TipTarget {
+  "aria-describedby": string;
+}
+
+/**
+ * A few words about a control that has none beside it, shown while it is
+ * pointed at, focused from the keyboard, or tapped. children is given what
+ * ties the words to the control, to put on the one that takes the focus.
+ * With tapShows, a tap only shows the words, and does not also do what a
+ * click on it would, such as following the link it is in. With inLink, it
+ * is about part of a link, which takes the focus for it: the words show
+ * while the keyboard is on that link.
+ */
+export function Tip({
+  text,
+  tapShows,
+  inLink,
+  className,
+  children,
+}: {
+  text: string;
+  tapShows?: boolean;
+  inLink?: boolean;
+  className?: string;
+  children: (target: TipTarget) => ReactNode;
+}) {
+  const id = useId();
+  const box = useRef<HTMLSpanElement>(null);
+  const bubble = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  const hovering = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const tapped = useRef(false);
+
+  useEffect(() => {
+    const link = inLink ? box.current?.closest("a") : null;
+    if (!link) return;
+    const focused = () => link.matches(":focus-visible") && setOpen(true);
+    const blurred = () => setOpen(false);
+    link.addEventListener("focus", focused);
+    link.addEventListener("blur", blurred);
+    return () => {
+      link.removeEventListener("focus", focused);
+      link.removeEventListener("blur", blurred);
+    };
+  }, [inLink]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setAt(null);
+      return;
+    }
+    // Above the control, or below it where there is no room above; never off the side of the window.
+    const place = () => {
+      const r = box.current?.getBoundingClientRect();
+      const b = bubble.current?.getBoundingClientRect();
+      if (!r || !b) return;
+      const above = r.top - b.height - 6;
+      const left = Math.min(Math.max(8, r.left + r.width / 2 - b.width / 2), window.innerWidth - b.width - 8);
+      setAt({ left, top: above >= 4 ? above : r.bottom + 6 });
+    };
+    place();
+    const away = (e: PointerEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const escape = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  useEffect(() => () => clearTimeout(hovering.current), []);
+
+  const pointer = (e: { pointerType: string }) => e.pointerType === "mouse" || e.pointerType === "pen";
+  return (
+    <span
+      ref={box}
+      className={cx("inline-flex", className)}
+      onPointerEnter={(e) => {
+        if (!pointer(e)) return;
+        clearTimeout(hovering.current);
+        hovering.current = setTimeout(() => setOpen(true), 250);
+      }}
+      onPointerLeave={(e) => {
+        if (!pointer(e)) return;
+        clearTimeout(hovering.current);
+        setOpen(false);
+      }}
+      onPointerDown={(e) => {
+        tapped.current = e.pointerType === "touch";
+        if (tapped.current) setOpen((o) => !o);
+      }}
+      onClickCapture={(e) => {
+        if (!tapShows || !tapped.current) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      // Focus the keyboard moved. A click focuses too, and the pointer is already showing it.
+      onFocus={(e) => e.target.matches(":focus-visible") && setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      {children({ "aria-describedby": id })}
+      {createPortal(
+        <span
+          ref={bubble}
+          id={id}
+          role="tooltip"
+          hidden={!open}
+          style={at ? { left: at.left, top: at.top } : { left: 0, top: 0, visibility: "hidden" }}
+          className="pointer-events-none fixed z-[70] w-max max-w-60 rounded-md border border-line-strong bg-surface px-2 py-1 text-xs leading-snug font-normal text-fg shadow-lg shadow-shade/50"
+        >
+          {text}
+        </span>,
+        document.body,
+      )}
+    </span>
+  );
+}
+
 const phaseStyle: Record<Phase, { label: string; dot: string; text: string; pulse?: boolean }> = {
   Running: { label: "Online", dot: "bg-accent shadow-[0_0_8px] shadow-accent/60", text: "text-accent" },
   Starting: { label: "Starting", dot: "bg-warn", text: "text-warn", pulse: true },
@@ -276,6 +434,23 @@ const phaseStyle: Record<Phase, { label: string; dot: string; text: string; puls
 export function StatusDot({ phase }: { phase?: Phase }) {
   const s = phaseStyle[phase ?? "Stopped"];
   return <span className={cx("inline-block size-2 shrink-0 rounded-full", s.dot, s.pulse && "animate-pulse-soft")} />;
+}
+
+/**
+ * A server's status dot at the start of the link to it, which says what it
+ * means when pointed at or tapped, and while the keyboard is on the link. A
+ * screen reader is not told: the link says the status in words.
+ */
+export function LinkStatusDot({ phase }: { phase?: Phase }) {
+  return (
+    <Tip text={phaseStyle[phase ?? "Stopped"].label} tapShows inLink className="-m-1.5 shrink-0">
+      {() => (
+        <span aria-hidden data-status-dot className="flex p-1.5">
+          <StatusDot phase={phase} />
+        </span>
+      )}
+    </Tip>
+  );
 }
 
 export function Status({ phase }: { phase?: Phase }) {
@@ -523,6 +698,67 @@ export function MenuCheck({ checked, onChange, children }: { checked: boolean; o
       {ticked}
       {children}
     </Dropdown.CheckboxItem>
+  );
+}
+
+/** One choice of a SelectMenu: what it is called, and a few words on what it means. */
+export interface Choice<T extends string> {
+  value: T;
+  label: string;
+  description: string;
+}
+
+/**
+ * Looks like a Select, but each choice has a few words under it on what it
+ * means, which a Select's choices cannot. For choices whose names do not say
+ * enough by themselves, such as roles.
+ */
+export function SelectMenu<T extends string>({
+  value,
+  choices,
+  onChange,
+  className,
+  ...rest
+}: { value: T; choices: Choice<T>[]; onChange: (value: T) => void; className?: string; id?: string; "aria-label"?: string }) {
+  const base = useId();
+  const current = choices.find((c) => c.value === value);
+  return (
+    <Dropdown.Root>
+      <Dropdown.Trigger
+        {...rest}
+        className={cx(controlClass, widthOf(className), "h-8 bg-[length:16px] bg-[right_6px_center] bg-no-repeat pr-7 text-left", className)}
+        style={{ backgroundImage: chevron }}
+      >
+        {current?.label ?? value}
+      </Dropdown.Trigger>
+      <Dropdown.Portal>
+        <Dropdown.Content
+          align="start"
+          sideOffset={4}
+          className="z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[var(--radix-dropdown-menu-trigger-width)] animate-rise overflow-y-auto rounded-md border border-line-strong bg-surface p-1 shadow-xl shadow-shade/50"
+        >
+          <Dropdown.RadioGroup value={value} onValueChange={(v) => v !== value && onChange(v as T)}>
+            {choices.map((c) => (
+              <Dropdown.RadioItem
+                key={c.value}
+                value={c.value}
+                aria-labelledby={`${base}-${c.value}`}
+                aria-describedby={`${base}-${c.value}-about`}
+                className="flex cursor-pointer items-start gap-2 rounded-sm px-2 py-1.5 text-[13px] text-fg outline-none select-none data-[highlighted]:bg-hover"
+              >
+                <span className="flex h-lh items-center">{ticked}</span>
+                <span className="flex flex-col">
+                  <span id={`${base}-${c.value}`}>{c.label}</span>
+                  <span id={`${base}-${c.value}-about`} className="text-xs text-muted">
+                    {c.description}
+                  </span>
+                </span>
+              </Dropdown.RadioItem>
+            ))}
+          </Dropdown.RadioGroup>
+        </Dropdown.Content>
+      </Dropdown.Portal>
+    </Dropdown.Root>
   );
 }
 

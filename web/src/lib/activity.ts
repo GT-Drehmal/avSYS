@@ -12,6 +12,8 @@ export function didWhat(a: Activity): string {
       return "restarted the server";
     case "server.update":
       return "changed the settings";
+    case "server.notes":
+      return "changed the notes";
     case "server.create":
       if (d.startsWith("copy of ")) return `created the server as a copy of ${d.slice(8)}`;
       if (d.startsWith("from snapshot")) return "created the server from a snapshot";
@@ -40,6 +42,8 @@ export function didWhat(a: Activity): string {
       return "restored a snapshot";
     case "snapshot.delete":
       return "deleted a snapshot";
+    case "snapshot.name":
+      return "named a snapshot";
     case "console.command":
       return `ran /${d}`;
     case "terminal.open":

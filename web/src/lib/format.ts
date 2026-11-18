@@ -76,5 +76,5 @@ export function ago(iso: string | null | undefined): string {
 
 export const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
-/** Removes ANSI escape sequences and Minecraft § colour codes from console text. */
-export const plain = (line: string) => line.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/§[0-9a-fk-orx]/gi, "");
+/** Removes ANSI escape sequences from console text. The game's § codes are left for McText to show. */
+export const plain = (line: string) => line.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");

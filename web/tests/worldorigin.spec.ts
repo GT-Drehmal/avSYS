@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { shownColours } from "../src/lib/mctext";
 import { levelDat, zip } from "./archives";
 import { content, expect, test } from "./panel";
 
@@ -55,6 +56,9 @@ async function server(page: Page, org: string, name: string, shown: Shown) {
 }
 
 const hourAgo = () => new Date(Date.now() - 3_600_000).toISOString();
+
+/** A colour as the browser gives it back: "rgb(…)". */
+const rgb = (hex: string) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
 
 test.beforeEach(async ({ as }) => {
   await as("owner");
@@ -143,6 +147,33 @@ test("what the world says of itself shows beside where it came from, or alone", 
   await page.goto(`/o/${slug}/s/event/settings`);
   await expect(page.getByRole("button", { name: "Replace the world" })).toBeVisible();
   await expect(line).toHaveCount(0);
+});
+
+test("a world's own name is shown as the game colours it, in either theme, its codes not shown", async ({ page, org }, info) => {
+  const slug = await org(["event"]);
+  // As Drehmal's level.dat has it.
+  const shown: Shown = { facts: { level: "world", exists: true, name: "§6§lDrehmal： §6§lAPOTHEOSIS", version: "1.21.4", size: 12 << 20 } };
+  await server(page, slug, "event", shown);
+  const line = page.getByTestId("world-now");
+  await page.goto(`/o/${slug}/s/event/settings`);
+  const title = line.locator("p").first();
+  await expect(title).toHaveText("Drehmal： APOTHEOSIS");
+  await expect(title.locator("[data-mc]")).toHaveAttribute("title", "Drehmal： APOTHEOSIS");
+  const gold = title.locator("span[style]");
+  await expect(gold).toHaveText("Drehmal： APOTHEOSIS");
+  await expect(gold).toHaveCSS("font-weight", "700");
+  await expect(gold).toHaveCSS("color", rgb(shownColours.dark["6"]));
+  await line.screenshot({ path: info.outputPath("world-dark.png") });
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(gold).toHaveCSS("color", rgb(shownColours.light["6"]));
+  await line.screenshot({ path: info.outputPath("world-light.png") });
+  // With where it came from above it, the name is on the line below.
+  shown.origin = { kind: "new", time: hourAgo() };
+  await page.goto(`/o/${slug}/s/event/settings`);
+  await expect(title).toHaveText("New world");
+  await expect(line).toContainText('"Drehmal： APOTHEOSIS" · Last opened in 1.21.4 · 12 MB');
+  await expect(line.locator("span[style]")).toHaveCSS("color", rgb(shownColours.light["6"]));
+  await expect(line).not.toContainText("§");
 });
 
 test("a world from the library is put back as it is there, after asking", async ({ page, org }) => {

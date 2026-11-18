@@ -50,7 +50,7 @@ export function PlayerNamesField({ label, edition, onEdition, value, onChange, o
               Bedrock
             </button>
           </div>
-          <Textarea id={id} rows={rows} value={value} onChange={(e) => onChange(e.target.value)} className="font-mono" spellCheck={false} />
+          <Textarea id={id} rows={rows} value={value} onChange={(e) => onChange(e.target.value)} placeholder={edition === "bedrock" ? "Steve\nAlex Smith" : "Steve\nAlex"} className="font-mono" spellCheck={false} />
         </div>
       )}
     </Field>

@@ -8,7 +8,7 @@ import { Picture } from "../components/Picture";
 import { ListBar } from "../components/ListBar";
 import { ServerActions } from "../components/ServerActions";
 import { useOrg } from "../components/Shell";
-import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, SelectionBar, StatusDot, Loading, Toggle } from "../components/ui";
+import { Button, Confirm, CopyText, Empty, PageHeader, RowCheckbox, LinkStatusDot, SelectionBar, Loading, Toggle } from "../components/ui";
 import { byCount, byPlace, byText, byTime, type ListOptions, useList } from "../lib/list";
 import { api, ApiError, atLeast, serverIcon, serverPath, type Server } from "../lib/api";
 import { describeSoftware, displayName, loaderNames } from "../lib/format";
@@ -43,7 +43,7 @@ const phaseOrder = ["Running", "Starting", "Sleeping", "Stopping", "Error", "Sto
 const phaseOf = (s: Server) => s.status.phase ?? "Stopped";
 
 const serverList: ListOptions<Server> = {
-  said: (s) => [s.name, displayName(s), describeSoftware(s), phaseWords[phaseOf(s)], s.status.address],
+  said: (s) => [s.name, displayName(s), describeSoftware(s), phaseWords[phaseOf(s)], s.status.address, s.notes],
   then: byText(displayName),
   sorts: [
     { key: "name", label: "Name", compare: byText(displayName) },
@@ -234,7 +234,7 @@ export function Servers() {
                   className={`${columns} min-h-14 py-2.5 text-[13px] transition-colors hover:bg-raised max-md:grid-cols-[minmax(0,1fr)_auto] ${canOperate ? "pl-10" : ""}`}
                 >
                   <span className="flex min-w-0 items-center gap-3">
-                    <StatusDot phase={s.status.phase} />
+                    <LinkStatusDot phase={s.status.phase} />
                     <Picture name={displayName(s)} url={serverIcon(s)} size={32} retryKey={`${s.status.phase}|${s.status.message ?? ""}`} />
                     <span className="min-w-0">
                       <span className="flex min-w-0 items-center gap-2">
@@ -246,6 +246,11 @@ export function Servers() {
                         {s.status.pendingRestart && <span className="text-warn"> · restart to apply changes</span>}
                         <BackupMark server={s} scheduled={!!policy.data && scheduleOf(policy.data, s.spec.backups).enabled} />
                       </span>
+                      {s.notes && (
+                        <span className="block truncate text-xs text-faint" title={s.notes}>
+                          {s.notes}
+                        </span>
+                      )}
                     </span>
                   </span>
                   <span className="truncate text-muted max-md:hidden">{describeSoftware(s)}</span>

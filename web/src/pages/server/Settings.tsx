@@ -12,7 +12,7 @@ import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
 import { PackFit } from "../../components/Content";
-import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, triState } from "../../components/ServerFields";
+import { autoOpOptions, exposeOptions, GameplayFields, imageDocs, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, playersExample, propertiesDocs, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { LoaderBuildField } from "../../components/LoaderBuild";
@@ -21,6 +21,7 @@ import { AddedInGame } from "../../components/AddedInGame";
 import { BedrockNeedsMods, SaveAsList, SavedListsField } from "../../components/PlayerLists";
 import { NewerWorldConfirm } from "../../components/NewerWorld";
 import { newerThan, newerWorldWarning, runsOn } from "../../lib/worlds";
+import { NotesField } from "../../components/Notes";
 import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
@@ -29,6 +30,8 @@ const typedProperties = ["motd", "difficulty", "gamemode", "max-players", "pvp",
 
 interface Draft {
   displayName: string;
+  /** The panel's notes on it, which are not part of its spec. */
+  notes: string;
   version: string;
   loader: Loader;
   /** The loader build it is pinned to; empty for the newest. */
@@ -70,12 +73,13 @@ const picksFor = (p: Picks) => (p.also.length || p.except.length ? p : null);
 /** Whether anyone who finds its address can join: reachable, with no whitelist. */
 const isOpen = (d: Draft) => d.exposeType !== "None" && d.whitelistOn !== "true";
 
-function toDraft(spec: ServerSpec): Draft {
+function toDraft(spec: ServerSpec, notes: string): Draft {
   const p = spec.properties ?? {};
   const launch = launchOf(spec);
   const typed = new Set<string>(typedProperties);
   return {
     displayName: spec.displayName ?? "",
+    notes,
     version: spec.version,
     loader: spec.loader,
     loaderVersion: spec.loaderVersion ?? "",
@@ -187,7 +191,7 @@ export function Settings() {
   const update = useUpdateServer(server.org, server.name);
   const specKey = JSON.stringify(server.spec);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the spec is a new object on every update; what it says is what counts
-  const saved = useMemo(() => toDraft(server.spec), [specKey]);
+  const saved = useMemo(() => toDraft(server.spec, server.notes ?? ""), [specKey, server.notes]);
   const [draft, setDraft] = useState(saved);
   const versions = useGameVersions(draft.loader);
   const [previews, setPreviews] = useState(false);
@@ -249,11 +253,14 @@ export function Settings() {
     if (!sure && isOpen(draft) && !isOpen(saved)) return setOpening(true);
     setOpening(false);
     const sent = draft;
+    // Notes alone are saved whatever the server is doing.
+    const notesOnly = JSON.stringify({ ...draft, notes: "" }) === JSON.stringify({ ...saved, notes: "" });
+    const notes = draft.notes !== saved.notes ? { notes: draft.notes } : {};
     const spec = toPatch(draft, server.spec, latestOf(versions));
-    update.mutate(goingOlder ? { spec, newerWorld: true } : spec, {
+    update.mutate(notesOnly ? { notes: draft.notes } : { spec, ...notes, ...(goingOlder ? { newerWorld: true as const } : {}) }, {
       onSuccess: (next) => {
         // Changed again while it was saved: that change is kept, to save next.
-        setDraft((d) => (d === sent ? toDraft(next.spec) : d));
+        setDraft((d) => (d === sent ? toDraft(next.spec, next.notes ?? "") : d));
         toast.info("Settings saved");
       },
     });
@@ -273,6 +280,7 @@ export function Settings() {
         />
         <Field label="Display name">{(id) => <Input id={id} {...text("displayName")} placeholder={server.name} />}</Field>
         <Field label="Message of the day">{(id) => <Input id={id} {...text("motd")} placeholder="A Minecraft Server" />}</Field>
+        <NotesField value={draft.notes} onChange={(notes) => set("notes", notes)} />
       </Section>
 
       <Section title="Software" description={server.spec.modpack ? undefined : "Changing the type or going to an older version can break the world. Take a snapshot first."}>
@@ -345,13 +353,14 @@ export function Settings() {
         </div>
         <Field
           label="Other properties"
+          docs={propertiesDocs}
           hint={`One key=value per line.${worldSet.length > 0 ? ` ${worldSet.join(", ")} only ${worldSet.length === 1 ? "affects" : "affect"} new worlds.` : ""}`}
         >
           {(id) => <Textarea id={id} rows={3} {...text("otherProperties")} placeholder={"view-distance=12\nspawn-protection=0"} className="font-mono" spellCheck={false} />}
         </Field>
       </Section>
 
-      <Section title="Players" description="Usernames or UUIDs, one per line.">
+      <Section title="Players">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Whitelist">
             {(id) => (
@@ -381,7 +390,7 @@ export function Settings() {
           {(["whitelist", "ops"] as const).map((list) => (
             <div key={list} className="flex flex-col gap-3">
               <Field label={list === "whitelist" ? "Whitelisted players" : "Operators"}>
-                {(id) => <Textarea id={id} rows={4} {...text(list)} className="font-mono" spellCheck={false} />}
+                {(id) => <Textarea id={id} rows={4} {...text(list)} placeholder={playersExample} className="font-mono" spellCheck={false} />}
               </Field>
               <AddedInGame server={server} list={list} listed={draft[list]} onKeep={(name) => setDraft((d) => ({ ...d, [list]: [...lines(d[list]), name].join("\n") }))} />
               <Button size="sm" className="self-start" aria-label={list === "whitelist" ? "Save the whitelist as a list" : "Save the operators as a list"} onClick={() => setSavingList(list)}>
@@ -479,7 +488,7 @@ export function Settings() {
       </Section>
 
       <Section title="Advanced" description="Options of the itzg/minecraft-server image.">
-        <Field label="Environment" hint="One NAME=value per line.">
+        <Field label="Environment" docs={imageDocs} hint="One NAME=value per line.">
           {(id) => <Textarea id={id} rows={3} {...text("env")} placeholder="ENABLE_ROLLING_LOGS=true" className="font-mono" spellCheck={false} />}
         </Field>
         <Field label="Image" hint="Leave empty for the default.">

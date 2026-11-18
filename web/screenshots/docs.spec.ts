@@ -146,6 +146,27 @@ test("a server's page", async ({ page }) => {
   await shot(page, "server");
 });
 
+test("completing a command", async ({ page }) => {
+  await page.route("**/api/v1/orgs/friends/servers/survival/console", (route) =>
+    route.fulfill({
+      headers: { "Content-Type": "text/event-stream" },
+      body: `event: reset\ndata: null\n\nevent: lines\ndata: ${JSON.stringify(log)}\n\n`,
+    }),
+  );
+  await page.goto("/o/friends/s/survival");
+  await expect(page.getByText("meet at spawn")).toBeVisible();
+  const line = page.getByRole("combobox", { name: "Server command" });
+  // The panel makes the game's commands the first time they are asked for.
+  await expect(async () => {
+    await line.fill("");
+    await line.pressSequentially("execute as @a at @s run ti");
+    await expect(page.getByRole("option", { name: "time" })).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
+  await line.press("ArrowDown");
+  await expect(page.getByRole("option", { name: "time", selected: true })).toBeVisible();
+  await shot(page, "console-completion");
+});
+
 test("files", async ({ page }) => {
   const tree: Record<string, string[]> = {
     "/": ["config/", "logs/", "plugins/", "world/", "banned-players.json", "eula.txt", "ops.json", "server.properties", "whitelist.json"],

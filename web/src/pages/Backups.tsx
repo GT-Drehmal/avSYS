@@ -7,7 +7,7 @@ import { ListBar } from "../components/ListBar";
 import { OffsiteCopy } from "../components/OffsiteCopy";
 import { Picture } from "../components/Picture";
 import { useOrg } from "../components/Shell";
-import { OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, software, triggerLabel, type RowsProps } from "../components/Snapshots";
+import { colorName, OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, software, triggerLabel, type RowsProps } from "../components/Snapshots";
 import { Button, Chip, cx, Empty, Loading, Notice, PageHeader } from "../components/ui";
 import { api, atLeast, serverIcon, serverPath, snapshotIcon, type Operation, type Server, type Snapshot } from "../lib/api";
 import { ago, bytes, displayName } from "../lib/format";
@@ -45,12 +45,16 @@ const ages = ["7", "30", "90"];
 const day = 24 * 60 * 60 * 1000;
 const olderThan = (s: Snapshot) => ages.filter((days) => Date.now() - Date.parse(s.time) > Number(days) * day);
 
+/** Whether a snapshot was named, as the filter names it. */
+const naming: Record<string, string> = { named: "Named", unnamed: "Not named" };
+const nameFilter: ListFilter<Snapshot> = { key: "named", label: "Name", values: (s) => [s.name ? "named" : "unnamed"], name: (v) => naming[v] ?? v, order: Object.keys(naming) };
+
 /** Whether a snapshot is in the offsite copy, as the filter names it. */
 const places: Record<string, string> = { yes: "Offsite", no: "Only here" };
 const whereFilter: ListFilter<Snapshot> = { key: "offsite", label: "Where", values: (s) => [s.offsite ? "yes" : "no"], name: (v) => places[v] ?? v, order: Object.keys(places) };
 
 /** What arranges and narrows the list by time, and so what in an address asks for it. */
-const timeParams = ["sort", "server", "reason", "age", "offsite"];
+const timeParams = ["sort", "server", "reason", "age", "named", "offsite"];
 
 const sortsByTime: ListOptions<Snapshot>["sorts"] = [
   { key: "newest", label: "Newest", compare: byTime((s) => s.time) },
@@ -111,18 +115,19 @@ export function Backups() {
     return [name, s && displayName(s), !s && servers.data && "deleted"];
   };
   const byTimeList = useList(snapshots, {
-    said: (s) => [...serverSaid(s.server), triggerLabel(s), software(s), new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })],
+    said: (s) => [...serverSaid(s.server), s.name, colorName(s.color), triggerLabel(s), software(s), new Date(s.time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })],
     sorts: sortsByTime,
     filters: [
       { key: "server", label: "Server", values: (s) => [s.server] },
       { key: "reason", label: "Reason", values: (s) => [s.trigger], name: (trigger) => reasons[trigger] ?? trigger, order: Object.keys(reasons) },
       { key: "age", label: "Age", values: olderThan, name: (days) => `Older than ${days} days`, order: ages },
+      nameFilter,
       // Only where there is an offsite copy to be in.
       ...(offsite.data?.configured ? [whereFilter] : []),
     ],
   });
   const { query, shown: filtered } = byTimeList;
-  const ordered = [...byServer].filter(([name]) => matches(query, ...serverSaid(name))).sort(([a, as], [b, bs]) => Number(!!concernOf(b)) - Number(!!concernOf(a)) || newestTime(bs) - newestTime(as) || a.localeCompare(b));
+  const ordered = [...byServer].filter(([name, items]) => matches(query, ...serverSaid(name), ...items.map((s) => s.name))).sort(([a, as], [b, bs]) => Number(!!concernOf(b)) - Number(!!concernOf(a)) || newestTime(bs) - newestTime(as) || a.localeCompare(b));
   // What can be ticked is what is on the page, in its order.
   const listed = view === "time" ? filtered : ordered.flatMap(([name, items]) => (open.has(name) ? (all.has(name) ? items : items.slice(0, firstFew)) : []));
   const selection = useSelection(listed.map((s) => s.id), `${org}/${view}`);

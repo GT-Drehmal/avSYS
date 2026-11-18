@@ -12,10 +12,12 @@ import { CurseForgeOff, ModrinthSearch } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { SavedListsField } from "../components/PlayerLists";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, playersExample, propertiesDocs, type Join } from "../components/ServerFields";
 import { BottomBar, Button, Checked, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
+import { NotesField } from "../components/Notes";
 import { NewerWorldConfirm } from "../components/NewerWorld";
+import { McText } from "../components/McText";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type CatalogSource, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
@@ -71,6 +73,8 @@ export interface Source {
   flags?: string;
   /** The game version its world was last opened in, where that is known apart from its settings. */
   worldVersion?: string;
+  /** Its notes, which what is made from it starts with. */
+  notes?: string;
 }
 
 /** A template of settings alone, which a new server is made with: there are no files to copy. */
@@ -80,6 +84,8 @@ export interface Preset {
   spec: ServerSpec;
   /** The world it has of its own, for each server made from it. */
   ownWorld?: OwnWorld;
+  /** Its notes, which what is made from it starts with. */
+  notes?: string;
 }
 
 /** An archive of an existing server's folder, and what it says about the server. */
@@ -583,7 +589,8 @@ export function ServerForm({
     return { values: packWorld ? withWorldPack(values, packWorld, forTemplate) : values, packWorld: packWorld?.key ?? "" };
   });
   const start = initial.values;
-  const [description, setDescription] = useState(editing?.description ?? "");
+  // The panel's notes on it: a template's own, or those of what it is made from.
+  const [description, setDescription] = useState(editing?.description ?? source?.notes ?? preset?.notes ?? "");
   // A new server can start from a template, a server or a snapshot, picked here.
   const [picking, setPicking] = useState<StartKind | null>(source || preset || forTemplate ? null : (pick ?? null));
   const [v, setRawValues] = useState(start);
@@ -1431,7 +1438,7 @@ export function ServerForm({
         // as it is now, and then puts the files in, which its page shows.
         // Without its world, for one to be made or put in.
         const fresh = world !== "kept" ? { world: "new" } : source.world ? { world: "kept" } : {};
-        const server = await api.post<Server>(`/orgs/${org}/servers${keepsOriginal && worldTooNew ? "?newerWorld=true" : ""}`, { name, ...from, ...fresh, ...pictured, ...placed });
+        const server = await api.post<Server>(`/orgs/${org}/servers${keepsOriginal && worldTooNew ? "?newerWorld=true" : ""}`, { name, ...from, ...fresh, ...pictured, ...placed, notes: description.trim() });
         await Promise.all([qc.invalidateQueries({ queryKey: keys.servers(org) }), qc.invalidateQueries({ queryKey: keys.snapshots(org) })]);
         // How the copying goes shows on the server's page until its files
         // are in. Files to upload join them after.
@@ -1445,7 +1452,7 @@ export function ServerForm({
           if (startNow) await startIt(w, server.name);
         });
       }
-      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...(v.node ? { node: v.node } : {}), spec: newRequest() });
+      const server = await api.post<Server>(`/orgs/${org}/servers`, { name, ...(v.node ? { node: v.node } : {}), spec: newRequest(), notes: description.trim() });
       await qc.invalidateQueries({ queryKey: keys.servers(org) });
       const picture = v.picture.kind === "file" ? v.picture.file : null;
       if (!toUpload && !picture) return navigate(`/o/${org}/s/${server.name}`);
@@ -1804,9 +1811,7 @@ export function ServerForm({
         <Field label={forTemplate ? "Name" : "Display name"} hint={forTemplate ? "Servers made from this template are called this." : undefined} missing="Give it a name.">
           {(id) => <Input id={id} required maxLength={forTemplate ? 60 : undefined} value={v.displayName} onChange={(e) => set("displayName", e.target.value)} />}
         </Field>
-        {forTemplate ? (
-          <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
-        ) : (
+        {!forTemplate && (
           <Field label="Short name" hint={nameHint} missing="Give it a short name.">
             {(id) => <Input id={id} required value={name} onChange={(e) => set("customName", e.target.value)} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" title="Use lowercase letters, digits and -, starting with a letter." className="font-mono" spellCheck={false} />}
           </Field>
@@ -1814,6 +1819,7 @@ export function ServerForm({
         <Field label="Message of the day" hint="Shown under the name in the server list.">
           {(id) => <Input id={id} value={v.motd} onChange={(e) => set("motd", e.target.value)} placeholder="A Minecraft Server" />}
         </Field>
+        <NotesField value={description} onChange={setDescription} />
       </Section>
 
       <Section
@@ -2034,7 +2040,9 @@ export function ServerForm({
               <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
                 <ArchiveIcon className="size-5 shrink-0 text-muted" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium">{v.myWorld.found.name}</p>
+                  <p className="truncate text-[13px] font-medium">
+                    <McText text={v.myWorld.found.level ?? v.myWorld.found.name} title />
+                  </p>
                   <p className="truncate text-xs text-muted" data-testid="world-summary">
                     {[v.myWorld.found.version && `Last opened in ${v.myWorld.found.version}`, bytes(v.myWorld.found.size), v.myWorld.file.name].filter(Boolean).join(" · ")}
                   </p>
@@ -2134,7 +2142,7 @@ export function ServerForm({
                 )}
               </Field>
             </div>
-            <Field label="Other properties" hint="One key=value per line.">
+            <Field label="Other properties" docs={propertiesDocs} hint="One key=value per line.">
               {(id) => (
                 <Textarea id={id} rows={3} value={v.otherProperties} onChange={(e) => set("otherProperties", e.target.value)} placeholder={"view-distance=12\nspawn-protection=0"} className="font-mono" spellCheck={false} />
               )}
@@ -2169,11 +2177,11 @@ export function ServerForm({
           onChange={(ids) => set("whitelistLists", ids)}
         />
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Whitelisted players" hint={v.join === "anyone" ? "Only used with a whitelist." : "One name per line."}>
-            {(id) => <Textarea id={id} rows={3} value={v.whitelist} onChange={(e) => set("whitelist", e.target.value)} className="font-mono" spellCheck={false} />}
+          <Field label="Whitelisted players" hint={v.join === "anyone" ? "Only used with a whitelist." : undefined}>
+            {(id) => <Textarea id={id} rows={4} value={v.whitelist} onChange={(e) => set("whitelist", e.target.value)} placeholder={playersExample} className="font-mono" spellCheck={false} />}
           </Field>
-          <Field label="Operators" hint="One name per line.">
-            {(id) => <Textarea id={id} rows={3} value={v.ops} onChange={(e) => set("ops", e.target.value)} className="font-mono" spellCheck={false} />}
+          <Field label="Operators">
+            {(id) => <Textarea id={id} rows={4} value={v.ops} onChange={(e) => set("ops", e.target.value)} placeholder={playersExample} className="font-mono" spellCheck={false} />}
           </Field>
         </div>
         <SavedListsField org={org} title="Operators from saved lists" label="operators" value={v.opLists} onChange={(ids) => set("opLists", ids)} />

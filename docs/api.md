@@ -85,7 +85,7 @@ two routes that set it up.
   `conflict` (409), `rate_limited` (429), `internal` (500). Routes list
   others where they matter.
 - A server, in answers and in [events](#live-events), is
-  `{org, name, createdAt, revision, generation, java: {game, effective}, spec, status, unfinished?}`.
+  `{org, name, createdAt, revision, generation, java: {game, effective}, spec, status, unfinished?, notes}`.
   `spec` is the `MinecraftServer` resource's spec, the same as in
   Kubernetes, so GitOps tools can manage servers as manifests. See
   [The server resource](#the-server-resource).
@@ -506,9 +506,15 @@ lists other organizations' servers already under one (they keep working).
 
 ## Snapshots and backups
 
-A snapshot is `{id, time, server, trigger, by?, version?, loader?, size, added, files, offsite?}`.
+A snapshot is `{id, time, server, trigger, by?, version?, loader?, size, added, files, offsite?, name?, color?}`.
+`size` is its files' size in bytes; `added` is what it added to the
+repository when it was taken (restic's `data_added_packed`), which later
+snapshots and worlds may share since.
 `trigger` is how it came to be: `manual`, `scheduled`, `pre-restore`,
 `pre-replace`, `final` (before a delete), `copy`, `move` or `template`.
+`name` and `color` are what it was given with
+[`PATCH`](#patch-orgsorgsnapshotsid); they are kept by the panel, not in
+the repository, and go when the snapshot does.
 Where an `id` is taken, an unambiguous prefix of at least 8 characters
 will do. All of these answer `503 backups_unavailable` where the panel has
 no restic.
@@ -568,11 +574,12 @@ are not listed.
 
 ### `GET /orgs/{org}/snapshots/{id}`
 
-One snapshot, with the server as it was: the snapshot's fields plus `spec`
-and `retention: {scheduled, kept?, paused?}`, which says whether the
-schedule keeps it and why. **Viewer**; below admin the spec's `image`,
-`env` and JVM flags are left out. `no_record` (422) for a snapshot with no
-record of its settings.
+One snapshot, with the server as it was: the snapshot's fields plus `spec`,
+`retention: {scheduled, kept?, paused?, named?}`, which says whether the
+schedule keeps it and why (`named`: a scheduled one it passes over, as it
+has a name), and `notes`, the notes of the server it is of as they are now.
+**Viewer**; below admin the spec's `image`, `env` and JVM flags are left
+out. `no_record` (422) for a snapshot with no record of its settings.
 
 ### `GET /orgs/{org}/snapshots/{id}/icon`
 
@@ -584,6 +591,21 @@ Delete several. **Admin.** Body: `{ids: [...]}` (1–500). All of them, or
 none if any is unknown or in use. Returns `{deleted}`. `in_use` (409) for
 one being restored or still needed by a server being made; `template`
 (409) for one belonging to a template or the world library.
+
+### `PATCH /orgs/{org}/snapshots/{id}`
+
+Name a snapshot, give it a colour, or both. **Admin.** Body: any of
+`{name, color}`. `name` is one line of up to 60 characters; `color` is
+one of `amethyst`, `gold`, `teal`, `blue` and `rose`, the panel's accents.
+What is left out stays; `""` takes it away. A scheduled snapshot with a
+name is kept until someone deletes it, as one taken by hand is: the
+schedule passes over it. A colour alone does not keep it. Returns the
+snapshot. `template` (409) for one belonging to a template or the world
+library.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"name":"Before 1.22","color":"teal"}' $AVSYS/orgs/friends/snapshots/1a2b3c4d
+```
 
 ### `DELETE /orgs/{org}/snapshots/{id}`
 
@@ -841,6 +863,7 @@ Make a server. **Admin.** Body:
 | `world` | With one of the three above: `new` for a new world in place of the source's, `kept` to keep a template's world even where it gives its servers new ones. |
 | `node` | A node to put it on, in place of the panel's choice. |
 | `picture` | With one of the three above: a PNG as base64, or `null` for none. |
+| `notes` | Notes for the panel, up to 500 characters. Left out, a server made from a snapshot or server has its original's notes, and one made from a template the template's `description`. |
 
 At most one of `fromSnapshot`, `fromServer` and `fromTemplate`.
 
@@ -900,6 +923,13 @@ replaced whole. Most changes to a running server apply at its next restart
 (`status.pendingRestart` says so). Changing the version or loader pins its
 content again for the new one. Returns the server. `stale` (409) if it kept
 changing underneath.
+
+`notes`, beside `spec` or alone, sets the server's notes: plain text, up to
+500 characters, `""` for none. Notes are the panel's own, for those who
+look after the server; they are not in `spec`, its files or anything the
+game shows, and changing them alone works whatever the server is doing. A
+deleted server keeps its notes while it has snapshots to be brought back
+from.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"spec":{"resources":{"memory":"6Gi"}}}' $AVSYS/orgs/friends/servers/creative
@@ -1050,7 +1080,8 @@ if any.
 What the server's world says of itself, read from its files. **Viewer.**
 Returns `{level, exists, name?, seed?, version?, lastPlayed?, size?}`:
 the world's folder (as `server.properties` names it), whether it is there
-yet, its `level.dat`'s name, seed, the game version it was last opened in
+yet, its `level.dat`'s name (as the game has it, `§` formatting codes
+and all), seed, the game version it was last opened in
 and when it was last played, and its folders' size in bytes, left out if
 counting them takes too long. `502 workspace` when the files cannot be
 reached; `409 busy` while files are being put in.
@@ -1113,6 +1144,26 @@ and `save-all` wait while a snapshot holds the game's saves).
 curl -H "Authorization: Bearer $TOKEN" -d '{"command":"list"}' $AVSYS/orgs/friends/servers/creative/console
 curl -H "Authorization: Bearer $TOKEN" -d '{"command":"say hello","as":"server"}' $AVSYS/orgs/friends/servers/creative/console
 ```
+
+### `GET /orgs/{org}/servers/{server}/console/commands`
+
+The commands a server has, for completing them. **Operator.** Returns the
+game's command tree for the version the server runs, as its data generator
+writes it in `reports/commands.json`: nodes of `type` `root`, `literal` or
+`argument`, with `children`, `executable`, `redirect`, and an argument's
+`parser` and `properties`. The game version is in the header
+`X-Game-Version`. The first time a version is asked for, the panel makes
+its tree: the answer is `202` with `{making: true}` until it is ready, a
+minute at most. A version older than 1.13, or one whose tree could not be
+made, is `no_commands` (404).
+
+While the server runs, the commands its mods and plugins add are in the
+tree too, after the game's own, read from the server's help once each time
+it starts (also `202` for the few seconds that takes). They are nodes of
+the same kinds; an argument of one has no `parser`, as what it takes is
+not known, and a part whose subcommands are not known runs as it is. A
+command the game has stays as the game has it. A server that is not
+running, or whose help could not be read, has the game's commands only.
 
 ### `GET /orgs/{org}/servers/{server}/logs`
 

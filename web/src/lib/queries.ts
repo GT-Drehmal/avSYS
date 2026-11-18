@@ -300,11 +300,23 @@ export interface NewerWorldMeant {
   newerWorld: true;
 }
 
+/** A change to a server's settings, its notes, or both. */
+export interface ServerChange {
+  spec?: SpecPatch;
+  notes?: string;
+  newerWorld?: true;
+}
+
 export function useUpdateServer(org: string, name: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (change: SpecPatch | NewerWorldMeant) =>
-      "newerWorld" in change ? api.patch<Server>(`${serverPath(org, name)}?newerWorld=true`, { spec: change.spec }) : api.patch<Server>(serverPath(org, name), { spec: change }),
+    mutationFn: (change: SpecPatch | NewerWorldMeant | ServerChange) => {
+      const whole: ServerChange = "spec" in change || "notes" in change || "newerWorld" in change ? (change as ServerChange) : { spec: change as SpecPatch };
+      return api.patch<Server>(`${serverPath(org, name)}${whole.newerWorld ? "?newerWorld=true" : ""}`, {
+        ...(whole.spec ? { spec: whole.spec } : {}),
+        ...(whole.notes !== undefined ? { notes: whole.notes } : {}),
+      });
+    },
     onSuccess: (server) => applyServer(qc, server),
     onError,
   });

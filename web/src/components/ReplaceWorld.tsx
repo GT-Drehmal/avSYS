@@ -10,6 +10,7 @@ import { type FoundWorld, inspectWorld } from "../lib/serverImport";
 import { levelTypes } from "../lib/properties";
 import { newerThan, newerWorldWarning, runsOn, worldSummary } from "../lib/worlds";
 import { packTitle } from "./Content";
+import { McText } from "./McText";
 import { NewerWorldConfirm } from "./NewerWorld";
 import { Picture } from "./Picture";
 import { libraryWorldOf, useWorldFacts, WorldNow } from "./WorldNow";
@@ -313,7 +314,7 @@ export function ReplaceWorld({ server }: { server: Server }) {
           </label>
           {world && (
             <p className="text-[13px] text-muted" data-testid="world-summary">
-              World "{world.name}"{world.version ? ` · last opened in ${world.version}` : ""} · {bytes(world.size)}
+              World "<McText text={world.level ?? world.name} />"{world.version ? ` · last opened in ${world.version}` : ""} · {bytes(world.size)}
             </p>
           )}
           </>

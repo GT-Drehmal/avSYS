@@ -56,7 +56,7 @@ export function NewFromSource({ org, origin, templating }: { org: string; origin
   // A template of settings alone has no files: the server is a new one, with them.
   const settings = origin.kind === "template" ? template.data : undefined;
   if (settings?.settingsOnly && settings.spec) {
-    return <ServerForm key={`settings:${settings.id}`} org={org} preset={{ id: settings.id, name: settings.name, spec: settings.spec, ownWorld: settings.ownWorld }} templating={templating} taken={taken} history={history} />;
+    return <ServerForm key={`settings:${settings.id}`} org={org} preset={{ id: settings.id, name: settings.name, spec: settings.spec, ownWorld: settings.ownWorld, notes: settings.description }} templating={templating} taken={taken} history={history} />;
   }
   const live = origin.kind === "server" ? servers.data?.find((s) => s.name === origin.name) : undefined;
   // A template's version, named as the template is: the server made from it
@@ -66,14 +66,14 @@ export function NewFromSource({ org, origin, templating }: { org: string; origin
     origin.kind === "server"
       ? live
         ? // Its world was last opened in what its game says it runs.
-          { origin, name: live.name, spec: live.spec, size: 0, live, worldVersion: live.status.version?.split(" ").at(-1) }
+          { origin, name: live.name, spec: live.spec, size: 0, live, worldVersion: live.status.version?.split(" ").at(-1), notes: live.notes }
         : null
       : origin.kind === "template"
         ? template.data?.spec && version
-          ? { origin, name: slugify(template.data.name) || "server", spec: { ...template.data.spec, displayName: template.data.name }, size: version.size, taken: version.time, snapshot: version.id, world: template.data.world, ownWorld: template.data.ownWorld, flags: template.data.extraFlags, worldVersion: version.version }
+          ? { origin, name: slugify(template.data.name) || "server", spec: { ...template.data.spec, displayName: template.data.name }, size: version.size, taken: version.time, snapshot: version.id, world: template.data.world, ownWorld: template.data.ownWorld, flags: template.data.extraFlags, worldVersion: version.version, notes: template.data.description }
           : null
         : snapshot.data
-          ? { origin, name: snapshot.data.server, spec: snapshot.data.spec, size: snapshot.data.size, taken: snapshot.data.time, live: servers.data?.find((s) => s.name === snapshot.data.server) }
+          ? { origin, name: snapshot.data.server, spec: snapshot.data.spec, size: snapshot.data.size, taken: snapshot.data.time, live: servers.data?.find((s) => s.name === snapshot.data.server), notes: snapshot.data.notes }
           : null;
   if (!source) {
     return (

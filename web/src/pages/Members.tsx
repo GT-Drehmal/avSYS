@@ -6,13 +6,23 @@ import { useOrg } from "../components/Shell";
 import { ListBar } from "../components/ListBar";
 import { Picture } from "../components/Picture";
 import { mainAccount, PlayerHead } from "../components/PlayerLists";
-import { Button, Chip, Confirm, CopyText, Field, Input, Modal, Notice, PageHeader, Select, Loading, Toggle } from "../components/ui";
+import { Button, type Choice, Chip, Confirm, CopyText, Field, Input, Modal, Notice, PageHeader, Select, SelectMenu, Loading, Toggle } from "../components/ui";
 import { api, atLeast, roles, roleSummary, type Invite, type Member, type Role } from "../lib/api";
 import { ago } from "../lib/format";
 import { keys, useAction, useMe, useMeta } from "../lib/queries";
 import { byPlace, byText, byTime, type ListOptions, useList } from "../lib/list";
 
 const inviteURL = (token: string) => `${location.origin}/invite/${token}`;
+
+/** Each role, with a few words on what it can do. */
+const roleChoices: Choice<Role>[] = (
+  [
+    ["viewer", "Sees servers and consoles"],
+    ["operator", "Starts servers, runs commands"],
+    ["admin", "Sets up servers and members"],
+    ["owner", "Everything, even other owners"],
+  ] as const
+).map(([value, description]) => ({ value, label: value[0].toUpperCase() + value.slice(1), description }));
 
 function InviteDialog({ org, myRole, onClose }: { org: string; myRole: Role; onClose: () => void }) {
   const [role, setRole] = useState<Role>("operator");
@@ -210,13 +220,13 @@ export function Members() {
               </div>
               <span className="text-xs text-faint max-sm:hidden">joined {ago(m.joinedAt)}</span>
               {editable ? (
-                <Select value={m.role} onChange={(e) => setRole.mutate({ userId: m.userId, role: e.target.value as Role })} className="w-28" aria-label={`Role of ${m.username}`}>
-                  {roles.filter((r) => isOwner || r !== "owner").map((r) => (
-                    <option key={r} value={r}>
-                      {r[0].toUpperCase() + r.slice(1)}
-                    </option>
-                  ))}
-                </Select>
+                <SelectMenu
+                  value={m.role}
+                  choices={roleChoices.filter((c) => isOwner || c.value !== "owner")}
+                  onChange={(role) => setRole.mutate({ userId: m.userId, role })}
+                  className="w-28"
+                  aria-label={`Role of ${m.username}`}
+                />
               ) : (
                 <Chip>{m.role}</Chip>
               )}

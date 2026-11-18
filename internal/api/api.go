@@ -74,6 +74,10 @@ type Config struct {
 	// with. One entered in the panel goes before it. With neither, nothing
 	// of CurseForge is offered.
 	CurseForgeKey string
+	// CommandsDir is where the panel keeps the game's command trees, by
+	// game version, for the console to complete commands from. Empty, they
+	// are kept in memory only.
+	CommandsDir string
 	// TrustedProxies are the reverse proxies the panel stands behind. A
 	// request from one of them is taken to come from the address it
 	// forwarded for; see clientAddress. Empty: every request comes from
@@ -125,6 +129,10 @@ type Server struct {
 	// on a server's game, in place of the game's console. The browser tests
 	// stand one in.
 	GameCommand func(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error)
+	// CommandTree, where set, makes the game's command tree of a version,
+	// its commands.json, in place of running the game's data generator in
+	// a pod. The browser tests stand one in.
+	CommandTree func(ctx context.Context, version string) ([]byte, error)
 	Dialer      kube.PodDialer
 	Gateway     *sshgw.Gateway
 	// Backups keeps each organization's snapshot repository.
@@ -167,6 +175,10 @@ type Server struct {
 	packReads packReads
 	// consoles holds one lock per server, taken to type at its console.
 	consoles sync.Map
+	// commands are the game's command trees, by game version.
+	commands commandTrees
+	// mods are the commands read from running servers' help.
+	mods serverCommands
 	// bench is the measuring of nodes' speed.
 	bench nodeBench
 	// usage is what each running server's game has been using lately.
@@ -470,6 +482,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/snapshots/{id}", s.authed(s.getSnapshot))
 	api("GET /orgs/{org}/snapshots/{id}/icon", s.authed(s.getSnapshotIcon))
 	api("DELETE /orgs/{org}/snapshots", s.authed(s.deleteSnapshots))
+	api("PATCH /orgs/{org}/snapshots/{id}", s.authed(s.nameSnapshot))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
 
 	api("GET /orgs/{org}/domains", s.authed(s.getDomains))
@@ -527,6 +540,7 @@ func (s *Server) Handler() http.Handler {
 	api("DELETE /orgs/{org}/servers/{server}/lists/{list}/{name}", s.authed(s.removeFromGameList))
 	api("GET /orgs/{org}/servers/{server}/console", s.authed(s.streamConsole))
 	api("POST /orgs/{org}/servers/{server}/console", s.authed(s.runCommand))
+	api("GET /orgs/{org}/servers/{server}/console/commands", s.authed(s.getCommands))
 	api("GET /orgs/{org}/servers/{server}/logs", s.authed(s.listLogs))
 	api("GET /orgs/{org}/servers/{server}/logs/file", s.authed(s.readLogFile))
 	api("GET /orgs/{org}/servers/{server}/snapshots", s.authed(s.listServerSnapshots))

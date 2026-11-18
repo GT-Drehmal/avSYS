@@ -25,9 +25,12 @@ import (
 // snapshotDetail is one snapshot with the settings its server had when it
 // was taken, and how long it will be here.
 type snapshotDetail struct {
-	backup.Snapshot
+	snapshotView
 	Spec      avsysv1.MinecraftServerSpec `json:"spec"`
 	Retention snapshotRetention           `json:"retention"`
+	// Notes are those of the server it is of, as they are now: what a
+	// server made from it starts with.
+	Notes string `json:"notes"`
 }
 
 // snapshotRetention says what, if anything, will remove a snapshot.
@@ -44,6 +47,9 @@ type snapshotRetention struct {
 	// server's organization. The rules are then only applied when someone
 	// runs the schedule by hand, or switches it back on.
 	Paused bool `json:"paused,omitempty"`
+	// Named is true for a scheduled snapshot that is kept, though the
+	// schedule would remove it, because it has a name.
+	Named bool `json:"named,omitempty"`
 }
 
 // getSnapshot returns a snapshot and what it recorded of its server. That
@@ -66,7 +72,12 @@ func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err != nil {
 		return errNoRecord(err)
 	}
-	writeJSON(w, http.StatusOK, snapshotDetail{Snapshot: *snap, Spec: recordFor(a.Role, record.Spec), Retention: s.retentionOf(r.Context(), a, snap)})
+	view := s.named(r.Context(), a, []backup.Snapshot{*snap})[0]
+	notes, err := s.Store.ServerNotes(r.Context(), a.Org.ID, snap.Server)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, snapshotDetail{snapshotView: view, Spec: recordFor(a.Role, record.Spec), Retention: s.retentionOf(r.Context(), a, &view), Notes: notes})
 	return nil
 }
 
@@ -83,9 +94,13 @@ func recordFor(role store.Role, spec avsysv1.MinecraftServerSpec) avsysv1.Minecr
 // retentionOf works out what will remove a snapshot. Where that cannot be
 // found out it is reported as kept by nothing in particular, which is the
 // safe way round: nobody is told a snapshot is safe that is not.
-func (s *Server) retentionOf(ctx context.Context, a *access, snap *backup.Snapshot) snapshotRetention {
+func (s *Server) retentionOf(ctx context.Context, a *access, snap *snapshotView) snapshotRetention {
 	if snap.Trigger != backup.TriggerScheduled {
 		return snapshotRetention{}
+	}
+	// The schedule passes over a named one.
+	if snap.Name != "" {
+		return snapshotRetention{Named: true}
 	}
 	// The schedule is applied server by server, as each one's run completes.
 	mc := &avsysv1.MinecraftServer{}
@@ -344,7 +359,7 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 // was deleted, to bring it back, or of one that still exists, to copy it.
 // The server exists as soon as this answers, stopped and held, and its files
 // follow; with ?wait=true the answer waits for them.
-func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, template *avsysv1.WorldRef, picture newPicture, newWorld bool, node string) error {
+func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, template *avsysv1.WorldRef, picture newPicture, newWorld bool, node string, notes *string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -461,6 +476,12 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 		s.ops.end(a.Namespace, name)
 		return err
 	}
+	// Brought back, it has the notes it had; a copy has its original's.
+	original, err := s.Store.ServerNotes(ctx, a.Org.ID, snap.Server)
+	if err != nil {
+		s.Log.Warn("could not read a server's notes", "org", a.Org.Slug, "server", snap.Server, "error", err)
+	}
+	s.keepNotes(ctx, a, name, notes, original)
 	s.audit(ctx, u, a.Org, "server.create", name, fmt.Sprintf("from snapshot %s of %s", snap.ID, snap.Server))
 
 	// Deleting the server calls this off. Nothing else does: the request
@@ -497,7 +518,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 // is then taken, unless its newest one already has everything, and the copy
 // is given its files from that, as its create operation. The original keeps
 // running and is not touched. With ?wait=true it answers when all is done.
-func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string, picture newPicture, newWorld bool, node string) error {
+func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, source string, picture newPicture, newWorld bool, node string, notes *string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -608,6 +629,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 		s.ops.end(a.Namespace, name)
 		return err
 	}
+	s.keepNotes(ctx, a, name, notes, s.notesOf(ctx, mc))
 	s.audit(ctx, u, a.Org, "server.copy", mc.Name, "to "+name)
 	s.audit(ctx, u, a.Org, "server.create", name, "copy of "+mc.Name)
 
