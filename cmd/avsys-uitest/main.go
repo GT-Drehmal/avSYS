@@ -308,14 +308,14 @@ func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir s
 // resticStandIn is what the panel runs as restic here. It answers the
 // questions the panel asks of a repository out of files beside it, and
 // agrees to everything else. Its arguments are as the panel gives them:
-// --repo DIR, then --password-file FILE --no-cache for its own repositories
-// or --cache-dir DIR for the offsite ones, then COMMAND ...
+// --repo DIR, then --password-file FILE --no-cache --retry-lock TIME for its
+// own repositories or --cache-dir DIR for the offsite ones, then COMMAND ...
 const resticStandIn = `#!/bin/sh
 repo=$2
 shift 2
 while :; do
   case "$1" in
-    --password-file|--cache-dir) shift 2 ;;
+    --password-file|--cache-dir|--retry-lock) shift 2 ;;
     --no-cache) shift ;;
     *) break ;;
   esac
