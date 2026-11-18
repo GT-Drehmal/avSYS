@@ -177,6 +177,8 @@ type Server struct {
 	consoles sync.Map
 	// commands are the game's command trees, by game version.
 	commands commandTrees
+	// mods are the commands read from running servers' help.
+	mods serverCommands
 	// bench is the measuring of nodes' speed.
 	bench nodeBench
 	// usage is what each running server's game has been using lately.

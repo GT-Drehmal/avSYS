@@ -160,9 +160,46 @@ first time someone at a console of that version asks:
 
 One version is made at a time. One that could not be made is tried again
 ten minutes later; meanwhile, and for versions without a tree, the console
-works as before, with nothing to complete. Commands that mods and plugins
-add are not in the tree: the game tells players of those only over its own
-connection, as a packet, which the panel does not open.
+works as before, with nothing to complete.
+
+Commands that mods and plugins add are not in that tree. The game sends
+its whole tree only to players, as a packet when they join; what it tells
+anyone else is its `help`, one line per command in Brigadier's short form
+of usage:
+
+```
+/bingo [card|difficulty|reroll|lobby|goal|mode|options|timelimit|start]
+/bingostats [<player>|reset]
+/xp -> experience
+```
+
+`[a|b]` are subcommands the command runs without, `(a|b)` one it needs,
+`<name>` an argument, `-> name` another name for a command, and `...` a
+command starting again. So when a console asks for a running server's
+commands, the panel reads its help over RCON (`internal/api/modcommands.go`):
+
+1. `help`, or on Paper and its kind, where `help` is Bukkit's pages of
+   topics, `minecraft:help`. Over RCON the lines come with nothing between
+   them, so they are split at each `/` outside brackets.
+2. It keeps the commands the version's tree does not have, leaving out a
+   namespaced name (`luckperms:lp`) of one there is without.
+3. For each subcommand named only among others (`card` in `bingo
+   [card|…]`), it asks for the help of the command it is under
+   (`help bingo`, then `help bingo card`, …), which says what comes after
+   each of them, as far down as words go: an argument cannot be asked
+   about. At most 256 asks, 6 words deep, and 20 seconds.
+4. What it read is added to the version's tree after the game's own
+   commands, as nodes of the same kinds; an argument of no known kind has
+   no `parser`, and the console offers it by its name only. A command the
+   game has stays as the game has it.
+
+Where `minecraft:help` says nothing, the command names on Bukkit's pages
+are taken, as commands with nothing known after them. Only `help` and
+`minecraft:help` are ever run. What was read is kept in memory for that
+run of the game (its container), and read again once it is started again.
+A server that is not running has the game's commands only; one whose help
+could not be read too, and it is asked again a minute later. Requests wait
+up to 4 seconds for the help, then are answered `202` to ask again.
 
 ## The life of a server
 

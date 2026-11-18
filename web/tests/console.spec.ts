@@ -2,7 +2,9 @@ import { expect, type Page, test } from "./panel";
 
 // Completing commands at the console, from the game's command tree for the
 // server's version: the test panel has the one recorded for 1.21.4
-// (tests/upstream/commands), and none for any other version.
+// (tests/upstream/commands), and none for any other version. Its running
+// servers answer help as a server with Yet Another Bingo did
+// (tests/upstream/commands/help), so they have its commands too.
 
 test.beforeEach(async ({ as }) => {
   await as("owner");
@@ -145,6 +147,36 @@ test("all of it works from the keyboard alone", async ({ page }) => {
   // With nothing to complete, Tab leaves the line, as anywhere else.
   await page.keyboard.press("Tab");
   await expect(box).not.toBeFocused();
+});
+
+test("the commands of a server's mods are offered too, from its help", async ({ page }) => {
+  const box = await openConsole(page);
+  await box.pressSequentially("bingo di");
+  await expect(options(page)).toHaveText(["difficulty"]);
+  await box.press("Tab");
+  await expect(box).toHaveValue("bingo difficulty ");
+  await expect(options(page)).toHaveText(["easy", "extreme", "hard", "impossible", "medium"]);
+  await box.pressSequentially("ha");
+  await expect(options(page)).toHaveText(["hard"]);
+  await expect(ghost(page)).toHaveText("rd");
+  await box.press("Tab");
+  await expect(box).toHaveValue("bingo difficulty hard ");
+  // An argument is hinted by its name alone: what it takes is not known.
+  await box.fill("");
+  await box.pressSequentially("bingo timelimit ");
+  await expect(options(page)).toHaveText(["off"]);
+  await expect(hints(page)).toHaveText("<minutes>");
+  await box.fill("");
+  await box.pressSequentially("bingo shuffleteams ");
+  await expect(ghost(page)).toHaveText("<number_of_teams>");
+  // Any word goes for it, and nothing after it is taken for a mistake.
+  await box.pressSequentially("4 ");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(hints(page)).toHaveCount(0);
+  // The game's own are as they were.
+  await box.fill("");
+  await box.pressSequentially("ti");
+  await expect(options(page)).toHaveText(["tick", "time", "title"]);
 });
 
 test("a server of a version with no command list is typed at as before", async ({ page }) => {

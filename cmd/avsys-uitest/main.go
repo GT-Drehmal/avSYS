@@ -162,7 +162,18 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 
 	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
 	srv.Metrics = metrics
-	srv.GameCommand = metrics.gameCommand
+	// The servers' games answer help as a server with Yet Another Bingo
+	// did, recorded in --upstream: the console completes its commands.
+	help, err := helpRecording(upstreamDir)
+	if err != nil {
+		return err
+	}
+	srv.GameCommand = func(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (string, error) {
+		if out, ok := help[command]; ok {
+			return out, nil
+		}
+		return metrics.gameCommand(ctx, mc, command)
+	}
 	// The game's command trees are the ones recorded in --upstream; a
 	// version without one has none, as one too old for them.
 	srv.CommandTree = func(_ context.Context, version string) ([]byte, error) {
@@ -496,6 +507,18 @@ func commandTree(dir, version string) ([]byte, error) {
 		return nil, err
 	}
 	return io.ReadAll(z)
+}
+
+// helpRecording is what a server with Yet Another Bingo answered to each
+// help command the panel asked it, as recorded in commands/help/bingo.json
+// under dir.
+func helpRecording(dir string) (map[string]string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "commands", "help", "bingo.json"))
+	if err != nil {
+		return nil, err
+	}
+	var help map[string]string
+	return help, json.Unmarshal(data, &help)
 }
 
 func loadUpstream(dir string) (*upstream, error) {

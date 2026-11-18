@@ -38,7 +38,8 @@ import (
 // for its reports, so the panel runs the generator once for each game
 // version, in a short pod with the version's own server jar from Mojang,
 // and keeps what it wrote. The tree is of the game's own commands: those a
-// mod or plugin adds are not in it.
+// mod or plugin adds are read from the running server's help, and added to
+// it (modcommands.go).
 
 // commandTrees are the command trees the panel has, by game version, and
 // those it is making.
@@ -57,6 +58,9 @@ type commandTrees struct {
 type commandTree struct {
 	gz   []byte
 	etag string
+	// commands are the names of the commands in it, read once.
+	once     sync.Once
+	commands map[string]bool
 }
 
 const (
@@ -84,8 +88,10 @@ const (
 )
 
 // getCommands answers with the game's command tree for the version a server
-// runs, for the console to complete commands from. While it is being made
-// the answer is 202, to ask again shortly; where there is none, 404.
+// runs, for the console to complete commands from, with those the server's
+// mods and plugins add while it runs. While it is being made, or the
+// server's help read, the answer is 202, to ask again shortly; where there
+// is none, 404.
 func (s *Server) getCommands(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	_, mc, err := s.server(r, u, store.RoleOperator)
 	if err != nil {
@@ -96,6 +102,14 @@ func (s *Server) getCommands(w http.ResponseWriter, r *http.Request, u *store.Us
 		return noCommands
 	}
 	tree, state := s.commandTree(mc, version)
+	if state == commandsReady {
+		// With the commands the server's mods and plugins add, read from
+		// its help while it runs.
+		var pending bool
+		if tree, pending = s.modCommandsOf(r.Context(), mc, tree); pending {
+			state = commandsMaking
+		}
+	}
 	switch state {
 	case commandsMaking:
 		writeJSON(w, http.StatusAccepted, map[string]any{"making": true, "version": version})

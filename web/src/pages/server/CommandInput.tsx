@@ -5,8 +5,12 @@ import { api, type Server, serverPath } from "../../lib/api";
 import { type CommandNode, complete, type Edit, type EditKind, emptyUndo, ghostOf, insert, record, redo, undo } from "../../lib/completion";
 
 /**
- * The game's command tree for the version a server runs, for completing
- * commands. Undefined while the panel makes it, and where there is none.
+ * The game's command tree for the version a server runs, with the commands
+ * its mods and plugins add while it runs, for completing commands.
+ * Undefined while the panel makes it, and where there is none. Asked again
+ * each time the console opens or the server starts (the panel answers "not
+ * changed" if it is the same), as the server's own commands are read anew
+ * each time it starts.
  */
 export function useCommandTree(server: Server, enabled: boolean): CommandNode | undefined {
   const version = `${server.spec.modpack?.gameVersion ?? server.spec.version ?? ""}|${server.status.version ?? ""}`;
@@ -15,13 +19,17 @@ export function useCommandTree(server: Server, enabled: boolean): CommandNode | 
     queryFn: () => api.get<CommandNode | { making: true }>(`${serverPath(server.org, server.name)}/console/commands`),
     enabled,
     retry: false,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     refetchOnWindowFocus: false,
     // Being made: asked again until it is there.
     refetchInterval: (query) => (query.state.data && "making" in query.state.data ? 3000 : false),
   });
+  // While asked again, the one there was stays.
+  const last = useRef<{ key: string; tree: CommandNode } | null>(null);
+  const key = `${server.org}/${server.name}|${version}`;
   const data = q.data;
-  return data && !("making" in data) ? data : undefined;
+  if (data && !("making" in data)) last.current = { key, tree: data };
+  return last.current?.key === key ? last.current.tree : undefined;
 }
 
 let measurer: CanvasRenderingContext2D | null = null;
@@ -213,7 +221,13 @@ export function CommandInput({ value, onChange, onHistory, tree, players, disabl
             <div data-testid="hints" aria-live="polite" className={cx("flex flex-wrap gap-x-3 gap-y-0.5 px-2.5 py-1.5", suggestions.length > 0 && "border-t border-line")}>
               {c.hints.map((h) => (
                 <span key={`${h.name}:${h.type}`} className="whitespace-nowrap">
-                  <span className="text-muted">{h.optional ? `[<${h.name}>]` : `<${h.name}>`}</span> <span className="font-sans text-faint">{h.type}</span>
+                  <span className="text-muted">{h.optional ? `[<${h.name}>]` : `<${h.name}>`}</span>
+                  {h.type && (
+                    <>
+                      {" "}
+                      <span className="font-sans text-faint">{h.type}</span>
+                    </>
+                  )}
                 </span>
               ))}
             </div>

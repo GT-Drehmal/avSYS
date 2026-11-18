@@ -418,9 +418,11 @@ players cannot join.
 box at the bottom (no `/` needed); up and down bring back earlier ones.
 As you type, the commands and subcommands that fit are listed above the
 box, with the argument that comes next: up and down pick one, **Tab** or a
-click puts it in, and Ctrl/Cmd-Z takes it out again. The list is of the
-game's own commands for the server's version, not those of its mods or
-plugins, and is ready a minute or so after a version's first start.
+click puts it in, and Ctrl/Cmd-Z takes it out again. The list has the
+game's own commands for the server's version, ready a minute or so after a
+version's first start, and those of its mods and plugins, from the
+server's own help while it runs: their names and options, with each
+argument by its name only, not what it takes.
 
 ![Completing a command at the console](images/console-completion.png)
 The **Log** menu opens earlier runs and crash reports, with search,
