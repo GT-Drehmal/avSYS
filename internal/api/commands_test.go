@@ -554,8 +554,9 @@ func (f *flakyMojang) hosts() []string {
 func TestMojangIsAskedAgain(t *testing.T) {
 	// As set: a few tries, each giving up on connecting sooner than on the
 	// whole, in about half a minute.
-	if most := time.Duration(mojangTries)*mojangTry + mojangBackoff*time.Duration(1<<(mojangTries-1)-1); mojangTries < 4 || most > 40*time.Second || catalogDial >= mojangTry {
-		t.Errorf("%d tries in up to %v, connecting in %v", mojangTries, most, catalogDial)
+	set := mojangAsSet
+	if most := time.Duration(set.tries)*set.try + set.backoff*time.Duration(1<<(set.tries-1)-1); set.tries < 4 || most > 40*time.Second || catalogDial >= set.try {
+		t.Errorf("%d tries in up to %v, connecting in %v", set.tries, most, catalogDial)
 	}
 	defer func(try, backoff time.Duration) { mojangTry, mojangBackoff = try, backoff }(mojangTry, mojangBackoff)
 	mojangTry, mojangBackoff = 100*time.Millisecond, 20*time.Millisecond
