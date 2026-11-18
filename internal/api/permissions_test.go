@@ -289,6 +289,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		// 503 below: allowed, and then told that this panel has no restic.
 		{"GET /orgs/{org}/snapshots/{id}", "", "", store.RoleViewer, 503},
 		{"GET /orgs/{org}/snapshots/{id}/icon", "", "", store.RoleViewer, 503},
+		// Naming a snapshot keeps it from the schedule: admins only, as deleting it is.
+		{"PATCH /orgs/{org}/snapshots/{id}", "", `{"name":"Before the update","color":"teal"}`, store.RoleAdmin, 503},
 		{"DELETE /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},
 		{"DELETE /orgs/{org}/snapshots", "", `{"ids":["aaaa1111"]}`, store.RoleAdmin, 503},
 
@@ -297,6 +299,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST /orgs/{org}/servers", "", `{"name":"copy-{who}","fromSnapshot":"abcdef12"}`, store.RoleAdmin, 503},
 		{"GET " + server, "", "", store.RoleViewer, 200},
 		{"PATCH " + server, "", `{"spec":{"displayName":"World"}}`, store.RoleAdmin, 200},
+		// Notes are changed by whoever may change its settings.
+		{"PATCH " + server, "", `{"notes":"Ours, by {who}"}`, store.RoleAdmin, 200},
 		{"DELETE " + server, "/orgs/alpha/servers/doomed-{who}", "", store.RoleAdmin, 204},
 		{"POST " + server + "/{action}", "/orgs/alpha/servers/world/stop", "", store.RoleOperator, 200},
 		{"POST " + server + "/{action}", "/orgs/alpha/servers/world/start", "", store.RoleOperator, 200},

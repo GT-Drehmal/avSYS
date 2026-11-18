@@ -244,7 +244,7 @@ func TestTemplateAndWorldListsAfterRemoving(t *testing.T) {
 	l := newLibraryRepo(t)
 	ctx := t.Context()
 	// Retention is of scheduled snapshots alone.
-	if n, err := l.p.srv.Backups.Forget(ctx, "alpha", templateHost(l.template), backup.Keep{Daily: 1}); err != nil || n != 0 {
+	if n, err := l.p.srv.Backups.Forget(ctx, "alpha", templateHost(l.template), backup.Keep{Daily: 1}, nil); err != nil || n != 0 {
 		t.Errorf("retention took %d of a template's: %v", n, err)
 	}
 	l.same("after retention")

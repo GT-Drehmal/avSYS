@@ -414,9 +414,9 @@ func softwareOf(spec *avsysv1.MinecraftServerSpec) (version, loader string) {
 
 type snapshotList struct {
 	// Available is false when the panel cannot run restic at all.
-	Available  bool              `json:"available"`
-	Snapshots  []backup.Snapshot `json:"snapshots"`
-	Operations []operation       `json:"operations"`
+	Available  bool           `json:"available"`
+	Snapshots  []snapshotView `json:"snapshots"`
+	Operations []operation    `json:"operations"`
 	// Usage is only measured for the organization-wide list.
 	Usage *backup.Usage `json:"usage,omitempty"`
 }
@@ -428,18 +428,21 @@ func (s *Server) listOrgSnapshots(w http.ResponseWriter, r *http.Request, u *sto
 	if err != nil {
 		return err
 	}
-	out := snapshotList{Available: s.Backups.Available(), Snapshots: []backup.Snapshot{}, Operations: s.ops.inNamespace(a.Namespace)}
+	out := snapshotList{Available: s.Backups.Available(), Snapshots: []snapshotView{}, Operations: s.ops.inNamespace(a.Namespace)}
 	if !out.Available {
 		writeJSON(w, http.StatusOK, out)
 		return nil
 	}
+	listed := time.Now()
 	all, err := s.Backups.List(r.Context(), a.Org.Slug)
 	if err != nil {
 		return err
 	}
+	// The names of those no longer there go: this is the whole list.
+	s.forgetGoneNames(context.WithoutCancel(r.Context()), a, all, listed)
 	// Templates' are on their own page.
-	for _, snap := range all {
-		if !isTemplate(&snap) {
+	for _, snap := range s.named(r.Context(), a, all) {
+		if !isTemplate(&snap.Snapshot) {
 			out.Snapshots = append(out.Snapshots, snap)
 		}
 	}
@@ -457,7 +460,7 @@ func (s *Server) listServerSnapshots(w http.ResponseWriter, r *http.Request, u *
 	if err != nil {
 		return err
 	}
-	out := snapshotList{Available: s.Backups.Available(), Snapshots: []backup.Snapshot{}, Operations: []operation{}}
+	out := snapshotList{Available: s.Backups.Available(), Snapshots: []snapshotView{}, Operations: []operation{}}
 	if op := s.ops.current(a.Namespace, mc.Name); op != nil {
 		out.Operations = append(out.Operations, *op)
 	}
@@ -466,11 +469,13 @@ func (s *Server) listServerSnapshots(w http.ResponseWriter, r *http.Request, u *
 		if err != nil {
 			return err
 		}
+		var its []backup.Snapshot
 		for _, snap := range all {
 			if snap.Server == mc.Name && !isTemplate(&snap) {
-				out.Snapshots = append(out.Snapshots, snap)
+				its = append(its, snap)
 			}
 		}
+		out.Snapshots = append(out.Snapshots, s.named(r.Context(), a, its)...)
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
@@ -1334,14 +1339,22 @@ func (s *Server) deleteSnapshots(w http.ResponseWriter, r *http.Request, u *stor
 	if err := s.Backups.DeleteMany(context.WithoutCancel(r.Context()), a.Org.Slug, ids); err != nil {
 		return snapshotError(err)
 	}
+	ctx := context.WithoutCancel(r.Context())
+	if err := s.Store.DeleteSnapshotNames(ctx, a.Org.ID, ids...); err != nil {
+		s.Log.Warn("could not forget the names of deleted snapshots", "org", a.Org.Slug, "error", err)
+	}
 	servers := map[string]bool{}
+	var names []string
 	for _, snap := range snaps {
 		s.audit(r.Context(), u, a.Org, "snapshot.delete", snap.Server, snap.ID)
 		if !servers[snap.Server] {
 			servers[snap.Server] = true
+			names = append(names, snap.Server)
 			s.Events.Publish(Event{Type: "operation.done", Namespace: a.Namespace, Data: operationDone{Kind: "delete", Org: a.Org.Slug, Server: snap.Server}})
 		}
 	}
+	// A deleted server with no snapshots left cannot be brought back.
+	s.forgetNotesOfGone(ctx, a, names...)
 	writeJSON(w, http.StatusOK, map[string]int{"deleted": len(snaps)})
 	return nil
 }
@@ -1376,8 +1389,13 @@ func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	if err := s.Backups.Delete(context.WithoutCancel(r.Context()), a.Org.Slug, snap.ID); err != nil {
 		return snapshotError(err)
 	}
+	ctx := context.WithoutCancel(r.Context())
+	if err := s.Store.DeleteSnapshotNames(ctx, a.Org.ID, snap.ID); err != nil {
+		s.Log.Warn("could not forget the name of a deleted snapshot", "org", a.Org.Slug, "snapshot", snap.ID, "error", err)
+	}
 	s.audit(r.Context(), u, a.Org, "snapshot.delete", snap.Server, snap.ID)
 	s.Events.Publish(Event{Type: "operation.done", Namespace: a.Namespace, Data: operationDone{Kind: "delete", Org: a.Org.Slug, Server: snap.Server}})
+	s.forgetNotesOfGone(ctx, a, snap.Server)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

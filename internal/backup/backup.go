@@ -1144,9 +1144,10 @@ func (m *Manager) DeleteMany(ctx context.Context, org string, ids []string) erro
 
 // Forget removes the scheduled snapshots of one server that the policy no
 // longer keeps, and returns how many that was. Snapshots taken any other way
-// are not considered, and neither are other servers'. The space is not given
+// are not considered, and neither are other servers', nor those spared, by
+// ID: those are kept besides what the policy keeps. The space is not given
 // back until Prune.
-func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (int, error) {
+func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spared map[string]bool) (int, error) {
 	args, err := forgetArgs(server, keep)
 	if err != nil {
 		return 0, err
@@ -1172,15 +1173,28 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep) (in
 	// Asked first what it would remove, so that it can be noted before it
 	// is gone. Nothing else touches the repository in between: the lock is
 	// held alone.
-	going, err := m.forgetting(ctx, org, append(args, "--dry-run")...)
-	if err != nil || len(going) == 0 {
+	found, err := m.forgetting(ctx, org, append(args, "--dry-run")...)
+	if err != nil {
 		return 0, err
 	}
-	if err := m.removing(org, going...); err != nil {
+	// Then removed by ID, those spared left out.
+	var ids, lineages []string
+	for _, r := range found {
+		if !spared[r.ID] {
+			ids = append(ids, r.ID)
+			lineages = append(lineages, r.snapshot().Lineage)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if err := m.removing(org, lineages...); err != nil {
 		return 0, err
 	}
-	gone, err := m.forgetting(ctx, org, args...)
-	return len(gone), err
+	if _, err := m.restic(ctx, org, append([]string{"forget"}, ids...)...); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
 }
 
 // forgetArgs is the forget that applies a policy to one server's scheduled
@@ -1250,9 +1264,9 @@ func (m *Manager) Kept(ctx context.Context, org, server string, keep Keep) (map[
 	return kept, nil
 }
 
-// forgetting runs a forget and returns the lineages of what it removed, or
-// with --dry-run would remove.
-func (m *Manager) forgetting(ctx context.Context, org string, args ...string) ([]string, error) {
+// forgetting runs a forget and returns what it removed, or with --dry-run
+// would remove.
+func (m *Manager) forgetting(ctx context.Context, org string, args ...string) ([]resticSnapshot, error) {
 	out, err := m.restic(ctx, org, args...)
 	if err != nil {
 		return nil, err
@@ -1267,13 +1281,11 @@ func (m *Manager) forgetting(ctx context.Context, org string, args ...string) ([
 	if err := json.Unmarshal(out, &groups); err != nil {
 		return nil, fmt.Errorf("reading what was forgotten: %w", err)
 	}
-	var lineages []string
+	var found []resticSnapshot
 	for _, g := range groups {
-		for _, r := range g.Remove {
-			lineages = append(lineages, r.snapshot().Lineage)
-		}
+		found = append(found, g.Remove...)
 	}
-	return lineages, nil
+	return found, nil
 }
 
 // Prune gives back the space of snapshots that have been forgotten.

@@ -9,7 +9,7 @@ import { matches } from "../lib/search";
 import { ready, templateSummary } from "../lib/templates";
 import { worldSummary } from "../lib/worlds";
 import { Picture } from "./Picture";
-import { software, triggerLabel } from "./Snapshots";
+import { colorName, SnapshotColorDot, software, triggerLabel } from "./Snapshots";
 import { Chip, cx, Loading, SearchBox } from "./ui";
 
 /** What else a new server can start from than nothing: each fills in the form. */
@@ -107,7 +107,7 @@ export function ServerPicker({ org, onPick, picked }: { org: string; onPick: (s:
   if (servers.isPending) return <Loading />;
   if (!servers.data) return <Empty>{failed(servers.error, "Could not load servers.")}</Empty>;
   if (servers.data.length === 0) return <Empty>No servers yet.</Empty>;
-  const shown = servers.data.filter((s) => matches(query, s.name, displayName(s), describeSoftware(s)));
+  const shown = servers.data.filter((s) => matches(query, s.name, displayName(s), describeSoftware(s), s.notes));
   return (
     <Searched query={query} onQuery={setQuery} label="Search servers" none={shown.length === 0}>
       <List label="Servers">
@@ -143,7 +143,8 @@ export function SnapshotPicker({ org, onPick, picked: chosen, className }: { org
     return s ? displayName(s) : name;
   };
   if (!server) {
-    const shown = names.filter((name) => matches(query, name, title(name), !live(name) && "deleted"));
+    // A server is found by the names of its snapshots too.
+    const shown = names.filter((name) => matches(query, name, title(name), !live(name) && "deleted", ...all.filter((s) => s.server === name).map((s) => s.name)));
     return (
       <Searched query={query} onQuery={setQuery} label="Search servers" none={shown.length === 0}>
       <List label="Servers with snapshots" className={className}>
@@ -170,7 +171,7 @@ export function SnapshotPicker({ org, onPick, picked: chosen, className }: { org
   }
   const when = (time: string) => new Date(time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   const about = (s: Snapshot) => [ago(s.time), software(s), triggerLabel(s), bytes(s.size)].filter(Boolean).join(" · ");
-  const shown = all.filter((s) => s.server === server && matches(within, when(s.time), about(s)));
+  const shown = all.filter((s) => s.server === server && matches(within, when(s.time), about(s), s.name, colorName(s.color)));
   return (
     <>
       {names.length > 1 && (
@@ -191,8 +192,10 @@ export function SnapshotPicker({ org, onPick, picked: chosen, className }: { org
               onClick={() => onPick(s)}
               selected={s.id === chosen}
               picture={<Picture name={title(s.server)} url={snapshotIcon(org, s.id)} size={32} />}
-              title={when(s.time)}
-              sub={about(s)}
+              // A named one by its name, which is what it is found by.
+              title={s.name || when(s.time)}
+              mark={s.color && <SnapshotColorDot color={s.color} />}
+              sub={s.name ? `${when(s.time)} · ${about(s)}` : about(s)}
             />
           ))}
         </List>
@@ -228,7 +231,7 @@ export function List({ label, children, className }: { label: string; children: 
   );
 }
 
-export function Row({ picture, title, chip, sub, disabled, selected, onClick }: { picture: ReactNode; title: string; chip?: string; sub: string; disabled?: boolean; selected?: boolean; onClick: () => void }) {
+export function Row({ picture, title, mark, chip, sub, disabled, selected, onClick }: { picture: ReactNode; title: string; mark?: ReactNode; chip?: string; sub: string; disabled?: boolean; selected?: boolean; onClick: () => void }) {
   return (
     <li>
       <button
@@ -244,6 +247,7 @@ export function Row({ picture, title, chip, sub, disabled, selected, onClick }: 
         {picture}
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2 text-[13px] font-medium">
+            {mark}
             <span className="truncate">{title}</span>
             {chip && <Chip>{chip}</Chip>}
           </span>

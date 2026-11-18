@@ -124,7 +124,7 @@ func TestSyncOffsite(t *testing.T) {
 	}
 
 	// Retention here is carried out there too.
-	if removed, err := m.Forget(ctx, "alpha", "world", Keep{Daily: 1}); err != nil || removed != 1 {
+	if removed, err := m.Forget(ctx, "alpha", "world", Keep{Daily: 1}, nil); err != nil || removed != 1 {
 		t.Fatalf("forget: %d, %v; want 1", removed, err)
 	}
 	if res, err := m.SyncOffsite(ctx, "alpha"); err != nil || res.Removed != 1 || res.Snapshots != 2 {
@@ -261,7 +261,7 @@ func TestARemovalThatCannotBeNotedIsNotMade(t *testing.T) {
 	if err := m.Delete(ctx, "alpha", list[0].ID); err == nil {
 		t.Error("a snapshot was deleted though its removal could not be noted")
 	}
-	if removed, err := m.Forget(ctx, "alpha", "world", Keep{Daily: 1}); err == nil || removed != 0 {
+	if removed, err := m.Forget(ctx, "alpha", "world", Keep{Daily: 1}, nil); err == nil || removed != 0 {
 		t.Errorf("retention went ahead though its removals could not be noted: %d, %v", removed, err)
 	}
 	if after, err := m.List(ctx, "alpha"); err != nil || len(after) != 3 {

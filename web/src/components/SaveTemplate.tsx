@@ -1,13 +1,14 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, ApiError, snapshotIcon, type Server, type Snapshot, type Template } from "../lib/api";
+import { api, ApiError, snapshotIcon, type Server, type Snapshot, type SnapshotDetail, type Template } from "../lib/api";
 import { ago, describeSoftware, displayName } from "../lib/format";
 import { matches } from "../lib/search";
 import { keys, useTemplates } from "../lib/queries";
 import { Picture } from "./Picture";
 import { software, triggerLabel } from "./Snapshots";
 import { List, ServerRow, SnapshotPicker } from "./StartPicker";
-import { Button, cx, Field, Input, Modal, Notice, SearchBox, Select, Textarea } from "./ui";
+import { Button, cx, Field, Input, Modal, Notice, SearchBox, Select } from "./ui";
+import { NotesField } from "./Notes";
 
 /**
  * Saves a server or a snapshot as a template: a new one, or the newest
@@ -50,10 +51,18 @@ export function SaveTemplate({
   // A new one, or a template there is, by its ID.
   const [target, setTarget] = useState<string>(into?.id ?? "new");
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  // Until changed here, the notes of what it is saved from.
+  const [description, setDescription] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const updating = templates.find((t) => t.id === target);
+  const detail = useQuery({
+    queryKey: ["snapshot", org, fromSnapshot?.id],
+    queryFn: () => api.get<SnapshotDetail>(`/orgs/${org}/snapshots/${fromSnapshot?.id}`),
+    enabled: open && !!fromSnapshot && !updating,
+    retry: false,
+  });
+  const notes = description ?? (fromServer ? (fromServer.notes ?? "") : fromSnapshot ? (detail.data?.notes ?? "") : "");
   // A snapshot is called after its server, as it is now if it is still there.
   const snapshotName = (s: Snapshot) => {
     const live = servers.find((x) => x.name === s.server);
@@ -67,7 +76,7 @@ export function SaveTemplate({
     if (!o) {
       setError(null);
       setName("");
-      setDescription("");
+      setDescription(null);
       setTarget(into?.id ?? "new");
       setPicked(server?.name ?? "");
       setPickedSnapshot(null);
@@ -83,7 +92,7 @@ export function SaveTemplate({
     const source = fromServer ? { server: fromServer.name } : { snapshot: fromSnapshot!.id };
     try {
       if (updating) await api.post(`/orgs/${org}/templates/${updating.id}/versions`, source);
-      else await api.post(`/orgs/${org}/templates`, { name: name.trim() || suggested, description: description.trim(), ...source });
+      else await api.post(`/orgs/${org}/templates`, { name: name.trim() || suggested, description: notes.trim(), ...source });
       void qc.invalidateQueries({ queryKey: keys.templates(org) });
       setBusy(false);
       close(false);
@@ -166,7 +175,7 @@ export function SaveTemplate({
         ) : (
           <>
             <Field label="Name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder={suggested} maxLength={60} />}</Field>
-            <Field label="Description">{(id) => <Textarea id={id} value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={500} />}</Field>
+            <NotesField value={notes} onChange={setDescription} rows={3} />
             <p className="text-[13px] text-muted">The server's files, world and settings are saved. New servers can be made from the template.</p>
           </>
         )}

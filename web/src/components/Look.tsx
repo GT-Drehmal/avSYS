@@ -53,7 +53,7 @@ export function Swatch({ accent, className }: { accent: Accent; className?: stri
 }
 
 /** One of a row of choices, of which one is picked. */
-function Choice({ checked, onPick, children }: { checked: boolean; onPick: () => void; children: ReactNode }) {
+export function Choice({ checked, onPick, children }: { checked: boolean; onPick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"

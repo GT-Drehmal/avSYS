@@ -50,6 +50,9 @@ type serverView struct {
 	// Unfinished says why the game may not be run on its files, when a
 	// copy, restore or import of them did not finish.
 	Unfinished string `json:"unfinished,omitempty"`
+	// Notes are what admins noted of it in the panel: never in its spec,
+	// its files or the game.
+	Notes string `json:"notes"`
 }
 
 // forRole is the view as someone with this role is shown it.
@@ -75,6 +78,7 @@ func (s *Server) view(role store.Role, mc *avsysv1.MinecraftServer) serverView {
 	if errors.As(unfinished(mc), &why) {
 		v.Unfinished = why.Message
 	}
+	v.Notes = s.notesOf(context.Background(), mc)
 	return v
 }
 
@@ -461,9 +465,20 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// "kept" for one made from a template whose servers start a new
 		// world to take its version's anyway.
 		World string `json:"world"`
+		// Notes are the panel's notes on it. Left out, a server made from
+		// another has its original's, and one made from a template the
+		// template's description.
+		Notes *string `json:"notes"`
 	}
 	if err := decode(r, &raw); err != nil {
 		return err
+	}
+	if raw.Notes != nil {
+		notes, err := checkNotes(*raw.Notes)
+		if err != nil {
+			return err
+		}
+		raw.Notes = &notes
 	}
 	if raw.World != "" && raw.World != "new" && raw.World != "kept" {
 		return errBadRequest(`"world" is "new" or "kept".`)
@@ -494,6 +509,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 		template = &avsysv1.WorldRef{ID: t.ID, Name: t.Name}
+		if raw.Notes == nil {
+			raw.Notes = &t.Description
+		}
 	}
 	in := struct {
 		Name string
@@ -544,9 +562,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 			return err
 		}
 		if raw.FromServer != "" {
-			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture, newWorld, raw.Node)
+			return s.createFromServer(w, r, u, a, in.Name, in.Spec, given, raw.FromServer, picture, newWorld, raw.Node, raw.Notes)
 		}
-		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, template, picture, newWorld, raw.Node)
+		return s.createFromSnapshot(w, r, u, a, in.Name, in.Spec, given, raw.FromSnapshot, template, picture, newWorld, raw.Node, raw.Notes)
 	}
 	if len(raw.Picture) > 0 {
 		return errBadRequest("A new server is given a picture with PUT /orgs/{org}/servers/{server}/icon?wait=true once the server is made.")
@@ -612,6 +630,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err := s.withHostname(r.Context(), a.Org, mc.Spec.Expose.Hostname, func() error { return s.createPlaced(r.Context(), mc, raw.Node) }); err != nil {
 		return err
 	}
+	// Notes left by a server of this name before, gone with no snapshots
+	// to bring it back from, are not this one's.
+	s.keepNotes(r.Context(), a, in.Name, raw.Notes, "")
 	s.audit(r.Context(), u, a.Org, "server.create", in.Name, "")
 	writeJSON(w, http.StatusCreated, s.view(a.Role, mc))
 	return nil
@@ -691,18 +712,42 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if err != nil {
 		return err
 	}
+	var in struct {
+		Spec json.RawMessage
+		// Notes are the panel's notes on the server, which nothing else
+		// reads: changed whatever the server is doing.
+		Notes *string
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	if len(in.Spec) == 0 && in.Notes == nil {
+		return errBadRequest("Nothing to change: send {\"spec\": {...}} or {\"notes\": \"...\"}.")
+	}
+	if in.Notes != nil {
+		notes, err := checkNotes(*in.Notes)
+		if err != nil {
+			return err
+		}
+		if len(in.Spec) == 0 {
+			if err := s.Store.SetServerNotes(r.Context(), a.Org.ID, mc.Name, notes); err != nil {
+				return err
+			}
+			s.audit(r.Context(), u, a.Org, "server.notes", mc.Name, "")
+			// Its pages elsewhere see it now: nothing about the server
+			// itself changed for them to hear of.
+			v := s.view(store.RoleOwner, mc)
+			s.Events.Publish(Event{Type: "server.updated", Namespace: mc.Namespace, Data: v})
+			writeJSON(w, http.StatusOK, v.forRole(a.Role))
+			return nil
+		}
+		in.Notes = &notes
+	}
 	release, err := s.changing(mc, false)
 	if err != nil {
 		return err
 	}
 	defer release()
-	var in struct{ Spec json.RawMessage }
-	if err := decode(r, &in); err != nil {
-		return err
-	}
-	if len(in.Spec) == 0 {
-		return errBadRequest("Nothing to change: send {\"spec\": {...}}.")
-	}
 	var previous *avsysv1.MinecraftServerSpec
 	var unlock, dropPack, dropModpack func()
 	defer func() {
@@ -776,6 +821,13 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		go s.restackFor(context.WithoutCancel(r.Context()), client.ObjectKeyFromObject(mc))
 	}
 	s.audit(r.Context(), u, a.Org, "server.update", mc.Name, "")
+	if in.Notes != nil {
+		if err := s.Store.SetServerNotes(r.Context(), a.Org.ID, mc.Name, *in.Notes); err != nil {
+			return err
+		}
+		// Its pages elsewhere may have heard of the change before the notes.
+		s.Events.Publish(Event{Type: "server.updated", Namespace: mc.Namespace, Data: s.view(store.RoleOwner, mc)})
+	}
 	// Who is on its lists in game, acted on now and not with the next look.
 	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist ||
 		!equality.Semantic.DeepEqual(previous.OpMembers, mc.Spec.OpMembers) || !equality.Semantic.DeepEqual(previous.WhitelistMembers, mc.Spec.WhitelistMembers) ||
@@ -903,6 +955,7 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 		}
 		s.audit(r.Context(), u, a.Org, "server.delete", mc.Name, "")
 		s.serverIcons.forget(a.Namespace + "/" + mc.Name)
+		s.forgetNotesOfGone(context.WithoutCancel(r.Context()), a, mc.Name)
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
@@ -959,6 +1012,8 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.audit(ctx, u, a.Org, "server.delete", mc.Name, detail)
 	// A server made under this name later is another server.
 	s.serverIcons.forget(a.Namespace + "/" + mc.Name)
+	// Its notes stay with its name while it can be brought back.
+	s.forgetNotesOfGone(ctx, a, mc.Name)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

@@ -3,7 +3,8 @@ import { useState } from "react";
 import { api, ApiError, type LibraryWorld, type Server, type Snapshot } from "../lib/api";
 import { keys } from "../lib/queries";
 import { toast } from "../lib/toast";
-import { Button, Field, Input, Modal, Notice, Textarea } from "./ui";
+import { Button, Field, Input, Modal, Notice } from "./ui";
+import { NotesField } from "./Notes";
 
 /**
  * Puts a server's world in the organization's library, as it is now (a
@@ -46,7 +47,7 @@ export function SaveWorld({ org, server, snapshot, onClose }: { org: string; ser
         }}
       >
         <Field label="Name">{(id) => <Input id={id} maxLength={60} value={name} placeholder={named} onChange={(e) => setName(e.target.value)} />}</Field>
-        <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
+        <NotesField value={description} onChange={setDescription} />
         {error && <Notice tone="danger">{error}</Notice>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} disabled={busy}>

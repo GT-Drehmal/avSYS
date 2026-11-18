@@ -529,7 +529,14 @@ export interface Snapshot {
   files: number;
   /** In the offsite copy, as of its last sync. Absent when there is none, or this one is not in it yet. */
   offsite?: boolean;
+  /** What it was named in the panel. */
+  name?: string;
+  /** The colour it was marked with: one of the panel's accents. */
+  color?: SnapshotColor;
 }
+
+/** The colours a snapshot can be marked with, which are the panel's accents. */
+export type SnapshotColor = "amethyst" | "gold" | "teal" | "blue" | "rose";
 
 /** A snapshot with the settings its server had when it was taken. */
 export interface SnapshotDetail extends Snapshot {
@@ -542,7 +549,11 @@ export interface SnapshotDetail extends Snapshot {
     kept?: ("daily" | "weekly" | "monthly" | "yearly")[];
     /** The organization's daily snapshots are off: the rules only apply when they are run by hand or switched back on. */
     paused?: boolean;
+    /** A scheduled one the schedule passes over, as it is named. */
+    named?: boolean;
   };
+  /** The notes of the server it is of, as they are now. */
+  notes: string;
 }
 
 /** A snapshot or restore under way on a server, or a new server receiving its files. */
@@ -753,6 +764,8 @@ export interface Server {
   status: ServerStatus;
   /** Why the game may not be run on its files, when a copy, restore or import of them did not finish. */
   unfinished?: string;
+  /** What admins noted of it, in the panel only. */
+  notes: string;
 }
 
 /** A partial spec for PATCH: omitted fields are kept, null clears a field. */

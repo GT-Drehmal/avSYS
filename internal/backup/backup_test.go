@@ -518,7 +518,7 @@ func TestRetentionRemovesRejectedFirst(t *testing.T) {
 	if err := m.reject("alpha", bad.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 1}); err != nil {
+	if _, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 1}, nil); err != nil {
 		t.Fatal(err)
 	}
 	all, err := m.listAll(ctx, "alpha")
@@ -739,7 +739,7 @@ func TestForgetKeepsWhatThePolicySays(t *testing.T) {
 	take("probe", TriggerPreRestore, "2026-09-03 12:00:00")
 	take("other", TriggerScheduled, "2026-09-01 04:00:00")
 
-	if _, err := m.Forget(ctx, "alpha", "probe", Keep{}); err == nil {
+	if _, err := m.Forget(ctx, "alpha", "probe", Keep{}, nil); err == nil {
 		t.Fatal("a policy that keeps nothing was carried out")
 	}
 	// Asking which rule keeps what changes nothing, and names only the
@@ -768,9 +768,19 @@ func TestForgetKeepsWhatThePolicySays(t *testing.T) {
 		t.Error("a policy that keeps nothing was answered for")
 	}
 
-	removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3})
-	if err != nil || removed != 7 {
-		t.Fatalf("forget keeping three days: removed %d, %v; want 7", removed, err)
+	// One spared, as a named one is, is kept besides what the policy keeps.
+	spared := map[string]bool{}
+	for _, snap := range before {
+		if snap.Server == "probe" && snap.Trigger == TriggerScheduled && snap.Time.UTC().Day() == 5 {
+			spared[snap.ID] = true
+		}
+	}
+	if len(spared) != 1 {
+		t.Fatalf("spared: %v", spared)
+	}
+	removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3}, spared)
+	if err != nil || removed != 6 {
+		t.Fatalf("forget keeping three days: removed %d, %v; want 6", removed, err)
 	}
 	if err := m.Prune(ctx, "alpha"); err != nil {
 		t.Fatalf("prune: %v", err)
@@ -785,20 +795,24 @@ func TestForgetKeepsWhatThePolicySays(t *testing.T) {
 	}
 	want := []string{
 		"probe scheduled 09-10", "probe scheduled 09-09", "probe scheduled 09-08",
-		"probe pre-restore 09-03", "probe manual 09-02", "other scheduled 09-01",
+		"probe scheduled 09-05", "probe pre-restore 09-03", "probe manual 09-02", "other scheduled 09-01",
 	}
 	if strings.Join(kept, ", ") != strings.Join(want, ", ") {
 		t.Errorf("kept:\n %s\nwant:\n %s", strings.Join(kept, "\n "), strings.Join(want, "\n "))
 	}
 	// Nothing more to remove the second time.
-	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3, Weekly: 4, Monthly: 12, Yearly: 2}); err != nil || removed != 0 {
+	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3, Weekly: 4, Monthly: 12, Yearly: 2}, spared); err != nil || removed != 0 {
 		t.Errorf("forget again: removed %d, %v; want 0", removed, err)
 	}
+	// No longer spared, it goes as the policy says.
+	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3}, nil); err != nil || removed != 1 {
+		t.Errorf("forget once it is no longer spared: removed %d, %v; want 1", removed, err)
+	}
 	// A server with no snapshots, or an organization with no repository, is nothing to do.
-	if removed, err := m.Forget(ctx, "alpha", "nobody", Keep{Daily: 1}); err != nil || removed != 0 {
+	if removed, err := m.Forget(ctx, "alpha", "nobody", Keep{Daily: 1}, nil); err != nil || removed != 0 {
 		t.Errorf("forget for a server with no snapshots: %d, %v", removed, err)
 	}
-	if removed, err := m.Forget(ctx, "beta", "probe", Keep{Daily: 1}); err != nil || removed != 0 {
+	if removed, err := m.Forget(ctx, "beta", "probe", Keep{Daily: 1}, nil); err != nil || removed != 0 {
 		t.Errorf("forget in an organization with no repository: %d, %v", removed, err)
 	}
 }
