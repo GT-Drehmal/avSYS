@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test:browser": "playwright test",
-    "lint": "biome lint ."
+    "lint": "biome lint .",
+    "test:unit": "bun test unit"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",

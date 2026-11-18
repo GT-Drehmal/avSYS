@@ -305,6 +305,9 @@ func TestOrganizationRoutes(t *testing.T) {
 		// 409: allowed, and then refused because the server is not running.
 		{"POST " + server + "/console", "", `{"command":"list"}`, store.RoleOperator, 409},
 		{"GET " + server + "/console", "", "", store.RoleViewer, 0},
+		// Those who can type commands are given the game's, to complete
+		// them from. 0: it goes on to make them.
+		{"GET " + server + "/console/commands", "", "", store.RoleOperator, 0},
 		{"GET " + server + "/activity", "", "", store.RoleViewer, 200},
 		// 502: allowed, and this panel reaches no server's files.
 		{"GET " + server + "/world", "", "", store.RoleViewer, 502},

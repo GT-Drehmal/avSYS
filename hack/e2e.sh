@@ -465,6 +465,18 @@ expect "a command typed at the server console answers with nothing, its output b
 sleep 2
 expect "and is then from the server" "$(call -N --max-time 4 "$SRV/console" 2>/dev/null || true)" "[Server] hello from the panel"
 expect "one command at a time" "$(call -o /dev/null -w '%{http_code}' -d '{"command":"say a\nsay b","as":"server"}' "$SRV/console")" 400
+# The game's own commands, to complete them at the console: the panel has
+# the game write them out for the probe's version, once, in a pod of its
+# own, and keeps them.
+commands_code=202
+for _ in $(seq 1 90); do
+  commands_code=$(call -o "$WORK/commands.json" -w '%{http_code}' "$SRV/console/commands")
+  [ "$commands_code" = 202 ] || break
+  sleep 2
+done
+expect "the game's commands are made for its version" "$commands_code" 200
+expect "and are its command tree" "$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d["type"], sorted(k for k in ("execute", "gamemode", "time") if k in d["children"]))' "$WORK/commands.json")" "root ['execute', 'gamemode', 'time']"
+expect "and are kept" "$(call -o /dev/null -w '%{http_code}' "$SRV/console/commands")" 200
 
 step "members picked for the whitelist"
 # The player this user says they are: the one linked already, or one linked

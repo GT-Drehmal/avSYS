@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ChevronRight, Download, Search } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cx, Input, Select } from "../../components/ui";
 import { toast } from "../../lib/toast";
 import { api, ApiError, atLeast, serverPath } from "../../lib/api";
 import { bytes, plain } from "../../lib/format";
+import { CommandInput, useCommandTree } from "./CommandInput";
 import { useServerContext } from "./ServerPage";
 
 interface Line {
@@ -274,6 +275,9 @@ function LiveConsole() {
   const path = serverPath(server.org, server.name);
   const running = server.status.phase === "Running";
   const canRun = atLeast(role, "operator");
+  const tree = useCommandTree(server, canRun && running);
+  const online = server.status.players?.names;
+  const players = useMemo(() => online ?? [], [online]);
 
   const append = useCallback((more: Line[]) => setLines((prev) => [...prev, ...more].slice(-maxLines)), []);
 
@@ -361,16 +365,15 @@ function LiveConsole() {
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  // The commands run before, newest first, to go back through.
+  const onHistory = (step: 1 | -1) => {
     const h = history.current;
-    if (e.key === "ArrowUp" && h.index < h.entries.length - 1) {
-      e.preventDefault();
-      setCommand(h.entries[++h.index]);
-    } else if (e.key === "ArrowDown" && h.index >= 0) {
-      e.preventDefault();
+    if (step === -1 && h.index < h.entries.length - 1) return h.entries[++h.index];
+    if (step === 1 && h.index >= 0) {
       h.index--;
-      setCommand(h.index === -1 ? "" : h.entries[h.index]);
+      return h.index === -1 ? "" : h.entries[h.index];
     }
+    return null;
   };
 
   return (
@@ -401,16 +404,14 @@ function LiveConsole() {
       {canRun && (
         <form onSubmit={submit} className="flex h-10 shrink-0 items-center gap-2 border-t border-line bg-surface px-3">
           <ChevronRight className={cx("size-4", running ? "text-accent" : "text-faint")} />
-          <input
+          <CommandInput
             value={command}
-            onChange={(e) => setCommand(e.target.value)}
-            onKeyDown={onKeyDown}
+            onChange={setCommand}
+            onHistory={onHistory}
+            tree={tree}
+            players={players}
             disabled={!running}
             placeholder={running ? "Run a server command, e.g. list" : "Start the server to run commands"}
-            aria-label="Server command"
-            autoComplete="off"
-            spellCheck={false}
-            className="h-full flex-1 bg-transparent font-mono text-xs text-fg placeholder:text-faint focus:outline-none disabled:cursor-not-allowed"
           />
         </form>
       )}

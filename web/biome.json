@@ -5,7 +5,8 @@
       "src/**/*.ts",
       "src/**/*.tsx",
       "tests/**/*.ts",
-      "screenshots/**/*.ts"
+      "screenshots/**/*.ts",
+      "unit/**/*.ts"
     ]
   },
   "formatter": {

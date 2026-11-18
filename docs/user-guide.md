@@ -416,6 +416,13 @@ players cannot join.
 
 **Console.** The live log of the server. Operators type commands in the
 box at the bottom (no `/` needed); up and down bring back earlier ones.
+As you type, the commands and subcommands that fit are listed above the
+box, with the argument that comes next: up and down pick one, **Tab** or a
+click puts it in, and Ctrl/Cmd-Z takes it out again. The list is of the
+game's own commands for the server's version, not those of its mods or
+plugins, and is ready a minute or so after a version's first start.
+
+![Completing a command at the console](images/console-completion.png)
 The **Log** menu opens earlier runs and crash reports, with search,
 **First error**, and **Download**.
 

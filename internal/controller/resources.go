@@ -139,6 +139,10 @@ func javaTag(java int) string {
 	return "latest"
 }
 
+// ImageForJava is the server image that carries at least the given Java
+// release.
+func ImageForJava(java int) string { return defaultImageRepo + ":" + javaTag(java) }
+
 // RanVersion is the game version in what a server's game says it runs when
 // pinged, its status's version: after the software's name, as in "Paper
 // 1.21.4", or alone. "" when it has said nothing.
