@@ -175,8 +175,13 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 		return metrics.gameCommand(ctx, mc, command)
 	}
 	// The game's command trees are the ones recorded in --upstream; a
-	// version without one has none, as one too old for them.
+	// version without one has none, as one too old for them. That of
+	// 1.20.1 cannot be made, as when Mojang's site does not answer: its
+	// servers complete from their help alone.
 	srv.CommandTree = func(_ context.Context, version string) ([]byte, error) {
+		if version == "1.20.1" {
+			return nil, errors.New("could not reach launchermeta.mojang.com")
+		}
 		return commandTree(upstreamDir, version)
 	}
 	tokens := map[string]string{}

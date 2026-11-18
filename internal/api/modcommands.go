@@ -42,7 +42,13 @@ import (
 //
 // Paper's help is Bukkit's, pages of topics; there the game's own is
 // minecraft:help, and Bukkit's topics are read for names only where that
-// says nothing.
+// says nothing. Before 1.13 the game's help is pages of usage of its own
+// kind, which are read for names only too.
+//
+// Where the version's tree is not there (still being made, Mojang's site
+// not answering, or a version before the game had one), the help is read
+// for every command, the game's own included, and what it says is what
+// the console completes from until the tree is there.
 
 // modsWait is how long an ask for a server's commands waits for its help
 // to be read before it is answered to ask again.
@@ -56,7 +62,7 @@ const (
 	modsRetry = time.Minute
 	// modsCalls is how many times the help is asked for, at most, for one
 	// server, and modsDepth how many words deep.
-	modsCalls = 256
+	modsCalls = 512
 	modsDepth = 6
 	// modsBytes is how much help is read, at most, for one server.
 	modsBytes = 4 << 20
@@ -293,6 +299,9 @@ func helpLines(out, path string) []string {
 var (
 	bukkitIndex   = regexp.MustCompile(`Help: Index \((\d+)/(\d+)\)`)
 	bukkitCommand = regexp.MustCompile(`(?m)^/(\S+): `)
+	// The game's help before 1.13: "--- Showing help page 1 of 9 (/help
+	// <page>) ---", then a command's usage on each line.
+	legacyIndex = regexp.MustCompile(`Showing help page (\d+) of (\d+)`)
 )
 
 // bukkitHelp says whether an answer to help is Bukkit's: pages of topics,
@@ -336,6 +345,9 @@ func readHelp(ctx context.Context, run func(string) (string, error), vanilla map
 	if err != nil {
 		return root, err
 	}
+	if legacyIndex.MatchString(plain(out)) {
+		return root, readLegacyHelp(root, out, ask, vanilla)
+	}
 	var bukkit []string
 	if bukkitHelp(out) {
 		// Paper's help is Bukkit's; the game's own goes by its namespace.
@@ -343,6 +355,10 @@ func readHelp(ctx context.Context, run func(string) (string, error), vanilla map
 		help = "minecraft:help"
 		if out, err = ask(help); err != nil {
 			return root, err
+		}
+		if legacyIndex.MatchString(plain(out)) {
+			// Before 1.13 Bukkit's pages have every command.
+			return root, readBukkitHelp(root, bukkit[0], ask, vanilla)
 		}
 	}
 	lines := map[string]usageLine{}
@@ -464,6 +480,34 @@ func readBukkitHelp(root *usageNode, first string, ask func(string) (string, err
 	}
 }
 
+// readLegacyHelp reads command names from the game's pages of help before
+// 1.13: names only, each a command that runs.
+func readLegacyHelp(root *usageNode, first string, ask func(string) (string, error), vanilla map[string]bool) error {
+	pages := 1
+	if m := legacyIndex.FindStringSubmatch(plain(first)); m != nil {
+		pages, _ = strconv.Atoi(m[2])
+	}
+	out := first
+	for page := 1; ; page++ {
+		for _, l := range helpLines(out, "") {
+			name, _, _ := strings.Cut(l, " ")
+			if vanilla[name] || !usageLiteral.MatchString(name) {
+				continue
+			}
+			if c, made := root.child(name); made {
+				c.Executable = true
+			}
+		}
+		if page >= pages || page >= bukkitPages {
+			return nil
+		}
+		var err error
+		if out, err = ask("help " + strconv.Itoa(page+1)); err != nil {
+			return err
+		}
+	}
+}
+
 // serverCommands are the commands read from each running server's help,
 // for the run of its game they were read from.
 type serverCommands struct {
@@ -473,49 +517,112 @@ type serverCommands struct {
 
 type modCommands struct {
 	instance string
-	done     chan struct{}
+	// skipped: the game's own commands were left out, as its tree has them.
+	skipped bool
+	done    chan struct{}
 	// Once done: what was read, and when to ask again if not all of it
 	// could be.
 	root  *usageNode
 	retry time.Time
-	// The game's tree with them, made once for the tree it was made from.
+	// The game's tree with them, made once for the tree it was made from;
+	// and without it, what was read alone, by what it says of the game's
+	// tree (helpCommandsOf).
 	merge  sync.Mutex
 	base   string
 	merged *commandTree
+	alone  map[string]*commandTree
 }
 
-// modCommandsOf is the game's tree with the commands a server's mods and
-// plugins add, read from its help if it is running; the tree as it is if
-// they add none. pending is true while the help is still being read.
-func (s *Server) modCommandsOf(ctx context.Context, mc *avsysv1.MinecraftServer, tree *commandTree) (out *commandTree, pending bool) {
+// What a tree from a server's help alone says of the game's own tree, as
+// its root's "partial": being made, to come later (it could not be made a
+// moment ago, and is tried again), or nothing where there is none.
+const (
+	partialMaking = "making"
+	partialLater  = "later"
+)
+
+// serverHelp is what was read from a running server's help in this run of
+// its game, which is read first if it has not been: nil where the server is
+// not running. vanilla are the commands of the game's tree, which are left
+// out, or nil where there is no tree and every command is read. pending is
+// true while the help is still being read.
+func (s *Server) serverHelp(ctx context.Context, mc *avsysv1.MinecraftServer, vanilla func() map[string]bool) (m *modCommands, pending bool) {
 	key := mc.Namespace + "/" + mc.Name
 	c := &s.mods
 	if mc.Status.Phase != avsysv1.PhaseRunning {
 		c.mu.Lock()
 		delete(c.by, key)
 		c.mu.Unlock()
-		return tree, false
+		return nil, false
 	}
 	instance := s.gameInstance(ctx, mc)
+	names := vanilla()
 	c.mu.Lock()
 	if c.by == nil {
 		c.by = map[string]*modCommands{}
 	}
-	m := c.by[key]
-	if m == nil || m.instance != instance || m.finished() && !m.retry.IsZero() && time.Now().After(m.retry) {
-		m = &modCommands{instance: instance, done: make(chan struct{})}
+	m = c.by[key]
+	if m == nil || m.instance != instance || m.finished() && !m.retry.IsZero() && time.Now().After(m.retry) ||
+		names == nil && m.skipped {
+		m = &modCommands{instance: instance, skipped: names != nil, done: make(chan struct{})}
 		c.by[key] = m
-		go s.readModCommands(m, mc.DeepCopy(), tree.names())
+		go s.readModCommands(m, mc.DeepCopy(), names)
 	}
 	c.mu.Unlock()
 	select {
 	case <-m.done:
+		return m, false
 	case <-time.After(modsWait):
 		return nil, true
 	case <-ctx.Done():
 		return nil, true
 	}
-	if m.root == nil || len(m.root.order) == 0 {
+}
+
+// helpCommandsOf is a tree of the commands a running server's help lists,
+// for where the game's own tree is not there: the game's as its help has
+// them, by name and usage, with those of its mods and plugins. partial
+// says when the game's tree is to come (partialMaking, partialLater), or
+// is "" where there is none. nil where the server is not running or its
+// help lists nothing; pending is true while it is read.
+func (s *Server) helpCommandsOf(ctx context.Context, mc *avsysv1.MinecraftServer, partial string) (out *commandTree, pending bool) {
+	m, pending := s.serverHelp(ctx, mc, func() map[string]bool { return nil })
+	if m == nil || m.root == nil || len(m.root.order) == 0 {
+		return nil, pending
+	}
+	m.merge.Lock()
+	defer m.merge.Unlock()
+	if m.alone[partial] == nil {
+		raw, err := m.root.MarshalJSON()
+		if err == nil && partial != "" {
+			raw = append([]byte(`{"partial":"`+partial+`",`), raw[1:]...)
+		}
+		var gz []byte
+		if err == nil {
+			gz, err = packCommands(raw)
+		}
+		if err != nil {
+			s.Log.Warn("could not make a list of a server's commands from its help", "server", mc.Name, "error", err)
+			return nil, false
+		}
+		if m.alone == nil {
+			m.alone = map[string]*commandTree{}
+		}
+		m.alone[partial] = newCommandTree(gz)
+	}
+	return m.alone[partial], false
+}
+
+// modCommandsOf is the game's tree with the commands a server's mods and
+// plugins add, read from its help if it is running; the tree as it is if
+// they add none. pending is true while the help is still being read. One
+// the game's tree has stays as the tree has it.
+func (s *Server) modCommandsOf(ctx context.Context, mc *avsysv1.MinecraftServer, tree *commandTree) (out *commandTree, pending bool) {
+	m, pending := s.serverHelp(ctx, mc, tree.names)
+	if pending {
+		return nil, true
+	}
+	if m == nil || m.root == nil || len(m.root.order) == 0 {
 		return tree, false
 	}
 	m.merge.Lock()

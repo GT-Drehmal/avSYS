@@ -444,7 +444,9 @@ click puts it in, and Ctrl/Cmd-Z takes it out again. The list has the
 game's own commands for the server's version, ready a minute or so after a
 version's first start, and those of its mods and plugins, from the
 server's own help while it runs: their names and options, with each
-argument by its name only, not what it takes.
+argument by its name only, not what it takes. Until the game's own list is
+ready, or where there is none (versions before 1.13), a running server's
+list is all from its help, the game's commands included.
 
 ![Completing a command at the console](images/console-completion.png)
 The **Log** menu opens earlier runs and crash reports, with search,

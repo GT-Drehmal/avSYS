@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -479,5 +481,184 @@ func TestServerCommandsWhenTheGameDoesNotAnswer(t *testing.T) {
 	close(slow.hold)
 	if rec := waitCommandTree(q, nil); rec.Code != http.StatusOK || commandNames(t, rec.Body.Bytes())["bingo"] == nil {
 		t.Errorf("once read: %d", rec.Code)
+	}
+}
+
+// The game's help before 1.13: pages of usage, read for names. Over RCON a
+// page's lines come with nothing between them.
+var legacyHelp = map[string]string{
+	"help": "--- Showing help page 1 of 2 (/help <page>) ---/advancement <grant|revoke|test> <player>/ban <name> [reason ...]" +
+		"/blockdata <x> <y> <z> <dataTag>/tp [target player] <destination player> OR /tp [target player] <x> <y> <z> [<yaw> <pitch>]" +
+		"/forge <tps|track|gen|entity>/home [name]",
+	"help 2": "--- Showing help page 2 of 2 (/help <page>) ---/warp <name>/weather <clear|rain|thunder> [duration in seconds]",
+}
+
+func TestReadHelpBefore113(t *testing.T) {
+	var asked []string
+	root, err := readHelp(context.Background(), answering(t, legacyHelp, &asked), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"advancement", "ban", "blockdata", "tp", "forge", "home", "warp", "weather"}
+	if !reflect.DeepEqual(root.order, want) || !reflect.DeepEqual(asked, []string{"help", "help 2"}) {
+		t.Errorf("read %q, asked %q", root.order, asked)
+	}
+	for _, name := range want {
+		if n := root.children[name]; !n.Executable || len(n.order) != 0 {
+			t.Errorf("%s: %+v", name, n)
+		}
+	}
+	// Spigot before 1.13: Bukkit's pages, as the game's own help says
+	// nothing that can be read as Brigadier's.
+	rec := helpRecording(t, "paper")
+	asked = nil
+	root, err = readHelp(context.Background(), answering(t, map[string]string{
+		"help":           strings.Replace(rec["help"], "(1/21)", "(1/1)", 1),
+		"minecraft:help": legacyHelp["help"],
+	}, &asked), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(root.order, []string{"advancement", "attribute", "ban", "ban-ip"}) {
+		t.Errorf("from Bukkit's pages: %q", root.order)
+	}
+}
+
+// waitFull asks until the tree is the game's own, not one from the help
+// alone.
+func waitFull(p *panel) *httptest.ResponseRecorder {
+	p.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rec := waitCommandTree(p, nil)
+		if !strings.Contains(rec.Body.String(), `"partial":`) || time.Now().After(deadline) {
+			return rec
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Mojang's site does not answer, so the game's tree cannot be made: a
+// running server's commands are those its help lists, the game's own
+// included, until the tree is there.
+func TestCommandsFromHelpAlone(t *testing.T) {
+	p := newPanel(t)
+	raw := commandsFixture(t)
+	var mu sync.Mutex
+	unreachable := errors.New("could not reach launchermeta.mojang.com")
+	treeErr := unreachable
+	p.srv.CommandTree = func(context.Context, string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if treeErr != nil {
+			return nil, treeErr
+		}
+		return raw, nil
+	}
+	game := &helpServer{rec: helpRecording(t, "bingo")}
+	p.srv.GameCommand = game.command
+
+	// Stopped: nothing to complete from.
+	if rec := waitCommandTree(p, nil); rec.Code != http.StatusNotFound || game.count() != 0 {
+		t.Fatalf("stopped: %d, asked %d", rec.Code, game.count())
+	}
+
+	// Running: what its help says, with the game's tree to come later.
+	p.setPhase("alpha", "world", avsysv1.PhaseRunning)
+	gamePod(t, p, 0)
+	rec := waitCommandTree(p, nil)
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Body.String(), `{"partial":"later",`) {
+		t.Fatalf("from the help: %d %.200s", rec.Code, rec.Body)
+	}
+	names := commandNames(t, rec.Body.Bytes())
+	for _, name := range []string{"gamerule", "time", "execute", "give", "bingo", "bingostats"} {
+		if names[name] == nil {
+			t.Errorf("no %s among %d", name, len(names))
+		}
+	}
+	if got := string(names["xp"]); got != `{"type":"literal","redirect":["experience"]}` {
+		t.Errorf("xp: %s", got)
+	}
+	if got := string(names["time"]); got != `{"type":"literal","children":{"set":{"type":"literal","executable":true},"add":{"type":"literal","executable":true},"query":{"type":"literal","executable":true}}}` {
+		t.Errorf("time: %s", got)
+	}
+	if !bytes.Contains(names["bingo"], []byte(`"difficulty":{"type":"literal","children":{"S":{"type":"argument"`)) {
+		t.Errorf("bingo: %.300s", names["bingo"])
+	}
+	asked, partialTag := game.count(), rec.Header().Get("ETag")
+	if again := getCommandTree(p, "operator", http.Header{"If-None-Match": {partialTag}}); again.Code != http.StatusNotModified || game.count() != asked {
+		t.Errorf("asked again: %d, help read %d more times", again.Code, game.count()-asked)
+	}
+
+	// Mojang answers again, and the wait after the failure is over: the
+	// game's tree, with the mods' commands added, from the help read before.
+	mu.Lock()
+	treeErr = nil
+	mu.Unlock()
+	p.srv.commands.mu.Lock()
+	f := p.srv.commands.failed["1.21.4"]
+	f.until = time.Now().Add(-time.Second)
+	p.srv.commands.failed["1.21.4"] = f
+	p.srv.commands.mu.Unlock()
+	rec = waitFull(p)
+	names = commandNames(t, rec.Body.Bytes())
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"partial"`) || names["bingo"] == nil || rec.Header().Get("ETag") == partialTag {
+		t.Fatalf("with the game's tree: %d, %d commands", rec.Code, len(names))
+	}
+	var vanilla struct {
+		Children map[string]json.RawMessage `json:"children"`
+	}
+	_ = json.Unmarshal(raw, &vanilla)
+	var a, b any
+	_ = json.Unmarshal(names["time"], &a)
+	_ = json.Unmarshal(vanilla.Children["time"], &b)
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("time is not the game's: %s", names["time"])
+	}
+	if game.count() != asked {
+		t.Errorf("help read again: %d more", game.count()-asked)
+	}
+
+	// Stopped again: the game's tree alone.
+	p.setPhase("alpha", "world", avsysv1.PhaseStopped)
+	if rec := getCommandTree(p, "operator", nil); rec.Code != http.StatusOK || commandNames(t, rec.Body.Bytes())["bingo"] != nil {
+		t.Errorf("stopped: %d", rec.Code)
+	}
+}
+
+// A version from before the game's tree has none, nor will: what its help
+// lists is all there is, and is not partial.
+func TestCommandsFromHelpBefore113(t *testing.T) {
+	p := newPanel(t)
+	var made atomic.Int32
+	p.srv.CommandTree = func(context.Context, string) ([]byte, error) {
+		made.Add(1)
+		return nil, ErrNoCommands
+	}
+	p.srv.GameCommand = (&helpServer{rec: legacyHelp}).command
+	p.setPhase("alpha", "world", avsysv1.PhaseRunning)
+	gamePod(t, p, 0)
+	// Partial while it is not yet known there is none; then not.
+	if rec := waitCommandTree(p, nil); rec.Code != http.StatusOK || !strings.HasPrefix(rec.Body.String(), `{"partial":"making",`) {
+		t.Errorf("at first: %d %.100s", rec.Code, rec.Body)
+	}
+	rec := waitFull(p)
+	names := commandNames(t, rec.Body.Bytes())
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "partial") || names["forge"] == nil || names["weather"] == nil {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+	if got := string(names["warp"]); got != `{"type":"literal","executable":true}` {
+		t.Errorf("warp: %s", got)
+	}
+	if n := made.Load(); n != 1 {
+		t.Errorf("made %d times", n)
+	}
+	// One whose help says nothing has nothing to complete from.
+	q := newPanel(t)
+	q.srv.CommandTree = p.srv.CommandTree
+	q.srv.GameCommand = (&helpServer{rec: map[string]string{"help": "Unknown command"}}).command
+	q.setPhase("alpha", "world", avsysv1.PhaseRunning)
+	if rec := waitCommandTree(q, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("help that says nothing: %d", rec.Code)
 	}
 }

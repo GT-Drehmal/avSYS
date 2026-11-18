@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
-import { type CommandNode, complete, emptyUndo, ghostOf, insert, record, redo, undo } from "../src/lib/completion";
+import { askAgainIn, type CommandNode, complete, emptyUndo, ghostOf, insert, record, redo, undo } from "../src/lib/completion";
 
 const tree: CommandNode = JSON.parse(gunzipSync(readFileSync(new URL("../tests/upstream/commands/1.21.4.json.gz", import.meta.url))).toString());
 
@@ -290,5 +290,54 @@ describe("undo", () => {
     [u] = undo(u, at("time "));
     u = record(u, at("ti"), "type", 10, "x");
     expect(redo(u, at("tix"))[1]).toBeNull();
+  });
+});
+
+// Where the game's own tree is not there yet, as when Mojang's site does not
+// answer, the commands are those the server's help lists, the game's
+// included, read as the panel reads a mod's: names and choices, arguments by
+// name.
+const fromHelp: CommandNode = {
+  type: "root",
+  partial: "later",
+  children: {
+    execute: {
+      type: "literal",
+      children: { run: { type: "literal" }, as: { type: "literal", children: { targets: { type: "argument" } } } },
+    },
+    experience: {
+      type: "literal",
+      children: { add: { type: "literal", executable: true }, query: { type: "literal", executable: true }, set: { type: "literal", executable: true } },
+    },
+    xp: { type: "literal", redirect: ["experience"] },
+    give: { type: "literal", children: { targets: { type: "argument", children: { item: { type: "argument", executable: true } } } } },
+    time: {
+      type: "literal",
+      children: { set: { type: "literal", executable: true }, add: { type: "literal", executable: true }, query: { type: "literal", executable: true } },
+    },
+    title: { type: "literal", children: { targets: { type: "argument" } } },
+    ...bingo.children,
+  },
+};
+
+describe("commands from the server's help alone", () => {
+  test("the game's own are offered, by name and choices", () => {
+    expect(complete(fromHelp, "ti").suggestions).toEqual(["time", "title"]);
+    expect(complete(fromHelp, "time ").suggestions).toEqual(["add", "query", "set"]);
+    expect(complete(fromHelp, "xp ").suggestions).toEqual(["add", "query", "set"]);
+    expect(complete(fromHelp, "execute run ti").suggestions).toEqual(["time", "title"]);
+    expect(complete(fromHelp, "give ").hints).toEqual([{ name: "targets", type: "", optional: false }]);
+  });
+
+  test("with those of the server's mods", () => {
+    expect(complete(fromHelp, "bingo difficulty ").suggestions).toEqual(["easy", "extreme", "hard", "impossible", "medium"]);
+  });
+
+  test("are asked for again until the game's own are there", () => {
+    expect(askAgainIn(fromHelp)).toBe(15_000);
+    expect(askAgainIn({ ...fromHelp, partial: "making" })).toBe(3000);
+    expect(askAgainIn({ making: true })).toBe(3000);
+    expect(askAgainIn(tree)).toBe(false);
+    expect(askAgainIn(undefined)).toBe(false);
   });
 });

@@ -2,8 +2,9 @@ import { expect, type Page, test } from "./panel";
 
 // Completing commands at the console, from the game's command tree for the
 // server's version: the test panel has the one recorded for 1.21.4
-// (tests/upstream/commands), and none for any other version. Its running
-// servers answer help as a server with Yet Another Bingo did
+// (tests/upstream/commands), cannot make the one for 1.20.1, as when
+// Mojang's site does not answer, and has none for any other version. Its
+// running servers answer help as a server with Yet Another Bingo did
 // (tests/upstream/commands/help), so they have its commands too.
 
 test.beforeEach(async ({ as }) => {
@@ -22,11 +23,13 @@ async function openConsole(page: Page) {
   await page.goto("/o/friends/s/survival");
   const box = line(page);
   await expect(box).toBeEnabled();
-  // The first time anywhere, the panel makes the tree: asked again until it is there.
+  // The first time anywhere, the panel makes the tree: asked again until it
+  // is there. Meanwhile the commands are those the server's help lists,
+  // which has no tick (it was recorded on 1.20.1).
   await expect(async () => {
     await box.fill("");
-    await box.pressSequentially("ti");
-    await expect(options(page).first()).toBeVisible({ timeout: 1000 });
+    await box.pressSequentially("tic");
+    await expect(options(page).first()).toHaveText("tick", { timeout: 1000 });
   }).toPass({ timeout: 15_000 });
   await box.fill("");
   return box;
@@ -179,10 +182,43 @@ test("the commands of a server's mods are offered too, from its help", async ({ 
   await expect(options(page)).toHaveText(["tick", "time", "title"]);
 });
 
-test("a server of a version with no command list is typed at as before", async ({ page }) => {
+test("where Mojang's list cannot be had, the commands come from the server's help", async ({ page }) => {
+  // Classic runs 1.20.1, whose list the test panel cannot make, as when
+  // Mojang's site does not answer.
   await page.goto("/o/club/s/classic");
   const box = line(page);
   await expect(box).toBeEnabled();
+  await expect(async () => {
+    await box.fill("");
+    await box.pressSequentially("ti");
+    await expect(options(page).first()).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
+  // The game's own, as its help lists them: 1.20.1 has no tick.
+  await expect(options(page)).toHaveText(["time", "title"]);
+  await box.press("Tab");
+  await expect(box).toHaveValue("time ");
+  await expect(options(page)).toHaveText(["add", "query", "set"]);
+  await box.fill("");
+  await box.pressSequentially("xp ");
+  await expect(options(page)).toHaveText(["add", "query", "set"]);
+  await box.fill("");
+  await box.pressSequentially("give ");
+  await expect(ghost(page)).toHaveText("<targets>");
+  // And those of its mods.
+  await box.fill("");
+  await box.pressSequentially("bingo di");
+  await expect(options(page)).toHaveText(["difficulty"]);
+});
+
+test("a server with no command list is typed at as before", async ({ page }) => {
+  await page.route("**/console/commands", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "no_commands", message: "There is no list of commands for this game version." }) }),
+  );
+  const asked = page.waitForResponse("**/console/commands");
+  await page.goto("/o/friends/s/survival");
+  const box = line(page);
+  await expect(box).toBeEnabled();
+  await asked;
   await box.pressSequentially("ti");
   // Asked, and told there is none: nothing is offered, and nothing goes wrong.
   await page.waitForTimeout(500);
