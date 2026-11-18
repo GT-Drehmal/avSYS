@@ -40,9 +40,17 @@ type cacheEntry struct {
 	expires time.Time
 }
 
+// catalogDial is how long connecting to a site may take. From inside a
+// cluster, a connection to Mojang's sites from some ports never gets an
+// answer while one from another port does at once: a connection that does
+// not answer is given up soon, and the next try makes a new one.
+var catalogDial = 4 * time.Second
+
 func newCatalog(version string) *catalog {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: catalogDial, KeepAlive: 30 * time.Second}).DialContext
 	return &catalog{
-		http: &http.Client{Timeout: 15 * time.Second},
+		http: &http.Client{Timeout: 15 * time.Second, Transport: transport},
 		// Modrinth asks for a User-Agent that identifies the application.
 		userAgent: "GT-Drehmal/avSYS/" + version,
 		entries:   map[string]cacheEntry{},
@@ -121,9 +129,10 @@ func (c *catalog) fetch(ctx context.Context, u string, notFound func(status int,
 }
 
 // Mojang's sites, each with the other name it also answers at. From inside
-// some clusters they now and then do not answer for seconds on end, so
-// what is read from them is asked for a few times, at one name and then
-// the other, for a few seconds each time.
+// some clusters a connection to them now and then gets no answer at all
+// (from some source ports, which a cluster's NAT picks at random), so what
+// is read from them is asked for a few times, each on a new connection, at
+// one name and then the other, for a few seconds each time.
 var mojangHosts = map[string]string{
 	"launchermeta.mojang.com": "piston-meta.mojang.com",
 	"piston-meta.mojang.com":  "launchermeta.mojang.com",
@@ -144,19 +153,23 @@ func mojangMirror(u string) string {
 
 var (
 	// mojangTries is how many times something of Mojang's is asked for,
-	// mojangTry how long each may take, and mojangBackoff how long is
-	// waited after the first that fails, twice that after each next: 4
-	// tries in about 30 seconds at most.
-	mojangTries   = 4
+	// mojangTry how long each may take (connecting, catalogDial of it),
+	// and mojangBackoff how long is waited after the first that fails,
+	// twice that after each next: 5 tries in under 40 seconds, about 28
+	// where it is connecting that fails.
+	mojangTries   = 5
 	mojangTry     = 6 * time.Second
-	mojangBackoff = time.Second
+	mojangBackoff = 500 * time.Millisecond
 )
 
 // getMojang reads a URL of Mojang's at either of its names, trying again a
 // few times. When neither answers, what was read from it before is used,
 // however old.
 func (c *catalog) getMojang(ctx context.Context, u string, ttl time.Duration) ([]byte, error) {
-	urls := []string{u, mojangMirror(u)}
+	urls := []string{u}
+	if m := mojangMirror(u); m != "" {
+		urls = append(urls, m)
+	}
 	wait := mojangBackoff
 	var err error
 	for i := range mojangTries {

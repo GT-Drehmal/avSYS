@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -550,9 +552,10 @@ func (f *flakyMojang) hosts() []string {
 }
 
 func TestMojangIsAskedAgain(t *testing.T) {
-	// As set: a few tries, in about half a minute at most.
-	if most := time.Duration(mojangTries)*mojangTry + mojangBackoff*time.Duration(1<<(mojangTries-1)-1); mojangTries < 3 || most > 35*time.Second {
-		t.Errorf("%d tries in up to %v", mojangTries, most)
+	// As set: a few tries, each giving up on connecting sooner than on the
+	// whole, in about half a minute.
+	if most := time.Duration(mojangTries)*mojangTry + mojangBackoff*time.Duration(1<<(mojangTries-1)-1); mojangTries < 4 || most > 40*time.Second || catalogDial >= mojangTry {
+		t.Errorf("%d tries in up to %v, connecting in %v", mojangTries, most, catalogDial)
 	}
 	defer func(try, backoff time.Duration) { mojangTry, mojangBackoff = try, backoff }(mojangTry, mojangBackoff)
 	mojangTry, mojangBackoff = 100*time.Millisecond, 20*time.Millisecond
@@ -708,7 +711,7 @@ exit 0
 	}
 	for i, c := range curl {
 		host := []string{"piston-data", "launcher.mojang"}[i%2]
-		for _, want := range []string{"--connect-timeout 5", "--max-time", "--retry 2", "--retry-all-errors", host} {
+		for _, want := range []string{"--connect-timeout 4", "--max-time", "--retry 2", "--retry-all-errors", host} {
 			if !strings.Contains(c, want) {
 				t.Errorf("try %d: %q has no %s", i+1, c, want)
 			}
@@ -733,5 +736,41 @@ exit 0
 		if err == nil || !strings.Contains(string(out), "could not download") || len(curl) != 6 || !reflect.DeepEqual(sleeps, []string{"5", "10"}) {
 			t.Errorf("failing %d: %v %q %q %s", fails, err, curl, sleeps, out)
 		}
+	}
+}
+
+// From inside a cluster, a connection to Mojang's sites from some source
+// ports gets no answer at all, while one from another port answers at once.
+// Such a connection is given up after catalogDial, not held for the whole
+// try, and each try makes a new one.
+func TestMojangDialsAnew(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	defer func(try, backoff, dial time.Duration) { mojangTry, mojangBackoff, catalogDial = try, backoff, dial }(mojangTry, mojangBackoff, catalogDial)
+	mojangTry, mojangBackoff, catalogDial = 3*time.Second, 10*time.Millisecond, 300*time.Millisecond
+	c := newCatalog("test")
+	tr := c.http.Transport.(*http.Transport)
+	dial := tr.DialContext
+	var dials atomic.Int32
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if dials.Add(1) <= 2 {
+			// A port that gets no answer: an address nothing answers at.
+			return dial(ctx, network, "192.0.2.1:443")
+		}
+		return dial(ctx, network, addr)
+	}
+	start := time.Now()
+	body, err := c.getMojang(context.Background(), srv.URL+"/version_manifest_v2.json", time.Hour)
+	took := time.Since(start)
+	if err != nil || string(body) != `{"ok":true}` {
+		t.Fatalf("got %s %v", body, err)
+	}
+	if n := dials.Load(); n != 3 {
+		t.Errorf("connected %d times, want a new connection each try", n)
+	}
+	if took > 2*catalogDial+time.Second {
+		t.Errorf("took %v: a connection with no answer was held past %v", took, catalogDial)
 	}
 }

@@ -160,20 +160,23 @@ first time someone at a console of that version asks:
    `commands/<version>.json.gz` on its volume. Browsers are sent it as it
    is kept, and keep it by its ETag.
 
-From inside some clusters Mojang's sites now and then give no answer for
-seconds on end (one ask in four, on one install), so each is asked for a
-few times, at both of the names it answers at:
+From inside some clusters, connections to Mojang's sites from some source
+ports never get an answer, while the same sites answer other ports at once
+(on one install: a pod's connection, whose port the cluster's NAT picks at
+random from 1024 to 65535, one time in four to seven). So what is read from
+Mojang is asked for a few times, each on a new connection, given up after
+4 seconds without an answer, at both of the names each site answers at:
 
 - The list of versions and a version's page, at `launchermeta.mojang.com`
-  and `piston-meta.mojang.com` in turn: 6 seconds each try, 4 tries, 1, 2
-  and 4 seconds apart, about 30 seconds at most. Where neither answers,
-  what was read from it before is used, however old.
+  and `piston-meta.mojang.com` in turn: 6 seconds each try, 5 tries, 0.5,
+  1, 2 and 4 seconds apart, under 40 seconds at most. Where neither
+  answers, what was read from it before is used, however old.
 - The jar, in the pod, at `piston-data.mojang.com` and
   `launcher.mojang.com` in turn, in up to three rounds 5 and 10 seconds
-  apart: 5 seconds to connect, 3 minutes to download, and curl tries twice
-  more on any error (only after a timeout or a server error in the image
-  of Java 17, whose curl is older). A jar that is not the one Mojang lists
-  is not used.
+  apart: 4 seconds to connect, 3 minutes to download, and curl tries twice
+  more, on a new connection, on any error (only after a timeout or a
+  server error in the image of Java 17, whose curl is older). A jar that
+  is not the one Mojang lists is not used.
 
 One version is made at a time. One that could not be made is tried again
 a minute later, then two, four and so on up to 30 minutes; the first ask

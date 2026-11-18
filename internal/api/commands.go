@@ -415,9 +415,10 @@ func (s *Server) serverJarOf(ctx context.Context, version string) (*serverJar, e
 // commandsScript is what the pod runs: it fetches the server jar, has the
 // game write its reports, and prints the command tree, gzipped and in
 // base64, between two marks. The jar is asked for again where Mojang's site
-// does not answer, at both its names, each for a few seconds at first (an
-// older curl, as in the image of Java 17, cannot be told to try again after
-// every kind of error). From 1.18 the jar is a bundle that runs the part of
+// does not answer, at both its names, each try on a new connection that
+// is given up after a few seconds if it gets no answer (catalogDial says
+// why; an older curl, as in the image of Java 17, cannot be told to try
+// again after every kind of error). From 1.18 the jar is a bundle that runs the part of
 // the game it is told to; before, the game is the jar itself. It works in
 // the folder it is started in.
 const commandsScript = `set -eu
@@ -426,7 +427,7 @@ curl $again --version >/dev/null 2>&1 || again=
 got=
 for round in 1 2 3; do
   for url in "$JAR_URL" ${JAR_MIRROR:+"$JAR_MIRROR"}; do
-    if curl -fsS --connect-timeout 5 --max-time 180 --retry 2 --retry-delay 2 $again -o server.jar "$url" &&
+    if curl -fsS --connect-timeout 4 --max-time 180 --retry 2 --retry-delay 2 $again -o server.jar "$url" &&
       echo "$JAR_SHA1  server.jar" | sha1sum -c - >/dev/null 2>&1; then
       got=1
       break 2
