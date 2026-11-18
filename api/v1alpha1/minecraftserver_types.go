@@ -65,6 +65,10 @@ const (
 	// the panel could not delete then, one path per line, for it to delete
 	// when it next can.
 	AnnotationContentLeft = "avsys.dev/content-left"
+	// AnnotationFoundContent is what the panel last found in a server's
+	// content folders that it did not put there itself: mods, plugins and
+	// datapacks added by hand or brought in with its files, as JSON.
+	AnnotationFoundContent = "avsys.dev/found-content"
 	// AnnotationPublicPorts records the public ports given out to the extra
 	// ports of a server that shares the router's address, as name=port,...
 	// They are the server's for as long as it has those ports.

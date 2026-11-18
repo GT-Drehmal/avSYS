@@ -716,7 +716,14 @@ func (s *Server) importInto(r *http.Request, w http.ResponseWriter, mc *avsysv1.
 		return undo, err
 	}
 	s.serverIcons.forget(mc.Namespace + "/" + mc.Name)
-	return undo, s.markImporting(ctx, key, "")
+	if err := s.markImporting(ctx, key, ""); err != nil {
+		return undo, err
+	}
+	// The mods, plugins and datapacks it brought as files are its content
+	// from the start: looked at now, and named as Modrinth or the files
+	// themselves say. If that cannot be done now, the next look does it.
+	s.lookAtImported(ctx, key)
+	return undo, nil
 }
 
 // newWorldScript takes a server's world away, for the game to make a new one

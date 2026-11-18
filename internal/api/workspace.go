@@ -400,6 +400,15 @@ func (s *Server) filesFor(r *http.Request, u *store.User, write bool) (*access, 
 		release()
 		return nil, "", nil, "", none, err
 	}
+	if write {
+		// A file changed may be content: the server's folders are looked
+		// at again for it.
+		held := release
+		release = func() {
+			held()
+			s.lookSoon(mc.Namespace, mc.Name)
+		}
+	}
 	return a, server, sc, full, release, nil
 }
 

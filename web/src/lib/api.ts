@@ -766,6 +766,30 @@ export interface Server {
   unfinished?: string;
   /** What admins noted of it, in the panel only. */
   notes: string;
+  /** Mods, plugins and datapacks in its folders that the panel did not add. */
+  found?: FoundFile[] | null;
+}
+
+/** A file of content found in a server's folders, which the panel did not add. */
+export interface FoundFile {
+  /** Where it is, under the server's folder: mods/x.jar. */
+  path: string;
+  kind: ContentKind;
+  size: number;
+  title?: string;
+  version?: string;
+  /** What a datapack says of itself. */
+  about?: string;
+  /** Modrinth's project, version and picture, when Modrinth has the file. */
+  project?: string;
+  slug?: string;
+  versionId?: string;
+  iconUrl?: string;
+  /** It has a picture of its own, which the panel serves. */
+  picture?: boolean;
+  folder?: boolean;
+  sha1?: string;
+  modified?: number;
 }
 
 /** A partial spec for PATCH: omitted fields are kept, null clears a field. */

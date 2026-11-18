@@ -363,6 +363,26 @@ Content is settled when it is added, not when the server starts.
 A restart never changes what is installed. Changing the game version or
 loader pins each entry again for the new one.
 
+**Content found in a server's folders.** A server may have mods, plugins
+and datapacks the panel did not add: put in its folders by hand, or
+brought in with an import or a snapshot. The panel looks for them
+(`internal/api/found.go`) through the workspace, in `mods/`, `plugins/`
+and the world's `datapacks/`, leaving out what it or the image put there:
+its own uploads and datapacks, and every file in the image's records
+(`.modrinth-manifest.json`, `.curseforge-files-manifest.json`,
+`.var-list-manifest.json` in each folder, and a modpack's). It hashes each
+new or changed file (SHA-1), asks Modrinth about all of them in one
+`POST /v2/version_files`, and names those it has from
+`GET /v2/projects`; the rest are named by their `fabric.mod.json`,
+`quilt.mod.json`, `mods.toml`, `neoforge.mods.toml`, `plugin.yml`,
+`paper-plugin.yml` or `pack.mcmeta`, or by file name. What it found is
+kept on the server as the annotation `avsys.dev/found-content`, with each
+file's size, time and hash, so an unchanged file is not read or asked
+about again. It looks every five minutes, and sooner once a server starts
+or stops, its files are changed through the panel, an import or restore
+is done, or its Content page is opened. Found files are never changed;
+removing one deletes it.
+
 **Starting while a site is down.** The image asks the sites it installs
 from about the loader and the content on every start, even when the server
 has them, and the start fails when one does not answer. So the game

@@ -53,6 +53,9 @@ type serverView struct {
 	// Notes are what admins noted of it in the panel: never in its spec,
 	// its files or the game.
 	Notes string `json:"notes"`
+	// Found is the content in its folders that the panel did not add, as
+	// last looked at.
+	Found []FoundFile `json:"found"`
 }
 
 // forRole is the view as someone with this role is shown it.
@@ -79,6 +82,7 @@ func (s *Server) view(role store.Role, mc *avsysv1.MinecraftServer) serverView {
 		v.Unfinished = why.Message
 	}
 	v.Notes = s.notesOf(context.Background(), mc)
+	v.Found = foundOf(mc)
 	return v
 }
 

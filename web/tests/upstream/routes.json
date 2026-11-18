@@ -41,6 +41,11 @@
  },
  {
   "url": "https://api.modrinth.com/v2/projects?",
+  "has": "P00001",
+  "file": "projects-found.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/projects?",
   "has": "",
   "file": "projects.json"
  },

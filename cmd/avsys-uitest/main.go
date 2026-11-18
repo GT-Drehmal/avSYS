@@ -141,6 +141,8 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 		Upstream: up,
 	}
 	gateway.Authz = srv
+	// Servers named bingo have files with content the panel did not add.
+	srv.ContentFiles = looseFiles(dir)
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		return err
@@ -284,6 +286,9 @@ func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir s
 		{org: "club", name: "survival", display: "Survival", loader: avsysv1.LoaderVanilla, version: "1.21.4", state: avsysv1.StateStopped, phase: avsysv1.PhaseStopped},
 		// On a version from before the game could say how fast it ticks.
 		{org: "club", name: "classic", display: "Classic", loader: avsysv1.LoaderVanilla, version: "1.20.1", state: avsysv1.StateRunning, phase: avsysv1.PhaseRunning},
+		// Moved in from elsewhere: its mods and datapacks are files in its
+		// folders, which the panel did not add (see loose.go).
+		{org: "club", name: "bingo", display: "Drehmal Bingo", loader: avsysv1.LoaderFabric, version: "1.20.1", state: avsysv1.StateStopped, phase: avsysv1.PhaseStopped},
 	} {
 		mc := &avsysv1.MinecraftServer{
 			ObjectMeta: metav1.ObjectMeta{Namespace: srv.Namespace(s.org), Name: s.name, CreationTimestamp: metav1.NewTime(time.Now().Add(-48 * time.Hour))},

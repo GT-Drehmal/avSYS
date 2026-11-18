@@ -846,6 +846,7 @@ func (s *Server) populate(ctx context.Context, org string, created *avsysv1.Mine
 	mc.Spec.State = finalState(&mc.Spec, final)
 	delete(mc.Annotations, avsysv1.AnnotationRestoring)
 	delete(mc.Annotations, avsysv1.AnnotationCreating)
+	defer s.lookSoon(key.Namespace, key.Name)
 	return s.Client.Patch(ctx, mc, client.MergeFrom(orig))
 }
 

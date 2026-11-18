@@ -367,6 +367,24 @@ and NeoForge; plugins for Paper, Purpur and Folia; datapacks for all.
 - Some CurseForge authors allow downloads only on CurseForge. Those are
   marked: download the file there, then add it with **Upload**.
 
+**Added outside the panel.** Mods, plugins and datapacks that are in the
+server's folders but were not added here are listed too, marked "Added
+outside the panel": files put in `mods`, `plugins` or the world's
+`datapacks` folder over SFTP, the terminal or **Files**, or brought in
+with an imported server or a snapshot. The panel finds them by itself, a
+few minutes after they appear at most, and at once when the page is
+opened or an import finishes.
+
+![Mods added outside the panel, listed with the rest](images/content-found.png)
+
+- A file Modrinth has shows as that project, at that very version, with
+  its picture. Others show the name, version and picture the file gives,
+  or its file name.
+- Nothing is downloaded or changed: the files stay as they are.
+- **Remove** (×) deletes the file. A running server has it until it
+  restarts.
+- A long list has a search box above it.
+
 **Modpacks.** A modpack server shows its pack, with its version button, and
 the mods in it (**Mods in this pack**). Files only players need are marked
 "Client only, left out". **Mods added on top of the pack** are your own.

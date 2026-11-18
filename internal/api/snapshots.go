@@ -742,6 +742,8 @@ func (s *Server) markRestoring(ctx context.Context, key client.ObjectKey, snapsh
 		// A move left to be finished by a restore is finished by it.
 		delete(mc.Annotations, avsysv1.AnnotationMoving)
 		delete(mc.Annotations, avsysv1.AnnotationMoveWas)
+		// Its folders may hold other content now.
+		defer s.lookSoon(key.Namespace, key.Name)
 	} else {
 		if mc.Annotations == nil {
 			mc.Annotations = map[string]string{}
