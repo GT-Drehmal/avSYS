@@ -426,6 +426,7 @@ func run(opts options, log *slog.Logger) error {
 			Providers:       oauth,
 			Version:         version,
 			PackDir:         filepath.Join(opts.dataDir, "packs"),
+			CommandsDir:     filepath.Join(opts.dataDir, "commands"),
 			PackURL:         opts.packURL,
 			PackCache:       int64(opts.packCache) << 20,
 			CurseForgeKey:   curseForgeKey,

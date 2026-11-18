@@ -122,6 +122,7 @@ jobs:
             sleep 15
           done
           bun run lint
+          bun run test:unit
           bun run build
       # The images, for what govulncheck and the audit do not see: the
       # Debian packages in the workspace and in the panel's base. Fails on a

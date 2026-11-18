@@ -23,7 +23,9 @@ The panel also keeps, on its own volumes:
   accounts, saved player lists, templates and the world library's records,
   and the panel's settings, including its two SSH keys;
 - one [restic](https://restic.net) repository per organization
-  (`internal/backup`) for snapshots.
+  (`internal/backup`) for snapshots;
+- the game's command tree of each game version its servers run, in
+  `commands/`, for the console to complete commands from.
 
 Servers themselves live in Kubernetes. An organization `friends` gets the
 namespace `mc-friends`, and each of its servers is a `MinecraftServer`
@@ -134,6 +136,33 @@ The pod has two containers and no init containers:
 
 Both share `/data` and a small in-memory volume holding the console's
 input pipe, which is how a command typed "as the server" reaches the game.
+
+### The console's commands
+
+The console completes commands from the game's own command tree: every
+command, subcommand and argument, as the game's parser has them. The game
+writes it out as `reports/commands.json` when its data generator is run
+with `--reports`, so the panel does that once for each game version, the
+first time someone at a console of that version asks:
+
+1. It looks up the version's server jar and its Java in Mojang's list.
+   Versions before 1.13 have no command tree, and get none.
+2. It makes a pod `avsys-commands-<random>` in the server's namespace,
+   owned by the server and preferring its node: the server image of that
+   Java, which downloads the jar, checks its SHA-1, runs the generator
+   (`-DbundlerMainClass=net.minecraft.data.Main` from 1.18 on, the jar's
+   own `net.minecraft.data.Main` before) and prints the tree, gzipped. It
+   asks for 512 MiB, may use 1 GiB, and takes 5 to 20 seconds.
+3. The panel reads the tree from the pod's log, checks it, removes the
+   pod, and keeps the tree, compacted and gzipped (10 to 25 KB), in
+   `commands/<version>.json.gz` on its volume. Browsers are sent it as it
+   is kept, and keep it by its ETag.
+
+One version is made at a time. One that could not be made is tried again
+ten minutes later; meanwhile, and for versions without a tree, the console
+works as before, with nothing to complete. Commands that mods and plugins
+add are not in the tree: the game tells players of those only over its own
+connection, as a packet, which the panel does not open.
 
 ## The life of a server
 

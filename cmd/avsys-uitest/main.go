@@ -19,11 +19,13 @@ package main
 
 import (
 	"cmp"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -161,6 +163,11 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 	metrics := &metricsStandIn{on: withMetrics, cluster: cluster}
 	srv.Metrics = metrics
 	srv.GameCommand = metrics.gameCommand
+	// The game's command trees are the ones recorded in --upstream; a
+	// version without one has none, as one too old for them.
+	srv.CommandTree = func(_ context.Context, version string) ([]byte, error) {
+		return commandTree(upstreamDir, version)
+	}
 	tokens := map[string]string{}
 	if !fresh {
 		if tokens, err = populate(ctx, srv, cluster, dir, withOffsite, provider.ID, idp.URL); err != nil {
@@ -472,6 +479,23 @@ type upstream struct {
 		// Status is what it answers with, where that is not 200 OK.
 		Status int `json:"status"`
 	}
+}
+
+// commandTree is a game version's commands.json, as recorded in
+// commands/<version>.json.gz under dir.
+func commandTree(dir, version string) ([]byte, error) {
+	f, err := os.Open(filepath.Join(dir, "commands", url.PathEscape(version)+".json.gz"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, api.ErrNoCommands
+	} else if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	z, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(z)
 }
 
 func loadUpstream(dir string) (*upstream, error) {

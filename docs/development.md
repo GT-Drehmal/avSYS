@@ -37,6 +37,9 @@ make generate        # after changing api/
   added to that table (`TestOrganizationRoutes`), or the tests fail. A new
   route of any kind also needs a heading in [docs/api.md](api.md)
   (`TestEveryRouteIsDocumented`).
+- **Web unit tests** in `web/unit` check the web UI's own logic, such as
+  completing console commands, without a browser: `bun run test:unit` in
+  `web/`, and part of `make test`.
 - **`make test-browser`** needs neither a cluster nor the internet. It
   starts `cmd/avsys-uitest`, which is the real API and web UI with
   stand-ins for everything they reach out to: servers are remembered but

@@ -1118,6 +1118,18 @@ curl -H "Authorization: Bearer $TOKEN" -d '{"command":"list"}' $AVSYS/orgs/frien
 curl -H "Authorization: Bearer $TOKEN" -d '{"command":"say hello","as":"server"}' $AVSYS/orgs/friends/servers/creative/console
 ```
 
+### `GET /orgs/{org}/servers/{server}/console/commands`
+
+The game's own commands for the version the server runs, for completing
+them. **Operator.** Returns the game's command tree, as its data generator
+writes it in `reports/commands.json`: nodes of `type` `root`, `literal` or
+`argument`, with `children`, `executable`, `redirect`, and an argument's
+`parser` and `properties`. The game version is in the header
+`X-Game-Version`. The first time a version is asked for, the panel makes
+its tree: the answer is `202` with `{making: true}` until it is ready, a
+minute at most. A version older than 1.13, or one whose tree could not be
+made, is `no_commands` (404). Commands of mods and plugins are not in it.
+
 ### `GET /orgs/{org}/servers/{server}/logs`
 
 Earlier logs and crash reports. **Viewer.** Returns
