@@ -12,7 +12,7 @@ import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
 import { PackFit } from "../../components/Content";
-import { autoOpOptions, exposeOptions, GameplayFields, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, triState } from "../../components/ServerFields";
+import { autoOpOptions, exposeOptions, GameplayFields, imageDocs, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, playersExample, propertiesDocs, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { LoaderBuildField } from "../../components/LoaderBuild";
@@ -345,13 +345,14 @@ export function Settings() {
         </div>
         <Field
           label="Other properties"
+          docs={propertiesDocs}
           hint={`One key=value per line.${worldSet.length > 0 ? ` ${worldSet.join(", ")} only ${worldSet.length === 1 ? "affects" : "affect"} new worlds.` : ""}`}
         >
           {(id) => <Textarea id={id} rows={3} {...text("otherProperties")} placeholder={"view-distance=12\nspawn-protection=0"} className="font-mono" spellCheck={false} />}
         </Field>
       </Section>
 
-      <Section title="Players" description="Usernames or UUIDs, one per line.">
+      <Section title="Players">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Whitelist">
             {(id) => (
@@ -381,7 +382,7 @@ export function Settings() {
           {(["whitelist", "ops"] as const).map((list) => (
             <div key={list} className="flex flex-col gap-3">
               <Field label={list === "whitelist" ? "Whitelisted players" : "Operators"}>
-                {(id) => <Textarea id={id} rows={4} {...text(list)} className="font-mono" spellCheck={false} />}
+                {(id) => <Textarea id={id} rows={4} {...text(list)} placeholder={playersExample} className="font-mono" spellCheck={false} />}
               </Field>
               <AddedInGame server={server} list={list} listed={draft[list]} onKeep={(name) => setDraft((d) => ({ ...d, [list]: [...lines(d[list]), name].join("\n") }))} />
               <Button size="sm" className="self-start" aria-label={list === "whitelist" ? "Save the whitelist as a list" : "Save the operators as a list"} onClick={() => setSavingList(list)}>
@@ -479,7 +480,7 @@ export function Settings() {
       </Section>
 
       <Section title="Advanced" description="Options of the itzg/minecraft-server image.">
-        <Field label="Environment" hint="One NAME=value per line.">
+        <Field label="Environment" docs={imageDocs} hint="One NAME=value per line.">
           {(id) => <Textarea id={id} rows={3} {...text("env")} placeholder="ENABLE_ROLLING_LOGS=true" className="font-mono" spellCheck={false} />}
         </Field>
         <Field label="Image" hint="Leave empty for the default.">
