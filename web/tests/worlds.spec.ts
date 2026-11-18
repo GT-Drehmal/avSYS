@@ -88,6 +88,8 @@ test("a world is uploaded to the library, named as its file is, with its own pic
     buffer: zip({ "Island Save/level.dat": levelDat("1.21.4", "§6§lIsland§r Save"), "Island Save/region/r.0.0.mca": "land", "Island Save/icon.png": icon }),
   });
   await expect(dialog.getByTestId("world-summary")).toContainText('World "Island Save" · last opened in 1.21.4');
+  await expect(dialog.getByTestId("world-summary").locator("span[style]")).toHaveText("Island");
+  await expect(dialog.getByTestId("world-summary").locator("span[style]")).toHaveCSS("font-weight", "700");
   await expect(dialog.getByLabel("Name")).toHaveValue("Island Adventure");
   // A name typed in is kept when another file is chosen.
   await dialog.getByLabel("Name").fill("Island");

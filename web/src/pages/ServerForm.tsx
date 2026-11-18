@@ -16,6 +16,7 @@ import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines
 import { BottomBar, Button, Checked, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { NewerWorldConfirm } from "../components/NewerWorld";
+import { McText } from "../components/McText";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../components/VersionOptions";
 import { api, ApiError, qs, serverIcon, serverPath, type BackupOverride, type CatalogSource, type ContentKind, type ContentRef, type ExposeType, type LibraryWorld, type Loader, type Modpack, type Operation, type OwnWorld, type ResourcePack, type Server, type ServerSpec, type StackedPack, type Template, sendInParts, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
@@ -2034,7 +2035,9 @@ export function ServerForm({
               <div className="flex items-center gap-3 rounded-md border border-accent bg-accent-wash px-3 py-2.5">
                 <ArchiveIcon className="size-5 shrink-0 text-muted" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium">{v.myWorld.found.name}</p>
+                  <p className="truncate text-[13px] font-medium">
+                    <McText text={v.myWorld.found.level ?? v.myWorld.found.name} title />
+                  </p>
                   <p className="truncate text-xs text-muted" data-testid="world-summary">
                     {[v.myWorld.found.version && `Last opened in ${v.myWorld.found.version}`, bytes(v.myWorld.found.size), v.myWorld.file.name].filter(Boolean).join(" · ")}
                   </p>

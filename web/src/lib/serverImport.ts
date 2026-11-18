@@ -1,5 +1,6 @@
 import type { ContentKind, Loader } from "./api";
 import { ArchiveError, type Contents, type Entry, gunzip, readArchive } from "./archive";
+import { hasMcCodes, plainMc } from "./mctext";
 import { parseProperties } from "./properties";
 
 /** What an archive of a server's folder says about the server. */
@@ -288,8 +289,10 @@ function neoForgeGame(v: string) {
 export interface FoundWorld {
   /** The folder in the archive that holds its level.dat, "" for the top. */
   root: string;
-  /** Its name in the game. */
+  /** Its name in the game, without the game's formatting codes. */
   name: string;
+  /** Its name as level.dat has it, with its § codes, for one that has them: shown as the game shows it. */
+  level?: string;
   /** The game version that last opened it, "" when it could not be told. */
   version: string;
   /** How large it is unpacked, the Nether and the End beside it included. */
@@ -324,11 +327,20 @@ export async function inspectWorld(file: File): Promise<FoundWorld> {
   const nextTo = root.includes("/") ? `${dirname(root)}/resources.zip` : "resources.zip";
   const packData = files.get(root ? `${root}/resources.zip` : "resources.zip") ?? (root ? files.get(nextTo) : undefined);
   const pack = packData ? new File([packData.slice()], "resources.zip", { type: "application/zip" }) : undefined;
-  return { root, name: plainName(read.name) || base(root) || archiveName(file), version: read.version, size, ...(icon ? { icon } : {}), ...(pack ? { pack } : {}) };
+  const name = plainName(read.name);
+  return {
+    root,
+    name: name || base(root) || archiveName(file),
+    ...(name && hasMcCodes(read.name) ? { level: read.name.trim() } : {}),
+    version: read.version,
+    size,
+    ...(icon ? { icon } : {}),
+    ...(pack ? { pack } : {}),
+  };
 }
 
 /** A name without the game's formatting codes: § and the letter after it, which colour and style it. */
-export const plainName = (name: string) => name.replace(/§[0-9a-fk-or]/gi, "").replace(/\s+/g, " ").trim();
+const plainName = (name: string) => plainMc(name).replace(/\s+/g, " ").trim();
 
 /** What an archive is called, without its extension: "Drehmal APOTHEOSIS.zip" is "Drehmal APOTHEOSIS". */
 export const archiveName = (file: File) => file.name.replace(/\.(zip|tar|tgz|tar\.gz)$/i, "").trim();

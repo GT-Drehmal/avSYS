@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ChevronRight, Download, Search } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { McText } from "../../components/McText";
 import { cx, Input, Select } from "../../components/ui";
 import { toast } from "../../lib/toast";
 import { api, ApiError, atLeast, serverPath } from "../../lib/api";
@@ -30,10 +31,10 @@ const logPattern = /^(\[\d{2}:\d{2}:\d{2}(?:\] \[[^\]]*\/| ))(INFO|WARN|ERROR|FA
 
 function LogLine({ line }: { line: Line }) {
   if (line.kind === "input") return <div className="text-accent">&gt; {line.text}</div>;
-  if (line.kind === "output") return <div className="text-accent-strong">{line.text}</div>;
+  if (line.kind === "output") return <div className="text-accent-strong"><McText text={line.text} /></div>;
   if (line.kind === "error") return <div className="text-danger">{line.text}</div>;
   const m = logPattern.exec(line.text);
-  if (!m) return <div className="text-muted">{line.text || " "}</div>;
+  if (!m) return <div className="text-muted">{line.text ? <McText text={line.text} /> : " "}</div>;
   const level = m[2];
   const tone = level === "WARN" ? "text-warn" : level === "ERROR" || level === "FATAL" ? "text-danger" : "text-fg";
   return (
@@ -43,7 +44,7 @@ function LogLine({ line }: { line: Line }) {
         {level}
         {m[3]}
       </span>
-      {m[4]}
+      <McText text={m[4]} />
     </div>
   );
 }

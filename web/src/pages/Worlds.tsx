@@ -9,6 +9,7 @@ import { AddContentDialog, packTitle } from "../components/Content";
 import { ProjectIcon } from "../components/ModrinthSearch";
 import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SelectAllRow, SelectionBar, Spinner, Textarea, Toggle } from "../components/ui";
 import { ListBar } from "../components/ListBar";
+import { McText } from "../components/McText";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
 import { api, ApiError, atLeast, qs, type LibraryWorld, type ResourcePack, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
@@ -306,7 +307,9 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
                   <p className="truncate text-[13px] font-medium">{file.name}</p>
                   <p className="truncate text-xs text-muted" data-testid="world-summary">
                     {found ? (
-                      [`World "${found.name}"`, found.version && `last opened in ${found.version}`, bytes(found.size)].filter(Boolean).join(" · ")
+                      <>
+                        World "<McText text={found.level ?? found.name} />"{found.version ? ` · last opened in ${found.version}` : ""} · {bytes(found.size)}
+                      </>
                     ) : reading ? (
                       <span className="flex items-center gap-1.5">
                         <Spinner className="size-3" />

@@ -243,9 +243,10 @@ world** while it is stopped. A snapshot is taken first.
   Event*, and when it was put in. A copy, a server made from a snapshot or
   a template, and a restore keep where the world first came from. Servers
   made before the panel kept this show none.
-- What the world says of itself, read from its files: its name, seed, the
-  game version it was last opened in, when it was last played, and its
-  size. Nothing while its files cannot be reached.
+- What the world says of itself, read from its files: its name (in the
+  colours and styles the game gives it), seed, the game version it was
+  last opened in, when it was last played, and its size. Nothing while
+  its files cannot be reached.
 
 Its buttons:
 
@@ -414,7 +415,8 @@ players cannot join.
 
 ## Console, files and terminal
 
-**Console.** The live log of the server. Operators type commands in the
+**Console.** The live log of the server, with the game's colour codes
+(`§6`, `§l` and the rest) shown as colours. Operators type commands in the
 box at the bottom (no `/` needed); up and down bring back earlier ones.
 The **Log** menu opens earlier runs and crash reports, with search,
 **First error**, and **Download**.
@@ -500,7 +502,9 @@ such as a voice chat client connecting or someone opening the map.
 
 A **snapshot** is a server's files and settings at one moment. Taking one
 does not stop the server. Snapshots of an organization's servers share
-storage, so each costs only what changed.
+storage, so each costs only what changed. **+1.2 GB new when taken**
+beside a snapshot is what it added then; later snapshots and library
+worlds can share those files, so deleting it may free less.
 
 ![The Backups page: the daily schedule and each server's snapshots](images/backups.png)
 

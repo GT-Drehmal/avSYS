@@ -47,6 +47,33 @@ test("a server is opened to see its snapshots, and one of them to see what it ho
   await expect(dialog).toContainText("Until you delete it.");
 });
 
+test("what a snapshot added is said to be as it was when taken, here and on the server's tab", async ({ page }, info) => {
+  await page.getByRole("button", { expanded: false }).filter({ hasText: "Survival" }).click();
+  // The newest of survival's added 4 MB, by the test panel's canned ones.
+  const about = page.getByRole("button", { name: "About the snapshot of survival from 3 hours ago" });
+  // Its own row, not the server's around it.
+  const row = page.getByRole("listitem").filter({ has: about }).last();
+  const added = row.getByText("+4.0 MB new when taken");
+  await expect(added).toBeVisible();
+  await expect(added).toHaveAttribute("title", /when it was taken/);
+  await expect(page.getByText(/\bstored$/)).toHaveCount(0);
+  await row.screenshot({ path: info.outputPath("row-dark.png") });
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await row.screenshot({ path: info.outputPath("row-light.png") });
+  await about.click();
+  await expect(page.getByRole("dialog")).toContainText("It added 4.0 MB to storage when it was taken.");
+  await page.keyboard.press("Escape");
+  // The server's own tab lists them the same way.
+  await page.goto("/o/friends/s/survival/backups");
+  await expect(page.getByText("+4.0 MB new when taken")).toBeVisible();
+  // On a phone the row keeps to the screen: the figure is for wider ones.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText("+4.0 MB new when taken")).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath("phone-light.png") });
+});
+
 test("by server, each server that exists is snapshotted from its row, one with none yet too", async ({ page }) => {
   const asked: string[] = [];
   await page.route("**/api/v1/orgs/friends/servers/*/snapshots", (route) => {

@@ -3,7 +3,9 @@ import { Globe } from "lucide-react";
 import { Link } from "react-router";
 import { api, qs, serverPath, type LibraryWorld, type Server, type WorldFacts, type WorldOrigin, worldIcon } from "../lib/api";
 import { ago, bytes } from "../lib/format";
+import { plainMc } from "../lib/mctext";
 import { useServers } from "../lib/queries";
+import { McText } from "./McText";
 import { Picture } from "./Picture";
 
 /** What a world came by way of, in a few words: the server copied, a snapshot of one, or a template. */
@@ -54,12 +56,13 @@ export function WorldNow({ server, library }: { server: Server; library: Library
   const nameOf = (name: string) => servers?.find((s) => s.name === name)?.spec.displayName || name;
   const f = useWorldFacts(server).data;
   if (!o && !f) return null;
-  // What the world says, less what the line above says already.
+  // What the world says, less what the line above says already: its own
+  // name, where the line above is not it already, as the game colours it.
+  const name = f?.exists && f.name && plainMc(f.name).trim() ? f.name : null;
+  const ownName = o && name && (o.kind !== "library" || plainMc(name) !== o.library?.name) ? name : null;
   const said = f
     ? f.exists
       ? [
-          // Its own name, where the line above is not it already.
-          o && f.name && (o.kind !== "library" || f.name !== o.library?.name) ? `"${f.name}"` : null,
           f.seed && f.seed !== o?.seed ? `Seed ${f.seed}` : null,
           f.version ? `Last opened in ${f.version}` : null,
           f.lastPlayed ? `Played ${ago(f.lastPlayed)}` : null,
@@ -67,10 +70,10 @@ export function WorldNow({ server, library }: { server: Server; library: Library
         ].filter(Boolean)
       : ["Made when the server starts"]
     : [];
-  const title = o ? originWords(o, nameOf) : f?.name || f?.level || "World";
+  const title = o ? originWords(o, nameOf) : name ? <McText text={name} title /> : f?.level || "World";
   const via = o && !["copy", "snapshot", "template"].includes(o.kind) ? viaWords(o, nameOf) : null;
   const when = o?.time ? `Put in ${ago(o.time)}` : null;
-  const lines = [[via, when].filter(Boolean).join(" · "), said.join(" · ")].filter(Boolean);
+  const first = [via, when].filter(Boolean).join(" · ");
   return (
     <div className="flex items-center gap-3 rounded-md border border-line bg-raised px-3 py-2.5" data-testid="world-now">
       {library ? (
@@ -93,11 +96,17 @@ export function WorldNow({ server, library }: { server: Server; library: Library
             title
           )}
         </p>
-        {lines.map((line) => (
-          <p key={line} className="text-xs break-words text-muted">
-            {line}
+        {first && <p className="text-xs break-words text-muted">{first}</p>}
+        {(ownName || said.length > 0) && (
+          <p className="text-xs break-words text-muted">
+            {ownName && (
+              <>
+                "<McText text={ownName} />"{said.length > 0 && " · "}
+              </>
+            )}
+            {said.join(" · ")}
           </p>
-        ))}
+        )}
       </div>
     </div>
   );

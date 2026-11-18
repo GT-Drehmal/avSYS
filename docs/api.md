@@ -507,6 +507,9 @@ lists other organizations' servers already under one (they keep working).
 ## Snapshots and backups
 
 A snapshot is `{id, time, server, trigger, by?, version?, loader?, size, added, files, offsite?}`.
+`size` is its files' size in bytes; `added` is what it added to the
+repository when it was taken (restic's `data_added_packed`), which later
+snapshots and worlds may share since.
 `trigger` is how it came to be: `manual`, `scheduled`, `pre-restore`,
 `pre-replace`, `final` (before a delete), `copy`, `move` or `template`.
 Where an `id` is taken, an unambiguous prefix of at least 8 characters
@@ -1050,7 +1053,8 @@ if any.
 What the server's world says of itself, read from its files. **Viewer.**
 Returns `{level, exists, name?, seed?, version?, lastPlayed?, size?}`:
 the world's folder (as `server.properties` names it), whether it is there
-yet, its `level.dat`'s name, seed, the game version it was last opened in
+yet, its `level.dat`'s name (as the game has it, `§` formatting codes
+and all), seed, the game version it was last opened in
 and when it was last played, and its folders' size in bytes, left out if
 counting them takes too long. `502 workspace` when the files cannot be
 reached; `409 busy` while files are being put in.

@@ -141,8 +141,8 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
             </div>
             <div className="text-right max-sm:hidden">
               <p className="font-mono text-[13px] tabular-nums">{bytes(s.size)}</p>
-              <p className="text-xs text-faint" title="What this snapshot added to storage when it was taken">
-                +{bytes(s.added)} stored
+              <p className="text-xs text-faint" title="What this snapshot added to storage when it was taken. Later snapshots and worlds may share it.">
+                +{bytes(s.added)} new when taken
               </p>
             </div>
             {(s.trigger === "pre-restore" || s.trigger === "pre-replace") && <Chip className="max-md:hidden">undo point</Chip>}
@@ -320,7 +320,7 @@ export function SnapshotDetails({ org, snapshot, onClose, actions }: DetailsProp
             <Fact label="Why">{s.trigger === "manual" ? (s.by ? `Taken manually, by ${s.by}` : "Taken manually") : triggerLabel(s)}</Fact>
             <Fact label="Size">
               {bytes(s.size)} in {s.files.toLocaleString()} file{s.files === 1 ? "" : "s"}.{" "}
-              <span className="text-muted">This snapshot added {bytes(s.added)} to storage.</span>
+              <span className="text-muted">It added {bytes(s.added)} to storage when it was taken.</span>
             </Fact>
             {detail.data && <Fact label="Kept">{keptFor(detail.data)}</Fact>}
             {offsite.data?.configured && <Fact label="Offsite">{copied ? "In the offsite copy." : "Not in the offsite copy yet."}</Fact>}

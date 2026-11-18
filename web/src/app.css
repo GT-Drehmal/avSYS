@@ -69,6 +69,24 @@
   /* Saturation and lightness of a picture drawn from a name: behind, and the letters. */
   --placeholder-bg: 30% 16%;
   --placeholder-fg: 55% 68%;
+  /* The game's 16 colours (§0 to §f), moved to read on this theme's
+     backgrounds: lib/mctext.ts has them too, and says how. */
+  --mc-0: #898989;
+  --mc-1: #568afe;
+  --mc-2: #46d040;
+  --mc-3: #45cccb;
+  --mc-4: #ff6654;
+  --mc-5: #f261ef;
+  --mc-6: #fec579;
+  --mc-7: #c4c4c4;
+  --mc-8: #a2a2a2;
+  --mc-9: #8d9dfd;
+  --mc-a: #9bff96;
+  --mc-b: #9afffe;
+  --mc-c: #ff9a93;
+  --mc-d: #ff9afc;
+  --mc-e: #fdffa6;
+  --mc-f: #ffffff;
 }
 
 /*
@@ -105,6 +123,22 @@
   --checker-b: #cfd2d7;
   --placeholder-bg: 45% 91%;
   --placeholder-fg: 45% 34%;
+  --mc-0: #000000;
+  --mc-1: #001883;
+  --mc-2: #015a01;
+  --mc-3: #025757;
+  --mc-4: #770100;
+  --mc-5: #6f036f;
+  --mc-6: #784e03;
+  --mc-7: #535353;
+  --mc-8: #393939;
+  --mc-9: #3511c8;
+  --mc-a: #06700d;
+  --mc-b: #026d6e;
+  --mc-c: #9c0319;
+  --mc-d: #8f0491;
+  --mc-e: #696903;
+  --mc-f: #676767;
 }
 
 /*
@@ -231,6 +265,14 @@
     scrollbar-width: thin;
     scrollbar-color: var(--color-line-strong) transparent;
   }
+}
+
+/* A server's own colour (§x), as components/McText.tsx works it out for each theme. */
+.mc-hex {
+  color: var(--mc-dark);
+}
+[data-theme="light"] .mc-hex {
+  color: var(--mc-light);
 }
 
 @utility label-mono {
