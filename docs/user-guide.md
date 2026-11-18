@@ -108,8 +108,9 @@ names they play as.
 
 - **Invite**: choose a role (up to your own), how long the link works and
   how many times, then **Create link** and send it.
-- **Change a role** from the list. Only an owner can make someone an owner
-  or change an owner. An organization always keeps at least one owner.
+- **Change a role** from the list; each role in it says in a few words what
+  it can do. Only an owner can make someone an owner or change an owner.
+  An organization always keeps at least one owner.
 - **Remove** someone with the trash button; on your own row it is
   **Leave**. Their account is kept.
 - The panel's administrator sees a key button on each row, to make a
@@ -301,7 +302,8 @@ Most settings apply at the next restart. **Settings** has: **General**
 (picture, name, message of the day), **Software** (type, version, loader
 build), **Gameplay**, **Players**, **Resources**, **Node**, **Network**,
 **Sleep**, **Advanced** (the image's environment and image), **World**, and
-**Delete server**.
+**Delete server**. **Other properties** (under **Gameplay**) and
+**Environment** (under **Advanced**) link to the docs for what they take.
 
 **Changing the game version.** Under **Settings → Software**. Going to an
 older version asks first, since a world opened in a newer game may not
@@ -377,8 +379,9 @@ operators in game, unless you choose otherwise.
 Both keep up by themselves: when the server starts, and within seconds of
 someone linking an account, joining, leaving, or changing role.
 
-- **Members** lists every member: whitelisted or operator by role, picked
-  by you, or left out. Untick a member to keep them off.
+- **Members** lists every member: whitelisted or operator **by role**
+  (following their role), **picked** by you, or **left out**. Untick a
+  member to keep them off. Point at a tick to see what it means.
 - **Whitelisted players** and **Operators**: players who are not members,
   one name or UUID per line. These stay.
 - **Saved lists**: tick lists from the **Players** page to use them on this

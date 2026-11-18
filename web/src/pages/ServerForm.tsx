@@ -12,7 +12,7 @@ import { CurseForgeOff, ModrinthSearch } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { SavedListsField } from "../components/PlayerLists";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, type Join } from "../components/ServerFields";
+import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, playersExample, propertiesDocs, type Join } from "../components/ServerFields";
 import { BottomBar, Button, Checked, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { NewerWorldConfirm } from "../components/NewerWorld";
@@ -2134,7 +2134,7 @@ export function ServerForm({
                 )}
               </Field>
             </div>
-            <Field label="Other properties" hint="One key=value per line.">
+            <Field label="Other properties" docs={propertiesDocs} hint="One key=value per line.">
               {(id) => (
                 <Textarea id={id} rows={3} value={v.otherProperties} onChange={(e) => set("otherProperties", e.target.value)} placeholder={"view-distance=12\nspawn-protection=0"} className="font-mono" spellCheck={false} />
               )}
@@ -2169,11 +2169,11 @@ export function ServerForm({
           onChange={(ids) => set("whitelistLists", ids)}
         />
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Whitelisted players" hint={v.join === "anyone" ? "Only used with a whitelist." : "One name per line."}>
-            {(id) => <Textarea id={id} rows={3} value={v.whitelist} onChange={(e) => set("whitelist", e.target.value)} className="font-mono" spellCheck={false} />}
+          <Field label="Whitelisted players" hint={v.join === "anyone" ? "Only used with a whitelist." : undefined}>
+            {(id) => <Textarea id={id} rows={4} value={v.whitelist} onChange={(e) => set("whitelist", e.target.value)} placeholder={playersExample} className="font-mono" spellCheck={false} />}
           </Field>
-          <Field label="Operators" hint="One name per line.">
-            {(id) => <Textarea id={id} rows={3} value={v.ops} onChange={(e) => set("ops", e.target.value)} className="font-mono" spellCheck={false} />}
+          <Field label="Operators">
+            {(id) => <Textarea id={id} rows={4} value={v.ops} onChange={(e) => set("ops", e.target.value)} placeholder={playersExample} className="font-mono" spellCheck={false} />}
           </Field>
         </div>
         <SavedListsField org={org} title="Operators from saved lists" label="operators" value={v.opLists} onChange={(ids) => set("opLists", ids)} />

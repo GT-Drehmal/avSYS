@@ -5,7 +5,7 @@ import { api, atLeast, type Member, type NodeInfo, type Role } from "../lib/api"
 import { difficulties, gameModes } from "../lib/properties";
 import { fromGigabytes } from "../lib/software";
 import { mainAccount, PlayerHead } from "./PlayerLists";
-import { Field, Input, Select, Textarea, Toggle } from "./ui";
+import { Field, Input, Select, Textarea, Tip, Toggle } from "./ui";
 
 /** The server.properties entries that have a control of their own here. */
 export interface Gameplay {
@@ -117,6 +117,15 @@ export const exposeOptions = (
 );
 
 /** Who may join: anyone, the organization's members from a role up, or only who is on the whitelist. */
+/** What a box of players looks like filled in: names or UUIDs, one a line. */
+export const playersExample = "Steve\nAlex\n069a79f4-44e9-4726-a5be-fca90e38aaf5";
+
+/** Where each server.properties entry is told of, for "Other properties". */
+export const propertiesDocs = { href: "https://minecraft.wiki/w/Server.properties", about: "server.properties" };
+
+/** Where the options of the image the servers run in are told of. */
+export const imageDocs = { href: "https://docker-minecraft-server.readthedocs.io/", about: "itzg/minecraft-server image" };
+
 /** Names typed one a line. */
 export const lines = (text: string) =>
   text
@@ -240,6 +249,9 @@ function toggled(byRole: boolean, picks: Picks, id: string, on: boolean): Picks 
   return { also, except };
 }
 
+/** What each word beside a member's tick means. */
+const tips = { "by role": "Follows their role", picked: "Added by hand", "left out": "Taken off by hand" };
+
 const roles: Role[] = ["owner", "admin", "operator", "viewer"];
 const byRoleThenName = (a: Member, b: Member) =>
   roles.indexOf(a.role) - roles.indexOf(b.role) || (a.displayName || a.username).localeCompare(b.displayName || b.username);
@@ -300,21 +312,27 @@ export function MemberLists({ members, whitelistFrom, opFrom, whitelist, ops, on
                 {columns.map((c) => {
                   const byRole = !!c.from && atLeast(m.role, c.from);
                   const on = onList(byRole, c.picks, m.userId);
+                  const how = on === byRole ? "by role" : on ? "picked" : "left out";
                   return (
                     <td key={c.key} className="px-3 py-2 align-top">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          aria-label={`${c.label}: ${name}`}
-                          checked={on}
-                          onChange={(e) => {
-                            const next = toggled(byRole, c.picks, m.userId, e.target.checked);
-                            onChange({ whitelist, ops, [c.key]: next });
-                          }}
-                          className="size-3.5 accent-(--color-accent)"
-                        />
-                        <span className="text-xs text-faint">{on === byRole ? "by role" : on ? "picked" : "left out"}</span>
-                      </label>
+                      <Tip text={tips[how]}>
+                        {(tip) => (
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              aria-label={`${c.label}: ${name}`}
+                              {...tip}
+                              checked={on}
+                              onChange={(e) => {
+                                const next = toggled(byRole, c.picks, m.userId, e.target.checked);
+                                onChange({ whitelist, ops, [c.key]: next });
+                              }}
+                              className="size-3.5 accent-(--color-accent)"
+                            />
+                            <span className="text-xs text-faint">{how}</span>
+                          </label>
+                        )}
+                      </Tip>
                     </td>
                   );
                 })}
