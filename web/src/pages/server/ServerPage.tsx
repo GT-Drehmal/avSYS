@@ -18,6 +18,7 @@ import { others, useHere, usePresence } from "../../lib/presence";
 import { sshCommand, vscodeURL } from "../../lib/ssh";
 import { toast } from "../../lib/toast";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
+import { NotesText } from "../../components/Notes";
 
 export interface ServerContext {
   server: Server;
@@ -202,6 +203,8 @@ export function ServerPage() {
           </div>
         )}
       </header>
+      {/* What admins noted of it: theirs alone, never the game's. */}
+      <NotesText notes={server.notes} className="mt-3 max-w-3xl text-[13px]" />
 
       <dl className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 rounded-lg border border-line bg-surface px-4 py-3.5 sm:grid-cols-4">
         <Fact label="Address">

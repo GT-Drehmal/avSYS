@@ -100,7 +100,7 @@ test("a world is uploaded to the library, named as its file is, with its own pic
   });
   await expect(dialog.getByTestId("world-summary")).toContainText('World "Island"');
   await expect(dialog.getByLabel("Name")).toHaveValue("Island");
-  await dialog.getByLabel("Description").fill("Where we started");
+  await dialog.getByLabel("Notes").fill("Where we started");
   await dialog.getByRole("button", { name: "Add world" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("listitem", { name: "Island" })).toBeVisible();
@@ -244,7 +244,7 @@ test("a world is renamed, and deleted by an admin", async ({ page, as }) => {
   await page.getByRole("menuitem", { name: "Edit" }).click();
   const dialog = page.getByRole("dialog", { name: "Edit Island" });
   await dialog.getByLabel("Name").fill("Atoll");
-  await dialog.getByLabel("Description").fill("Smaller now");
+  await dialog.getByLabel("Notes").fill("Smaller now");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toHaveCount(0);
   expect(calls[0]).toMatchObject({ method: "PATCH", path: "/worlds/w1", body: { name: "Atoll", description: "Smaller now" } });

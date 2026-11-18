@@ -21,7 +21,9 @@ The panel also keeps, on its own volumes:
 - a SQLite database (`internal/store`) for people: accounts, sessions,
   organizations and roles, invites, API tokens, SSH keys, linked Minecraft
   accounts, saved player lists, templates and the world library's records,
-  and the panel's settings, including its two SSH keys;
+  notes on servers, names and colours of snapshots (by snapshot ID), and
+  the panel's settings, including its two SSH keys. Notes and names are
+  the panel's alone: never in a `MinecraftServer`, its files or the game;
 - one [restic](https://restic.net) repository per organization
   (`internal/backup`) for snapshots;
 - the game's command tree of each game version its servers run, in
@@ -350,7 +352,12 @@ A snapshot is taken **inside the server's workspace**, which has the files:
 Through that channel a server can add to its organization's repository and
 read from it, but not delete or overwrite anything. Only the panel removes
 snapshots, with `restic forget` and `prune`, as retention or a person
-says.
+says. Retention asks restic what the policy would remove (`--dry-run`),
+leaves out snapshots that have a name in the panel (read while it holds
+the repository, which naming a snapshot holds too), and forgets the rest
+by ID. A snapshot's name goes when it does; any left for a snapshot the
+repository no longer lists are dropped the next time the organization's
+snapshots are listed.
 
 **Restore** takes a snapshot first, stops the server, restores the files
 with `restic restore --delete` inside the workspace, and puts the

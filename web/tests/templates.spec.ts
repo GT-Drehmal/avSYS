@@ -38,7 +38,7 @@ test("a server is saved as a template from its Backups tab", async ({ page, as }
   // Named after the server unless named otherwise.
   await expect(dialog.getByLabel("Name")).toHaveAttribute("placeholder", "Survival");
   await dialog.getByLabel("Name").fill("Lobby");
-  await dialog.getByLabel("Description").fill("Where everyone starts.");
+  await dialog.getByLabel("Notes").fill("Where everyone starts.");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toHaveCount(0);
   expect(sent).toEqual({ name: "Lobby", description: "Where everyone starts.", server: "survival" });
@@ -258,7 +258,7 @@ test("a template is made from settings alone, and a new server made from it has 
   await page.getByRole("group", { name: "Server type" }).getByRole("button", { name: /^Paper/ }).click();
   await page.getByLabel("Game version").selectOption("1.21.4");
   await page.getByLabel("Name", { exact: true }).fill("Survival base");
-  await page.getByLabel("Description").fill("Hard, with more memory.");
+  await page.getByLabel("Notes").fill("Hard, with more memory.");
   await page.getByLabel("Difficulty").selectOption("hard");
   await page.getByLabel("Memory (GB)").fill("6");
   await page.getByRole("button", { name: "Create template" }).click();

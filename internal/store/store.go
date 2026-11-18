@@ -221,6 +221,27 @@ CREATE TABLE IF NOT EXISTS template_snapshots_read (
 	org_id TEXT PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
 	at     INTEGER NOT NULL
 );
+-- What admins note of a server, for themselves: never the game's. Kept by
+-- the server's name, while the server or its snapshots are there; see
+-- notes.go.
+CREATE TABLE IF NOT EXISTS server_notes (
+	org_id     TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+	server     TEXT NOT NULL,
+	notes      TEXT NOT NULL,
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (org_id, server)
+);
+-- The names and colours given to snapshots, by the snapshot's ID in the
+-- organization's repository. Gone with the snapshot.
+CREATE TABLE IF NOT EXISTS snapshot_names (
+	org_id     TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+	id         TEXT NOT NULL,
+	name       TEXT NOT NULL DEFAULT '',
+	color      TEXT NOT NULL DEFAULT '',
+	by_user    TEXT NOT NULL DEFAULT '',
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (org_id, id)
+);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);
 CREATE INDEX IF NOT EXISTS audit_target ON audit(org_id, target, id);
 `

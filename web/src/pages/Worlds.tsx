@@ -7,7 +7,8 @@ import { useOrg } from "../components/Shell";
 import { ServerPicker, SnapshotPicker } from "../components/StartPicker";
 import { AddContentDialog, packTitle } from "../components/Content";
 import { ProjectIcon } from "../components/ModrinthSearch";
-import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SelectAllRow, SelectionBar, Spinner, Textarea, Toggle } from "../components/ui";
+import { Button, Confirm, cx, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, RowCheckbox, SelectAllRow, SelectionBar, Spinner, Toggle } from "../components/ui";
+import { NotesField } from "../components/Notes";
 import { ListBar } from "../components/ListBar";
 import { McText } from "../components/McText";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
@@ -375,7 +376,7 @@ function AddWorld({ org, onClose }: { org: string; onClose: () => void }) {
             />
           )}
         </Field>
-        <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
+        <NotesField value={description} onChange={setDescription} />
         {from === "upload" && <PictureChange name={name} value={picture} onChange={setPicture} optional="Optional. Shown in the library." />}
         {error && <Notice tone="danger">{error}</Notice>}
         {sending && <UploadProgress sending={sending} onCancel={cancel} />}
@@ -457,7 +458,7 @@ function EditWorld({ org, world, onClose }: { org: string; world: LibraryWorld; 
       >
         <PictureChange name={name} current={worldIcon(org, world.id)} value={picture} onChange={setPicture} optional="Optional. Shown in the library." kept="" />
         <Field label="Name" missing="Give it a name.">{(id) => <Input id={id} required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-        <Field label="Description">{(id) => <Textarea id={id} rows={2} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
+        <NotesField value={description} onChange={setDescription} />
         <section aria-label="Resource pack" className="flex flex-col gap-2.5">
           <p className="text-[13px] font-medium">Resource pack</p>
           {shown ? (

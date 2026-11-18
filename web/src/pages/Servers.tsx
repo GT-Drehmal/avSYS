@@ -43,7 +43,7 @@ const phaseOrder = ["Running", "Starting", "Sleeping", "Stopping", "Error", "Sto
 const phaseOf = (s: Server) => s.status.phase ?? "Stopped";
 
 const serverList: ListOptions<Server> = {
-  said: (s) => [s.name, displayName(s), describeSoftware(s), phaseWords[phaseOf(s)], s.status.address],
+  said: (s) => [s.name, displayName(s), describeSoftware(s), phaseWords[phaseOf(s)], s.status.address, s.notes],
   then: byText(displayName),
   sorts: [
     { key: "name", label: "Name", compare: byText(displayName) },
@@ -246,6 +246,11 @@ export function Servers() {
                         {s.status.pendingRestart && <span className="text-warn"> · restart to apply changes</span>}
                         <BackupMark server={s} scheduled={!!policy.data && scheduleOf(policy.data, s.spec.backups).enabled} />
                       </span>
+                      {s.notes && (
+                        <span className="block truncate text-xs text-faint" title={s.notes}>
+                          {s.notes}
+                        </span>
+                      )}
                     </span>
                   </span>
                   <span className="truncate text-muted max-md:hidden">{describeSoftware(s)}</span>

@@ -480,6 +480,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/snapshots/{id}", s.authed(s.getSnapshot))
 	api("GET /orgs/{org}/snapshots/{id}/icon", s.authed(s.getSnapshotIcon))
 	api("DELETE /orgs/{org}/snapshots", s.authed(s.deleteSnapshots))
+	api("PATCH /orgs/{org}/snapshots/{id}", s.authed(s.nameSnapshot))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
 
 	api("GET /orgs/{org}/domains", s.authed(s.getDomains))
