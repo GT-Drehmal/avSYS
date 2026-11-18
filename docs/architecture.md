@@ -151,7 +151,7 @@ first time someone at a console of that version asks:
    Versions before 1.13 have no command tree, and get none.
 2. It makes a pod `avsys-commands-<random>` in the server's namespace,
    owned by the server and preferring its node: the server image of that
-   Java, which downloads the jar, checks its SHA-1, runs the generator
+   Java, which downloads the jar and checks its SHA-1, runs the generator
    (`-DbundlerMainClass=net.minecraft.data.Main` from 1.18 on, the jar's
    own `net.minecraft.data.Main` before) and prints the tree, gzipped. It
    asks for 512 MiB, may use 1 GiB, and takes 5 to 20 seconds.
@@ -160,9 +160,25 @@ first time someone at a console of that version asks:
    `commands/<version>.json.gz` on its volume. Browsers are sent it as it
    is kept, and keep it by its ETag.
 
+From inside some clusters Mojang's sites now and then give no answer for
+seconds on end (one ask in four, on one install), so each is asked for a
+few times, at both of the names it answers at:
+
+- The list of versions and a version's page, at `launchermeta.mojang.com`
+  and `piston-meta.mojang.com` in turn: 6 seconds each try, 4 tries, 1, 2
+  and 4 seconds apart, about 30 seconds at most. Where neither answers,
+  what was read from it before is used, however old.
+- The jar, in the pod, at `piston-data.mojang.com` and
+  `launcher.mojang.com` in turn, in up to three rounds 5 and 10 seconds
+  apart: 5 seconds to connect, 3 minutes to download, and curl tries twice
+  more on any error (only after a timeout or a server error in the image
+  of Java 17, whose curl is older). A jar that is not the one Mojang lists
+  is not used.
+
 One version is made at a time. One that could not be made is tried again
-ten minutes later; meanwhile, and for versions without a tree, the console
-works as before, with nothing to complete.
+a minute later, then two, four and so on up to 30 minutes; the first ask
+once the wait is over starts it again. Meanwhile, and for versions without
+a tree, the console completes from the running server's help alone (below).
 
 Commands that mods and plugins add are not in that tree. The game sends
 its whole tree only to players, as a packet when they join; what it tells
@@ -189,7 +205,7 @@ commands, the panel reads its help over RCON (`internal/api/modcommands.go`):
    [card|…]`), it asks for the help of the command it is under
    (`help bingo`, then `help bingo card`, …), which says what comes after
    each of them, as far down as words go: an argument cannot be asked
-   about. At most 256 asks, 6 words deep, and 20 seconds.
+   about. At most 512 asks, 6 words deep, and 20 seconds.
 4. What it read is added to the version's tree after the game's own
    commands, as nodes of the same kinds; an argument of no known kind has
    no `parser`, and the console offers it by its name only. A command the
@@ -202,6 +218,19 @@ run of the game (its container), and read again once it is started again.
 A server that is not running has the game's commands only; one whose help
 could not be read too, and it is asked again a minute later. Requests wait
 up to 4 seconds for the help, then are answered `202` to ask again.
+
+Where the version's tree is not there (being made, could not be made a
+moment ago, or a version before 1.13), a running server's help alone is
+what the console completes from: every command it lists, the game's own
+included, read as above with nothing left out as the tree's. The tree sent
+says so at its root, `"partial": "making"` or `"partial": "later"` (none
+before 1.13, where nothing better is to come), and browsers ask again every
+3 or 15 seconds until the game's tree is there. Then the game's commands
+are the tree's, and the same reading of the help adds the rest: the help is
+not read again. Before 1.13 the game's help is pages of usage of its own
+kind (`--- Showing help page 1 of 9 (/help <page>) ---`, then
+`/ban <name> [reason ...]`); every page is read, for names only, and on
+Spigot, whose `minecraft:help` is that, Bukkit's pages are.
 
 ## The life of a server
 

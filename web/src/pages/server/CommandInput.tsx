@@ -2,11 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cx } from "../../components/ui";
 import { api, type Server, serverPath } from "../../lib/api";
-import { type CommandNode, complete, type Edit, type EditKind, emptyUndo, ghostOf, insert, record, redo, undo } from "../../lib/completion";
+import { askAgainIn, type CommandNode, complete, type Edit, type EditKind, emptyUndo, ghostOf, insert, record, redo, undo } from "../../lib/completion";
 
 /**
  * The game's command tree for the version a server runs, with the commands
- * its mods and plugins add while it runs, for completing commands.
+ * its mods and plugins add while it runs, for completing commands; until
+ * the game's own tree is there, those the running server's help lists.
  * Undefined while the panel makes it, and where there is none. Asked again
  * each time the console opens or the server starts (the panel answers "not
  * changed" if it is the same), as the server's own commands are read anew
@@ -21,8 +22,9 @@ export function useCommandTree(server: Server, enabled: boolean): CommandNode | 
     retry: false,
     staleTime: 0,
     refetchOnWindowFocus: false,
-    // Being made: asked again until it is there.
-    refetchInterval: (query) => (query.state.data && "making" in query.state.data ? 3000 : false),
+    // Being made, or from the server's help alone: asked again until the
+    // game's own are there.
+    refetchInterval: (query) => askAgainIn(query.state.data),
   });
   // While asked again, the one there was stays.
   const last = useRef<{ key: string; tree: CommandNode } | null>(null);

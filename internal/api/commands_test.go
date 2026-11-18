@@ -4,14 +4,21 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -235,23 +242,64 @@ func TestCommandTreeThatCannotBeMade(t *testing.T) {
 		t.Errorf("asked again: %d, made %d times", rec.Code, tries)
 	}
 
-	// One that failed for a while is tried again later; what was made
-	// that is not a tree is not kept.
+	// One that failed for a while is tried again a minute later, then
+	// two, ...; what was made that is not a tree is not kept.
 	q := newPanel(t)
-	q.srv.CommandTree = func(context.Context, string) ([]byte, error) { return []byte(`{"type":"root"}`), nil }
-	if rec := waitCommandTree(q, nil); rec.Code != http.StatusNotFound {
-		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	var mu sync.Mutex
+	made := 0
+	answer := []byte(`{"type":"root"}`)
+	q.srv.CommandTree = func(context.Context, string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		made++
+		return answer, nil
 	}
-	q.srv.commands.mu.Lock()
-	until := q.srv.commands.failed["1.21.4"]
-	q.srv.commands.failed["1.21.4"] = time.Now().Add(-time.Second)
-	q.srv.commands.mu.Unlock()
-	if d := time.Until(until); d < commandsRetry-time.Minute || d > commandsRetry {
-		t.Errorf("tried again in %v, want %v", d, commandsRetry)
+	// waitOver ends the wait after a failure, as if the time had passed.
+	waitOver := func() {
+		q.srv.commands.mu.Lock()
+		defer q.srv.commands.mu.Unlock()
+		f := q.srv.commands.failed["1.21.4"]
+		f.until = time.Now().Add(-time.Second)
+		q.srv.commands.failed["1.21.4"] = f
 	}
-	q.srv.CommandTree = func(context.Context, string) ([]byte, error) { return commandsFixture(t), nil }
+	for i, want := range []time.Duration{time.Minute, 2 * time.Minute} {
+		if rec := waitCommandTree(q, nil); rec.Code != http.StatusNotFound {
+			t.Fatalf("got %d %s", rec.Code, rec.Body)
+		}
+		// Asked meanwhile: not made again.
+		getCommandTree(q, "operator", nil)
+		q.srv.commands.mu.Lock()
+		until := q.srv.commands.failed["1.21.4"].until
+		q.srv.commands.mu.Unlock()
+		if d := time.Until(until); d < want-10*time.Second || d > want {
+			t.Errorf("failure %d: tried again in %v, want %v", i+1, d, want)
+		}
+		mu.Lock()
+		if made != i+1 {
+			t.Errorf("failure %d: made %d times", i+1, made)
+		}
+		mu.Unlock()
+		// Asked once the wait is over: made again at once.
+		waitOver()
+	}
+	mu.Lock()
+	answer = commandsFixture(t)
+	mu.Unlock()
 	if rec := waitCommandTree(q, nil); rec.Code != http.StatusOK {
 		t.Errorf("tried again: %d", rec.Code)
+	}
+	q.srv.commands.mu.Lock()
+	if f, ok := q.srv.commands.failed["1.21.4"]; ok {
+		t.Errorf("still noted as failed: %+v", f)
+	}
+	q.srv.commands.mu.Unlock()
+}
+
+func TestCommandsWait(t *testing.T) {
+	for times, want := range map[int]time.Duration{1: time.Minute, 2: 2 * time.Minute, 3: 4 * time.Minute, 5: 16 * time.Minute, 6: 30 * time.Minute, 40: 30 * time.Minute} {
+		if got := commandsWait(times); got != want {
+			t.Errorf("after %d: %v, want %v", times, got, want)
+		}
 	}
 }
 
@@ -298,6 +346,9 @@ func TestServerJarOf(t *testing.T) {
 	if err != nil || jar.URL != "https://piston-data.test/server-1.21.4.jar" || jar.SHA1 != "4707d00eb834b446575d89a61a11b5d548d8c001" || jar.Java != 21 {
 		t.Errorf("1.21.4: %+v %v", jar, err)
 	}
+	if jar.Mirror != "" {
+		t.Errorf("a mirror of a site not Mojang's: %s", jar.Mirror)
+	}
 	if jar, err := p.srv.serverJarOf(ctx, "1.17.1"); err != nil || jar.Java != 16 {
 		t.Errorf("1.17.1: %+v %v", jar, err)
 	}
@@ -318,7 +369,7 @@ func TestCommandsPod(t *testing.T) {
 	mc := &avsysv1.MinecraftServer{}
 	mc.Namespace, mc.Name, mc.UID = "mc-alpha", "world", "uid-1"
 	mc.Status.Node = "node-a"
-	pod := commandsPod(mc, &serverJar{URL: "https://piston-data.test/server.jar", SHA1: "abc", Java: 16}, "avsys-commands-1")
+	pod := commandsPod(mc, &serverJar{URL: "https://piston-data.test/server.jar", Mirror: "https://launcher.mojang.test/server.jar", SHA1: "abc", Java: 16}, "avsys-commands-1")
 	c := pod.Spec.Containers[0]
 	if pod.Namespace != "mc-alpha" || c.Image != "itzg/minecraft-server:java17" {
 		t.Errorf("in %s, image %s", pod.Namespace, c.Image)
@@ -333,7 +384,7 @@ func TestCommandsPod(t *testing.T) {
 	for _, e := range c.Env {
 		env[e.Name] = e.Value
 	}
-	if env["JAR_URL"] != "https://piston-data.test/server.jar" || env["JAR_SHA1"] != "abc" {
+	if env["JAR_URL"] != "https://piston-data.test/server.jar" || env["JAR_SHA1"] != "abc" || env["JAR_MIRROR"] != "https://launcher.mojang.test/server.jar" {
 		t.Errorf("env %v", env)
 	}
 	if pod.Spec.RestartPolicy != corev1.RestartPolicyNever || pod.Spec.ActiveDeadlineSeconds == nil || *pod.Spec.SecurityContext.RunAsNonRoot != true {
@@ -463,6 +514,224 @@ func TestAcceptsGzip(t *testing.T) {
 		r.Header.Set("Accept-Encoding", header)
 		if got := acceptsGzip(r); got != want {
 			t.Errorf("%q: %v", header, got)
+		}
+	}
+}
+
+// flakyMojang is Mojang's site as seen from inside some clusters: the first
+// fails asks of it get no answer at all.
+type flakyMojang struct {
+	mu     sync.Mutex
+	fails  int
+	status int
+	asked  []string
+}
+
+func (f *flakyMojang) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.mu.Lock()
+	f.asked = append(f.asked, r.URL.Host)
+	n := len(f.asked)
+	f.mu.Unlock()
+	if n <= f.fails {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	}
+	status := f.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"from":"` + r.URL.Host + `"}`)), Request: r}, nil
+}
+
+func (f *flakyMojang) hosts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.asked...)
+}
+
+func TestMojangIsAskedAgain(t *testing.T) {
+	// As set: a few tries, in about half a minute at most.
+	if most := time.Duration(mojangTries)*mojangTry + mojangBackoff*time.Duration(1<<(mojangTries-1)-1); mojangTries < 3 || most > 35*time.Second {
+		t.Errorf("%d tries in up to %v", mojangTries, most)
+	}
+	defer func(try, backoff time.Duration) { mojangTry, mojangBackoff = try, backoff }(mojangTry, mojangBackoff)
+	mojangTry, mojangBackoff = 100*time.Millisecond, 20*time.Millisecond
+	most := time.Duration(mojangTries)*mojangTry + mojangBackoff*time.Duration(1<<(mojangTries-1)-1)
+	ctx := context.Background()
+	version := "https://piston-meta.mojang.com/v1/packages/fb73/1.20.1.json"
+
+	// No answer three times: the fourth try, at both of the site's names.
+	c := newCatalog("test")
+	f := &flakyMojang{fails: 3}
+	c.http.Transport = f
+	start := time.Now()
+	body, err := c.get(ctx, mojangManifest, time.Hour)
+	took := time.Since(start)
+	if err != nil || string(body) != `{"from":"piston-meta.mojang.com"}` {
+		t.Fatalf("got %s %v", body, err)
+	}
+	if want := []string{"launchermeta.mojang.com", "piston-meta.mojang.com", "launchermeta.mojang.com", "piston-meta.mojang.com"}; !reflect.DeepEqual(f.hosts(), want) {
+		t.Errorf("asked %q", f.hosts())
+	}
+	if took < 3*mojangTry || took > most+time.Second {
+		t.Errorf("took %v", took)
+	}
+	// Kept: not asked again.
+	if _, err := c.get(ctx, mojangManifest, time.Hour); err != nil || len(f.hosts()) != 4 {
+		t.Errorf("asked again: %v, %d", err, len(f.hosts()))
+	}
+
+	// No answer at all: an error after the last try, in bounded time.
+	c = newCatalog("test")
+	f = &flakyMojang{fails: 100}
+	c.http.Transport = f
+	start = time.Now()
+	if _, err := c.get(ctx, version, time.Hour); err == nil || !strings.Contains(err.Error(), "Could not reach") {
+		t.Errorf("never answering: %v", err)
+	}
+	if took := time.Since(start); len(f.hosts()) != mojangTries || took > most+time.Second {
+		t.Errorf("asked %d times in %v", len(f.hosts()), took)
+	}
+	if !strings.HasPrefix(f.hosts()[1], "launchermeta") {
+		t.Errorf("asked %q", f.hosts())
+	}
+	// What was read before, however old, is used then.
+	c.keep(version, []byte(`{"old":true}`), -time.Hour)
+	if body, err := c.get(ctx, version, time.Hour); err != nil || string(body) != `{"old":true}` {
+		t.Errorf("with an old copy: %s %v", body, err)
+	}
+	// So is it once the one asking gives up.
+	gone, cancel := context.WithTimeout(ctx, mojangTry+mojangBackoff/2)
+	defer cancel()
+	if body, err := c.get(gone, version, time.Hour); err != nil || string(body) != `{"old":true}` {
+		t.Errorf("given up: %s %v", body, err)
+	}
+
+	// What Mojang says is not there is asked for once.
+	c = newCatalog("test")
+	f = &flakyMojang{status: http.StatusNotFound}
+	c.http.Transport = f
+	if _, err := c.get(ctx, version, time.Hour); !errors.Is(err, errNotFound) || len(f.hosts()) != 1 {
+		t.Errorf("not there: %v, asked %d times", err, len(f.hosts()))
+	}
+	// Another site is asked once, as before.
+	f = &flakyMojang{fails: 1}
+	c.http.Transport = f
+	short, cancelShort := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancelShort()
+	if _, err := c.get(short, "https://api.modrinth.com/v2/project/x", time.Hour); err == nil || len(f.hosts()) != 1 {
+		t.Errorf("modrinth: %v, asked %d times", err, len(f.hosts()))
+	}
+}
+
+func TestMojangMirror(t *testing.T) {
+	for u, want := range map[string]string{
+		"https://launchermeta.mojang.com/mc/game/version_manifest_v2.json":                              "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+		"https://piston-meta.mojang.com/v1/packages/fb73/1.20.1.json":                                   "https://launchermeta.mojang.com/v1/packages/fb73/1.20.1.json",
+		"https://piston-data.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/server.jar": "https://launcher.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/server.jar",
+		"https://api.mojang.com/users/profiles/minecraft/x":                                             "",
+		"https://piston-data.test/server.jar":                                                           "",
+		"http://piston-meta.mojang.com/x.json":                                                          "",
+	} {
+		if got := mojangMirror(u); got != want {
+			t.Errorf("%s: %q, want %q", u, got, want)
+		}
+	}
+}
+
+// The pod's script, with stand-ins for curl, sleep and java: the jar is
+// asked for again at both of Mojang's names, and checked each time.
+func TestCommandsScript(t *testing.T) {
+	for _, tool := range []string{"sh", "sha1sum", "gzip", "base64", "grep"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("no %s here", tool)
+		}
+	}
+	raw := commandsFixture(t)
+	bin := t.TempDir()
+	fixture := filepath.Join(bin, "commands.json")
+	if err := os.WriteFile(fixture, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]string{
+		// curl: --version answers unless OLD_CURL and asked with
+		// --retry-all-errors; a download fails CURL_FAILS times, then
+		// writes "jar".
+		"curl": `#!/bin/sh
+case " $* " in *" --version "*)
+  if [ -n "${OLD_CURL:-}" ]; then case " $* " in *" --retry-all-errors "*) exit 2;; esac; fi
+  exit 0;;
+esac
+echo "$*" >> "$LOG/curl"
+n=$(wc -l < "$LOG/curl")
+[ "$n" -le "$CURL_FAILS" ] && exit 28
+while [ $# -gt 0 ]; do [ "$1" = -o ] && printf jar > "$2"; shift; done
+exit 0
+`,
+		"sleep": "#!/bin/sh\necho \"$1\" >> \"$LOG/sleep\"\n",
+		"java":  "#!/bin/sh\nmkdir -p generated/reports && cat \"$FIXTURE\" > generated/reports/commands.json\n",
+	}
+	for name, script := range tools {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sum := sha1.Sum([]byte("jar"))
+	jarSHA1 := hex.EncodeToString(sum[:])
+	run := func(fails int, sha1 string, env ...string) (out []byte, curl, sleeps []string, err error) {
+		t.Helper()
+		work, logs := t.TempDir(), t.TempDir()
+		cmd := exec.Command("sh", "-c", commandsScript)
+		cmd.Dir = work
+		cmd.Env = append([]string{
+			"PATH=" + bin + ":" + os.Getenv("PATH"), "LOG=" + logs, "FIXTURE=" + fixture, "CURL_FAILS=" + strconv.Itoa(fails),
+			"JAR_URL=https://piston-data.mojang.com/server.jar", "JAR_MIRROR=https://launcher.mojang.com/server.jar", "JAR_SHA1=" + sha1,
+		}, env...)
+		out, err = cmd.CombinedOutput()
+		read := func(name string) []string {
+			b, _ := os.ReadFile(filepath.Join(logs, name))
+			return strings.Split(strings.TrimSpace(string(b)), "\n")
+		}
+		return out, read("curl"), read("sleep"), err
+	}
+
+	// No answer three times: the fourth, at the other name, is it.
+	out, curl, sleeps, err := run(3, jarSHA1)
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got, err := readCommandsLog(out); err != nil || !bytes.Equal(got, raw) {
+		t.Errorf("printed no tree: %v", err)
+	}
+	if len(curl) != 4 || !reflect.DeepEqual(sleeps, []string{"5"}) {
+		t.Fatalf("curl %q, slept %q", curl, sleeps)
+	}
+	for i, c := range curl {
+		host := []string{"piston-data", "launcher.mojang"}[i%2]
+		for _, want := range []string{"--connect-timeout 5", "--max-time", "--retry 2", "--retry-all-errors", host} {
+			if !strings.Contains(c, want) {
+				t.Errorf("try %d: %q has no %s", i+1, c, want)
+			}
+		}
+	}
+
+	// An older curl is not told what it does not know.
+	out, curl, _, err = run(1, jarSHA1, "OLD_CURL=1")
+	if err != nil || len(curl) != 2 || strings.Contains(strings.Join(curl, " "), "--retry-all-errors") || !strings.Contains(curl[1], "--retry 2") {
+		t.Errorf("an older curl: %v %q %s", err, curl, out)
+	}
+
+	// A jar that is not the one Mojang lists is not used, and asked for
+	// again; never the right one, or no answer at all: it says so, after
+	// three rounds.
+	for _, fails := range []int{0, 100} {
+		sha1 := jarSHA1
+		if fails == 0 {
+			sha1 = strings.Repeat("0", 40)
+		}
+		out, curl, sleeps, err = run(fails, sha1)
+		if err == nil || !strings.Contains(string(out), "could not download") || len(curl) != 6 || !reflect.DeepEqual(sleeps, []string{"5", "10"}) {
+			t.Errorf("failing %d: %v %q %q %s", fails, err, curl, sleeps, out)
 		}
 	}
 }

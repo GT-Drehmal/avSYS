@@ -15,6 +15,23 @@ export interface CommandNode {
   /** What an argument takes; none for one of a mod or plugin, whose kind is not known. */
   parser?: string;
   properties?: Record<string, unknown>;
+  /**
+   * On the root: the commands are only those the server's help lists, as
+   * the game's own tree is still to come: being made, or later, as it could
+   * not be made a moment ago.
+   */
+  partial?: "making" | "later";
+}
+
+/**
+ * How soon to ask for a server's commands again, in milliseconds, or false
+ * not to: soon while the panel makes them, and now and then while they are
+ * from the server's help alone, until the game's own are there.
+ */
+export function askAgainIn(data: CommandNode | { making: true } | undefined): number | false {
+  if (!data) return false;
+  if ("making" in data || data.partial === "making") return 3000;
+  return data.partial ? 15_000 : false;
 }
 
 /** An argument expected where the cursor is. */

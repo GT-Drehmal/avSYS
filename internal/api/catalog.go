@@ -59,13 +59,42 @@ func (c *catalog) get(ctx context.Context, u string, ttl time.Duration) ([]byte,
 // getOr is get where an answer other than 404 can also say there is no such
 // thing: one that notFound says so of. It is errNotFound, as 404 is.
 func (c *catalog) getOr(ctx context.Context, u string, ttl time.Duration, notFound func(status int, body []byte) bool) ([]byte, error) {
-	c.mu.Lock()
-	if e, ok := c.entries[u]; ok && time.Now().Before(e.expires) {
-		c.mu.Unlock()
-		return e.body, nil
+	if body, ok := c.cached(u, false); ok {
+		return body, nil
 	}
-	c.mu.Unlock()
+	if mojangMirror(u) != "" {
+		return c.getMojang(ctx, u, ttl)
+	}
+	body, err := c.fetch(ctx, u, notFound)
+	if err != nil {
+		return nil, err
+	}
+	c.keep(u, body, ttl)
+	return body, nil
+}
 
+// cached is what was read from a URL, if it is still fresh, or with stale,
+// as long as it is kept at all.
+func (c *catalog) cached(u string, stale bool) ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[u]; ok && (stale || time.Now().Before(e.expires)) {
+		return e.body, true
+	}
+	return nil, false
+}
+
+func (c *catalog) keep(u string, body []byte, ttl time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.entries) >= catalogCacheSize {
+		clear(c.entries)
+	}
+	c.entries[u] = cacheEntry{body: body, expires: time.Now().Add(ttl)}
+}
+
+// fetch reads a URL as JSON.
+func (c *catalog) fetch(ctx context.Context, u string, notFound func(status int, body []byte) bool) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -88,18 +117,79 @@ func (c *catalog) getOr(ctx context.Context, u string, ttl time.Duration, notFou
 		}
 		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: fmt.Sprintf("%s answered %s.", req.URL.Host, resp.Status)}
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return nil, err
-	}
+	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+}
 
-	c.mu.Lock()
-	if len(c.entries) >= catalogCacheSize {
-		clear(c.entries)
+// Mojang's sites, each with the other name it also answers at. From inside
+// some clusters they now and then do not answer for seconds on end, so
+// what is read from them is asked for a few times, at one name and then
+// the other, for a few seconds each time.
+var mojangHosts = map[string]string{
+	"launchermeta.mojang.com": "piston-meta.mojang.com",
+	"piston-meta.mojang.com":  "launchermeta.mojang.com",
+	"piston-data.mojang.com":  "launcher.mojang.com",
+	"launcher.mojang.com":     "piston-data.mojang.com",
+}
+
+// mojangMirror is a URL of Mojang's at its other name, or "" for one that
+// is not Mojang's.
+func mojangMirror(u string) string {
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "https" || mojangHosts[p.Host] == "" {
+		return ""
 	}
-	c.entries[u] = cacheEntry{body: body, expires: time.Now().Add(ttl)}
-	c.mu.Unlock()
-	return body, nil
+	p.Host = mojangHosts[p.Host]
+	return p.String()
+}
+
+var (
+	// mojangTries is how many times something of Mojang's is asked for,
+	// mojangTry how long each may take, and mojangBackoff how long is
+	// waited after the first that fails, twice that after each next: 4
+	// tries in about 30 seconds at most.
+	mojangTries   = 4
+	mojangTry     = 6 * time.Second
+	mojangBackoff = time.Second
+)
+
+// getMojang reads a URL of Mojang's at either of its names, trying again a
+// few times. When neither answers, what was read from it before is used,
+// however old.
+func (c *catalog) getMojang(ctx context.Context, u string, ttl time.Duration) ([]byte, error) {
+	urls := []string{u, mojangMirror(u)}
+	wait := mojangBackoff
+	var err error
+	for i := range mojangTries {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return c.staleOr(u, err)
+			case <-time.After(wait):
+			}
+			wait *= 2
+		}
+		try, cancel := context.WithTimeout(ctx, mojangTry)
+		var body []byte
+		body, err = c.fetch(try, urls[i%len(urls)], nil)
+		cancel()
+		if err == nil {
+			c.keep(u, body, ttl)
+			return body, nil
+		}
+		// Mojang says there is no such thing: no use asking again. (Its
+		// other name may not have what the first has.)
+		if errors.Is(err, errNotFound) && i%len(urls) == 0 {
+			return nil, err
+		}
+	}
+	return c.staleOr(u, err)
+}
+
+func (c *catalog) staleOr(u string, err error) ([]byte, error) {
+	if body, ok := c.cached(u, true); ok {
+		return body, nil
+	}
+	return nil, err
 }
 
 // post sends JSON to a URL and reads the JSON answer. It is not cached.

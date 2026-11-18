@@ -39,7 +39,8 @@ import (
 // version, in a short pod with the version's own server jar from Mojang,
 // and keeps what it wrote. The tree is of the game's own commands: those a
 // mod or plugin adds are read from the running server's help, and added to
-// it (modcommands.go).
+// it (modcommands.go). Until the tree is there, or where there is none, a
+// running server's help alone is what is completed from.
 
 // commandTrees are the command trees the panel has, by game version, and
 // those it is making.
@@ -47,10 +48,19 @@ type commandTrees struct {
 	mu     sync.Mutex
 	trees  map[string]*commandTree
 	making map[string]bool
-	// failed is when a version that could not be made may be tried again.
-	failed map[string]time.Time
+	// failed are the versions that could not be made.
+	failed map[string]commandsFailure
 	// turn holds the panel to making one at a time.
 	turn sync.Mutex
+}
+
+// commandsFailure is when a version that could not be made may be tried
+// again, and how many times in a row it could not be.
+type commandsFailure struct {
+	until time.Time
+	times int
+	// never: there is no tree of it.
+	never bool
 }
 
 // commandTree is the game's commands.json, compacted and gzipped, as it is
@@ -68,8 +78,9 @@ const (
 	// image included.
 	commandsTimeout = 10 * time.Minute
 	// commandsRetry is how long after a tree could not be made it is tried
-	// again.
-	commandsRetry = 10 * time.Minute
+	// again, twice as long after each next time, up to commandsRetryMax.
+	commandsRetry    = time.Minute
+	commandsRetryMax = 30 * time.Minute
 	// commandsLabel marks the pods trees are made in.
 	commandsLabel = "avsys.dev/commands"
 )
@@ -84,14 +95,18 @@ type commandsState int
 const (
 	commandsReady commandsState = iota
 	commandsMaking
+	// commandsFailed: it could not be made, and is tried again later.
+	commandsFailed
+	// commandsNone: there is none, nor will be.
 	commandsNone
 )
 
 // getCommands answers with the game's command tree for the version a server
 // runs, for the console to complete commands from, with those the server's
-// mods and plugins add while it runs. While it is being made, or the
-// server's help read, the answer is 202, to ask again shortly; where there
-// is none, 404.
+// mods and plugins add while it runs. Without the game's tree, a running
+// server's commands are those its help lists, and the tree's "partial" says
+// when the game's is to come: "making" or "later". While neither is there
+// yet, the answer is 202, to ask again shortly; where there is nothing, 404.
 func (s *Server) getCommands(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	_, mc, err := s.server(r, u, store.RoleOperator)
 	if err != nil {
@@ -102,19 +117,25 @@ func (s *Server) getCommands(w http.ResponseWriter, r *http.Request, u *store.Us
 		return noCommands
 	}
 	tree, state := s.commandTree(mc, version)
+	var pending bool
 	if state == commandsReady {
 		// With the commands the server's mods and plugins add, read from
 		// its help while it runs.
-		var pending bool
-		if tree, pending = s.modCommandsOf(r.Context(), mc, tree); pending {
-			state = commandsMaking
+		tree, pending = s.modCommandsOf(r.Context(), mc, tree)
+	} else {
+		// Without the game's own: those the server's help lists, while it
+		// runs.
+		partial := map[commandsState]string{commandsMaking: partialMaking, commandsFailed: partialLater}[state]
+		var alone *commandTree
+		if alone, pending = s.helpCommandsOf(r.Context(), mc, partial); alone != nil {
+			tree, state = alone, commandsReady
 		}
 	}
-	switch state {
-	case commandsMaking:
+	switch {
+	case pending || state == commandsMaking:
 		writeJSON(w, http.StatusAccepted, map[string]any{"making": true, "version": version})
 		return nil
-	case commandsNone:
+	case state != commandsReady:
 		return noCommands
 	}
 	h := w.Header()
@@ -171,13 +192,14 @@ func (s *Server) commandsVersion(ctx context.Context, mc *avsysv1.MinecraftServe
 }
 
 // commandTree is the tree of a version, if the panel has it; otherwise it
-// starts making it, unless that is under way or failed a moment ago.
+// starts making it, unless that is under way or failed a moment ago. Once
+// the wait after a failure is over, the next ask starts it again.
 func (s *Server) commandTree(mc *avsysv1.MinecraftServer, version string) (*commandTree, commandsState) {
 	c := &s.commands
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.trees == nil {
-		c.trees, c.making, c.failed = map[string]*commandTree{}, map[string]bool{}, map[string]time.Time{}
+		c.trees, c.making, c.failed = map[string]*commandTree{}, map[string]bool{}, map[string]commandsFailure{}
 	}
 	if t := c.trees[version]; t != nil {
 		return t, commandsReady
@@ -190,8 +212,10 @@ func (s *Server) commandTree(mc *avsysv1.MinecraftServer, version string) (*comm
 	if c.making[version] {
 		return nil, commandsMaking
 	}
-	if until, ok := c.failed[version]; ok && time.Now().Before(until) {
+	if f, ok := c.failed[version]; ok && f.never {
 		return nil, commandsNone
+	} else if ok && time.Now().Before(f.until) {
+		return nil, commandsFailed
 	}
 	c.making[version] = true
 	mc = mc.DeepCopy()
@@ -236,23 +260,37 @@ func (s *Server) makeCommandTree(mc *avsysv1.MinecraftServer, version string) {
 	defer c.mu.Unlock()
 	delete(c.making, version)
 	if err != nil {
-		retry := commandsRetry
 		if errors.Is(err, ErrNoCommands) {
 			// It will not be there later either; another start of the
 			// panel asks again.
-			retry = 100 * 365 * 24 * time.Hour
-		} else {
-			s.Log.Warn("could not make the list of commands of a game version", "version", version, "error", err)
+			c.failed[version] = commandsFailure{never: true}
+			return
 		}
-		c.failed[version] = time.Now().Add(retry)
+		f := c.failed[version]
+		f.times++
+		wait := commandsWait(f.times)
+		f.until = time.Now().Add(wait)
+		c.failed[version] = f
+		s.Log.Warn("could not make the list of commands of a game version", "version", version, "error", err, "retry", wait.String())
 		return
 	}
+	delete(c.failed, version)
 	c.trees[version] = newCommandTree(gz)
 	if f := s.commandsFile(version); f != "" {
 		if err := writeFileAtomic(f, gz); err != nil {
 			s.Log.Warn("could not keep the list of commands of a game version", "version", version, "error", err)
 		}
 	}
+}
+
+// commandsWait is how long after a version's tree could not be made, times
+// times in a row, it is tried again.
+func commandsWait(times int) time.Duration {
+	wait := commandsRetry
+	for i := 1; i < times && wait < commandsRetryMax; i++ {
+		wait *= 2
+	}
+	return min(wait, commandsRetryMax)
 }
 
 func writeFileAtomic(name string, data []byte) error {
@@ -307,14 +345,15 @@ func packCommands(raw []byte) ([]byte, error) {
 // versions have neither.
 var firstCommandTree = time.Date(2017, 11, 1, 0, 0, 0, 0, time.UTC)
 
-// serverJar is where Mojang has the server of a game version, and the Java
-// it ships with.
+// serverJar is where Mojang has the server of a game version, at both of
+// the names of its site, and the Java it ships with.
 type serverJar struct {
-	URL, SHA1 string
-	Java      int
+	URL, Mirror, SHA1 string
+	Java              int
 }
 
-// serverJarOf looks up a version's server jar in Mojang's list of versions.
+// serverJarOf looks up a version's server jar in Mojang's list of versions,
+// which is asked for a few times when it does not answer (catalog.go).
 func (s *Server) serverJarOf(ctx context.Context, version string) (*serverJar, error) {
 	body, err := s.catalog.get(ctx, mojangManifest, time.Hour)
 	if err != nil {
@@ -370,17 +409,36 @@ func (s *Server) serverJarOf(ctx context.Context, version string) (*serverJar, e
 	if java == 0 {
 		java = 8
 	}
-	return &serverJar{URL: jar.URL, SHA1: jar.SHA1, Java: java}, nil
+	return &serverJar{URL: jar.URL, Mirror: mojangMirror(jar.URL), SHA1: jar.SHA1, Java: java}, nil
 }
 
 // commandsScript is what the pod runs: it fetches the server jar, has the
 // game write its reports, and prints the command tree, gzipped and in
-// base64, between two marks. From 1.18 the jar is a bundle that runs the
-// part of the game it is told to; before, the game is the jar itself.
+// base64, between two marks. The jar is asked for again where Mojang's site
+// does not answer, at both its names, each for a few seconds at first (an
+// older curl, as in the image of Java 17, cannot be told to try again after
+// every kind of error). From 1.18 the jar is a bundle that runs the part of
+// the game it is told to; before, the game is the jar itself. It works in
+// the folder it is started in.
 const commandsScript = `set -eu
-cd /work
-curl -fsS --retry 3 --connect-timeout 20 -o server.jar "$JAR_URL"
-echo "$JAR_SHA1  server.jar" | sha1sum -c - >/dev/null
+again=--retry-all-errors
+curl $again --version >/dev/null 2>&1 || again=
+got=
+for round in 1 2 3; do
+  for url in "$JAR_URL" ${JAR_MIRROR:+"$JAR_MIRROR"}; do
+    if curl -fsS --connect-timeout 5 --max-time 180 --retry 2 --retry-delay 2 $again -o server.jar "$url" &&
+      echo "$JAR_SHA1  server.jar" | sha1sum -c - >/dev/null 2>&1; then
+      got=1
+      break 2
+    fi
+    rm -f server.jar
+  done
+  [ "$round" = 3 ] || sleep $((round * 5))
+done
+if [ -z "$got" ]; then
+  echo "could not download the server from Mojang"
+  exit 1
+fi
 if grep -aq META-INF/versions.list server.jar; then
   set -- -DbundlerMainClass=net.minecraft.data.Main -jar server.jar
 else
@@ -427,7 +485,7 @@ func commandsPod(mc *avsysv1.MinecraftServer, jar *serverJar, name string) *core
 				Name:         "commands",
 				Image:        controller.ImageForJava(jar.Java),
 				Command:      []string{"sh", "-c", commandsScript},
-				Env:          []corev1.EnvVar{{Name: "JAR_URL", Value: jar.URL}, {Name: "JAR_SHA1", Value: jar.SHA1}, {Name: "HOME", Value: "/work"}},
+				Env:          []corev1.EnvVar{{Name: "JAR_URL", Value: jar.URL}, {Name: "JAR_MIRROR", Value: jar.Mirror}, {Name: "JAR_SHA1", Value: jar.SHA1}, {Name: "HOME", Value: "/work"}},
 				WorkingDir:   "/work",
 				VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: "/work"}},
 				Resources: corev1.ResourceRequirements{
