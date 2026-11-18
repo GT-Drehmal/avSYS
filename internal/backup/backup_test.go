@@ -1015,6 +1015,63 @@ func TestKeepFile(t *testing.T) {
 	}
 }
 
+// Someone else reading the repository with restic holds a lock on it while
+// they do. One taken just as the panel removes snapshots, after it cleared
+// what was left, is waited for: the removal still happens. So it is for
+// giving back the space.
+func TestRemovingWaitsForSomeoneReading(t *testing.T) {
+	real, err := exec.LookPath("restic")
+	if err != nil {
+		t.Skip("restic is not installed")
+	}
+	for _, step := range []string{"forget", "prune"} {
+		t.Run(step, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			kept, err := m.KeepFile(ctx, "alpha", "world-w1", "world.archive", "", strings.NewReader("a world"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// restic as the panel runs it, but the first time it is asked to
+			// forget or prune, someone else starts reading first, for three
+			// seconds, and holds the repository's lock until done.
+			held := filepath.Join(t.TempDir(), "held")
+			stand := filepath.Join(t.TempDir(), "restic")
+			script := `#!/bin/sh
+case " $* " in
+*" ` + step + ` "*)
+  if mkdir ` + quote(held) + ` 2>/dev/null; then
+    { sleep 3; } </dev/null 2>/dev/null | ` + quote(real) + ` --repo "$2" --password-file "$4" --no-cache backup --stdin --stdin-filename read --host someone-else >/dev/null 2>&1 &
+    for _ in $(seq 1 100); do [ -n "$(ls "$2/locks")" ] && break; sleep 0.1; done
+  fi ;;
+esac
+exec ` + quote(real) + ` "$@"
+`
+			if err := os.WriteFile(stand, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			m.Restic = stand
+			if step == "forget" {
+				err = m.Delete(ctx, "alpha", kept.ID)
+			} else {
+				err = m.Prune(ctx, "alpha")
+			}
+			if err != nil {
+				t.Fatalf("%s with someone reading: %v", step, err)
+			}
+			if _, err := os.Stat(held); err != nil {
+				t.Fatalf("no one was reading: %v", err)
+			}
+			if step == "forget" {
+				if _, err := m.Get(ctx, "alpha", kept.ID); !errors.Is(err, ErrNotFound) {
+					t.Errorf("the snapshot is still there: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // A snapshot's world folders come out as one archive, under the names they
 // are given, without the rest of the server's files.
 func TestArchive(t *testing.T) {

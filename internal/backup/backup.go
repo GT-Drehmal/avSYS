@@ -395,6 +395,19 @@ func (m *Manager) password(org string) (string, error) {
 	return secret, nil
 }
 
+// lockWait is how long the panel's restic waits for a lock that someone
+// else holds on a repository. The panel's own work takes one at a time, but
+// anyone else using the repository with restic takes one too, even just to
+// list it, and one taken between the panel clearing what was left (unlock
+// --remove-all) and its forget or prune would otherwise fail that.
+const lockWait = "1m"
+
+// repoArgs are what the panel's restic is first given for an organization's
+// repository.
+func (m *Manager) repoArgs(org string) []string {
+	return []string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache", "--retry-lock", lockWait}
+}
+
 // restic runs the panel's own restic against an organization's repository.
 func (m *Manager) restic(ctx context.Context, org string, args ...string) ([]byte, error) {
 	return m.resticEnv(ctx, org, nil, args...)
@@ -408,7 +421,7 @@ func (m *Manager) resticEnv(ctx context.Context, org string, env []string, args 
 	if _, err := m.password(org); err != nil {
 		return nil, err
 	}
-	full := append([]string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache"}, args...)
+	full := append(m.repoArgs(org), args...)
 	cmd := exec.CommandContext(ctx, m.Restic, full...)
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
@@ -838,8 +851,8 @@ func (m *Manager) KeepFile(ctx context.Context, org, host, name, by string, r io
 // should have, which it may keep all the same: that snapshot is given back
 // with the error, for the caller to remove.
 func (m *Manager) keepFile(ctx context.Context, org, host, name, by string, r io.Reader) (*Snapshot, error) {
-	args := []string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache",
-		"backup", "--stdin", "--stdin-filename", name, "--host", host, "--json", "--tag", "avsys", "--tag", "trigger=" + TriggerTemplate}
+	args := append(m.repoArgs(org),
+		"backup", "--stdin", "--stdin-filename", name, "--host", host, "--json", "--tag", "avsys", "--tag", "trigger="+TriggerTemplate)
 	if by != "" {
 		args = append(args, "--tag", "by="+by)
 	}
@@ -971,8 +984,8 @@ func (m *Manager) keepFolders(ctx context.Context, org, dir string, folders []st
 	lock := m.lock(org)
 	lock.RLock()
 	defer lock.RUnlock()
-	args := []string{"--repo", m.repoDir(org), "--password-file", m.keyFile(org), "--no-cache",
-		"backup", "--json", "--host", host, "--tag", "avsys", "--tag", "trigger=" + TriggerTemplate, "--tag", "form=" + FormFolders}
+	args := append(m.repoArgs(org),
+		"backup", "--json", "--host", host, "--tag", "avsys", "--tag", "trigger="+TriggerTemplate, "--tag", "form="+FormFolders)
 	if by != "" && tagPattern.MatchString(by) {
 		args = append(args, "--tag", "by="+by)
 	}
