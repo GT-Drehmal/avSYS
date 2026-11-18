@@ -463,6 +463,12 @@ instead of overwriting their change. Pictures open as pictures.
 ![Editing server.properties in the browser](images/files.png)
 
 **Terminal.** A shell on the server, in the server's folder, as in SSH.
+Opening one, here or over SSH, first shows the server at a glance: its game
+and loader, whether it is running and who is on, what it runs (mods,
+plugins, datapacks), its world and how full its storage is, and the `mc`
+commands below. Commands run over SSH, like `rsync` or `scp`, get nothing
+extra. To hide it, make an empty file called `.hushlogin` in your home
+(`touch ~/.hushlogin`).
 
 On the server, the `mc` command talks to the game:
 
