@@ -101,7 +101,7 @@ func (b *tab) signIn(username, secret string) {
 			b.p.t.Fatalf("%s has two-factor, and no secret was given", username)
 		}
 		// The code of the next step: that of this one went to setting it up.
-		if got, code := b.call("POST", "/auth/login/code", map[string]string{"code": codeOf(b.p.t, secret, 1)}, nil); got != 200 {
+		if got, code := b.call("POST", "/auth/login/code", map[string]string{"code": b.p.codeOf(secret, 1)}, nil); got != 200 {
 			b.p.t.Fatalf("the code of %s: %d %s", username, got, code)
 		}
 	}
@@ -142,12 +142,13 @@ func forgetGuesses(key string) {
 	delete(logins.failures, key)
 }
 
-// codeOf is the code of secret, steps of 30 seconds from now.
-func codeOf(t *testing.T, secret string, steps int) string {
-	t.Helper()
-	code, err := auth.TOTPCode(secret, time.Now().Add(time.Duration(steps)*30*time.Second))
+// codeOf is the code of secret, steps of 30 seconds from the time the
+// panel checks codes at: p.codeTime, which stays put until a test moves it.
+func (p *panel) codeOf(secret string, steps int) string {
+	p.t.Helper()
+	code, err := auth.TOTPCode(secret, p.codeTime.Add(time.Duration(steps)*30*time.Second))
 	if err != nil {
-		t.Fatal(err)
+		p.t.Fatal(err)
 	}
 	return code
 }
@@ -161,7 +162,7 @@ func (b *tab) turnOnTwoFactor() (string, []string) {
 		b.p.t.Fatalf("setting up two-factor: %d %s", got, code)
 	}
 	var done struct{ RecoveryCodes []string }
-	if got, code := b.call("POST", "/me/two-factor", map[string]string{"code": codeOf(b.p.t, setup.Secret, 0)}, &done); got != 200 {
+	if got, code := b.call("POST", "/me/two-factor", map[string]string{"code": b.p.codeOf(setup.Secret, 0)}, &done); got != 200 {
 		b.p.t.Fatalf("confirming two-factor: %d %s", got, code)
 	}
 	return setup.Secret, done.RecoveryCodes
@@ -309,7 +310,8 @@ func TestTwoFactorSignIn(t *testing.T) {
 		t.Errorf("confirming with a wrong code: %d %s", got, code)
 	}
 	var done struct{ RecoveryCodes []string }
-	if got, code := b.call("POST", "/me/two-factor", map[string]string{"code": codeOf(t, setup.Secret, 0)}, &done); got != 200 {
+	confirming := p.codeOf(setup.Secret, 0)
+	if got, code := b.call("POST", "/me/two-factor", map[string]string{"code": confirming}, &done); got != 200 {
 		t.Fatalf("confirming: %d %s", got, code)
 	}
 	if len(done.RecoveryCodes) != 10 {
@@ -320,7 +322,7 @@ func TestTwoFactorSignIn(t *testing.T) {
 		t.Errorf("after confirming: twoFactor %v, recoveryCodes %v", me["twoFactor"], me["recoveryCodes"])
 	}
 	// Confirming again, with nothing being set up, is refused.
-	if got, code := b.call("POST", "/me/two-factor", map[string]string{"code": codeOf(t, setup.Secret, 0)}, nil); got != 409 || code != "no_setup" {
+	if got, code := b.call("POST", "/me/two-factor", map[string]string{"code": confirming}, nil); got != 409 || code != "no_setup" {
 		t.Errorf("confirming twice: %d %s", got, code)
 	}
 	if got, _ := b.call("POST", "/me/two-factor/setup", map[string]string{"password": testPassword}, nil); got != 409 {
@@ -341,10 +343,10 @@ func TestTwoFactorSignIn(t *testing.T) {
 		t.Errorf("a wrong code: %d %s", got, code)
 	}
 	// The code that confirmed the setup was used: not again.
-	if got, code := c.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, setup.Secret, 0)}, nil); got != 400 || code != "wrong_code" {
+	if got, code := c.call("POST", "/auth/login/code", map[string]string{"code": confirming}, nil); got != 400 || code != "wrong_code" {
 		t.Errorf("the code used to confirm, again: %d %s", got, code)
 	}
-	next := codeOf(t, setup.Secret, 1)
+	next := p.codeOf(setup.Secret, 1)
 	if got, code := c.call("POST", "/auth/login/code", map[string]string{"code": next}, nil); got != 200 {
 		t.Fatalf("the next code: %d %s", got, code)
 	}
@@ -358,7 +360,7 @@ func TestTwoFactorSignIn(t *testing.T) {
 	// A code, once used, does not sign in again: nor one of before it.
 	d := p.tab("replayer")
 	d.call("POST", "/auth/login", map[string]string{"username": "viewer", "password": testPassword}, nil)
-	for _, code := range []string{next, codeOf(t, setup.Secret, 0), codeOf(t, setup.Secret, -1)} {
+	for _, code := range []string{next, confirming, p.codeOf(setup.Secret, -1)} {
 		if got, _ := d.call("POST", "/auth/login/code", map[string]string{"code": code}, nil); got != 400 {
 			t.Errorf("a used code, or one before it: %d, want 400", got)
 		}
@@ -406,6 +408,63 @@ func TestTwoFactorSignIn(t *testing.T) {
 	p.tab("after").signIn("viewer", "")
 }
 
+// A code typed as its 30-second step ends is still taken in the next, and
+// each step's code once: right up to the turn of a step, and right after.
+func TestTwoFactorCodesAsAStepTurns(t *testing.T) {
+	p := newPanel(t)
+	p.withPasswords()
+	b := p.tab("b")
+	b.signIn("viewer", "")
+	at := func(step int, into time.Duration) {
+		p.codeTime = codeStep.Add(time.Duration(step)*30*time.Second + into)
+	}
+	signIn := func(code string) int {
+		t.Helper()
+		c := p.tab("c")
+		if got, _ := c.call("POST", "/auth/login", map[string]string{"username": "viewer", "password": testPassword}, nil); got != 200 {
+			t.Fatalf("signing in: %d", got)
+		}
+		got, _ := c.call("POST", "/auth/login/code", map[string]string{"code": code}, nil)
+		return got
+	}
+
+	// Typed at the end of step 0, it gets there in step 1.
+	var setup struct{ Secret string }
+	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{"password": testPassword}, &setup); got != 200 {
+		t.Fatalf("setting up: %d %s", got, code)
+	}
+	at(0, 29900*time.Millisecond)
+	typed := p.codeOf(setup.Secret, 0)
+	at(1, 100*time.Millisecond)
+	if got, code := b.call("POST", "/me/two-factor", map[string]string{"code": typed}, nil); got != 200 {
+		t.Fatalf("confirming with the code of the step just ended: %d %s", got, code)
+	}
+	// That code is spent; step 1's, new, is not.
+	if got := signIn(typed); got != 400 {
+		t.Errorf("the confirming code again, after the turn: %d, want 400", got)
+	}
+	if got := signIn(p.codeOf(setup.Secret, 0)); got != 200 {
+		t.Errorf("the code of the step just begun: %d, want 200", got)
+	}
+	// The code of step 2 at its very end, and just after.
+	at(2, 29900*time.Millisecond)
+	typed = p.codeOf(setup.Secret, 0)
+	at(3, 100*time.Millisecond)
+	if got := signIn(typed); got != 200 {
+		t.Errorf("a code sent as its step ended: %d, want 200", got)
+	}
+	// One step late is the most: step 4's code in step 6 is refused.
+	at(4, 15*time.Second)
+	typed = p.codeOf(setup.Secret, 0)
+	at(6, 100*time.Millisecond)
+	if got := signIn(typed); got != 400 {
+		t.Errorf("a code two steps old: %d, want 400", got)
+	}
+	if got := signIn(p.codeOf(setup.Secret, 0)); got != 200 {
+		t.Errorf("the code of now, after one too old: %d, want 200", got)
+	}
+}
+
 // Signing in through a provider is not asked for a code: the provider sees
 // to a second factor.
 func TestTwoFactorIsForPasswordSignIns(t *testing.T) {
@@ -436,11 +495,11 @@ func TestASignInWaitingForItsCodeEnds(t *testing.T) {
 
 	// With no sign-in waiting, there is nothing to give a code to.
 	none := p.tab("none")
-	if got, code := none.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, secret, 1)}, nil); got != 401 || code != "sign_in_again" {
+	if got, code := none.call("POST", "/auth/login/code", map[string]string{"code": p.codeOf(secret, 1)}, nil); got != 401 || code != "sign_in_again" {
 		t.Errorf("a code with no sign-in: %d %s", got, code)
 	}
 	none.cookies[challengeCookie] = "made-up"
-	if got, code := none.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, secret, 1)}, nil); got != 401 || code != "sign_in_again" {
+	if got, code := none.call("POST", "/auth/login/code", map[string]string{"code": p.codeOf(secret, 1)}, nil); got != 401 || code != "sign_in_again" {
 		t.Errorf("a code with a made-up sign-in: %d %s", got, code)
 	}
 
@@ -450,7 +509,7 @@ func TestASignInWaitingForItsCodeEnds(t *testing.T) {
 	challenges.mu.Lock()
 	challenges.m[late.cookies[challengeCookie]].expires = time.Now().Add(-time.Second)
 	challenges.mu.Unlock()
-	if got, code := late.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, secret, 1)}, nil); got != 401 || code != "sign_in_again" {
+	if got, code := late.call("POST", "/auth/login/code", map[string]string{"code": p.codeOf(secret, 1)}, nil); got != 401 || code != "sign_in_again" {
 		t.Errorf("a code after the sign-in expired: %d %s", got, code)
 	}
 
@@ -465,7 +524,7 @@ func TestASignInWaitingForItsCodeEnds(t *testing.T) {
 	if got, code := wrong.call("POST", "/auth/login/code", map[string]string{"code": "000000"}, nil); got != 401 || code != "sign_in_again" {
 		t.Errorf("wrong code %d: %d %s, want sign_in_again", challengeTries, got, code)
 	}
-	if got, _ := wrong.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, secret, 1)}, nil); got != 401 || wrong.signedIn() {
+	if got, _ := wrong.call("POST", "/auth/login/code", map[string]string{"code": p.codeOf(secret, 1)}, nil); got != 401 || wrong.signedIn() {
 		t.Error("the right code went through after the sign-in was ended")
 	}
 
@@ -480,7 +539,7 @@ func TestASignInWaitingForItsCodeEnds(t *testing.T) {
 	if err := p.srv.Store.SetPassword(context.Background(), p.users["viewer"].ID, hash); err != nil {
 		t.Fatal(err)
 	}
-	if got, code := before.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, secret, 1)}, nil); got != 401 || code != "sign_in_again" || before.signedIn() {
+	if got, code := before.call("POST", "/auth/login/code", map[string]string{"code": p.codeOf(secret, 1)}, nil); got != 401 || code != "sign_in_again" || before.signedIn() {
 		t.Errorf("a code after the password changed: %d %s", got, code)
 	}
 
@@ -490,7 +549,7 @@ func TestASignInWaitingForItsCodeEnds(t *testing.T) {
 	if err := p.srv.Store.DisableTwoFactor(context.Background(), p.users["viewer"].ID); err != nil {
 		t.Fatal(err)
 	}
-	if got, code := waiting.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, secret, 1)}, nil); got != 401 || code != "sign_in_again" {
+	if got, code := waiting.call("POST", "/auth/login/code", map[string]string{"code": p.codeOf(secret, 1)}, nil); got != 401 || code != "sign_in_again" {
 		t.Errorf("a code after two-factor was turned off: %d %s", got, code)
 	}
 }
@@ -512,7 +571,7 @@ func TestCodeGuessesAreLimited(t *testing.T) {
 	}
 	g := p.tab("guesser")
 	g.call("POST", "/auth/login", map[string]string{"username": "viewer", "password": testPassword}, nil)
-	if got, code := g.call("POST", "/auth/login/code", map[string]string{"code": codeOf(t, secret, 1)}, nil); got != 429 || code != "rate_limited" {
+	if got, code := g.call("POST", "/auth/login/code", map[string]string{"code": p.codeOf(secret, 1)}, nil); got != 429 || code != "rate_limited" {
 		t.Errorf("after %d wrong codes: %d %s, want 429", loginMaxFailures, got, code)
 	}
 }

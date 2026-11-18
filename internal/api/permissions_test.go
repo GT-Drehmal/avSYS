@@ -42,7 +42,14 @@ type panel struct {
 	h      http.Handler
 	users  map[string]*store.User
 	tokens map[string]string
+	// codeTime is the time the panel checks two-factor codes at. It stays
+	// put unless a test moves it, so that a test's codes do not change
+	// under it as a 30-second step turns.
+	codeTime time.Time
 }
+
+// codeStep is the start of a 30-second step of two-factor codes.
+var codeStep = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 var everyone = []string{"", "outsider", "viewer", "operator", "admin", "owner", "root"}
 
@@ -84,6 +91,9 @@ func newEmptyPanel(t *testing.T) *panel {
 		users:  map[string]*store.User{},
 		tokens: map[string]string{},
 	}
+	// Halfway through a step.
+	p.codeTime = codeStep.Add(15 * time.Second)
+	p.srv.TwoFactorClock = func() time.Time { return p.codeTime }
 	p.h = p.srv.Handler()
 	// Nothing here reaches the internet: what the panel looks up elsewhere
 	// is answered from offline, which tests fill in as they need.
