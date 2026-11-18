@@ -124,6 +124,57 @@ describe("arguments", () => {
   });
 });
 
+// The game's tree with the commands of a server with Yet Another Bingo, as
+// the panel reads them from its help (tests/upstream/commands/help) and adds
+// them after the game's own.
+const bingo: CommandNode = JSON.parse(readFileSync(new URL("../tests/upstream/commands/help/bingo.tree.json", import.meta.url), "utf8"));
+const modded: CommandNode = { ...tree, children: { ...bingo.children, ...tree.children } };
+
+describe("commands of mods and plugins", () => {
+  test("are offered with the game's own", () => {
+    expect(complete(modded, "bin").suggestions).toEqual(["bingo", "bingodata", "bingoprefs", "bingostats"]);
+    expect(complete(modded, "gl").suggestions).toEqual(["global"]);
+    expect(complete(modded, "ga").suggestions).toEqual(["gamemode", "gamerule"]);
+  });
+
+  test("their subcommands and the values they choose from are offered", () => {
+    expect(complete(modded, "bingo ").suggestions).toEqual(["book", "card", "difficulty", "filter", "goal", "lobby", "mode", "options", "reroll", "shuffleteams", "start", "timelimit"]);
+    expect(complete(modded, "bingo difficulty ha").suggestions).toEqual(["hard"]);
+    expect(complete(modded, "bingo difficulty ").suggestions).toEqual(["easy", "extreme", "hard", "impossible", "medium"]);
+    expect(complete(modded, "bingo card stack ").suggestions).toEqual(["pop", "push"]);
+    expect(complete(modded, "bingo options play_to ").suggestions).toEqual(["cards", "infinite_cards", "replace_goals"]);
+  });
+
+  test("their arguments are hinted by name, with no kind", () => {
+    const c = complete(modded, "bingo timelimit ");
+    expect(c.hints).toEqual([{ name: "minutes", type: "", optional: false }]);
+    expect(c.suggestions).toEqual(["off"]);
+    expect(complete(modded, "bingo shuffleteams ").hints).toEqual([{ name: "number_of_teams", type: "", optional: false }]);
+    expect(ghostOf(complete(modded, "bingo shuffleteams "), undefined)).toBe("<number_of_teams>");
+    // One the command runs without is optional.
+    expect(complete(modded, "bingostats ").hints).toEqual([{ name: "player", type: "", optional: true }]);
+  });
+
+  test("any word goes for an argument of no known kind, and what follows it is offered", () => {
+    expect(complete(modded, "bingo card set 3 r").suggestions).toEqual(["random"]);
+    expect(complete(modded, "bingo difficulty 1 2 ").hints).toEqual([{ name: "B", type: "", optional: false }]);
+    expect(complete(modded, "join red ").hints).toEqual([{ name: "player", type: "", optional: true }]);
+  });
+
+  test("past what is known, nothing is offered and nothing is wrong", () => {
+    for (const line of ["g hello there ", "bingo reroll ", "bingo nonsense ", "bingostats Steve x"]) {
+      const c = complete(modded, line);
+      expect(c.suggestions).toEqual([]);
+      expect(c.hints).toEqual([]);
+    }
+  });
+
+  test("the game's own commands are as the game has them", () => {
+    expect(complete(modded, "ti").suggestions).toEqual(["tick", "time", "title"]);
+    expect(complete(modded, "give ").hints[0]).toEqual({ name: "targets", type: "players", optional: false });
+  });
+});
+
 describe("ghost text", () => {
   test("is the rest of the suggestion chosen", () => {
     const c = complete(tree, "ti");

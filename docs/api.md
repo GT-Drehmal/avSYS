@@ -1147,15 +1147,23 @@ curl -H "Authorization: Bearer $TOKEN" -d '{"command":"say hello","as":"server"}
 
 ### `GET /orgs/{org}/servers/{server}/console/commands`
 
-The game's own commands for the version the server runs, for completing
-them. **Operator.** Returns the game's command tree, as its data generator
+The commands a server has, for completing them. **Operator.** Returns the
+game's command tree for the version the server runs, as its data generator
 writes it in `reports/commands.json`: nodes of `type` `root`, `literal` or
 `argument`, with `children`, `executable`, `redirect`, and an argument's
 `parser` and `properties`. The game version is in the header
 `X-Game-Version`. The first time a version is asked for, the panel makes
 its tree: the answer is `202` with `{making: true}` until it is ready, a
 minute at most. A version older than 1.13, or one whose tree could not be
-made, is `no_commands` (404). Commands of mods and plugins are not in it.
+made, is `no_commands` (404).
+
+While the server runs, the commands its mods and plugins add are in the
+tree too, after the game's own, read from the server's help once each time
+it starts (also `202` for the few seconds that takes). They are nodes of
+the same kinds; an argument of one has no `parser`, as what it takes is
+not known, and a part whose subcommands are not known runs as it is. A
+command the game has stays as the game has it. A server that is not
+running, or whose help could not be read, has the game's commands only.
 
 ### `GET /orgs/{org}/servers/{server}/logs`
 

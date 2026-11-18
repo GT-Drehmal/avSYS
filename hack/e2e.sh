@@ -467,7 +467,7 @@ expect "and is then from the server" "$(call -N --max-time 4 "$SRV/console" 2>/d
 expect "one command at a time" "$(call -o /dev/null -w '%{http_code}' -d '{"command":"say a\nsay b","as":"server"}' "$SRV/console")" 400
 # The game's own commands, to complete them at the console: the panel has
 # the game write them out for the probe's version, once, in a pod of its
-# own, and keeps them.
+# own, and keeps them; and adds the plugins' from the server's help.
 commands_code=202
 for _ in $(seq 1 90); do
   commands_code=$(call -o "$WORK/commands.json" -w '%{http_code}' "$SRV/console/commands")
@@ -477,6 +477,10 @@ done
 expect "the game's commands are made for its version" "$commands_code" 200
 expect "and are its command tree" "$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d["type"], sorted(k for k in ("execute", "gamemode", "time") if k in d["children"]))' "$WORK/commands.json")" "root ['execute', 'gamemode', 'time']"
 expect "and are kept" "$(call -o /dev/null -w '%{http_code}' "$SRV/console/commands")" 200
+# With the plugins' commands, read from the running server's help
+# (minecraft:help, as Paper's help is Bukkit's): names, and arguments with
+# no kind; the game's own namespaced names are left out.
+expect "with its plugins' commands, from its help" "$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1]))["children"]; print(sorted(k for k in ("luckperms", "lp", "minecraft:give") if k in d), d["lp"]["children"]["args"])' "$WORK/commands.json")" "['lp', 'luckperms'] {'type': 'argument', 'executable': True}"
 
 step "members picked for the whitelist"
 # The player this user says they are: the one linked already, or one linked

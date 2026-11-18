@@ -1,6 +1,9 @@
 // Completing a command typed at the console, from the game's own tree of
 // commands (its commands.json): every command, its subcommands and the
 // arguments each takes, as Brigadier, the game's command parser, has them.
+// The commands a server's mods and plugins add are in it too, read from the
+// server's help: their arguments have names but no parser, as what they
+// take is not known.
 
 /** A node of the game's command tree. */
 export interface CommandNode {
@@ -9,6 +12,7 @@ export interface CommandNode {
   executable?: boolean;
   /** Where the command goes on, as a path from the root. */
   redirect?: string[];
+  /** What an argument takes; none for one of a mod or plugin, whose kind is not known. */
   parser?: string;
   properties?: Record<string, unknown>;
 }
@@ -16,7 +20,7 @@ export interface CommandNode {
 /** An argument expected where the cursor is. */
 export interface Hint {
   name: string;
-  /** What it is, in a word or two. */
+  /** What it is, in a word or two; empty where that is not known. */
   type: string;
   /** Whether the command can be run without it. */
   optional: boolean;
@@ -143,6 +147,7 @@ function argumentAt(node: CommandNode, text: string, pos: number): number {
 
 /** What a parser takes, in a word or two. */
 export function typeOf(node: CommandNode): string {
+  if (!node.parser) return "";
   const p = node.properties ?? {};
   const registry = typeof p.registry === "string" ? p.registry.replace(/^minecraft:/, "").replaceAll("_", " ") : "";
   switch (node.parser) {
@@ -198,7 +203,7 @@ export function typeOf(node: CommandNode): string {
     case "minecraft:resource_or_tag_key":
       return registry || "ID";
     default:
-      return (node.parser ?? "").replace(/^\w+:/, "").replaceAll("_", " ");
+      return node.parser.replace(/^\w+:/, "").replaceAll("_", " ");
   }
 }
 

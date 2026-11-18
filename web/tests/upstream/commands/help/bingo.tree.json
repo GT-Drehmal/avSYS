@@ -1,0 +1,592 @@
+{
+  "type": "root",
+  "children": {
+    "bingo": {
+      "type": "literal",
+      "children": {
+        "card": {
+          "type": "literal",
+          "children": {
+            "set": {
+              "type": "literal",
+              "children": {
+                "tile": {
+                  "type": "argument",
+                  "children": {
+                    "objective": {
+                      "type": "argument",
+                      "executable": true
+                    },
+                    "random": {
+                      "type": "literal",
+                      "executable": true
+                    },
+                    "free_space": {
+                      "type": "literal",
+                      "executable": true
+                    }
+                  }
+                }
+              }
+            },
+            "seed": {
+              "type": "literal",
+              "children": {
+                "seed": {
+                  "type": "argument",
+                  "executable": true
+                }
+              },
+              "executable": true
+            },
+            "assign": {
+              "type": "literal",
+              "children": {
+                "team": {
+                  "type": "argument",
+                  "children": {
+                    "card": {
+                      "type": "argument",
+                      "executable": true
+                    }
+                  }
+                }
+              }
+            },
+            "stack": {
+              "type": "literal",
+              "children": {
+                "push": {
+                  "type": "literal",
+                  "executable": true
+                },
+                "pop": {
+                  "type": "literal",
+                  "executable": true
+                }
+              },
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "difficulty": {
+          "type": "literal",
+          "children": {
+            "S": {
+              "type": "argument",
+              "children": {
+                "A": {
+                  "type": "argument",
+                  "children": {
+                    "B": {
+                      "type": "argument",
+                      "children": {
+                        "C": {
+                          "type": "argument",
+                          "children": {
+                            "D": {
+                              "type": "argument",
+                              "executable": true
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "easy": {
+              "type": "literal",
+              "executable": true
+            },
+            "medium": {
+              "type": "literal",
+              "executable": true
+            },
+            "hard": {
+              "type": "literal",
+              "executable": true
+            },
+            "extreme": {
+              "type": "literal",
+              "executable": true
+            },
+            "impossible": {
+              "type": "literal",
+              "executable": true
+            }
+          }
+        },
+        "reroll": {
+          "type": "literal",
+          "executable": true
+        },
+        "lobby": {
+          "type": "literal",
+          "children": {
+            "confirm": {
+              "type": "literal",
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "goal": {
+          "type": "literal",
+          "children": {
+            "count": {
+              "type": "argument",
+              "children": {
+                "items": {
+                  "type": "literal",
+                  "executable": true
+                },
+                "lines": {
+                  "type": "literal",
+                  "executable": true
+                }
+              }
+            },
+            "full_card": {
+              "type": "literal",
+              "children": {
+                "items": {
+                  "type": "literal",
+                  "executable": true
+                },
+                "lines": {
+                  "type": "literal",
+                  "executable": true
+                }
+              },
+              "executable": true
+            }
+          }
+        },
+        "mode": {
+          "type": "literal",
+          "children": {
+            "lockout": {
+              "type": "literal",
+              "children": {
+                "enabled": {
+                  "type": "argument",
+                  "executable": true
+                }
+              },
+              "executable": true
+            },
+            "inventory": {
+              "type": "literal",
+              "children": {
+                "enabled": {
+                  "type": "argument",
+                  "executable": true
+                }
+              },
+              "executable": true
+            },
+            "hidden_items": {
+              "type": "literal",
+              "children": {
+                "enabled": {
+                  "type": "argument",
+                  "executable": true
+                }
+              },
+              "executable": true
+            }
+          }
+        },
+        "options": {
+          "type": "literal",
+          "children": {
+            "play_to": {
+              "type": "literal",
+              "children": {
+                "cards": {
+                  "type": "literal",
+                  "children": {
+                    "count": {
+                      "type": "argument",
+                      "executable": true
+                    }
+                  }
+                },
+                "infinite_cards": {
+                  "type": "literal",
+                  "executable": true
+                },
+                "replace_goals": {
+                  "type": "literal",
+                  "executable": true
+                }
+              }
+            },
+            "stalemate": {
+              "type": "literal",
+              "children": {
+                "end_game": {
+                  "type": "literal",
+                  "executable": true
+                },
+                "reroll_card": {
+                  "type": "literal",
+                  "executable": true
+                },
+                "do_nothing": {
+                  "type": "literal",
+                  "executable": true
+                }
+              }
+            },
+            "end_when": {
+              "type": "literal",
+              "children": {
+                "never": {
+                  "type": "literal",
+                  "executable": true
+                },
+                "first_win": {
+                  "type": "literal",
+                  "executable": true
+                },
+                "teams_win": {
+                  "type": "literal",
+                  "children": {
+                    "teams": {
+                      "type": "argument",
+                      "executable": true
+                    }
+                  }
+                },
+                "all_win": {
+                  "type": "literal",
+                  "executable": true
+                }
+              }
+            },
+            "elytra": {
+              "type": "literal",
+              "children": {
+                "enabled": {
+                  "type": "argument",
+                  "executable": true
+                }
+              },
+              "executable": true
+            },
+            "preview_card": {
+              "type": "literal",
+              "children": {
+                "enabled": {
+                  "type": "argument",
+                  "executable": true
+                }
+              },
+              "executable": true
+            }
+          }
+        },
+        "timelimit": {
+          "type": "literal",
+          "children": {
+            "minutes": {
+              "type": "argument",
+              "executable": true
+            },
+            "off": {
+              "type": "literal",
+              "executable": true
+            }
+          }
+        },
+        "start": {
+          "type": "literal",
+          "children": {
+            "ignore_warnings": {
+              "type": "literal",
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "shuffleteams": {
+          "type": "literal",
+          "children": {
+            "number_of_teams": {
+              "type": "argument",
+              "executable": true
+            }
+          }
+        },
+        "filter": {
+          "type": "literal",
+          "children": {
+            "filter": {
+              "type": "argument",
+              "executable": true
+            }
+          }
+        },
+        "book": {
+          "type": "literal",
+          "executable": true
+        }
+      },
+      "executable": true
+    },
+    "bingoprefs": {
+      "type": "literal",
+      "children": {
+        "bossbar": {
+          "type": "literal",
+          "children": {
+            "value": {
+              "type": "argument",
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "hide_lobby_prompt": {
+          "type": "literal",
+          "children": {
+            "value": {
+              "type": "argument",
+              "executable": true
+            }
+          }
+        },
+        "scoreboard": {
+          "type": "literal",
+          "children": {
+            "value": {
+              "type": "argument",
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "scoreboard_auto_hide": {
+          "type": "literal",
+          "children": {
+            "value": {
+              "type": "argument",
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "leading_messages": {
+          "type": "literal",
+          "children": {
+            "value": {
+              "type": "argument",
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "score_messages": {
+          "type": "literal",
+          "children": {
+            "value": {
+              "type": "argument",
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "item_messages": {
+          "type": "literal",
+          "children": {
+            "value": {
+              "type": "argument",
+              "executable": true
+            }
+          },
+          "executable": true
+        },
+        "night_vision": {
+          "type": "literal",
+          "children": {
+            "value": {
+              "type": "argument",
+              "executable": true
+            }
+          },
+          "executable": true
+        }
+      }
+    },
+    "g": {
+      "type": "literal",
+      "children": {
+        "message": {
+          "type": "argument",
+          "executable": true
+        }
+      }
+    },
+    "global": {
+      "type": "literal",
+      "children": {
+        "message": {
+          "type": "argument",
+          "executable": true
+        }
+      }
+    },
+    "all": {
+      "type": "literal",
+      "children": {
+        "message": {
+          "type": "argument",
+          "executable": true
+        }
+      }
+    },
+    "join": {
+      "type": "literal",
+      "children": {
+        "team": {
+          "type": "argument",
+          "children": {
+            "player": {
+              "type": "argument",
+              "executable": true
+            }
+          },
+          "executable": true
+        }
+      }
+    },
+    "bingostats": {
+      "type": "literal",
+      "children": {
+        "player": {
+          "type": "argument",
+          "executable": true
+        },
+        "reset": {
+          "type": "literal",
+          "children": {
+            "player": {
+              "type": "literal",
+              "children": {
+                "player": {
+                  "type": "argument",
+                  "executable": true
+                }
+              },
+              "executable": true
+            },
+            "game": {
+              "type": "literal",
+              "executable": true
+            },
+            "all": {
+              "type": "literal",
+              "executable": true
+            }
+          }
+        }
+      },
+      "executable": true
+    },
+    "bingodata": {
+      "type": "literal",
+      "children": {
+        "tag": {
+          "type": "literal",
+          "children": {
+            "add": {
+              "type": "literal",
+              "children": {
+                "tag": {
+                  "type": "argument",
+                  "children": {
+                    "objective": {
+                      "type": "argument",
+                      "executable": true
+                    }
+                  }
+                }
+              }
+            },
+            "remove": {
+              "type": "literal",
+              "children": {
+                "tag": {
+                  "type": "argument",
+                  "children": {
+                    "objective": {
+                      "type": "argument",
+                      "executable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tierlist": {
+          "type": "literal",
+          "children": {
+            "add": {
+              "type": "literal",
+              "children": {
+                "list": {
+                  "type": "argument",
+                  "children": {
+                    "s": {
+                      "type": "literal",
+                      "executable": true
+                    },
+                    "a": {
+                      "type": "literal",
+                      "executable": true
+                    },
+                    "b": {
+                      "type": "literal",
+                      "executable": true
+                    },
+                    "c": {
+                      "type": "literal",
+                      "executable": true
+                    },
+                    "d": {
+                      "type": "literal",
+                      "executable": true
+                    },
+                    "uncategorized": {
+                      "type": "literal",
+                      "executable": true
+                    }
+                  }
+                }
+              }
+            },
+            "remove": {
+              "type": "literal",
+              "children": {
+                "list": {
+                  "type": "argument",
+                  "children": {
+                    "objective": {
+                      "type": "argument",
+                      "executable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
