@@ -778,7 +778,12 @@ func TestForgetKeepsWhatThePolicySays(t *testing.T) {
 	if len(spared) != 1 {
 		t.Fatalf("spared: %v", spared)
 	}
-	removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3}, spared)
+	spare := func() (map[string]bool, error) { return spared, nil }
+	// Which are spared not known, nothing goes.
+	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3}, func() (map[string]bool, error) { return nil, errors.New("unreadable") }); err == nil || removed != 0 {
+		t.Fatalf("forget without knowing what is spared: removed %d, %v", removed, err)
+	}
+	removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3}, spare)
 	if err != nil || removed != 6 {
 		t.Fatalf("forget keeping three days: removed %d, %v; want 6", removed, err)
 	}
@@ -801,8 +806,45 @@ func TestForgetKeepsWhatThePolicySays(t *testing.T) {
 		t.Errorf("kept:\n %s\nwant:\n %s", strings.Join(kept, "\n "), strings.Join(want, "\n "))
 	}
 	// Nothing more to remove the second time.
-	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3, Weekly: 4, Monthly: 12, Yearly: 2}, spared); err != nil || removed != 0 {
+	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3, Weekly: 4, Monthly: 12, Yearly: 2}, spare); err != nil || removed != 0 {
 		t.Errorf("forget again: removed %d, %v; want 0", removed, err)
+	}
+	// Spared while it is held, as a snapshot is named, a forget waiting
+	// meanwhile sees it spared.
+	var mu sync.Mutex
+	later := map[string]bool{}
+	var id string
+	for k := range spared {
+		id = k
+	}
+	done := make(chan int)
+	err = m.Held(ctx, "alpha", id[:8], func(snap *Snapshot) error {
+		go func() {
+			n, _ := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3}, func() (map[string]bool, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				return maps.Clone(later), nil
+			})
+			done <- n
+		}()
+		select {
+		case <-done:
+			t.Error("a forget ran while a snapshot was held")
+		case <-time.After(500 * time.Millisecond):
+		}
+		mu.Lock()
+		later[snap.ID] = true
+		mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := <-done; n != 0 {
+		t.Errorf("spared while held, removed: %d", n)
+	}
+	if err := m.Held(ctx, "alpha", "ffffffff", func(*Snapshot) error { return nil }); !errors.Is(err, ErrNotFound) {
+		t.Errorf("holding one that is not there: %v", err)
 	}
 	// No longer spared, it goes as the policy says.
 	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 3}, nil); err != nil || removed != 1 {

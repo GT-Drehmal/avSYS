@@ -435,20 +435,23 @@ func (s *Server) scheduledSnapshot(ctx context.Context, org *store.Org, mc *avsy
 	}
 	// Retention is applied whenever the server's run completes, also when it
 	// took nothing new: the policy may have been tightened since. A named
-	// snapshot is kept until someone deletes it; without knowing which are
-	// named, none is removed.
-	names, err := s.Store.SnapshotNames(ctx, org.ID)
-	if err != nil {
-		s.Log.Error("could not apply the retention policy: the names of snapshots could not be read", "org", org.Slug, "server", mc.Name, "error", err)
-		return res
-	}
-	spared := map[string]bool{}
-	for id, n := range names {
-		if n.Name != "" {
-			spared[id] = true
+	// snapshot is kept until someone deletes it. Which are named is read
+	// with the repository held, as a snapshot is named (nameSnapshot):
+	// without knowing, none is removed.
+	named := func() (map[string]bool, error) {
+		names, err := s.Store.SnapshotNames(context.WithoutCancel(ctx), org.ID)
+		if err != nil {
+			return nil, fmt.Errorf("reading the names of snapshots: %w", err)
 		}
+		spared := map[string]bool{}
+		for id, n := range names {
+			if n.Name != "" {
+				spared[id] = true
+			}
+		}
+		return spared, nil
 	}
-	removed, err := s.Backups.Forget(context.WithoutCancel(ctx), org.Slug, mc.Name, policyFor(policy, &mc.Spec).Keep, spared)
+	removed, err := s.Backups.Forget(context.WithoutCancel(ctx), org.Slug, mc.Name, policyFor(policy, &mc.Spec).Keep, named)
 	if err != nil {
 		s.Log.Error("could not apply the retention policy", "org", org.Slug, "server", mc.Name, "error", err)
 	}

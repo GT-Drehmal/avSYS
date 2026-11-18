@@ -152,43 +152,52 @@ func (s *Server) nameSnapshot(w http.ResponseWriter, r *http.Request, u *store.U
 	if in.Name == nil && in.Color == nil {
 		return errBadRequest(`Nothing to change: send {"name": ..., "color": ...}.`)
 	}
-	snap, err := s.Backups.Get(r.Context(), a.Org.Slug, r.PathValue("id"))
-	if err != nil {
-		return snapshotError(err)
-	}
-	if isTemplate(snap) {
-		return errTemplateVersion
-	}
-	names, err := s.Store.SnapshotNames(r.Context(), a.Org.ID)
-	if err != nil {
-		return err
-	}
-	n := names[snap.ID]
+	var name, color string
 	if in.Name != nil {
-		n.Name = strings.TrimSpace(*in.Name)
-		if len([]rune(n.Name)) > maxSnapshotName {
+		name = strings.TrimSpace(*in.Name)
+		if len([]rune(name)) > maxSnapshotName {
 			return errBadRequest("A snapshot's name can be at most %d characters.", maxSnapshotName)
 		}
-		for _, c := range n.Name {
+		for _, c := range name {
 			if unicode.IsControl(c) {
 				return errBadRequest("A snapshot's name is one line, with no control characters.")
 			}
 		}
 	}
 	if in.Color != nil {
-		n.Color = *in.Color
-		if n.Color != "" && !slices.Contains(snapshotColors, n.Color) {
+		color = *in.Color
+		if color != "" && !slices.Contains(snapshotColors, color) {
 			return errBadRequest("A snapshot's colour is one of %s, or \"\" for none.", strings.Join(snapshotColors, ", "))
 		}
 	}
-	n.By = u.Username
-	if err := s.Store.SetSnapshotName(r.Context(), a.Org.ID, snap.ID, n); err != nil {
-		return err
-	}
-	// Deleted meanwhile, its name goes with it.
-	if _, err := s.Backups.Get(r.Context(), a.Org.Slug, snap.ID); errors.Is(err, backup.ErrNotFound) {
-		_ = s.Store.DeleteSnapshotNames(context.WithoutCancel(r.Context()), a.Org.ID, snap.ID)
+	// Named with the snapshot held, so that the schedule, which reads the
+	// names with the repository held, either sees the name or has already
+	// removed the snapshot, which is then not named.
+	var snap *backup.Snapshot
+	var n store.SnapshotName
+	err = s.Backups.Held(context.WithoutCancel(r.Context()), a.Org.Slug, r.PathValue("id"), func(held *backup.Snapshot) error {
+		snap = held
+		if isTemplate(snap) {
+			return errTemplateVersion
+		}
+		names, err := s.Store.SnapshotNames(r.Context(), a.Org.ID)
+		if err != nil {
+			return err
+		}
+		n = names[snap.ID]
+		if in.Name != nil {
+			n.Name = name
+		}
+		if in.Color != nil {
+			n.Color = color
+		}
+		n.By = u.Username
+		return s.Store.SetSnapshotName(r.Context(), a.Org.ID, snap.ID, n)
+	})
+	if errors.Is(err, backup.ErrNotFound) {
 		return snapshotError(err)
+	} else if err != nil {
+		return err
 	}
 	detail := n.Name
 	if n.Color != "" {

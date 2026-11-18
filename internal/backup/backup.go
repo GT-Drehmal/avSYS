@@ -1145,9 +1145,10 @@ func (m *Manager) DeleteMany(ctx context.Context, org string, ids []string) erro
 // Forget removes the scheduled snapshots of one server that the policy no
 // longer keeps, and returns how many that was. Snapshots taken any other way
 // are not considered, and neither are other servers', nor those spared, by
-// ID: those are kept besides what the policy keeps. The space is not given
-// back until Prune.
-func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spared map[string]bool) (int, error) {
+// ID: those are kept besides what the policy keeps. Which are spared is
+// asked once the repository is held, so that one spared through Held
+// meanwhile is not missed. The space is not given back until Prune.
+func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spare func() (map[string]bool, error)) (int, error) {
 	args, err := forgetArgs(server, keep)
 	if err != nil {
 		return 0, err
@@ -1176,6 +1177,12 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spa
 	found, err := m.forgetting(ctx, org, append(args, "--dry-run")...)
 	if err != nil {
 		return 0, err
+	}
+	spared := map[string]bool{}
+	if spare != nil && len(found) > 0 {
+		if spared, err = spare(); err != nil {
+			return 0, err
+		}
 	}
 	// Then removed by ID, those spared left out.
 	var ids, lineages []string
@@ -1286,6 +1293,20 @@ func (m *Manager) forgetting(ctx context.Context, org string, args ...string) ([
 		found = append(found, g.Remove...)
 	}
 	return found, nil
+}
+
+// Held runs fn with one snapshot, by its full ID or an unambiguous prefix,
+// held in the repository: nothing removes it until fn returns. A change fn
+// makes to which snapshots Forget spares is seen by every Forget after it.
+func (m *Manager) Held(ctx context.Context, org, id string, fn func(*Snapshot) error) error {
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	snap, err := m.get(ctx, org, id)
+	if err != nil {
+		return err
+	}
+	return fn(snap)
 }
 
 // Prune gives back the space of snapshots that have been forgotten.

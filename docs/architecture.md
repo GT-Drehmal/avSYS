@@ -324,7 +324,8 @@ Through that channel a server can add to its organization's repository and
 read from it, but not delete or overwrite anything. Only the panel removes
 snapshots, with `restic forget` and `prune`, as retention or a person
 says. Retention asks restic what the policy would remove (`--dry-run`),
-leaves out snapshots that have a name in the panel, and forgets the rest
+leaves out snapshots that have a name in the panel (read while it holds
+the repository, which naming a snapshot holds too), and forgets the rest
 by ID. A snapshot's name goes when it does; any left for a snapshot the
 repository no longer lists are dropped the next time the organization's
 snapshots are listed.
