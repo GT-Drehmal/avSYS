@@ -116,6 +116,24 @@ func (s *Server) readSnapshotFile(ctx context.Context, org, id, file string) (bo
 	}
 }
 
+// readWorldFolders is a world kept as its own files, its folder root under
+// /data, read out as a tar as it is wanted: the world under root, and its
+// Nether and End beside it as root_nether and root_the_end where it has
+// them. done lets go of it, whether or not all of it was read.
+func (s *Server) readWorldFolders(ctx context.Context, org, id, root string) (body io.Reader, done func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	var folders []backup.Folder
+	for i, dir := range worldFolders(root) {
+		folders = append(folders, backup.Folder{Path: worldFoldersIn(root)[i], As: strings.TrimPrefix(dir, "/")})
+	}
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(s.Backups.Archive(ctx, org, id, folders, pw)) }()
+	return pr, func() {
+		pr.CloseWithError(io.ErrClosedPipe)
+		cancel()
+	}
+}
+
 // keepPack checks a resource pack read from src and keeps it under host's
 // pack host, as uploaded under name. Its settings are left for the caller,
 // and so are the packs kept there before.
@@ -192,7 +210,7 @@ func (s *Server) packSource(r *http.Request, a *access) (body io.Reader, name st
 		}
 		rp, host = worldPackOf(w), libraryHost(w.ID)
 	} else {
-		_, info, err := s.ownWorldOf(r.Context(), a, template)
+		_, info, _, err := s.ownWorldOf(r.Context(), a, template)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -472,9 +490,10 @@ func zipWorld(zw *zip.Writer, archive io.Reader, root, name string, skip map[str
 	}
 }
 
-// writeWorldZip writes a world saved from a server or a snapshot, kept in
-// snap, to out as a zip of a single-player save, made as it is sent. An
-// uploaded pack it names goes in it as the world's own.
+// writeWorldZip writes a world of the library, kept in snap as its own
+// files or as a tar of its folders, to out as a zip of a single-player
+// save, made as it is sent. An uploaded pack it names goes in it as the
+// world's own.
 func (s *Server) writeWorldZip(ctx context.Context, a *access, world *store.World, snap *backup.Snapshot, out io.Writer) error {
 	zw := zip.NewWriter(out)
 	// Region files are compressed already: as fast as it goes, not as small.
@@ -492,8 +511,15 @@ func (s *Server) writeWorldZip(ctx context.Context, a *access, world *store.Worl
 			skip[name+"/"+packKeptFile] = true
 		}
 	}
-	body, done := s.readSnapshotFile(ctx, a.Org.Slug, snap.ID, "/"+ownWorldFile)
-	written, err := zipWorld(zw, body, world.Root, name, skip)
+	root := keptRoot(world, snap)
+	var body io.Reader
+	var done func()
+	if snap.Form == backup.FormFolders {
+		body, done = s.readWorldFolders(ctx, a.Org.Slug, snap.ID, root)
+	} else {
+		body, done = s.readSnapshotFile(ctx, a.Org.Slug, snap.ID, "/"+ownWorldFile)
+	}
+	written, err := zipWorld(zw, body, root, name, skip)
 	done()
 	if err != nil {
 		return err

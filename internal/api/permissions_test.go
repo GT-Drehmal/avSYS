@@ -296,6 +296,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST " + server + "/console", "", `{"command":"list"}`, store.RoleOperator, 409},
 		{"GET " + server + "/console", "", "", store.RoleViewer, 0},
 		{"GET " + server + "/activity", "", "", store.RoleViewer, 200},
+		// 502: allowed, and this panel reaches no server's files.
+		{"GET " + server + "/world", "", "", store.RoleViewer, 502},
 		// 200: allowed, and the lists could not be read, which it says. 502:
 		// allowed, and this panel reaches no server to take anyone off.
 		{"GET " + server + "/lists", "", "", store.RoleAdmin, 200},

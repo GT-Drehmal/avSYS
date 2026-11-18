@@ -263,10 +263,29 @@ Content is settled when it is added, not when the server starts.
 A restart never changes what is installed. Changing the game version or
 loader pins each entry again for the new one.
 
+**Starting while a site is down.** The image asks the sites it installs
+from about the loader and the content on every start, even when the server
+has them, and the start fails when one does not answer. So the game
+container's command, before the image starts, asks first, for a few
+seconds. When a site does not answer and the server already has what it
+asks for, the image is told to start with that: the Paper or Folia build,
+the Fabric, Forge or NeoForge loader, the Quilt or Purpur jar (started as
+the image's `CUSTOM` type), Modrinth content and files from an address. The
+container's log says so, as `[avsys] <site> does not answer: starting with
+the installed …`. A first start, and another game version, build or pack
+version, still need the sites. Vanilla asks nothing once installed.
+
+A modpack's start asks Modrinth or CurseForge about the pack, an uploaded
+pack's asks the loader's site (Fabric's, or Mojang's for Quilt), and a
+CurseForge Fabric pack's asks both. When one does not answer and the
+server has that pack version with all its files, the image is not given
+the pack: it starts the loader the pack set up, as for a server of that
+loader, and leaves the files as they are.
+
 **Modpacks** are the image's own: `MODPACK_PLATFORM=MODRINTH` with the
 pinned version, `AUTO_CURSEFORGE` with the pinned file, or an uploaded
-`.mrpack` kept in the server's files. Each start puts the pack's own files
-back.
+`.mrpack` kept in the server's files. A new pack version is installed with
+its own files; an uploaded pack's own files are put back on each start.
 
 **Resource packs.** A server offers players one pack. Several are joined
 into one by the panel (`internal/packmerge`). An uploaded or joined pack is
@@ -307,6 +326,46 @@ says.
 **Restore** takes a snapshot first, stops the server, restores the files
 with `restic restore --delete` inside the workspace, and puts the
 server's software settings back from the record.
+
+**Templates and the world library** live in the same repository, as
+snapshots the organization's snapshot list does not show (tag
+`trigger=template`). A library world is one snapshot under the host
+`world-<id>`, of the world's own files laid out as a server has them:
+`/data/world`, and `/data/world_nether` and `/data/world_the_end` where the
+Nether and the End were kept apart (tag `form=folders`). restic stores data
+in content-defined chunks, once per repository, so a server made from that
+world, and every snapshot of it, store only what changed from the library's
+copy.
+
+- **Upload.** The archive (`.zip`, `.tar`, `.tar.gz`) is unpacked on the
+  panel, in Go, into `/backups/.work/<org>/<random>/data/world`, and that
+  folder is backed up there with the panel's restic. The rules are the
+  import's: only files and folders, never links or `session.lock`, nothing
+  outside the folder, the world's folder as the page found it and the
+  Nether and End beside it, a `level.dat` in it, and no more than the free
+  space on the panel's volume. The snapshot is checked against what was
+  unpacked (file count, bytes, `level.dat`) before it is kept.
+- **Save from a server or a snapshot.** The server's snapshot (taken first,
+  for a running server) is copied with `restic rewrite --include` of its
+  world folders under the world's host: no file data is read or copied.
+- **Use** (new server, **Replace the world**, **Put back**, a template's
+  copy of the world, `import?library=`). The workspace restores the
+  world's snapshot with `restic restore` straight into the import's
+  staging folder, and the import's script moves it into place as it does
+  for an unpacked archive: the Nether and End where the server's software
+  keeps them, links dropped, the snapshot first for a replace.
+- **Download** builds a single-player save zip as it is sent, from
+  `restic dump` of the world's folders.
+
+Before, a library world was one file in its snapshot, the archive as it was
+uploaded or a tar of the saved folders, which shares nothing with a
+server's snapshots. As the panel starts it converts each such world, one at
+a time and under the same ID: the archive is unpacked and kept under
+`world-<id>-unpacking`, checked, copied under `world-<id>` with the world
+held, and only then is the archive removed. A world that fails keeps its
+archive, works as before, and shows why in the library; leftovers of a run
+that was cut short are removed on the next start. Templates' own uploaded
+worlds are still kept as archives.
 
 **Offsite.** The panel copies each organization's repository to a second
 place with `restic copy`, a couple of minutes after it changes, and removes

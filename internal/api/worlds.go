@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,20 +25,50 @@ import (
 )
 
 // An organization's library of worlds: maps kept to start servers from, or
-// to put in place of a server's world. Each is an archive of the world,
-// kept as a snapshot of its own in the organization's repository, the way a
-// template's own world is. One uploaded is kept as it was sent; one saved
-// from a server or a snapshot is a tar of its world's folders, the world as
-// "world" and the Nether and the End beside it where the server kept them
-// apart. Putting one in a server is the import that puts any world in. One
-// saved is downloaded as a zip of a single-player save, made as it is sent.
+// to put in place of a server's world. Each is kept as a snapshot of its own
+// in the organization's repository, as the world's own files, laid out as a
+// server has them (backup.FormFolders): the world at /data/world, and the
+// Nether and the End beside it where they were kept apart. restic keeps a
+// chunk of a file once, whichever snapshot has it: a server made from a
+// world of the library, and each snapshot of that server, share all of the
+// world they have not changed with it.
+//
+// One uploaded is unpacked on the panel and kept (worldunpack.go). One saved
+// from a server or a snapshot is a copy of that snapshot with only its
+// world's folders, which copies none of their files: there it is in the
+// folder the server had it in, which is the world's Root. Putting one in a
+// server is the import that puts any world in, with its folders put back
+// where an archive would be unpacked. It is downloaded as a zip of a
+// single-player save, made as it is sent.
+//
+// The library kept each world as an archive before: one uploaded as it was
+// sent, one saved as a tar of its world's folders. Those still work as they
+// did, and are kept as their own files instead as the panel starts
+// (worldsunpack.go).
 
 // libraryHost is what a world in the library is kept under.
 func libraryHost(id string) string { return "world-" + id }
 
-// libraryRoot is the folder a world saved from a server or a snapshot is
-// in, in its archive.
-const libraryRoot = "world"
+// keptRoot is the world's folder in a world's snapshot: in its archive, for
+// one kept as one, and under /data, for one kept as its own files. One
+// uploaded, or kept as an archive before, is at /data/world: it was
+// unpacked there, whatever the folder in its archive.
+func keptRoot(w *store.World, snap *backup.Snapshot) string {
+	if snap != nil && snap.Form == backup.FormFolders && w.Source == "upload" {
+		return keptWorld
+	}
+	return w.Root
+}
+
+// worldFoldersIn are the folders of a world kept as its own files in its
+// snapshot, its Nether and End beside it included, whichever it has.
+func worldFoldersIn(root string) []string {
+	var out []string
+	for _, dir := range worldFolders(root) {
+		out = append(out, "/"+keptData+dir)
+	}
+	return out
+}
 
 // worldsSaving holds, by organization ID and world ID, the worlds being
 // saved or deleted, one thing at a time.
@@ -78,16 +110,25 @@ type worldView struct {
 	CreatedBy   string    `json:"createdBy"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
-	// Root is its folder in its archive, "" for the top.
+	// Root is its folder: under /data in its snapshot, for one kept as its
+	// own files, and in its archive, "" for the top, for one kept as one.
 	Root string `json:"root"`
 	// Version is the game version it was last opened in, where known.
 	Version string `json:"version,omitempty"`
 	// File is the archive's name, for one uploaded.
 	File string `json:"file,omitempty"`
-	// Size is how large its archive is, and Unpacked how large the world is
-	// out of it, where known.
+	// Size is how large what is kept of it is, and Unpacked how large the
+	// world is, where known: the same for one kept as its own files.
 	Size     int64 `json:"size"`
 	Unpacked int64 `json:"unpacked,omitempty"`
+	// Kept is how it is kept, once it is: "folders", as its own files, or
+	// "archive", as the library kept worlds before.
+	Kept string `json:"kept,omitempty"`
+	// Unpacking is for one kept as an archive that is being kept as its own
+	// files now: it is used as it is meanwhile. UnpackError says why it
+	// could not be, for one that could not.
+	Unpacking   bool   `json:"unpacking,omitempty"`
+	UnpackError string `json:"unpackError,omitempty"`
 	// Source is where it came from: "upload", "server:<name>" or
 	// "snapshot:<server>".
 	Source string `json:"source"`
@@ -118,13 +159,24 @@ func librarySnapshots(list []backup.Snapshot) map[string]backup.Snapshot {
 
 func worldOf(w *store.World, snaps map[string]backup.Snapshot, busy bool) worldView {
 	// One being saved has none yet, or one still being written.
-	_, kept := snaps[w.ID]
-	return worldView{
+	snap, kept := snaps[w.ID]
+	v := worldView{
 		ID: w.ID, Name: w.Name, Description: w.Description, CreatedBy: w.CreatedBy, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 		Root: w.Root, Version: w.Version, File: w.File, Size: w.Size, Unpacked: w.Unpacked, Source: w.Source,
 		Saving: busy && w.Failed == "", Ready: kept && !busy && w.Failed == "", Error: w.Failed,
 		ResourcePack: worldPackOf(w),
 	}
+	if kept {
+		v.Root = keptRoot(w, &snap)
+		v.Kept = "archive"
+		if snap.Form == backup.FormFolders {
+			v.Kept = backup.FormFolders
+		} else {
+			v.Unpacking = worldUnpacking(w.OrgID, w.ID)
+			v.UnpackError = w.UnpackFailed
+		}
+	}
+	return v
 }
 
 // libraryWorld is one of the library's worlds, and the snapshot of its
@@ -229,10 +281,10 @@ func worldNameTaken(name string) error {
 	return &Error{Status: http.StatusConflict, Code: "name_taken", Message: "There is already a world called " + name + "."}
 }
 
-// uploadWorld puts an uploaded archive of a world in the library: the body,
-// or what was sent in parts as ?upload= of ?size=, with ?name=,
+// uploadWorld puts an uploaded archive of a world in the library, unpacked:
+// the body, or what was sent in parts as ?upload= of ?size=, with ?name=,
 // ?description=, ?root= its world's folder in it, and what the page read of
-// it, ?version=, ?file= and ?unpacked=, how large the world is out of it.
+// it, ?version= and ?file=. How large the world is, is as it is unpacked.
 func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleOperator)
 	if err != nil {
@@ -251,8 +303,7 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err != nil {
 		return err
 	}
-	unpacked, _ := strconv.ParseInt(q.Get("unpacked"), 10, 64)
-	world := &store.World{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username, Root: root, Version: q.Get("version"), File: q.Get("file"), Unpacked: max(unpacked, 0), Source: "upload"}
+	world := &store.World{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username, Root: keptWorld, Version: q.Get("version"), File: q.Get("file"), Source: "upload"}
 	if err := s.Store.CreateWorld(r.Context(), world); errors.Is(err, store.ErrWorldNameTaken) {
 		return worldNameTaken(name)
 	} else if err != nil {
@@ -264,19 +315,12 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	defer release()
 	ctx := context.WithoutCancel(r.Context())
-	body, done, err := s.uploadBody(w, r, a)
-	if err != nil {
-		s.forgetWorld(ctx, a, world.ID, nil)
-		return err
-	}
-	defer done()
-	kept, err := s.Backups.KeepFile(ctx, a.Org.Slug, libraryHost(world.ID), ownWorldFile, u.Username, body)
+	kept, err := s.keepUploadedWorld(ctx, w, r, a, world, root, u.Username)
 	if err == nil {
-		world.Size = kept.Size
 		err = s.noteTemplateSnapshot(ctx, a.Org, kept)
 	}
 	if err == nil {
-		err = s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, kept.Size, world.Unpacked)
+		err = s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, world.Size, world.Unpacked)
 	}
 	if err != nil {
 		s.forgetWorld(ctx, a, world.ID, kept)
@@ -304,6 +348,48 @@ func (s *Server) forgetWorld(ctx context.Context, a *access, id string, kept *ba
 	if err := s.Store.DeleteWorld(ctx, a.Org.ID, id); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.Log.Warn("could not forget a world whose archive was not kept", "world", id, "error", err)
 	}
+}
+
+// keepUploadedWorld unpacks the archive a request sends, the file sent in
+// parts that ?upload= names or else its body, and keeps the world in it,
+// whose folder in it is root, as world's, which is told how large it is.
+func (s *Server) keepUploadedWorld(ctx context.Context, w http.ResponseWriter, r *http.Request, a *access, world *store.World, root, by string) (*backup.Snapshot, error) {
+	dir, done, err := s.worldWork(a.Org.Slug)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	var file string
+	var drop func()
+	if q := r.URL.Query(); q.Get("upload") != "" {
+		f, closeIt, err := s.takeStaged(a, q)
+		if err != nil {
+			return nil, err
+		}
+		file = f.Name()
+		closeIt()
+		drop = func() { s.dropStaged(a, q.Get("upload")) }
+	} else {
+		file = filepath.Join(dir, "archive")
+		f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		_, err = io.Copy(f, http.MaxBytesReader(w, r.Body, maxUpload))
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return nil, err
+		}
+		drop = func() { _ = os.Remove(file) }
+	}
+	kept, unpacked, err := s.keepUnpacked(ctx, a.Org.Slug, dir, file, root, libraryHost(world.ID), by, drop)
+	if err != nil {
+		return nil, err
+	}
+	world.Size, world.Unpacked = unpacked.Bytes, unpacked.Bytes
+	return kept, nil
 }
 
 // saveWorld puts a world in the library from a snapshot, or from a server
@@ -388,7 +474,7 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 	if version == "LATEST" {
 		version = ""
 	}
-	world := &store.World{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username, Root: libraryRoot, Version: version, Source: source}
+	world := &store.World{OrgID: a.Org.ID, Name: name, Description: description, CreatedBy: u.Username, Root: level, Version: version, Source: source}
 	if err := s.Store.CreateWorld(r.Context(), world); errors.Is(err, store.ErrWorldNameTaken) {
 		return worldNameTaken(name)
 	} else if err != nil {
@@ -436,17 +522,14 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 				pack = record.Spec.ResourcePack.DeepCopy()
 			}
 		}
-		folders := []backup.Folder{{Path: dataRoot + "/" + level, As: libraryRoot}}
-		for _, dim := range []string{"_nether", "_the_end"} {
-			folders = append(folders, backup.Folder{Path: dataRoot + "/" + level + dim, As: libraryRoot + dim})
-		}
-		kept, err = s.Backups.KeepArchive(ctx, a.Org.Slug, from.ID, folders, libraryHost(saved.ID), ownWorldFile, u.Username)
+		// Its world's folders, where the server had them: a copy of the
+		// snapshot with nothing else, which copies none of their files.
+		kept, err = s.Backups.CopyFolders(ctx, a.Org.Slug, from.ID, worldFoldersIn(level), libraryHost(saved.ID), u.Username)
 		if errors.Is(err, backup.ErrNotFound) {
-			return kept, errBadRequest("The world is not among the server's files.")
+			return nil, errBadRequest("The world is not among the server's files.")
 		} else if err != nil {
-			return kept, err
+			return nil, err
 		}
-		// A tar is as large as what is in it.
 		saved.Size, saved.Unpacked = kept.Size, kept.Size
 		if err := s.noteTemplateSnapshot(ctx, a.Org, kept); err != nil {
 			return kept, err
@@ -578,16 +661,17 @@ func (s *Server) deleteWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	if err != nil {
 		return err
 	}
+	hosts := []string{libraryHost(world.ID), packHost(libraryHost(world.ID)), unpackingHost(world.ID)}
 	var ids []string
 	for _, snap := range list {
-		if (snap.Server == libraryHost(world.ID) || snap.Server == packHost(libraryHost(world.ID))) && isTemplate(&snap) {
+		if slices.Contains(hosts, snap.Server) && isTemplate(&snap) {
 			ids = append(ids, snap.ID)
 		}
 	}
 	if err := s.Backups.DeleteMany(ctx, a.Org.Slug, ids); err != nil {
 		return snapshotError(err)
 	}
-	s.forgetTemplateSnapshotsOf(ctx, a.Org, libraryHost(world.ID), packHost(libraryHost(world.ID)))
+	s.forgetTemplateSnapshotsOf(ctx, a.Org, hosts...)
 	if err := s.Store.DeleteWorld(ctx, a.Org.ID, world.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
@@ -596,9 +680,8 @@ func (s *Server) deleteWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	return nil
 }
 
-// downloadWorld sends a world's archive: one uploaded as it was uploaded,
-// and one saved from a server or a snapshot as a zip of a single-player
-// save, made as it is sent.
+// downloadWorld sends a world as a zip of a single-player save, made as it
+// is sent. One kept as an archive that was uploaded is sent as it was.
 func (s *Server) downloadWorld(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleOperator)
 	if err != nil {
@@ -608,7 +691,7 @@ func (s *Server) downloadWorld(w http.ResponseWriter, r *http.Request, u *store.
 	if err != nil {
 		return err
 	}
-	if world.Source != "upload" {
+	if world.Source != "upload" || snap.Form == backup.FormFolders {
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(saveName(world.Name)+".zip"))
 		sent := &countWriter{}

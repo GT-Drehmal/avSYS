@@ -272,6 +272,8 @@ spec:
               value: "25565"
             - name: AVSYS_SSH_PUBLIC_PORT
               value: "22"
+            - name: AVSYS_TRUSTED_PROXIES
+              value: "10.0.0.5,100.64.0.0/10"
             - name: AVSYS_SSH_PUBLIC_HOST
               value: "ssh.example.org"
             - name: AVSYS_ROUTER_DOMAIN

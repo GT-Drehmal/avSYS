@@ -175,7 +175,8 @@ CREATE TABLE IF NOT EXISTS worlds (
 	unpacked    INTEGER NOT NULL DEFAULT 0,
 	source      TEXT NOT NULL DEFAULT '',
 	failed      TEXT NOT NULL DEFAULT '',
-	pack        TEXT NOT NULL DEFAULT ''
+	pack        TEXT NOT NULL DEFAULT '',
+	unpack_failed TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS worlds_name ON worlds(org_id, name);
 CREATE TABLE IF NOT EXISTS player_lists (
@@ -211,6 +212,7 @@ CREATE TABLE IF NOT EXISTS template_snapshots (
 	added   INTEGER NOT NULL DEFAULT 0,
 	files   INTEGER NOT NULL DEFAULT 0,
 	lineage TEXT NOT NULL DEFAULT '',
+	form    TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (org_id, id)
 );
 -- The organizations whose template snapshots have been read from their
@@ -263,6 +265,14 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
 	if err := addWorldPack(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
+	if err := addColumn(db, "worlds", "unpack_failed", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
+	if err := addColumn(db, "template_snapshots", "form", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
@@ -355,6 +365,16 @@ func addWorldPack(db *sql.DB) error {
 		return err
 	}
 	_, err := db.Exec(`ALTER TABLE worlds ADD COLUMN pack TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// addColumn gives a table from before a column was added that column.
+func addColumn(db *sql.DB, table, column, kind string) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + kind)
 	return err
 }
 

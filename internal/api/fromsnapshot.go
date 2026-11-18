@@ -344,7 +344,7 @@ func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, r
 // was deleted, to bring it back, or of one that still exists, to copy it.
 // The server exists as soon as this answers, stopped and held, and its files
 // follow; with ?wait=true the answer waits for them.
-func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, picture newPicture, newWorld bool, node string) error {
+func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *store.User, a *access, name string, requested avsysv1.MinecraftServerSpec, given map[string]json.RawMessage, id string, template *avsysv1.WorldRef, picture newPicture, newWorld bool, node string) error {
 	ctx := r.Context()
 	if !s.Backups.Available() {
 		return errNoBackups
@@ -390,6 +390,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	if err := leaveWorld(&spec, &record.Spec, &requested, newWorld); err != nil {
 		return err
 	}
+	spec.WorldOrigin = snapshotWorldOrigin(&spec, record.Spec.WorldOrigin, snap, name, template, newWorld)
 	// The world it keeps was last opened in the version it was taken of.
 	if !newWorld {
 		if err := s.checkWorldVersion(r, controller.GameVersionOf(&record.Spec), &spec); err != nil {
@@ -529,6 +530,12 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 	}
 	if err := leaveWorld(&spec, &mc.Spec, &requested, newWorld); err != nil {
 		return err
+	}
+	// The original's world, as it is, or a new one.
+	if newWorld {
+		spec.WorldOrigin = newWorldOrigin(&spec)
+	} else {
+		spec.WorldOrigin = carriedOrigin(mc.Spec.WorldOrigin, avsysv1.WorldOrigin{Kind: avsysv1.WorldCopy, Server: mc.Name})
 	}
 	if !newWorld {
 		if err := s.checkWorldVersion(r, s.ranOn(ctx, mc, &mc.Spec), &spec); err != nil {

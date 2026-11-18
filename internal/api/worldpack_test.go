@@ -61,7 +61,7 @@ func TestWorldPack(t *testing.T) {
 		return n
 	}
 
-	code, made := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&root=Island&version=1.21.4&file=island.zip", "a world")
+	code, made := call("operator", "POST", "/orgs/alpha/worlds/upload?name=Island&root=saves%2FIsland&version=1.21.4&file=island.zip", string(islandZip(t)))
 	if code != http.StatusCreated || made["resourcePack"] != nil {
 		t.Fatalf("uploaded: %d %v", code, made)
 	}

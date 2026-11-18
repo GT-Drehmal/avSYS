@@ -26,6 +26,12 @@
 # AVSYS_E2E_NODE_UP brings back, commands run with sh -c, for moving a server
 # off a node that is down; AVSYS_E2E_ON_DOWN_NODE runs a command on that node.
 # The panel must not be on it. Unset, that is skipped.
+# AVSYS_E2E_PANEL_EXEC is a command that runs a program in the panel's
+# container, given it and its arguments, with its input; and
+# AVSYS_E2E_PANEL_RESTART restarts the panel and waits for it, run with sh
+# -c: a world kept the way the library kept them before is made with the
+# panel's restic, and the panel restarted to keep it as its own files.
+# Unset, that is skipped.
 # AVSYS_E2E_LIST_BUDGET_MS (200) is how long the panel may take over a read
 # of a list, such as the servers or the templates, before the run fails. The
 # few that read the repository's snapshots have budgets of their own; see
@@ -239,9 +245,9 @@ print("\n".join("  | " + line for line in lines[-40:]))' || true
 # the cluster starts the game again by itself. Only the image's own line
 # about a download counts: a timeout mentioned anywhere else in the log, by
 # the game or a plugin, says nothing about why the game stopped.
-FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload|Failed to download mojang_[^ ]*\.jar'
+FETCH_FAILED='\[init\].*\[ERROR\].*[Dd]ownload|Failed to download mojang_[^ ]*\.jar|IOException: Request to https://[a-z.-]*mojang\.com/[^ ]* (using DIRECT )?failed'
 # Paper's own launcher says it its own way, as it fetches the game's jar from
-# Mojang.
+# Mojang, and so does Fabric's.
 # How many times that happened in this run, said at the end so that it shows.
 REFETCHED=0
 
@@ -1010,6 +1016,14 @@ expect "a program put in ~/.local/bin is found by a login shell" "$own" "a tool 
 expect "the panel's own commands do not look in anyone's home" "$own" "restic is /usr/local/bin/restic"
 expect "python is there" "$own" "42"
 expect "sudo and apt say why not, and what to do instead" "$own" "There is no root in a server's workspace"
+# Someone opening a terminal is told what they can do there; a command run
+# over ssh, as rsync and scripts are, is not.
+hello=$(printf 'exit\n' | ssh -tt -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 2>&1) || true
+expect "a terminal says what it can do" "$hello" "mc console"
+plain=$(ssh -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'echo plain' 2>&1) || true
+if [ "$plain" = plain ]; then echo "ok: a command over ssh gets only its own output"; else fail "a command over ssh got more than its own output: $plain"; fi
 told=$(ssh -n -i "$WORK/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
   -p "$SSH_PORT" "probe.$ORG@$ssh_host" 'sudo true' 2>&1) || true
 expect "and point to tools" "$told" "tools install <name>"
@@ -1030,6 +1044,41 @@ for _ in 1 2 3 4 5; do
   case "$said" in *"No such file or directory"*) ;; *) fail "a command's error did not come through the gateway: '$said'" ;; esac
 done
 echo "ok: a command's errors come through, every time"
+# A big file both ways with rsync, as a world is copied in and out, whole and
+# in good time: the gateway once stalled partway through such a copy.
+SSH_E="ssh -i $WORK/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $SSH_PORT"
+head -c 200000000 /dev/urandom > "$WORK/big.bin"
+started=$(date +%s)
+timeout 180 rsync -a -e "$SSH_E" "$WORK/big.bin" "probe.$ORG@$ssh_host:e2e-big.bin" || fail "rsync of 200 MB into the server failed or stalled"
+timeout 180 rsync -a -e "$SSH_E" "probe.$ORG@$ssh_host:e2e-big.bin" "$WORK/big-back.bin" || fail "rsync of 200 MB out of the server failed or stalled"
+took=$(($(date +%s) - started))
+sums=$(python3 -c 'import hashlib,sys; print(len({hashlib.sha256(open(p,"rb").read()).hexdigest() for p in sys.argv[1:]}))' "$WORK/big.bin" "$WORK/big-back.bin")
+[ "$sums" = 1 ] || fail "200 MB copied in and out with rsync came back different"
+[ "$took" -le 120 ] || fail "200 MB in and out with rsync took ${took}s"
+$SSH_E -n "probe.$ORG@$ssh_host" 'rm -f e2e-big.bin' || true
+rm -f "$WORK/big.bin" "$WORK/big-back.bin"
+echo "ok: rsync copies 200 MB in and out whole, in ${took}s"
+# What someone leaves running when their ssh goes away is hung up on, as a
+# terminal's is, and not left behind in the workspace.
+$SSH_E -n "probe.$ORG@$ssh_host" 'sleep 3003' >/dev/null 2>&1 &
+held=$!
+for _ in $(seq 1 20); do
+  $SSH_E -n "probe.$ORG@$ssh_host" 'pgrep -fx "sleep 3003"' >/dev/null 2>&1 && break
+  sleep 1
+done
+kill -9 "$held" 2>/dev/null || true
+left=yes
+for _ in $(seq 1 20); do
+  if ! $SSH_E -n "probe.$ORG@$ssh_host" 'pgrep -fx "sleep 3003"' >/dev/null 2>&1; then left=; break; fi
+  sleep 1
+done
+[ -z "$left" ] || fail "a command was left running in the workspace after its ssh was killed"
+echo "ok: a command is hung up on when its ssh goes away"
+# A command that leaves something running behind it, holding its output,
+# still ends its ssh.
+said=$(timeout 60 $SSH_E -n "probe.$ORG@$ssh_host" 'sleep 3004 & echo started' 2>&1) || fail "ssh did not end when its command did: '$said'"
+expect "a command that leaves something running ends its ssh" "$said" started
+$SSH_E -n "probe.$ORG@$ssh_host" 'pkill -fx "sleep 3004"' >/dev/null 2>&1 || true
 
 fi
 
@@ -1064,8 +1113,11 @@ refused=$(call -X PUT --data-binary "@$WORK/escape.tar" "$IMPORTED/import?root=O
 expect "an archive with a path out of its folder is refused" "$(echo "$refused" | field "d['message']")" "Could not unpack the archive"
 expect "and nothing of it is kept" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/server.properties")" 404
 expect "nor is the game started on what an import left" "$(call -X POST "$IMPORTED/start" | field "d['code']")" import_incomplete
-imported=$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old&players=listed&wait=true")
+expect "a new server's world is one the game makes" "$(call "$IMPORTED" | field "d['spec']['worldOrigin']['kind']")" new
+imported=$(call -X PUT --data-binary "@$WORK/import.tar.gz" "$IMPORTED/import?root=Old&players=listed&file=import.tar.gz&wait=true")
 expect "a server's folder is imported" "$(echo "$imported" | field "d['name']")" imported
+expect "and its world is said to come with it" "$(call "$IMPORTED" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['file'])")" "('archive', 'import.tar.gz')"
+expect "what its world says of itself is read" "$(call "$IMPORTED/world" | field "(d['level'], d['exists'])")" "('world', True)"
 listing=$(call "$IMPORTED/files?path=/" | field "sorted(f['name'] for f in d['entries'])")
 expect "its world is the one the game opens" "$listing" "'world', 'world_nether'"
 expect "its plugins come with it" "$(call -o /dev/null -w '%{http_code}' "$IMPORTED/files/content?path=/plugins/Foo.jar")" 200
@@ -1089,9 +1141,12 @@ call -X DELETE "$IMPORTED?snapshot=false" >/dev/null
 BARE=$API/orgs/$ORG/servers/imported-bare
 call -d '{"name":"imported-bare","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
 call -X PUT --data-binary "@$WORK/import.tar.gz" "$BARE/import?root=Old&world=none&players=listed&wait=true" >/dev/null
+expect "a server's folder without its world has a new one" "$(call "$BARE" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin'].get('seed'))")" "('new', None)"
+expect "which the game has not made yet" "$(call "$BARE/world" | field "d['exists']")" False
 expect "a server's folder is imported without its world" "$(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world/level.dat") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world_nether/level.dat") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/plugins/Foo.jar")" "404 404 200"
 case "$(call "$BARE/files/content?path=/server.properties")" in *level-seed*) fail "the seed of the world left out was kept" ;; *) echo "ok: not with the seed of the world left out" ;; esac
-call -X PUT --data-binary "@$WORK/save.tar.gz" "$BARE/import?root=saves%2FMy%20World&world=true&wait=true" >/dev/null
+call -X PUT --data-binary "@$WORK/save.tar.gz" "$BARE/import?root=saves%2FMy%20World&world=true&file=save.tar.gz&wait=true" >/dev/null
+expect "and the world given it is said to be uploaded" "$(call "$BARE" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['file'])")" "('upload', 'save.tar.gz')"
 expect "and is given another" "$(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$BARE/files/content?path=/plugins/Foo.jar")" "200 200"
 call -X DELETE "$BARE?snapshot=false" >/dev/null
 # A world of one's own, a single-player save here, becomes a new server's:
@@ -1116,7 +1171,7 @@ expect "and taken off again" "$(call "$OWN/import/upload?upload=$UP")" "\"receiv
 expect "the last part is taken" "$(call -X PUT --data-binary "@$WORK/save.2" "$OWN/import/upload?upload=$UP&offset=$half&length=$((size - half))")" "\"received\":$size"
 expect "an import of less than was sent is turned down" "$(call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$UP&size=$((size + 1))&wait=true" | field "d['code']")" invalid
 expect "as is one of another upload" "$(call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=e2e-upload-two&size=$size&wait=true" | field "d['code']")" invalid
-call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$UP&size=$size&wait=true" >/dev/null
+call -X PUT "$OWN/import?root=saves%2FMy%20World&world=true&from=upload&upload=$UP&size=$size&file=save.tar.gz&wait=true" >/dev/null
 expect "a world of one's own is the server's" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat")" 200
 expect "with its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" 200
 expect "and not locked" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/session.lock")" 404
@@ -1143,12 +1198,82 @@ PY
 )" "None ['E2E island'] True True True"
 call -d '{"name":"from-library","spec":{"eula":true,"loader":"vanilla","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
 call -X PUT "$API/orgs/$ORG/servers/from-library/import?world=true&library=$LIB&pack=true&wait=true" >/dev/null
+expect "a world from the library is said to be from there" "$(call "$API/orgs/$ORG/servers/from-library" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['library']['id'] == '$LIB', d['spec']['worldOrigin']['library']['name'])")" "('library', True, 'E2E island')"
 expect "a world from the library is a new server's" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/from-library/files/content?path=/world/level.dat")" 200
 expect "with its Nether where the game itself keeps it" "$(call -o /dev/null -w '%{http_code}' "$API/orgs/$ORG/servers/from-library/files/content?path=/world/DIM-1/region/r.0.0.mca")" 200
 expect "and its resource pack" "$(call "$API/orgs/$ORG/servers/from-library" | field "(d['spec']['resourcePack']['sha1'], d['spec']['resourcePack']['uploaded']['name'])")" "('$PACK_SHA', 'e2e-pack.zip')"
 expect "kept in the server's files" "$(call "$API/orgs/$ORG/servers/from-library/files/content?path=/.avsys/resource-pack-$PACK_SHA.zip" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$PACK_SHA"
 call -X DELETE "$API/orgs/$ORG/servers/from-library?snapshot=false" >/dev/null
 expect "a world is taken out of the library" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/worlds/$LIB")" 204
+# A world uploaded to the library is kept unpacked, as its own files: a
+# server made from it, and putting it back in that server, share them with
+# it, and the server's snapshots add next to nothing of the world.
+python3 - "$WORK/big.zip" <<'PY'
+import os, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("Big/level.dat", b"x")
+    z.writestr("Big/region/r.0.0.mca", os.urandom(16 << 20))
+    z.writestr("Big/region/r.0.1.mca", os.urandom(8 << 20))
+    z.writestr("Big_nether/DIM-1/region/r.0.0.mca", os.urandom(2 << 20))
+PY
+BIGSIZE=$(((26 << 20) + 1))
+big=$(call --data-binary "@$WORK/big.zip" "$API/orgs/$ORG/worlds/upload?name=E2E%20big&root=Big&file=big.zip")
+BIG=$(echo "$big" | field "d['id']") || fail "the world was not uploaded to the library: $big"
+expect "an uploaded world is kept unpacked, as large as it is" "$(echo "$big" | field "(d['ready'], d['kept'], d['root'], d['size'])")" "(True, 'folders', 'world', $BIGSIZE)"
+FROMBIG=$API/orgs/$ORG/servers/from-big
+call -d '{"name":"from-big","spec":{"eula":true,"loader":"paper","version":"1.21.4","state":"Stopped","resources":{"memory":"1Gi"},"storage":{"size":"1Gi"}}}' "$API/orgs/$ORG/servers" >/dev/null
+call -X PUT "$FROMBIG/import?world=true&library=$BIG&wait=true" >/dev/null
+expect "a server is made from it, its Nether where Paper keeps it" "$(call -o /dev/null -w '%{http_code}' "$FROMBIG/files/content?path=/world/region/r.0.1.mca") $(call -o /dev/null -w '%{http_code}' "$FROMBIG/files/content?path=/world_nether/DIM-1/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$FROMBIG/files/content?path=/world/level.dat")" "200 200 200"
+expect "and says it is from there" "$(call "$FROMBIG" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['library']['id'] == '$BIG')")" "('library', True)"
+added=$(call -X POST "$FROMBIG/snapshots?wait=true" | field "d['added']")
+echo "the server's first snapshot added $added bytes; the world is $BIGSIZE"
+[ "$added" -lt $((BIGSIZE / 10)) ] || fail "the server's first snapshot added $added bytes of a world of $BIGSIZE it shares with the library"
+echo "ok: its first snapshot adds next to nothing of the world"
+echo "changed" | call -X PUT --data-binary @- "$FROMBIG/files/content?path=/world/region/r.0.1.mca" >/dev/null
+call -X PUT "$FROMBIG/import?world=true&replace=true&library=$BIG&wait=true" >/dev/null
+expect "put back, it is the library's again" "$(call "$FROMBIG/files/content?path=/world/region/r.0.1.mca" | wc -c | tr -d ' ')" $((8 << 20))
+added=$(call "$FROMBIG/snapshots" | field "[s['added'] for s in d['snapshots'] if s['trigger'] == 'pre-replace'][0]")
+echo "the snapshot taken before it was put back added $added bytes"
+[ "$added" -lt $((BIGSIZE / 10)) ] || fail "the snapshot before putting the world back added $added bytes"
+echo "ok: and so does the one before it was put back"
+ids=$(call "$FROMBIG/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
+call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
+call -X DELETE "$FROMBIG?snapshot=false" >/dev/null
+# A world kept as the library kept them before, as its archive, is kept as
+# its own files once the panel starts again, under the same ID. That needs
+# restic in the panel, and the panel restarted.
+if [ -n "${AVSYS_E2E_PANEL_EXEC:-}" ] && [ -n "${AVSYS_E2E_PANEL_RESTART:-}" ]; then
+  panel_restic() {
+    # shellcheck disable=SC2086 # a command and its arguments
+    $AVSYS_E2E_PANEL_EXEC /usr/local/bin/restic --repo "/backups/$ORG" --password-file "/backups/$ORG.key" --no-cache "$@"
+  }
+  python3 - "$WORK/old.zip" <<'PY'
+import os, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("world/level.dat", b"x")
+    z.writestr("world/region/r.0.0.mca", os.urandom(4 << 20))
+PY
+  old=$(call --data-binary "@$WORK/old.zip" "$API/orgs/$ORG/worlds/upload?name=E2E%20old&root=world&file=old.zip")
+  OLD=$(echo "$old" | field "d['id']") || fail "the world was not uploaded to the library: $old"
+  unpacked=$(panel_restic snapshots --json --host "world-$OLD" | field "d[0]['id']") || fail "the panel's restic could not be run"
+  panel_restic backup --stdin --stdin-filename world.archive --host "world-$OLD" --tag avsys --tag trigger=template --tag by=e2e < "$WORK/old.zip" >/dev/null
+  panel_restic forget "$unpacked" >/dev/null
+  sh -c "$AVSYS_E2E_PANEL_RESTART" >/dev/null || fail "the panel did not come back"
+  for _ in $(seq 1 90); do curl -fsS -o /dev/null "$API/meta" 2>/dev/null && break; sleep 2; done
+  for _ in $(seq 1 90); do [ "$(call "$API/orgs/$ORG/worlds/$OLD" 2>/dev/null | field "(d.get('kept'), d.get('ready'))" 2>/dev/null)" = "('folders', True)" ] && break; sleep 2; done
+  expect "a world kept as an archive is kept unpacked once the panel starts, under the same ID" "$(call "$API/orgs/$ORG/worlds/$OLD" | field "(d['id'] == '$OLD', d['ready'], d['kept'], d['root'], d['size'], d.get('unpackError'))")" "(True, True, 'folders', 'world', $(((4 << 20) + 1)), None)"
+  # The archive goes once the world is no longer held, as the panel prunes
+  # it.
+  kept_as() { panel_restic snapshots --json --host "world-$OLD" | field "[('form=folders' in s['tags'], 'world.archive' in str(s['paths'])) for s in d]"; }
+  for _ in $(seq 1 60); do [ "$(kept_as 2>/dev/null)" = "[(True, False)]" ] && break; sleep 2; done
+  expect "and its archive is gone" "$(kept_as)" "[(True, False)]"
+  call -o "$WORK/old-download.zip" "$API/orgs/$ORG/worlds/$OLD/archive"
+  expect "it is downloaded as a save" "$(python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); print(sorted(n for n in z.namelist() if not n.endswith("/")))' "$WORK/old-download.zip")" "['E2E old/level.dat', 'E2E old/region/r.0.0.mca']"
+  call -X DELETE "$API/orgs/$ORG/worlds/$OLD" >/dev/null
+else
+  echo "skipped: a world kept as an archive kept unpacked as the panel starts (AVSYS_E2E_PANEL_EXEC and AVSYS_E2E_PANEL_RESTART are not set)"
+fi
+call -X DELETE "$API/orgs/$ORG/worlds/$BIG" >/dev/null
 # Its world replaced by another: a snapshot is taken first, only the world's
 # folders are replaced, and the snapshot puts the old one back.
 echo "kept" | call -X PUT --data-binary @- "$OWN/files/content?path=/kept.txt" >/dev/null
@@ -1160,9 +1285,11 @@ expect "and then replaced" "$(call "$OWN/operation")" null
 expect "a world is replaced" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" "200 404 404"
 expect "and the server's other files are kept" "$(call "$OWN/files/content?path=/kept.txt")" kept
 expect "and the server can start" "$(call "$OWN" | field "d['status'].get('message', '')")" ""
+expect "the world put in its place is said to be uploaded" "$(call "$OWN" | field "d['spec']['worldOrigin']['kind']")" upload
 before=$(call "$OWN/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'pre-replace'][0]") || fail "no snapshot was taken before the world was replaced"
 call -X POST "$OWN/snapshots/$before/restore?wait=true" >/dev/null
 expect "the snapshot before it puts the old world back" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.0.0.mca") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/region/r.1.1.mca")" "200 404"
+expect "and where it came from" "$(call "$OWN" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['file'])")" "('upload', 'save.tar.gz')"
 # Or by a new one, which the game makes as the server next starts, with the
 # settings asked for.
 expect "a new world takes the place of another" "$(call -o /dev/null -w '%{http_code}' -X PUT -d '{"properties":{"level-seed":"42"}}' "$OWN/import?world=new&replace=true")" 202
@@ -1170,6 +1297,7 @@ for _ in $(seq 1 120); do [ "$(call "$OWN/operation")" = null ] && break; sleep 
 expect "its world is gone, for the game to make" "$(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world/level.dat") $(call -o /dev/null -w '%{http_code}' "$OWN/files/content?path=/world_nether/DIM-1/region/r.0.0.mca")" "404 404"
 expect "the rest is kept" "$(call "$OWN/files/content?path=/kept.txt")" kept
 expect "and the new one is made with the seed asked for" "$(call "$OWN" | field "d['spec']['properties'].get('level-seed')")" 42
+expect "which it says" "$(call "$OWN" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['seed'])")" "('new', '42')"
 expect "with a snapshot of the old one taken first" "$(call "$OWN/snapshots" | field "len([s for s in d['snapshots'] if s['trigger'] == 'pre-replace'])")" 2
 ids=$(call "$OWN/snapshots" | field "__import__('json').dumps([s['id'] for s in d['snapshots']])")
 call -X DELETE -d "{\"ids\":$ids}" "$API/orgs/$ORG/snapshots" >/dev/null
@@ -1536,6 +1664,7 @@ twin=$(cat "$WORK/twin.json")
 case "$twin" in *'"spec"'*) ;; *) fail "the server was not duplicated: $twin" ;; esac
 expect "a copy has the original's software" "$(echo "$twin" | field "(d['spec']['version'], d['spec']['loader'], sorted(m['project'] for m in d['spec']['mods']))")" "('1.21.4', 'paper', ['luckperms', 'worldedit'])"
 expect "and its files as they were a moment ago" "$(call "$TWIN/files/content?path=/twin.txt")" "only in the original"
+expect "and its world, from where the original's came, copied from it" "$(echo "$twin" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['server'])")" "('new', 'probe')"
 [ "$asked" = 404 ] || echo "note: the copy's picture was not asked for before its files were in (got '$asked')"
 expect "and the picture that came with them, though it was asked for before" "$(call "$TWIN/icon" | python3 -c 'import hashlib, sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())')" "$shown"
 copies="len([s for s in d['snapshots'] if s['trigger'] == 'copy'])"
@@ -1591,6 +1720,7 @@ case "$made" in *'"spec"'*) ;; *) fail "no server was made from the template: $m
 FROM=$API/orgs/$ORG/servers/from-template
 expect "a server made from a template has the files of the version used" "$(call "$FROM/files/content?path=/template.txt")" "kept in the template"
 expect "and its software" "$(echo "$made" | field "(d['spec']['loader'], d['spec']['version'])")" "('paper', '1.21.4')"
+expect "and its world, by way of the template" "$(echo "$made" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['template']['id'] == '$TPL')")" "('new', True)"
 expect "a template's version is not deleted as a server's snapshot" "$(call -X DELETE "$API/orgs/$ORG/snapshots/$FIRST" | field "d['code']")" template
 call -X DELETE "$FROM?snapshot=false" >/dev/null
 # One made with a new world has the template's files but not its world,
@@ -1598,6 +1728,7 @@ call -X DELETE "$FROM?snapshot=false" >/dev/null
 fresh=$(call -d "{\"name\":\"fresh-world\",\"fromTemplate\":\"$TPL\",\"world\":\"new\",\"spec\":{\"state\":\"Stopped\",\"expose\":{\"hostname\":\"fresh-world.$ORG.test\"}}}" "$API/orgs/$ORG/servers?wait=true")
 case "$fresh" in *'"spec"'*) ;; *) fail "no server was made from the template with a new world: $fresh" ;; esac
 FRESH=$API/orgs/$ORG/servers/fresh-world
+expect "a new world is said to be new" "$(echo "$fresh" | field "(d['spec']['worldOrigin']['kind'], 'template' in d['spec']['worldOrigin'])")" "('new', False)"
 expect "a server made with a new world has the template's files and not its world" "$(call "$FRESH/files/content?path=/template.txt") $(call -o /dev/null -w '%{http_code}' "$FRESH/files/content?path=/world/level.dat")" "kept in the template 404"
 expect "but the datapacks that were in it" "$(call "$FRESH/files/content?path=/world/datapacks/e2e.zip")" "a datapack"
 expect "and not the old world's seed" "$(call "$FRESH/files/content?path=/server.properties" | grep -c '^level-seed=' || true)" 0
@@ -1613,6 +1744,7 @@ OWNT=$API/orgs/$ORG/servers/own-from-template
 expect "a server made from it has its files and not its version's world" "$(call "$OWNT/files/content?path=/template.txt") $(call -o /dev/null -w '%{http_code}' "$OWNT/files/content?path=/world/level.dat")" "kept in the template 404"
 call -X PUT "$OWNT/import?world=true&template=$TPL&wait=true" >/dev/null
 expect "and is given the template's world" "$(call -o /dev/null -w '%{http_code}' "$OWNT/files/content?path=/world/level.dat") $(call "$OWNT/files/content?path=/world/datapacks/e2e.zip")" "200 a datapack"
+expect "which it says came with the template" "$(call "$OWNT" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin']['template']['id'] == '$TPL')")" "('template', True)"
 call -X DELETE "$OWNT?snapshot=false" >/dev/null
 expect "its world is taken away" "$(call -X DELETE "$API/orgs/$ORG/templates/$TPL/world" | field "d.get('world')")" None
 # Duplicated from the version used, and made from a snapshot: copies, under
@@ -1687,6 +1819,31 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  step "a Fabric server's restart while Fabric's site does not answer"
+  # Fabric installed, a restart asked to ask a site that answers nothing
+  # for its loader starts with the loader it has, and fetches nothing.
+  FAB=$API/orgs/$ORG/servers/fabric
+  made=$(call -d '{"name":"fabric","spec":{"eula":true,"loader":"fabric","version":"1.21.4","resources":{"memory":"2Gi"},"storage":{"size":"2Gi"}}}' "$API/orgs/$ORG/servers")
+  case "$made" in *'"spec"'*) ;; *) fail "the server was not made: $made" ;; esac
+  wait_phase Running "$FAB"
+  loader=$(call "$FAB/files/content?path=/.fabric-manifest.json" | field "d['origin']['loader']") || fail "Fabric was not installed"
+  set_spec '{"spec":{"env":[{"name":"FABRIC_META_BASE_URL","value":"http://127.0.0.1:9"}]}}' "$FAB"
+  act restart "$FAB"
+  for _ in $(seq 1 90); do [ "$(phase_now "$FAB")" != Running ] && break; sleep 1; done
+  wait_phase Running "$FAB"
+  started=$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" fabric 2>/dev/null)
+  expect "it starts with the loader it has" "$started" "[avsys] 127.0.0.1:9 does not answer: starting with the installed Fabric loader $loader"
+  case "$started" in *"'install-fabric-loader' command failed"* | *"Downloading"*"fabric-server-mc"*) fail "and the image asked for Fabric anyway" ;; esac
+  expect "and the game runs on it" "$(call -f "$FAB/files/content?path=/logs/latest.log")" "Loading Minecraft 1.21.4 with Fabric Loader $loader"
+  game_clean "and its log is clean" "$FAB"
+  call -o /dev/null -X DELETE "$FAB?snapshot=false"
+  for _ in $(seq 1 30); do
+    [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break
+    sleep 2
+  done
+fi
+
 step "a new server from a .mrpack"
 # A Modrinth pack file made here: Fabric on 1.21.4, one mod for the server
 # and one for players only, and files of its own for both and for the
@@ -1727,6 +1884,27 @@ wait_phase Running "$PACKED"
 expect "started, it has the pack's mod for the server and not the one for players" "$(call "$PACKED/files?path=/mods" | field "sorted(e['name'] for e in d['entries'])")" "['lithium-fabric-0.15.3+mc1.21.4.jar']"
 expect "and the game loaded it" "$(call "$PACKED/files/content?path=/logs/latest.log" | grep -q -- '- lithium ' && echo loaded)" loaded
 expect "and the pack's own files" "$(call "$PACKED/files/content?path=/config/e2e.txt") / $(call "$PACKED/files/content?path=/e2e-server.txt")" "from the pack / for the server"
+
+step "a pack's restart while Fabric's site does not answer"
+# The image reads an uploaded pack again on every start, puts its own files
+# back, and asks Fabric's site for its loader. With that site out of the
+# start's reach (a proxy that is not there, which only the start's own
+# questions go through), the pack is started with what it has, Fabric
+# asking nothing, and its files left as they are.
+echo "changed here" | call -X PUT --data-binary @- "$PACKED/files/content?path=/config/e2e.txt" >/dev/null
+set_spec '{"spec":{"env":[{"name":"https_proxy","value":"http://127.0.0.1:9"}]}}' "$PACKED"
+act restart "$PACKED"
+for _ in $(seq 1 90); do [ "$(phase_now "$PACKED")" != Running ] && break; sleep 1; done
+wait_phase Running "$PACKED"
+if [ -n "${AVSYS_E2E_CONTAINER_LOG:-}" ]; then
+  started=$(sh -c "$AVSYS_E2E_CONTAINER_LOG" container-log "$ORG" packed 2>/dev/null)
+  expect "it starts with the pack it has" "$started" "[avsys] meta.fabricmc.net does not answer: starting with the installed E2E Pack"
+  case "$started" in *"Processing modpack files"* | *"'install-modrinth-modpack' command failed"*) fail "and the image installed the pack anyway" ;; esac
+fi
+expect "on the pack's loader" "$(call -f "$PACKED/files/content?path=/logs/latest.log")" "Loading Minecraft 1.21.4 with Fabric Loader 0.16.10"
+expect "with the pack's mod" "$(call "$PACKED/files/content?path=/logs/latest.log" | grep -q -- '- lithium ' && echo loaded)" loaded
+expect "and the files as they were" "$(call "$PACKED/files/content?path=/config/e2e.txt")" "changed here"
+game_clean "and its log is clean" "$PACKED"
 call -o /dev/null -X DELETE "$PACKED?snapshot=false"
 for _ in $(seq 1 30); do
   [ "$(call "$API/orgs/$ORG/servers" | field 'len(d)')" = 1 ] && break

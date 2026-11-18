@@ -322,6 +322,40 @@ func TestRestoreIntoAnotherServer(t *testing.T) {
 	}
 }
 
+// A world kept as its own files by the panel is put back in a server's
+// workspace, in a folder of its own emptied first, its files the
+// workspace's own, and nothing else of the server's touched.
+func TestRestoreFoldersIntoAWorkspace(t *testing.T) {
+	ws, m := workspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"data/world/level.dat":              "a world\n",
+		"data/world/region/r.0.0.mca":       "land\n",
+		"data/world_nether/DIM-1/r.0.0.mca": "fire\n",
+	})
+	kept, err := m.KeepFolders(ctx, "alpha", dir, []string{"data/world", "data/world_nether"}, "world-w1", "owner")
+	if err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	sh(t, ws, `mkdir -p /data/world /data/.avsys/import/old && echo mine > /data/world/level.dat && echo stale > /data/.avsys/import/old/f`)
+	var reported int
+	if err := m.RestoreFolders(ctx, "alpha", ws, kept.ID, "/data", "/data/.avsys/import", func(Progress) { reported++ }); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	got := sh(t, ws, `cat /data/.avsys/import/world/level.dat /data/.avsys/import/world/region/r.0.0.mca /data/.avsys/import/world_nether/DIM-1/r.0.0.mca;
+		test -e /data/.avsys/import/old && echo STALE; cat /data/world/level.dat; stat -c %u /data/.avsys/import/world/level.dat; true`)
+	if want := "a world\nland\nfire\nmine\n1000"; got != want {
+		t.Errorf("after putting it back:\n%s\nwant:\n%s", got, want)
+	}
+	for _, target := range []string{"/tmp/elsewhere", "/data", "/data/../etc"} {
+		if err := m.RestoreFolders(ctx, "alpha", ws, kept.ID, "/data", target, nil); err == nil {
+			t.Errorf("put back into %s", target)
+		}
+	}
+}
+
 // What a workspace is given can be added to and read, never deleted from,
 // even by someone who has the repository password.
 func TestAWorkspaceCannotDeleteSnapshots(t *testing.T) {
@@ -1041,24 +1075,193 @@ func TestArchive(t *testing.T) {
 	if err := m.Archive(ctx, "alpha", list[0].ID, []Folder{{"/data/elsewhere", "world"}}, io.Discard); !errors.Is(err, ErrNotFound) {
 		t.Errorf("no such folder: %v", err)
 	}
-	// Kept as a file of its own, the same.
-	kept, err := m.KeepArchive(ctx, "alpha", list[0].ID, folders, "world-w1", "world.archive", "owner")
+}
+
+// writeTree writes files, by their paths under root.
+func writeTree(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// tarFiles are the files and folders of a tar, by name, with what each has.
+func tarFiles(t *testing.T, r io.Reader) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return got
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(tr)
+		got[h.Name] = string(data)
+	}
+}
+
+// A server's world, copied out of its snapshot as a world kept as its own
+// files: its world's folders alone, where they were, with nothing copied.
+// One of a folder it does not have is nothing.
+func TestCopyFolders(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := m.ensure(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"data/server.properties":            "motd=hi",
+		"data/lobby/level.dat":              "a world",
+		"data/lobby/region/r.0.0.mca":       "land",
+		"data/lobby_nether/DIM-1/r.0.0.mca": "fire",
+		"data/lobbyist/level.dat":           "another world",
+		"data/l[o]bby*/level.dat":           "a world whose name is a pattern",
+	})
+	backup := exec.Command("restic", "--repo", m.repoDir("alpha"), "--password-file", m.keyFile("alpha"), "backup", "data", "--host", "survival", "--tag", "avsys", "--tag", "trigger=manual", "--tag", "by=alex")
+	backup.Dir = root
+	if out, err := backup.CombinedOutput(); err != nil {
+		t.Fatalf("backup: %v: %s", err, out)
+	}
+	list, err := m.List(ctx, "alpha")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("snapshots: %v, %v", list, err)
+	}
+	src := list[0]
+	kept, err := m.CopyFolders(ctx, "alpha", src.ID, []string{"/data/lobby", "/data/lobby_nether", "/data/lobby_the_end"}, "world-w1", "owner")
+	if err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	if kept.Server != "world-w1" || kept.Trigger != TriggerTemplate || kept.By != "owner" || kept.Form != FormFolders || kept.Files != 3 || kept.Size != int64(len("a world")+len("land")+len("fire")) || kept.Lineage == src.Lineage {
+		t.Errorf("kept as %+v", kept)
+	}
+	var out bytes.Buffer
+	if err := m.Archive(ctx, "alpha", kept.ID, []Folder{{"/data", "data"}}, &out); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"data/lobby/": "", "data/lobby/level.dat": "a world", "data/lobby/region/": "", "data/lobby/region/r.0.0.mca": "land",
+		"data/lobby_nether/": "", "data/lobby_nether/DIM-1/": "", "data/lobby_nether/DIM-1/r.0.0.mca": "fire"}
+	if got := tarFiles(t, &out); !maps.Equal(got, want) {
+		t.Errorf("it holds %v, want %v", got, want)
+	}
+	// A name restic would take for a pattern is taken as it is.
+	odd, err := m.CopyFolders(ctx, "alpha", src.ID, []string{"/data/l[o]bby*"}, "world-w2", "owner")
+	if err != nil || odd.Files != 1 {
+		t.Fatalf("copy of an odd name: %+v, %v", odd, err)
+	}
+	if level, err := m.File(ctx, "alpha", odd.ID, "/data/l[o]bby*/level.dat", 1<<10); err != nil || string(level) != "a world whose name is a pattern" {
+		t.Errorf("its level.dat: %q, %v", level, err)
+	}
+	if _, err := m.CopyFolders(ctx, "alpha", src.ID, []string{"/data/elsewhere"}, "world-w3", "owner"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a copy of no such folder: %v", err)
+	}
+	if _, err := m.CopyFolders(ctx, "alpha", src.ID, []string{"data/lobby"}, "world-w3", "owner"); err == nil {
+		t.Error("a folder named from no top was copied")
+	}
+	// The server's snapshot is as it was, and nothing else was made.
+	if got, err := m.Get(ctx, "alpha", src.ID); err != nil || got.Server != "survival" || got.Form != "" || got.By != "alex" {
+		t.Errorf("the original is now %+v, %v", got, err)
+	}
+	if list, _ := m.List(ctx, "alpha"); len(list) != 3 {
+		t.Errorf("%d snapshots, want 3", len(list))
+	}
+}
+
+// Folders of the panel's own kept as a world's own files: under their names
+// from the folder's top, as a template's, and checked. A snapshot of a
+// server with the same world in it adds next to nothing to the repository.
+func TestKeepFolders(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	dir := t.TempDir()
+	// Land no compression makes smaller: 8 MB of it.
+	land := make([]byte, 8<<20)
+	if _, err := rand.Read(land); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, dir, map[string]string{
+		"data/world/level.dat":                "a world",
+		"data/world/region/r.0.0.mca":         string(land),
+		"data/world_nether/DIM-1/r.0.0.mca":   "fire",
+		"data/elsewhere/not-of-the-world.txt": "left out",
+	})
+	before := time.Now().Add(-time.Second)
+	kept, err := m.KeepFolders(ctx, "alpha", dir, []string{"data/world", "data/world_nether"}, "world-w1", "owner")
 	if err != nil {
 		t.Fatalf("keep: %v", err)
 	}
-	var again bytes.Buffer
-	if err := m.Stream(ctx, "alpha", kept.ID, "/world.archive", &again); err != nil {
+	if !m.Changed("alpha").After(before) {
+		t.Errorf("the repository is not noted as changed")
+	}
+	if kept.Server != "world-w1" || kept.Trigger != TriggerTemplate || kept.By != "owner" || kept.Form != FormFolders || kept.Files != 3 || kept.Size != int64(len(land)+len("a world")+len("fire")) {
+		t.Errorf("kept as %+v", kept)
+	}
+	if level, err := m.File(ctx, "alpha", kept.ID, "/data/world/level.dat", 1<<10); err != nil || string(level) != "a world" {
+		t.Errorf("its level.dat: %q, %v", level, err)
+	}
+	if other, err := m.File(ctx, "alpha", kept.ID, "/data/elsewhere/not-of-the-world.txt", 1<<10); err != nil || other != nil {
+		t.Errorf("what is not of the world was kept: %q, %v", other, err)
+	}
+	// A server given the world, and snapshotted: what it adds is what it
+	// has besides the world.
+	server := t.TempDir()
+	writeTree(t, server, map[string]string{
+		"data/server.properties":      "motd=hi",
+		"data/world/level.dat":        "a world, opened",
+		"data/world/region/r.0.0.mca": string(land),
+		"data/world/DIM-1/r.0.0.mca":  "fire",
+		"data/.avsys/snapshot.json":   "{}",
+	})
+	backup := exec.Command("restic", "--repo", m.repoDir("alpha"), "--password-file", m.keyFile("alpha"), "--json", "backup", "data", "--host", "survival", "--tag", "avsys", "--tag", "trigger=manual")
+	backup.Dir = server
+	if out, err := backup.CombinedOutput(); err != nil {
+		t.Fatalf("backup: %v: %s", err, out)
+	}
+	list, err := m.List(ctx, "alpha")
+	if err != nil {
 		t.Fatal(err)
 	}
-	var first bytes.Buffer
-	if err := m.Archive(ctx, "alpha", list[0].ID, folders, &first); err != nil {
-		t.Fatal(err)
+	for _, s := range list {
+		if s.Server == "survival" && (s.Added > 64<<10 || s.Added <= 0) {
+			t.Errorf("the server's snapshot added %d bytes of a world of %d it shares", s.Added, len(land))
+		}
 	}
-	if !bytes.Equal(again.Bytes(), first.Bytes()) || kept.Server != "world-w1" || kept.Trigger != TriggerTemplate {
-		t.Errorf("kept as %+v, %d bytes, not the %d of the archive", kept, again.Len(), first.Len())
+	// None to keep, or one outside the folder, is refused.
+	if _, err := m.KeepFolders(ctx, "alpha", dir, nil, "world-w2", "owner"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("none: %v", err)
 	}
-	if _, err := m.KeepArchive(ctx, "alpha", list[0].ID, []Folder{{"/data/elsewhere", "world"}}, "world-w2", "world.archive", "owner"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("kept of no such folder: %v", err)
+	if _, err := m.KeepFolders(ctx, "alpha", dir, []string{"../elsewhere"}, "world-w2", "owner"); err == nil {
+		t.Error("a folder outside was kept")
+	}
+	// One whose files cannot all be read keeps nothing.
+	if os.Geteuid() != 0 {
+		if err := os.Chmod(filepath.Join(dir, "data", "world_nether", "DIM-1", "r.0.0.mca"), 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.KeepFolders(ctx, "alpha", dir, []string{"data/world", "data/world_nether"}, "world-w3", "owner"); err == nil {
+			t.Error("a world missing a file was kept")
+		}
+		list, _ := m.List(ctx, "alpha")
+		for _, s := range list {
+			if s.Server == "world-w3" {
+				t.Errorf("what was kept of it is left: %+v", s)
+			}
+		}
 	}
 }
 

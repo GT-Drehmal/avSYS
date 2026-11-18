@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -46,6 +48,31 @@ type Gateway struct {
 	// apart, while its pod may be being replaced; 0 is the usual. A panel
 	// with no cluster behind it, as the browser tests run, tries once.
 	WorkspaceTries int
+	// timing, where set, replaces the usual waits, for tests.
+	timing *timing
+}
+
+// timing is how long the gateway waits on either side of a connection.
+type timing struct {
+	// askEvery is how long a side may be quiet before it is asked whether it
+	// is still there, and quietMost how long before it is taken as gone.
+	askEvery, quietMost time.Duration
+	// closeWait is how long what one side of a channel sent just before it
+	// closed is given to reach the other, when the other is not taking it.
+	closeWait time.Duration
+	// leftQuiet is how long a command's output may be quiet after the
+	// command has exited before its session is ended, though something it
+	// started still holds the output open.
+	leftQuiet time.Duration
+}
+
+var usualTiming = timing{askEvery: 30 * time.Second, quietMost: 90 * time.Second, closeWait: 5 * time.Second, leftQuiet: 2 * time.Second}
+
+func (g *Gateway) waits() timing {
+	if g.timing != nil {
+		return *g.timing
+	}
+	return usualTiming
 }
 
 // LoadOrCreateKey returns the ed25519 key stored under name, generating it on
@@ -133,8 +160,9 @@ func (g *Gateway) Serve(ctx context.Context, ln net.Listener) error {
 
 func (g *Gateway) handle(ctx context.Context, nc net.Conn, cfg *ssh.ServerConfig) {
 	defer nc.Close()
+	person := heard(nc)
 	_ = nc.SetDeadline(time.Now().Add(30 * time.Second))
-	down, downChans, downReqs, err := ssh.NewServerConn(nc, cfg)
+	down, downChans, downReqs, err := ssh.NewServerConn(person, cfg)
 	if err != nil {
 		return
 	}
@@ -144,7 +172,11 @@ func (g *Gateway) handle(ctx context.Context, nc net.Conn, cfg *ssh.ServerConfig
 	ext := down.Permissions.Extensions
 	log := g.Log.With("user", ext[extUsername], "namespace", ext[extNamespace], "server", ext[extServer])
 
-	up, upChans, upReqs, err := g.dialWorkspace(ctx, ext[extNamespace], ext[extServer], g.WorkspaceTries)
+	var workspace *heardConn
+	up, upChans, upReqs, err := g.dialWorkspace(ctx, ext[extNamespace], ext[extServer], g.WorkspaceTries, func(c net.Conn) net.Conn {
+		workspace = heard(c)
+		return workspace
+	})
 	if err != nil {
 		log.Warn("workspace unreachable", "error", err)
 		go ssh.DiscardRequests(downReqs)
@@ -156,33 +188,122 @@ func (g *Gateway) handle(ctx context.Context, nc net.Conn, cfg *ssh.ServerConfig
 	log.Info("ssh session opened", "remote", nc.RemoteAddr().String())
 	_ = g.Store.Audit(ctx, store.AuditEntry{UserID: ext[extUserID], Action: "ssh.connect", Target: ext[extNamespace] + "/" + ext[extServer]})
 
+	// A side that has gone without a word, as a laptop that sleeps or a pod
+	// that is replaced can, is let go of, so that the other is not left
+	// waiting on it.
+	waits := g.waits()
+	stop := make(chan struct{})
+	defer close(stop)
+	go watch(down, person, waits, stop)
+	go watch(up, workspace, waits, stop)
+
 	env := map[string]string{"AVSYS_USER": ext[extUsername]}
-	go relayChannels(up, downChans, env)
-	go relayChannels(down, upChans, nil)
+	// The relaying counts itself until it has taken the last channel, so
+	// that the count cannot reach nothing while more may still be added.
+	var sessions sync.WaitGroup
+	sessions.Add(1)
+	go relayChannels(up, downChans, env, &sessions, waits)
+	go relayChannels(down, upChans, nil, nil, waits)
 	go relayRequests(up, downReqs, nil)
 	// The workspace's own host keys must not reach the client: it knows this
 	// connection by the gateway's key.
 	go relayRequests(down, upReqs, func(t string) bool { return !strings.HasPrefix(t, "hostkeys-") })
 
-	done := make(chan struct{}, 2)
-	go func() { _ = down.Wait(); done <- struct{}{} }()
-	go func() { _ = up.Wait(); done <- struct{}{} }()
+	personGone := make(chan struct{})
+	workspaceGone := make(chan struct{})
+	go func() { _ = down.Wait(); close(personGone) }()
+	go func() { _ = up.Wait(); close(workspaceGone) }()
 	select {
-	case <-done:
+	case <-personGone:
+		// What the person left running is told they have gone before the
+		// connection to it ends.
+		waitFor(&sessions, waits.closeWait+time.Second)
+	case <-workspaceGone:
 	case <-ctx.Done():
 	}
 	log.Info("ssh session closed")
 }
+
+// waitFor waits for wg, for no longer than limit.
+func waitFor(wg *sync.WaitGroup, limit time.Duration) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(limit):
+	}
+}
+
+// heardConn notes when anything last came in on a connection.
+type heardConn struct {
+	net.Conn
+	last atomic.Int64
+}
+
+func heard(c net.Conn) *heardConn {
+	h := &heardConn{Conn: c}
+	h.last.Store(time.Now().UnixNano())
+	return h
+}
+
+func (h *heardConn) Read(p []byte) (int, error) {
+	n, err := h.Conn.Read(p)
+	if n > 0 {
+		h.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+func (h *heardConn) quiet() time.Duration {
+	return time.Since(time.Unix(0, h.last.Load()))
+}
+
+// watch asks conn whether it is still there once it has been quiet for a
+// while, and closes it once it has been quiet too long: anything heard on it,
+// an answer or the data it sends, counts.
+func watch(conn ssh.Conn, h *heardConn, waits timing, stop <-chan struct{}) {
+	tick := time.NewTicker(waits.askEvery / 3)
+	defer tick.Stop()
+	asking := make(chan struct{}, 1)
+	for {
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+		}
+		quiet := h.quiet()
+		if quiet >= waits.quietMost {
+			conn.Close()
+			return
+		}
+		if quiet >= waits.askEvery {
+			select {
+			case asking <- struct{}{}:
+				go func() {
+					// Every SSH implementation answers this, if only to say it
+					// does not know it.
+					_, _, _ = conn.SendRequest("keepalive@openssh.com", true, nil)
+					<-asking
+				}()
+			default:
+			}
+		}
+	}
+}
+
+// workspaceUser is who the gateway signs in to a workspace as.
+var workspaceUser = "mc"
 
 // workspaceDials is how many times a workspace is tried, a second apart,
 // before it is taken as unreachable: long enough for a pod being replaced.
 var workspaceDials = 15
 
 // dialWorkspace opens an SSH connection to a server's workspace, waiting
-// briefly for a pod that is being replaced.
-func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string, tries int) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+// briefly for a pod that is being replaced. wrap, if set, is given the
+// connection to the workspace before SSH is spoken over it.
+func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string, tries int, wrap func(net.Conn) net.Conn) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
 	cfg := &ssh.ClientConfig{
-		User: "mc",
+		User: workspaceUser,
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(g.WorkspaceKey)},
 		// The workspace is reached over the cluster's pod network (or the API
 		// server's tunnel) by pod name, and its host key is generated per pod,
@@ -206,6 +327,9 @@ func (g *Gateway) dialWorkspace(ctx context.Context, namespace, server string, t
 		if err != nil {
 			lastErr = err
 			continue
+		}
+		if wrap != nil {
+			nc = wrap(nc)
 		}
 		conn, chans, reqs, err := ssh.NewClientConn(nc, server, cfg)
 		if err != nil {
@@ -233,7 +357,7 @@ func (g *Gateway) DialWorkspaceNow(ctx context.Context, namespace, server string
 }
 
 func (g *Gateway) dialClient(ctx context.Context, namespace, server string, tries int) (*ssh.Client, error) {
-	conn, chans, reqs, err := g.dialWorkspace(ctx, namespace, server, tries)
+	conn, chans, reqs, err := g.dialWorkspace(ctx, namespace, server, tries, nil)
 	if err != nil {
 		return nil, err
 	}

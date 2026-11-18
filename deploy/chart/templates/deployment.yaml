@@ -86,6 +86,10 @@ spec:
               value: {{ include "avsys.publicPort" (dict "root" . "port" "minecraft") | quote }}
             - name: AVSYS_SSH_PUBLIC_PORT
               value: {{ include "avsys.publicPort" (dict "root" . "port" "ssh") | quote }}
+            {{- with .Values.trustedProxies }}
+            - name: AVSYS_TRUSTED_PROXIES
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- with .Values.sshPublicHost }}
             - name: AVSYS_SSH_PUBLIC_HOST
               value: {{ . | quote }}

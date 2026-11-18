@@ -62,6 +62,13 @@ expose:
   # Local keeps players' own addresses visible to the cluster.
   externalTrafficPolicy: ""
 
+# Addresses and ranges of the reverse proxies in front of the panel, as
+# [127.0.0.1, 100.64.0.0/10]. A request from one is taken to come from the
+# address its X-Forwarded-For gives, for sign-in limits and the sessions
+# shown in Account. Empty: every request comes from its connection's
+# address, and no header is read. List only proxies you run.
+trustedProxies: []
+
 # Hostname shown in SSH instructions, if not the host of publicURL.
 sshPublicHost: ""
 

@@ -22,8 +22,8 @@ func gameContainer(pod *corev1.Pod) *corev1.Container {
 }
 
 // Every server run by the image it is written for starts through
-// startScript. One with an image of its own, or a modpack, is started as
-// the image starts itself.
+// startScript, or for a modpack, packScript. One with an image of its own
+// is started as the image starts itself.
 func TestStartScript(t *testing.T) {
 	for name, c := range map[string]struct {
 		mutate func(*avsysv1.MinecraftServer)
@@ -60,8 +60,8 @@ func TestStartScript(t *testing.T) {
 				t.Errorf("%s: the game is started with %q", name, game.Command)
 			}
 		} else if startsThroughPackScript(mc) {
-			// A Modrinth modpack is installed by the image, through packScript.
-			if want := []string{"/bin/sh", "-c", packScript}; strings.Join(game.Command, "\x00") != strings.Join(want, "\x00") {
+			// A modpack is installed by the image, through packScript.
+			if want := []string{"/bin/sh", "-c", packScript(mc.Spec.Modpack)}; strings.Join(game.Command, "\x00") != strings.Join(want, "\x00") {
 				t.Errorf("%s: the game is started with %q", name, game.Command)
 			}
 		} else if len(game.Command) != 0 {

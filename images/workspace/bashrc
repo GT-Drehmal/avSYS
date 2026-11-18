@@ -11,3 +11,9 @@ shopt -s checkwinsize histappend
 PS1='\[\e[38;5;80m\]${AVSYS_USER:-mc}@${AVSYS_SERVER:-workspace}\[\e[0m\]:\[\e[38;5;245m\]\w\[\e[0m\]\$ '
 alias ls='ls --color=auto' ll='ls -lah' grep='grep --color=auto'
 [ -f /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion
+# A person opening a terminal is told what they can do here, once per
+# session (not again in a shell started inside it). ~/.hushlogin turns it off.
+if [ -z "${AVSYS_GREETED:-}" ] && [ -t 1 ] && [ ! -e "$HOME/.hushlogin" ]; then
+  export AVSYS_GREETED=1
+  avsys-hello 2>/dev/null
+fi

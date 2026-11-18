@@ -53,6 +53,7 @@ COPY images/workspace/profile.sh /etc/profile.d/avsys.sh
 COPY images/workspace/bashrc /etc/bash.bashrc
 COPY images/workspace/entrypoint.sh /usr/local/bin/avsys-workspace
 COPY images/workspace/mc /usr/local/bin/mc
+COPY images/workspace/hello /usr/local/bin/avsys-hello
 COPY images/workspace/tools /usr/local/bin/tools
 COPY images/workspace/shell /usr/local/bin/avsys-shell
 # Found before the real ones, to say why they will not do and what will.

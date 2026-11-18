@@ -82,6 +82,12 @@ jobs:
           docker cp "$(docker create avsys-workspace:ci)":/usr/local/bin/restic /usr/local/bin/restic
           restic version
           AVSYS_TEST_WORKSPACE_IMAGE=avsys-workspace:ci go test -count=1 ./internal/backup/
+      # The library's worlds with restic there: unpacked, kept, put back,
+      # downloaded, unpacked from the archives they were kept as before, and
+      # what a server made from one adds. Without restic, the run above
+      # skips these.
+      - name: World library
+        run: go test -count=1 -run 'World|Library|Unpack|Refused' ./internal/api/
       # The CRD from api/, and deploy/install.yaml and the chart's test
       # renders from deploy/chart (hack/chart.sh). Then helm lint with each
       # set of values, and values the chart must refuse. That what it makes

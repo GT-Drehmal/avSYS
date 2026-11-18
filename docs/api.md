@@ -110,7 +110,10 @@ curl -H "Authorization: Bearer $TOKEN" -X POST "$AVSYS/orgs/friends/servers/crea
 Wrong passwords are counted per address and username: eight within ten
 minutes hold that pair off (`429 rate_limited`) until the oldest is ten
 minutes old. Two-factor codes are counted the same way per account, from
-anywhere. The address is the connection's own; forwarded-for headers are
+anywhere. The address is the connection's own. Only from a proxy the panel
+is set to trust (see
+[Behind a reverse proxy](install.md#behind-a-reverse-proxy)) is it read
+from `X-Forwarded-For` instead; forwarded-for headers from anyone else are
 not read.
 
 ## Sign-in and the public routes
@@ -740,9 +743,13 @@ Take one off. **Admin.** Returns the list.
 ## World library
 
 Worlds kept to give to servers. A world is
-`{id, name, description, createdBy, createdAt, updatedAt, root, version?, file?, size, unpacked?, source, saving?, ready, error?, resourcePack?}`.
+`{id, name, description, createdBy, createdAt, updatedAt, root, version?, file?, size, unpacked?, source, saving?, ready, error?, kept?, unpacking?, unpackError?, resourcePack?}`.
 `source` is `upload`, `server:<name>` or `snapshot:<server>`; `ready` is
-false while it is being saved.
+false while it is being saved. `kept` is `folders` for a world kept as its
+own files, whose `size` is the world's, or `archive` for one kept as the
+archive it came in, as worlds were before; such a one says `unpacking`
+while it is being kept as its own files instead, and `unpackError` if it
+could not be, and is used as it is meanwhile.
 
 ### `GET /orgs/{org}/worlds`
 
@@ -760,8 +767,10 @@ with `?wait=true`, `201` once saved.
 
 Add a world from an archive. **Operator.** Query: `name`, `description?`,
 `root?` (the folder in the archive that is the world), `version?`,
-`file?`, `unpacked?`. Body: the archive (up to 2 GB), or
-`?upload=<id>&size=<bytes>`. Returns `201` with the world.
+`file?`. Body: the archive, a `.zip`, `.tar` or `.tar.gz` (up to 2 GB), or
+`?upload=<id>&size=<bytes>`. The archive is unpacked and the world kept as
+its own files: `400` if `root` has no `level.dat`, `507` if it does not fit
+on the panel's disk. Returns `201` with the world, once it is kept.
 
 ### `GET /orgs/{org}/worlds/{world}`
 
@@ -779,8 +788,9 @@ Add a world from an archive. **Operator.** Query: `name`, `description?`,
 
 ### `GET /orgs/{org}/worlds/{world}/archive`
 
-Download it. **Operator.** An uploaded world comes back as the file that
-was uploaded; a saved one as a zip of a single-player save.
+Download it. **Operator.** A zip of a single-player save, made as it is
+sent. One uploaded and still kept as an archive comes back as the file that
+was uploaded.
 
 ### `GET /orgs/{org}/worlds/{world}/icon`
 
@@ -941,9 +951,31 @@ The `spec` of a server, as in `kubectl get mcs -o yaml`:
 | `ports` | Extra ports, up to 8: `[{name, port, protocol: TCP\|UDP, for?}]`. Not 25565 or 25575. |
 | `sleep` | `{enabled, idleMinutes}` (default 15). Only with the router. |
 | `backups` | The server's own snapshot schedule: any of `{enabled, minute, keep}`; what is left out follows the organization. |
+| `worldOrigin` | Where its world came from. Set by the panel; a request cannot set it. See [Where a world came from](#where-a-world-came-from). |
 | `image` | Another image in place of `itzg/minecraft-server`. |
 | `env` | More environment variables for the game, applied last. |
 | `nodeSelector` | Leave placing to the scheduler, on these nodes. |
+
+#### Where a world came from
+
+`spec.worldOrigin` is `{kind, library?, seed?, file?, server?, snapshot?, template?, time}`,
+written by the panel whenever it puts a world in. `time` is when. `kind` is:
+
+| `kind` | |
+| --- | --- |
+| `new` | Made by the game: a new server, `world=new` or `world=none` on import, or a copy or snapshot made with `world: "new"`. `seed` is the one asked for, if any. |
+| `library` | `library: {id, name}`: the library's world, named as it was then. |
+| `upload` | A world sent to `PUT .../import?world=true`; `file` is its name as the request's `file` gave it. |
+| `archive` | A server's archive imported with its world; `file` as above. |
+| `copy`, `snapshot`, `template` | The world came with a copy, a snapshot or a template that knew nothing of where it came from. |
+
+A copy (`fromServer`), a server made from another's snapshot or a template
+keep the source's `worldOrigin`, with `server` (the original, or the
+server the snapshot is of), `snapshot` (its ID) or `template: {id, name}`
+saying what it came by way of, and `time` now: a copy of a server made
+from the library is still that library world. A server brought back from
+its own snapshot, and a restore, have the snapshot's, as it was then. A
+server made before the panel kept this, or outside it, has none.
 
 `status` has `phase` (`Stopped`, `Stopping`, `Starting`, `Running`,
 `Sleeping` or `Error`), `message`, `address` (what players type),
@@ -996,6 +1028,7 @@ Put files into a server from an archive: a whole server folder, or a world.
 | `root` | The folder in the archive to take. |
 | `template=<id>`, `library=<id>` | No archive: the world of a template or of the library. `pack=true` also takes its resource pack. |
 | `from=upload`, `upload`, `size` | The archive was sent in parts with [`PUT .../import/upload`](#put-orgsorgserversserverimportupload). |
+| `file` | The archive's name, kept in `spec.worldOrigin.file`. |
 | `version` | The game version the world was last opened in. |
 | `content=listed` | Leave out the archive's mods, plugins and datapacks; those in `spec.mods` are installed instead. |
 | `players=listed` | Trim the archive's operators and whitelist to the server's lists. |
@@ -1005,6 +1038,18 @@ Body: the archive (`.zip` or `.tar.gz`), up to 2 GiB. Returns `202` with the
 server once the archive is in; the rest goes on in the background. With
 `?wait=true`, `200` when all is done. Errors: `has_files` and `has_world`
 (409) when there is something to replace and `replace` was not said.
+Once the world is in, `spec.worldOrigin` says where it came from. Putting a
+library world back is this with `world=true&replace=true&library=<id>`.
+
+### `GET /orgs/{org}/servers/{server}/world`
+
+What the server's world says of itself, read from its files. **Viewer.**
+Returns `{level, exists, name?, seed?, version?, lastPlayed?, size?}`:
+the world's folder (as `server.properties` names it), whether it is there
+yet, its `level.dat`'s name, seed, the game version it was last opened in
+and when it was last played, and its folders' size in bytes, left out if
+counting them takes too long. `502 workspace` when the files cannot be
+reached; `409 busy` while files are being put in.
 
 ### `GET /orgs/{org}/servers/{server}/import/upload`
 

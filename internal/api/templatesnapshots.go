@@ -34,12 +34,12 @@ func notingLock(orgID string) *sync.Mutex {
 
 func notedOf(snap *backup.Snapshot) store.TemplateSnapshot {
 	return store.TemplateSnapshot{ID: snap.ID, Host: snap.Server, Time: snap.Time, By: snap.By, Version: snap.Version, Loader: snap.Loader,
-		Size: snap.Size, Added: snap.Added, Files: snap.Files, Lineage: snap.Lineage}
+		Size: snap.Size, Added: snap.Added, Files: snap.Files, Lineage: snap.Lineage, Form: snap.Form}
 }
 
 func snapshotOfNoted(t *store.TemplateSnapshot) backup.Snapshot {
 	return backup.Snapshot{ID: t.ID, Time: t.Time, Server: t.Host, Trigger: backup.TriggerTemplate, By: t.By, Version: t.Version, Loader: t.Loader,
-		Size: t.Size, Added: t.Added, Files: t.Files, Lineage: t.Lineage}
+		Size: t.Size, Added: t.Added, Files: t.Files, Lineage: t.Lineage, Form: t.Form}
 }
 
 // templateSnapshots are an organization's template snapshots, newest first,

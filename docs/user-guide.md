@@ -234,6 +234,24 @@ World type, seed, structures and hardcore are fixed once the world exists.
 To swap the world of a server later, use **Settings → World → Replace the
 world** while it is stopped. A snapshot is taken first.
 
+**Settings → World** also shows what the world is now:
+
+- Where it came from: *Drehmal · from the world library* (with the world's
+  picture and a link to it while the library still has it), *Uploaded ·
+  my-save.zip*, *Imported · server.zip*, *New world · seed 1234*, *Copied
+  from Survival*, *From a snapshot of Survival* or *From the template
+  Event*, and when it was put in. A copy, a server made from a snapshot or
+  a template, and a restore keep where the world first came from. Servers
+  made before the panel kept this show none.
+- What the world says of itself, read from its files: its name, seed, the
+  game version it was last opened in, when it was last played, and its
+  size. Nothing while its files cannot be reached.
+
+**Put back** next to **Replace the world** puts the library world back, as
+it is in the library, for a server whose world came from there: the same as
+**Replace the world** with that world picked, a snapshot taken first. Use it
+to reset a map between event rounds.
+
 ## A server's page
 
 ![A server's page, with its live console](images/server.png)
@@ -427,6 +445,10 @@ and rsync work the same way. To copy a world in, stop the server and:
 rsync -av -e 'ssh -p 2222' ./world/ creative.friends@panel.example.com:world/
 ```
 
+When your connection ends, what you ran over it is stopped, as it is when
+a terminal closes. For something that should keep going, start it in
+`tmux` and detach.
+
 **Open in VS Code** (under **Connect**, or on the **Files** tab) opens the
 server in VS Code with Remote SSH.
 
@@ -527,6 +549,20 @@ The **Worlds** page keeps maps to start servers from.
 - A world can carry a resource pack, with **Required** and **Prompt**.
 - **New server** on a world opens the form with it chosen. **Download**
   gives it back as a single-player save.
+
+A world in the library is kept unpacked, as its own files, with the
+organization's snapshots. An uploaded archive is unpacked on the panel
+when it is added; its size in the list is the world's own. A server made
+from a library world, its snapshots, **Replace the world** and **Put back**
+all share those files with the library, so a 4 GB map stored once does not
+take another 4 GB with each server and snapshot that has it.
+
+Worlds added before the library kept them unpacked are unpacked once,
+under the same name and link, after the panel is updated. Each shows
+*Unpacking* in the list meanwhile and can be used as before. If one cannot
+be unpacked, for example when the panel's disk is too full, it says *Could
+not unpack* with the reason, still works as before, and is tried again the
+next time the panel starts.
 
 ## Nodes and moving servers
 

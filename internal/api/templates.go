@@ -374,7 +374,7 @@ func (s *Server) templateSettings(ctx context.Context, a *access, raw json.RawMe
 		rp.Stack = nil
 	}
 	spec.DisplayName, spec.State, spec.EULA, spec.GameJava = "", "", false, 0
-	spec.Image, spec.Env, spec.NodeSelector = "", nil, nil
+	spec.Image, spec.Env, spec.NodeSelector, spec.WorldOrigin = "", nil, nil, nil
 	spec.Expose = avsysv1.ExposeSpec{Type: spec.Expose.Type}
 	if spec.Modpack == nil && spec.Loader == "" {
 		return "", errBadRequest("Choose a server type, or a modpack.")
@@ -413,7 +413,7 @@ func (s *Server) templateChanges(ctx context.Context, a *access, base *avsysv1.M
 	}
 	// What its mods listen on stays: each server made from it is given
 	// public ports of its own.
-	for _, own := range []string{"displayName", "state", "eula", "nodeSelector", "image", "env", "gameJava"} {
+	for _, own := range []string{"displayName", "state", "eula", "nodeSelector", "image", "env", "gameJava", "worldOrigin"} {
 		delete(fields, own)
 	}
 	// Whether its servers start a world of their own: "new", or not at all.

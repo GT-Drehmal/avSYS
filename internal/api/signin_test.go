@@ -23,6 +23,8 @@ type tab struct {
 	addr    string
 	agent   string
 	cookies map[string]string
+	// header is sent with every request, as a proxy in front would add.
+	header map[string]string
 }
 
 const testPassword = "correct horse battery"
@@ -62,6 +64,9 @@ func (b *tab) call(method, path string, body any, out any) (int, string) {
 	req.RemoteAddr = b.addr
 	req.Header.Set("X-Avsys", "1")
 	req.Header.Set("User-Agent", b.agent)
+	for name, value := range b.header {
+		req.Header.Set(name, value)
+	}
 	for name, value := range b.cookies {
 		req.AddCookie(&http.Cookie{Name: name, Value: value})
 	}
