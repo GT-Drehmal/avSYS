@@ -487,7 +487,7 @@ export function Settings() {
         </Field>
       </Section>
 
-      <Section title="World" description="Replace the world with a new one, one from the library, or one you upload.">
+      <Section title="World" description="Download, replace or delete the world.">
         <ReplaceWorld server={server} />
       </Section>
 

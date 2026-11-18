@@ -202,6 +202,9 @@ func TestImportedOrigin(t *testing.T) {
 	}{
 		{"a new world in its place", "world=new&replace=true", nil, nil, nil, map[string]*string{"level-seed": &seed}, avsysv1.WorldOrigin{Kind: avsysv1.WorldNew, Seed: "42"}},
 		{"a new random world", "world=new&replace=true", nil, nil, nil, map[string]*string{"level-seed": nil}, avsysv1.WorldOrigin{Kind: avsysv1.WorldNew}},
+		// Deleted: made again as the server's settings say.
+		{"the world deleted", "world=new&replace=true", nil, nil, nil, nil, avsysv1.WorldOrigin{Kind: avsysv1.WorldNew, Seed: "7"}},
+		{"the world deleted, its type changed", "world=new&replace=true", nil, nil, nil, map[string]*string{"level-type": nil}, avsysv1.WorldOrigin{Kind: avsysv1.WorldNew, Seed: "7"}},
 		{"a server's archive without its world", "world=none&from=upload&file=old.zip", nil, nil, nil, nil, avsysv1.WorldOrigin{Kind: avsysv1.WorldNew}},
 		{"one from the library", "world=true&replace=true&library=w1", lib, nil, nil, nil, avsysv1.WorldOrigin{Kind: avsysv1.WorldLibrary, Library: &avsysv1.WorldRef{ID: "w1", Name: "Drehmal 2.2.2f"}}},
 		{"a template's own, uploaded", "world=true&template=t1", nil, tmpl, &ownWorld{File: "w.zip"}, nil, avsysv1.WorldOrigin{Kind: avsysv1.WorldTemplate, Template: &avsysv1.WorldRef{ID: "t1", Name: "Event"}}},
@@ -215,7 +218,9 @@ func TestImportedOrigin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := importedOrigin(q, c.library, c.template, c.own, c.made)
+		// The server's own settings have a seed, which only a new world
+		// not asked to be made with one, or without, is made from.
+		got := importedOrigin(q, c.library, c.template, c.own, c.made, map[string]string{"level-seed": " 7 "})
 		if got.Time.IsZero() {
 			t.Errorf("%s: no time", c.name)
 		}

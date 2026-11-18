@@ -323,11 +323,12 @@ export function useAction<TArgs, TResult>(fn: (args: TArgs) => Promise<TResult>,
 // Worlds being replaced from this tab, by "org/server": the name to tell of
 // one by, and its end if that was heard before the panel's answer, which
 // says the upload is in. Only an import this tab is waiting on is kept.
-const replacing = new Map<string, { title: string; answered: boolean; ended?: OperationDone }>();
+type Replacing = { title: string; deleted: boolean; answered: boolean; ended?: OperationDone };
+const replacing = new Map<string, Replacing>();
 
-function tellImport(done: OperationDone, title: string) {
-  if (done.error) toast.error(`Replacing the world of ${title} failed: ${done.error}`);
-  else toast.info(`Replaced the world of ${title}`);
+function tellImport(done: OperationDone, r: Replacing) {
+  if (done.error) toast.error(`${r.deleted ? "Deleting" : "Replacing"} the world of ${r.title} failed: ${done.error}`);
+  else toast.info(`${r.deleted ? "Deleted" : "Replaced"} the world of ${r.title}`);
 }
 
 function heardImport(done: OperationDone) {
@@ -339,17 +340,18 @@ function heardImport(done: OperationDone) {
     return;
   }
   replacing.delete(key);
-  tellImport(done, r.title);
+  tellImport(done, r);
 }
 
 /**
  * Says, in this tab, how the replacing of a server's world went when it
- * ends. Called before the world is sent; the upload's end says whether it
- * was taken, after which the panel does the rest.
+ * ends: or its deleting, which is a new world in its place. Called before
+ * the world is sent; the upload's end says whether it was taken, after which
+ * the panel does the rest.
  */
-export function watchReplace(org: string, server: string, title: string) {
+export function watchReplace(org: string, server: string, title: string, deleted = false) {
   const key = `${org}/${server}`;
-  const r = { title, answered: false } as { title: string; answered: boolean; ended?: OperationDone };
+  const r: Replacing = { title, deleted, answered: false };
   replacing.set(key, r);
   return {
     taken() {
@@ -357,7 +359,7 @@ export function watchReplace(org: string, server: string, title: string) {
       r.answered = true;
       if (r.ended) {
         replacing.delete(key);
-        tellImport(r.ended, title);
+        tellImport(r.ended, r);
       }
     },
     // Refused or stopped: the dialog says so.

@@ -1040,6 +1040,10 @@ server once the archive is in; the rest goes on in the background. With
 (409) when there is something to replace and `replace` was not said.
 Once the world is in, `spec.worldOrigin` says where it came from. Putting a
 library world back is this with `world=true&replace=true&library=<id>`.
+Deleting the world is `world=new&replace=true` with no body: the server's
+settings stay as they are, and the next start makes a new world from them;
+`spec.worldOrigin` is then `new`, with the seed `server.properties` sets,
+if any.
 
 ### `GET /orgs/{org}/servers/{server}/world`
 
@@ -1050,6 +1054,26 @@ yet, its `level.dat`'s name, seed, the game version it was last opened in
 and when it was last played, and its folders' size in bytes, left out if
 counting them takes too long. `502 workspace` when the files cannot be
 reached; `409 busy` while files are being put in.
+
+### `GET /orgs/{org}/servers/{server}/world/archive`
+
+Download the server's world as it is now. **Operator**, as for the
+server's files. A zip of a single-player save named `<server> world.zip`,
+made as it is sent: the world (the folder `server.properties` names) in a
+folder named after the server, with a Nether and End kept beside it, as
+Paper and Spigot keep them (`world_nether/DIM-1`, `world_the_end/DIM1`), put
+in it as `DIM-1` and `DIM1`, as for a
+[library world](#get-orgsorgworldsworldarchive). A running game is told to
+save everything and then hold its saves (`save-all flush`, `save-off`) while
+the files are read, and to save again (`save-on`) as the download ends,
+however it ends; a game that does not answer is read as its files are. Saves
+are held for an hour at most: a download that takes longer is cut off, also
+one to a client that stopped reading. One download of a server's world at a
+time (`409 busy`). While it is sent no snapshot, restore or import begins, and a game restarted
+meanwhile cuts it off, which the browser shows as a failed download. Errors:
+`404 no_world` before the game has made a world; `409` while another
+operation runs, or while the server starts or stops; `502 workspace` when
+the files cannot be reached.
 
 ### `GET /orgs/{org}/servers/{server}/import/upload`
 

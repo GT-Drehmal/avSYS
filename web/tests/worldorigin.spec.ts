@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { levelDat, zip } from "./archives";
-import { expect, test } from "./panel";
+import { content, expect, test } from "./panel";
 
 // A server's Settings say what its world is: where it came from, as the
 // panel put it in, and what the world says of itself, read from its files.
@@ -196,7 +196,7 @@ test("putting a world back is held to what replacing it is: stopped first, and a
   });
   await page.goto(`/o/${slug}/s/event/settings`);
   await expect(page.getByRole("button", { name: "Put back Island" })).toBeDisabled();
-  await expect(page.getByText("Stop the server first.")).toBeVisible();
+  await expect(page.getByText("Stop the server to replace or delete the world.")).toBeVisible();
   shown.phase = "Stopped";
   await page.goto(`/o/${slug}/s/event/settings`);
   await page.getByRole("button", { name: "Put back Island" }).click();
@@ -245,4 +245,90 @@ test("a template's own world from the library says so in its form", async ({ pag
     await expect(page.getByTestId("world-summary")).toContainText("from the world library");
     await expect(page.getByTestId("world-summary")).toContainText("kept with the template");
   }
+});
+
+const islandFacts = { level: "world", exists: true, name: "Island", version: "1.21.4", size: 12 << 20 };
+
+test("the world is downloaded from Settings as it is, running or stopped, by the browser itself", async ({ page, org }) => {
+  const slug = await org(["event"]);
+  const shown: Shown = { facts: islandFacts, phase: "Running" };
+  await server(page, slug, "event", shown);
+  for (const phase of ["Running", "Stopped"]) {
+    shown.phase = phase;
+    await page.goto(`/o/${slug}/s/event/settings`);
+    const link = page.getByRole("link", { name: "Download" });
+    await expect(link).toHaveAttribute("href", `/api/v1/orgs/${slug}/servers/event/world/archive`);
+    await expect(link).toHaveAttribute("download", "");
+    // Replacing and deleting it wait for the server to stop; downloading does not.
+    await expect(page.getByRole("button", { name: "Replace the world" })).toBeEnabled({ enabled: phase === "Stopped" });
+    await expect(page.getByRole("button", { name: "Delete the world" })).toBeEnabled({ enabled: phase === "Stopped" });
+    await expect(page.getByText("Stop the server to replace or delete the world.")).toHaveCount(phase === "Stopped" ? 0 : 1);
+  }
+  // A download of the browser's own, straight from the panel: not read into
+  // the page first, as a world of gigabytes cannot be. (This panel has no
+  // files behind it to send; the Go tests check what it sends.)
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download" }).click()]);
+  expect(new URL(download.url()).pathname).toBe(`/api/v1/orgs/${slug}/servers/event/world/archive`);
+  // The page stayed where it was.
+  await expect(page.getByRole("link", { name: "Download" })).toBeVisible();
+});
+
+test("the world cannot be downloaded while its files cannot be read, before there is one, or while the server starts", async ({ page, org }) => {
+  const slug = await org(["event"]);
+  const shown: Shown = { facts: null, phase: "Running" };
+  await server(page, slug, "event", shown);
+  for (const [facts, phase, why] of [
+    [null, "Running", "Can't reach the server's files."],
+    [{ level: "world", exists: false }, "Stopped", "No world yet."],
+    [islandFacts, "Starting", "Wait for the server to start or stop."],
+  ] as const) {
+    shown.facts = facts;
+    shown.phase = phase;
+    await page.goto(`/o/${slug}/s/event/settings`);
+    await expect(page.getByTestId("world-why")).toContainText(why);
+    await expect(page.getByRole("button", { name: "Download" })).toBeDisabled();
+    await expect(page.getByRole("link", { name: "Download" })).toHaveCount(0);
+  }
+});
+
+test("a server's world is downloaded from its Settings, which only its admins see", async ({ page, as }) => {
+  await as("admin");
+  await page.goto("/o/friends/s/creative/settings");
+  // Nothing to read its files from in this panel.
+  await expect(page.getByTestId("world-why")).toContainText("Can't reach the server's files.");
+  await expect(page.getByRole("button", { name: "Download" })).toBeDisabled();
+  await as("operator");
+  await page.goto("/o/friends/s/creative");
+  await expect(page.getByRole("link", { name: "Files", exact: true })).toBeVisible();
+  await expect(content(page).getByRole("link", { name: "Settings", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Download" })).toHaveCount(0);
+});
+
+test("deleting the world asks first, says a snapshot is taken, and is only for a stopped server", async ({ page, org }) => {
+  const slug = await org(["event"]);
+  const shown: Shown = { facts: islandFacts, phase: "Running" };
+  await server(page, slug, "event", shown);
+  const sent: { query: Record<string, string>; body: string | null }[] = [];
+  await page.route(`**/api/v1/orgs/${slug}/servers/event/import?*`, async (route) => {
+    sent.push({ query: Object.fromEntries(new URL(route.request().url()).searchParams), body: route.request().postData() });
+    await route.fulfill({ status: 202, json: await (await page.request.get(`/api/v1/orgs/${slug}/servers/event`)).json() });
+  });
+  await page.goto(`/o/${slug}/s/event/settings`);
+  await expect(page.getByRole("button", { name: "Delete the world" })).toBeDisabled();
+  shown.phase = "Stopped";
+  await page.goto(`/o/${slug}/s/event/settings`);
+  await page.getByRole("button", { name: "Delete the world" }).click();
+  const dialog = page.getByRole("dialog", { name: "Delete the world of event?" });
+  await expect(dialog).toContainText("A snapshot is taken first, so it can be put back from Backups. The next start makes a new world.");
+  // Called off: nothing is sent.
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(sent).toEqual([]);
+  await page.getByRole("button", { name: "Delete the world" }).click();
+  await dialog.getByRole("button", { name: "Delete the world" }).click();
+  await expect(dialog).toHaveCount(0);
+  // A new world in its place, made as the server's settings say.
+  expect(sent).toHaveLength(1);
+  expect(sent[0].query).toEqual({ world: "new", replace: "true" });
+  expect(sent[0].body ?? "").toBe("");
 });

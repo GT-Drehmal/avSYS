@@ -34,6 +34,16 @@ export function originWords(o: WorldOrigin, nameOf: (server: string) => string =
 export const libraryWorldOf = (o: WorldOrigin | null | undefined, worlds: LibraryWorld[] | undefined) =>
   o?.kind === "library" && o.library ? (worlds?.find((w) => w.id === o.library?.id && w.ready) ?? null) : null;
 
+/** What a server's world says of itself, read from its files: again once a world is put in, or the game stops or starts. */
+export const useWorldFacts = (server: Server) =>
+  useQuery({
+    queryKey: ["world-facts", server.org, server.name, server.spec.worldOrigin?.time ?? "", server.status.phase ?? ""],
+    queryFn: () => api.get<WorldFacts>(`${serverPath(server.org, server.name)}/world`),
+    retry: false,
+    staleTime: 30_000,
+    enabled: !server.unfinished,
+  });
+
 /**
  * What a server's world is: where it came from, as the panel put it in, and
  * what the world says of itself, read from its files after the page is up.
@@ -42,15 +52,7 @@ export function WorldNow({ server, library }: { server: Server; library: Library
   const o = server.spec.worldOrigin ?? null;
   const servers = useServers(server.org).data;
   const nameOf = (name: string) => servers?.find((s) => s.name === name)?.spec.displayName || name;
-  // Read from its files: again once a world is put in, or the game stops or starts.
-  const facts = useQuery({
-    queryKey: ["world-facts", server.org, server.name, o?.time ?? "", server.status.phase ?? ""],
-    queryFn: () => api.get<WorldFacts>(`${serverPath(server.org, server.name)}/world`),
-    retry: false,
-    staleTime: 30_000,
-    enabled: !server.unfinished,
-  });
-  const f = facts.data;
+  const f = useWorldFacts(server).data;
   if (!o && !f) return null;
   // What the world says, less what the line above says already.
   const said = f

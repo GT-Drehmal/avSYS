@@ -955,6 +955,25 @@ snap=$(call -X POST "$SRV/snapshots?wait=true")
 SNAP=$(echo "$snap" | field "d['id']") || fail "no snapshot was taken: $snap"
 expect "a running server is snapshotted" "$(echo "$snap" | field "(d['server'], d['trigger'], d['version'], d['loader'], d['files'] > 10)")" "('probe', 'manual', '1.21.4', 'paper', True)"
 expect "the game goes back to saving" "$(call -d '{"command":"save-on"}' "$SRV/console" | field "d['output']")" "already turned on"
+
+step "a running server's world downloaded"
+# Read as the game holds its saves, as for a snapshot, and sent as a
+# single-player save: Paper's Nether and End, kept beside the world, in it.
+began=$(date +%s)
+expect "a running server's world is downloaded" "$(call -o "$WORK/probe-world.zip" -w '%{http_code} %{content_type}' "$SRV/world/archive")" "200 application/zip"
+took=$(($(date +%s) - began))
+[ "$took" -le 60 ] || fail "the world took ${took}s to download"
+echo "ok: in ${took}s"
+expect "as a whole save, in a folder named after the server" "$(python3 -c '
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+names = z.namelist()
+print(z.testzip() is None, "probe/level.dat" in names, any(n.startswith("probe/region/") for n in names),
+      any(n.startswith("probe/DIM-1/") for n in names), any(n.startswith("probe/DIM1/") for n in names),
+      all(n.startswith("probe/") for n in names), any("world_nether" in n for n in names))
+' "$WORK/probe-world.zip")" "True True True True True True False"
+expect "and the game saves again after" "$(call -d '{"command":"save-on"}' "$SRV/console" | field "d['output']")" "already turned on"
+
 # Change a file, add one, and take away a plugin, then go back.
 echo "changed after the snapshot" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null
 echo "not in the snapshot" | call -X PUT --data-binary @- "$SRV/files/content?path=/stray.txt" >/dev/null
@@ -981,8 +1000,20 @@ fi
 echo "ok: a shell open to its files is ended by the restore"
 call -X DELETE "$API/me/ssh-keys/$RESTORE_KEY" >/dev/null
 expect "a server stopped before the restore stays stopped" "$(call "$SRV" | field "d['spec']['state']")" Stopped
+# Its world deleted while it is stopped, from Settings: a new world in its
+# place, asked for with nothing of its own. A snapshot is taken first, and
+# the next start makes a new world as the server's settings say.
+old_seed=$(call "$SRV/world" | field "d.get('seed')")
+set_spec '{"spec":{"properties":{"motd":"e2e probe","level-seed":"20261117"}}}'
+expect "a stopped server's world is deleted" "$(call -o /dev/null -w '%{http_code}' -X PUT "$SRV/import?world=new&replace=true")" 202
+for _ in $(seq 1 120); do [ "$(call "$SRV/operation")" = null ] && break; sleep 1; done
+expect "and is gone" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/world/level.dat")" 404
+expect "with a snapshot taken first" "$(call "$SRV/snapshots" | field "len([s for s in d['snapshots'] if s['trigger'] == 'pre-replace'])")" 1
+expect "and says its world is new, from the server's seed" "$(call "$SRV" | field "(d['spec']['worldOrigin']['kind'], d['spec']['worldOrigin'].get('seed'))")" "('new', '20261117')"
 call -X POST "$SRV/start" >/dev/null
 wait_phase Running
+call -d '{"command":"save-all flush"}' "$SRV/console" >/dev/null
+expect "the next start makes a new world with that seed" "$(call "$SRV/world" | field "(d['exists'], d.get('seed'), d.get('seed') != '$old_seed')")" "(True, '20261117', True)"
 expect "a changed file is put back" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "a file added since is removed" "$(call -o /dev/null -w '%{http_code}' "$SRV/files/content?path=/stray.txt")" 404
 expect "the settings come back with the files" "$(call "$SRV" | field "sorted(m['project'] for m in d['spec']['mods'])")" "['luckperms', 'worldedit']"
@@ -994,7 +1025,7 @@ expect "and is searched where it is" "$(call "$SRV/logs/file?name=$earlier&q=Don
 expect "nothing but the game's logs is read" "$(call -o /dev/null -w '%{http_code}' "$SRV/logs/file?name=logs/../server.properties")" 400
 expect "the plugin runs again" "$(call -d '{"command":"plugins"}' "$SRV/console" | field "d['output']")" WorldEdit
 listed=$(call "$SRV/snapshots")
-expect "what was there before the restore is kept too" "$(echo "$listed" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'pre-restore']"
+expect "what was there before the restore is kept too, and the world before it was deleted" "$(echo "$listed" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'pre-replace', 'pre-restore']"
 expect "the server shows its last snapshot" "$(call "$SRV" | field "d['status']['snapshots'].get('error', '') == '' and len(d['status']['snapshots']['lastID']) == 64")" True
 
 step "ssh"
@@ -1575,7 +1606,7 @@ expect "one that has changed gets one" "$(call -X POST "$RUN" | field "$outcome"
 call -X PUT -d '{"enabled":false,"minute":540,"keep":{"daily":1}}' "$POLICY" >/dev/null
 echo "and again" | call -X PUT --data-binary @- "$SRV/files/content?path=/scheduled.txt" >/dev/null
 expect "what the policy no longer keeps is removed" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'snapshot', 1)]"
-expect "and only scheduled snapshots are" "$(call "$SRV/snapshots" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'manual', 'pre-restore', 'scheduled']"
+expect "and only scheduled snapshots are" "$(call "$SRV/snapshots" | field "sorted(s['trigger'] for s in d['snapshots'])")" "['manual', 'manual', 'pre-replace', 'pre-restore', 'scheduled']"
 # A server can leave its organization's schedule, and come back to it.
 expect "a server can switch its own off" "$(call -X PATCH -d '{"spec":{"backups":{"enabled":false}}}' "$SRV" | field "d['spec']['backups']")" "{'enabled': False}"
 expect "a run passes over it" "$(call -X POST "$RUN" | field "$outcome")" "[('probe', 'skipped', 0)]"
@@ -1924,10 +1955,10 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 history=$(call "$API/orgs/$ORG/snapshots")
-expect "a deleted server's snapshots are still listed" "$(echo "$history" | field "sorted({s['server'] for s in d['snapshots']}), len(d['snapshots']), d['usage']['bytes'] > 0")" "(['probe'], 5, True)"
+expect "a deleted server's snapshots are still listed" "$(echo "$history" | field "sorted({s['server'] for s in d['snapshots']}), len(d['snapshots']), d['usage']['bytes'] > 0")" "(['probe'], 6, True)"
 expect "an organization with snapshots is not deleted by accident" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG")" 409
 expect "a snapshot can be removed on purpose" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$SNAP")" 204
-expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])")" 4
+expect "and is then gone" "$(call "$API/orgs/$ORG/snapshots" | field "len(d['snapshots'])")" 5
 FINAL=$(call "$API/orgs/$ORG/snapshots" | field "[s['id'] for s in d['snapshots'] if s['trigger'] == 'final'][0]") || fail "there is no final snapshot of the deleted server"
 
 step "a deleted server comes back"
@@ -1937,7 +1968,7 @@ case "$back" in *'"spec"'*) ;; *) fail "the deleted server was not brought back:
 expect "under its own name, left stopped as asked" "$(echo "$back" | field "(d['name'], d['spec']['state'], d['spec']['expose']['hostname'])")" "('probe', 'Stopped', '$HOST')"
 expect "with its files" "$(call "$SRV/files/content?path=/e2e.txt")" "written by e2e"
 expect "down to what was written just before it was deleted" "$(call "$SRV/files/content?path=/last.txt")" "written just before the end"
-expect "and its history" "$(call "$SRV/snapshots" | field "len(d['snapshots'])")" 4
+expect "and its history" "$(call "$SRV/snapshots" | field "len(d['snapshots'])")" 5
 # And again with no pause, while what is left of the one just deleted is still
 # being cleared away. Its files must not land in a volume that is on its way out.
 call -X DELETE "$SRV" >/dev/null

@@ -347,6 +347,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST " + server + "/files/rename", "/orgs/alpha/servers/renames/files/rename?path=/{who}-a&to=/{who}-b", "", store.RoleOperator, 204},
 		{"POST " + server + "/files/extract", "", "", store.RoleOperator, 0},
 		{"GET " + server + "/files/archive", "", "", store.RoleOperator, 0},
+		// As its files are: 502, there are none to reach here.
+		{"GET " + server + "/world/archive", "", "", store.RoleOperator, 502},
 		{"GET " + server + "/files/search", "", "", store.RoleOperator, 0},
 	}
 

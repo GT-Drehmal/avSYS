@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type InputHTMLAttributes,
@@ -36,23 +37,31 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: ReactNode;
 }
 
+const buttonClass = (variant: ButtonVariant, size: "sm" | "md", labelled: boolean, className?: string) =>
+  cx(
+    "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors select-none disabled:opacity-50",
+    size === "sm" ? "h-7 text-xs" : "h-8 text-[13px]",
+    labelled ? (size === "sm" ? "px-2" : "px-3") : size === "sm" ? "w-7" : "w-8",
+    buttonVariants[variant],
+    className,
+  );
+
 export function Button({ variant = "default", size = "md", loading, icon, children, className, disabled, ...rest }: ButtonProps) {
   return (
-    <button
-      type="button"
-      {...rest}
-      disabled={disabled || loading}
-      className={cx(
-        "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors select-none disabled:opacity-50",
-        size === "sm" ? "h-7 text-xs" : "h-8 text-[13px]",
-        children ? (size === "sm" ? "px-2" : "px-3") : size === "sm" ? "w-7" : "w-8",
-        buttonVariants[variant],
-        className,
-      )}
-    >
+    <button type="button" {...rest} disabled={disabled || loading} className={buttonClass(variant, size, !!children, className)}>
       {loading ? <LoaderCircle className="size-3.5 animate-spin" /> : icon}
       {children}
     </button>
+  );
+}
+
+/** A link that looks like a Button, such as one that downloads a file. */
+export function ButtonLink({ variant = "default", size = "md", icon, children, className, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: ButtonVariant; size?: "sm" | "md"; icon?: ReactNode }) {
+  return (
+    <a {...rest} className={buttonClass(variant, size, !!children, className)}>
+      {icon}
+      {children}
+    </a>
   );
 }
 

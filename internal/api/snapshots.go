@@ -207,6 +207,15 @@ func (o *operations) current(namespace, server string) *operation {
 	return nil
 }
 
+// busy is whether an operation runs on a server, or a request is in the
+// middle of changing it or holding it still.
+func (o *operations) busy(namespace, server string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	key := namespace + "/" + server
+	return o.running[key] != nil || o.changes[key] > 0
+}
+
 func (o *operations) inNamespace(namespace string) []operation {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -627,45 +636,17 @@ func (s *Server) takeSnapshotAs(ctx context.Context, org string, mc *avsysv1.Min
 
 	if mc.Status.Phase == avsysv1.PhaseRunning {
 		s.setOperation(mc.Namespace, op, "Saving the world", 0)
-		// Noted on the server before the game is told, so that a panel which
-		// dies in the next few minutes leaves word for the one that replaces
-		// it. A game left with saving off loses everything at its next stop.
-		key := client.ObjectKeyFromObject(mc)
-		if err := s.markSavingPaused(ctx, key, true); err != nil {
-			return nil, err
-		}
-		defer func() {
-			// Saving is switched back on whatever happens next, including
-			// the panel's own request being abandoned.
-			ctx := context.WithoutCancel(ctx)
-			if _, err := s.rconFor(ctx, mc, "save-on", 15*time.Second); err != nil {
-				s.Log.Error("could not switch saving back on; it will be retried when the panel next starts", "server", mc.Name, "namespace", mc.Namespace, "error", err)
-				return
-			}
-			if err := s.markSavingPaused(ctx, key, false); err != nil {
-				s.Log.Warn("could not clear the saving-paused note", "server", mc.Name, "error", err)
-			}
-		}()
-		// Said in the workspace too, where the mc helper turns away the
-		// game's commands for saving while it lasts. Taken away again before
-		// saving is switched back on (deferred calls run last first).
-		if err := runIn(ws, "mkdir -p /tmp/avsys && touch "+savingPausedMark); err != nil {
-			s.Log.Warn("could not say in the workspace that saving is held", "server", mc.Name, "error", err)
-		}
-		defer func() {
-			if err := runIn(ws, "rm -f "+savingPausedMark); err != nil {
-				s.Log.Warn("could not take away the note in the workspace that saving is held", "server", mc.Name, "error", err)
-			}
-		}()
-		// Without both of these the copy could miss what the game still holds
-		// in memory, or catch a file half written. That is not a snapshot
-		// anyone should restore from, so there is none.
-		if _, err := s.rconFor(ctx, mc, "save-off", 15*time.Second); err != nil {
+		// Without the game's saves held the copy could miss what the game
+		// still holds in memory, or catch a file half written. That is not a
+		// snapshot anyone should restore from, so there is none.
+		release, told, err := s.holdSaves(ctx, mc, ws)
+		switch {
+		case err != nil && !told:
 			return nil, failed(err, "the game did not answer, so the world could not be saved first (stop the server to snapshot the files as they are)")
-		}
-		if _, err := s.rconFor(ctx, mc, "save-all flush", 5*time.Minute); err != nil {
+		case err != nil:
 			return nil, failed(err, "the game did not finish writing the world out")
 		}
+		defer release()
 	}
 
 	// The game restarting while its files are copied, on its own or because
@@ -780,6 +761,51 @@ func runIn(ws *ssh.Client, command string) error {
 	return session.Run(command)
 }
 
+// holdSaves tells a running game to write everything out and then hold its
+// saves, so that its world's files can be copied whole: save-off, then
+// save-all flush. release lets it save again, whatever happened meanwhile,
+// the request that asked for it abandoned included. told is whether the game
+// took save-off. With err nothing is held: saving has been switched back on,
+// as far as the game answers.
+//
+// It is noted on the server before the game is told, so that a panel which
+// dies meanwhile leaves word for the one that replaces it (ResumeSaving): a
+// game left with saving off loses everything at its next stop. It is said in
+// the workspace too, where the mc helper turns away the game's commands for
+// saving while it lasts.
+func (s *Server) holdSaves(ctx context.Context, mc *avsysv1.MinecraftServer, ws *ssh.Client) (release func(), told bool, err error) {
+	key := client.ObjectKeyFromObject(mc)
+	if err := s.markSavingPaused(ctx, key, true); err != nil {
+		return nil, false, err
+	}
+	if err := runIn(ws, "mkdir -p /tmp/avsys && touch "+savingPausedMark); err != nil {
+		s.Log.Warn("could not say in the workspace that saving is held", "server", mc.Name, "error", err)
+	}
+	release = func() {
+		// Taken away in the workspace before saving is switched back on.
+		if err := runIn(ws, "rm -f "+savingPausedMark); err != nil {
+			s.Log.Warn("could not take away the note in the workspace that saving is held", "server", mc.Name, "error", err)
+		}
+		ctx := context.WithoutCancel(ctx)
+		if _, err := s.rconFor(ctx, mc, "save-on", 15*time.Second); err != nil {
+			s.Log.Error("could not switch saving back on; it will be retried when the panel next starts", "server", mc.Name, "namespace", mc.Namespace, "error", err)
+			return
+		}
+		if err := s.markSavingPaused(ctx, key, false); err != nil {
+			s.Log.Warn("could not clear the saving-paused note", "server", mc.Name, "error", err)
+		}
+	}
+	if _, err := s.rconFor(ctx, mc, "save-off", 15*time.Second); err != nil {
+		release()
+		return nil, false, err
+	}
+	if _, err := s.rconFor(ctx, mc, "save-all flush", 5*time.Minute); err != nil {
+		release()
+		return nil, true, err
+	}
+	return release, true, nil
+}
+
 // markSavingPaused sets or clears the note that a game has been told to hold
 // its saves.
 func (s *Server) markSavingPaused(ctx context.Context, key client.ObjectKey, paused bool) error {
@@ -824,8 +850,9 @@ func (s *Server) resumeSaving(ctx context.Context) {
 	}
 	for i := range all.Items {
 		mc := &all.Items[i]
-		// Whatever is running right now set its own notes and will clear them.
-		if s.ops.current(mc.Namespace, mc.Name) != nil {
+		// Whatever is running right now set its own notes and will clear
+		// them: an operation, or a request such as a world's download.
+		if s.ops.busy(mc.Namespace, mc.Name) {
 			continue
 		}
 		// A restore with nobody running it was cut short, by this panel's
