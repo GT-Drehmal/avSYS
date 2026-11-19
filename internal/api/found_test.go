@@ -1434,3 +1434,92 @@ func TestFoundLeftRemovedOnlyAsItWas(t *testing.T) {
 		t.Errorf("the file: %q", got)
 	}
 }
+
+// Content taken from the server's folders keeps where it is kept through
+// any change to the list: a request that sends an entry back without its
+// place, as an older page or the API might, does not make it an upload
+// kept where uploads are, which the image would be handed and which is not
+// there. Nor can a request give an upload a place of its own.
+func TestFoundKeepsItsPlaceThroughChanges(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{
+		"world/datapacks/bern.zip":       jarOf(t, map[string]string{"pack.mcmeta": `{"pack":{"description":"Bern's trades"}}`}),
+		"world/datapacks/emis.zip":       jarOf(t, map[string]string{"pack.mcmeta": `{"pack":{"description":"Animations"}}`}),
+		"world/datapacks/hi_drehmal.zip": jarOf(t, map[string]string{"pack.mcmeta": `{"pack":{"description":"Hi"}}`}),
+		"mods/WI-Zoom.jar":               []byte("zoom"),
+	})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
+		t.Fatal(code)
+	}
+	// bern taken off, the rest sent back without where they are, and one
+	// given a place it does not have.
+	var mods []map[string]any
+	for _, m := range p.serverOf("world").Spec.Mods {
+		if m.Project == "bern.zip" {
+			continue
+		}
+		entry := map[string]any{"source": m.Source, "kind": m.Kind, "project": m.Project, "title": m.Title, "description": m.Description}
+		if m.Project == "WI-Zoom.jar" {
+			entry["file"] = "mods/other.jar"
+		}
+		mods = append(mods, entry)
+	}
+	raw, _ := json.Marshal(map[string]any{"spec": map[string]any{"mods": mods}})
+	if code, msg := p.do("admin", "PATCH", "/orgs/alpha/servers/world", string(raw)); code != 200 {
+		t.Fatalf("patch: %d %s", code, msg)
+	}
+	places := map[string]string{}
+	for _, m := range p.serverOf("world").Spec.Mods {
+		places[m.Project] = m.File
+		if m.Description == "" && m.Kind == avsysv1.KindDatapack {
+			t.Errorf("%s lost its description", m.Project)
+		}
+	}
+	if want := map[string]string{"emis.zip": "world/datapacks/emis.zip", "hi_drehmal.zip": "world/datapacks/hi_drehmal.zip", "WI-Zoom.jar": "mods/WI-Zoom.jar"}; !reflect.DeepEqual(places, want) {
+		t.Errorf("kept at %v, want %v", places, want)
+	}
+	if exists(t, filepath.Join(root, "world/datapacks/bern.zip")) || !exists(t, filepath.Join(root, "world/datapacks/emis.zip")) {
+		t.Error("not only bern was deleted")
+	}
+	// A new upload cannot be given a place by a request.
+	raw, _ = json.Marshal(map[string]any{"spec": map[string]any{"mods": append(mods, map[string]any{"source": "upload", "kind": "datapack", "project": "level.zip", "file": "world/datapacks/level.zip"})}})
+	p.do("admin", "PATCH", "/orgs/alpha/servers/world", string(raw))
+	for _, m := range p.serverOf("world").Spec.Mods {
+		if m.Project == "level.zip" && m.File != "" {
+			t.Errorf("a request gave an upload a place: %+v", m)
+		}
+	}
+}
+
+// An upload listed without its place, as an earlier version of the panel
+// could leave one it had taken in, whose copy is not where uploads are
+// kept, is put back in the place it was taken from.
+func TestFoundPlaceRepaired(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{"world/datapacks/emis.zip": []byte("emis"), "mods/kept.jar": []byte("k")})
+	lay(t, root, map[string][]byte{".avsys/content/kept.jar": []byte("k")})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	mc := p.serverOf("world")
+	mc.Spec.Mods = []avsysv1.ContentRef{
+		{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "emis.zip", Title: "emis"},
+		{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "kept.jar"},
+	}
+	mc.Annotations = map[string]string{avsysv1.AnnotationImported: `{"world/datapacks/emis.zip":{"key":"upload:datapack/emis.zip","sha1":"x"},"mods/kept.jar":{"key":"upload:mod/kept.jar"}}`}
+	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", "")
+	places := map[string]string{}
+	for _, m := range p.serverOf("world").Spec.Mods {
+		places[m.Project] = m.File
+	}
+	// kept.jar has its copy where uploads are kept: it is such an upload.
+	if want := map[string]string{"emis.zip": "world/datapacks/emis.zip", "kept.jar": ""}; !reflect.DeepEqual(places, want) {
+		t.Errorf("kept at %v, want %v", places, want)
+	}
+}

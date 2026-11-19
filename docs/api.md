@@ -968,7 +968,7 @@ The `spec` of a server, as in `kubectl get mcs -o yaml`:
 | `loaderVersion` | A loader build to stay on; empty for the newest. |
 | `gameJava` | The Java the game version ships with. Set by the panel. |
 | `modpack` | `{source: modrinth\|curseforge\|upload, project, version, gameVersion, loader, title, versionName, iconUrl}`. |
-| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; `description` is what an uploaded datapack says of itself. |
+| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; it is the panel's to say: a request's is not taken, and an entry sent back without it keeps it; `description` is what an uploaded datapack says of itself. |
 | `resourcePack` | `{url, sha1, enforce, prompt, uploaded, project, formats, stack}`. |
 | `properties` | `server.properties` entries the panel sets. |
 | `ops`, `whitelist` | Players, by name or UUID, up to 1000 each. |

@@ -598,6 +598,8 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	var named map[string]json.RawMessage
 	_ = json.Unmarshal(raw.Spec, &named)
 	fitModPorts(&in.Spec, nil, named, nil)
+	// A new server has no uploads kept in place: none is taken from a request.
+	keepUploadPlaces(&in.Spec, nil)
 	// A new server has Aikar's flags unless asked not to. Only here: one
 	// made before they were offered keeps starting as it always has.
 	if in.Spec.JVM.AikarFlags == nil {
@@ -885,6 +887,9 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	// PinLatest).
 	_, picked := named["version"]
 	fitModPorts(&spec, mc.Spec.Mods, named, foundRefs(foundOf(mc)))
+	// An upload found in its files keeps where it is kept, whatever the
+	// request says of it.
+	keepUploadPlaces(&spec, &mc.Spec)
 	stillLatest := !picked && mc.Spec.Version == "LATEST" && mc.Spec.Modpack == nil && spec.Loader == mc.Spec.Loader
 	if !stillLatest {
 		if err := s.settleLatest(ctx, &spec); err != nil {

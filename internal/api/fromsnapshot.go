@@ -318,6 +318,9 @@ func mergeProperties(recorded map[string]string, asked json.RawMessage) map[stri
 // changed game version needs.
 func (s *Server) specFromSnapshot(ctx context.Context, a *access, name string, requested, recorded *avsysv1.MinecraftServerSpec, given map[string]json.RawMessage) (avsysv1.MinecraftServerSpec, error) {
 	spec := fromSnapshot(requested, recorded, given)
+	// Its uploads found in the original's files are kept where the
+	// original kept them, which come with the copy.
+	keepUploadPlaces(&spec, recorded)
 	// A pack given with the copy is checked; the original's, kept or made
 	// required, is as it has it.
 	if err := checkPackSHA1(spec.ResourcePack, recorded.ResourcePack); err != nil {

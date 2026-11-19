@@ -141,7 +141,13 @@ func TestKeepContent(t *testing.T) {
 		keeps  keeps
 	}{
 		{name: "installed", keeps: all},
-		{name: "first start", change: func(dir string) { os.RemoveAll(dir); os.MkdirAll(dir, 0o755) }},
+		{name: "first start", change: func(dir string) {
+			// Nothing installed; the uploads are where they are kept.
+			os.RemoveAll(dir)
+			os.MkdirAll(filepath.Join(dir, ".avsys/content"), 0o755)
+			os.WriteFile(filepath.Join(dir, ".avsys/content/Own.jar"), []byte("jar"), 0o644)
+			os.WriteFile(filepath.Join(dir, ".avsys/content/Mine.zip"), []byte("zip"), 0o644)
+		}},
 		{name: "a dependency gone", change: func(dir string) { os.Remove(filepath.Join(dir, "plugins/Dep-1.jar")) }, keeps: keeps{false, true, true}},
 		{name: "a datapack from Modrinth gone", change: func(dir string) { os.Remove(filepath.Join(dir, "world/datapacks/Terralith.zip")) }, keeps: keeps{false, true, true}},
 		{name: "a project added", mutate: func(mc *avsysv1.MinecraftServer) {
@@ -476,5 +482,37 @@ func TestKeepContentTakesWhatWasImported(t *testing.T) {
 				t.Errorf("started with what it has: %v, want %v\n%s", kept, c.keeps, out)
 			}
 		})
+	}
+}
+
+// An upload the server's settings hand the image whose file is not where
+// uploads are kept is left out of what the image is given, and said: the
+// server starts without it, rather than not at all. What is there, and what
+// is kept in place, is as before.
+func TestStartsWithoutAnUploadThatIsNotThere(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".avsys/content/Own.jar"), "jar")
+	write(t, filepath.Join(dir, "world/datapacks/emis.zip"), "zip")
+	mc := server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.Loader = avsysv1.LoaderFabric
+		mc.Spec.Mods = []avsysv1.ContentRef{
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "Own.jar"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "Gone.jar"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "emis.zip"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "hi.zip", File: "world/datapacks/hi.zip"},
+			{Source: avsysv1.SourceURL, Kind: avsysv1.KindDatapack, Project: datapackURL},
+		}
+	})
+	given, _, out := started(t, dir, mc, nil, "*")
+	if got, want := given["MODS"], dir+"/.avsys/content/Own.jar"; got != want {
+		t.Errorf("MODS %q, want %q", got, want)
+	}
+	if got, want := given["DATAPACKS"], datapackURL; got != want {
+		t.Errorf("DATAPACKS %q, want %q", got, want)
+	}
+	for _, name := range []string{"Gone.jar", "emis.zip"} {
+		if !strings.Contains(out, "[avsys] "+dir+"/.avsys/content/"+name+" is not there: starting without it") {
+			t.Errorf("not said of %s:\n%s", name, out)
+		}
 	}
 }

@@ -108,6 +108,34 @@ test("content taken from a server's folders is updated and removed as any other"
   expect(server.spec.mods).toHaveLength(6);
 });
 
+test("a datapack taken off leaves the others where they are kept", async ({ page, as, org, api }) => {
+  const slug = await bingo(org, api);
+  await as("owner");
+  await page.goto(`/o/${slug}/s/bingo/content`);
+  await expect(datapacks(page).getByRole("listitem")).toHaveCount(2);
+  await page.getByRole("button", { name: "Remove bern" }).click();
+  await expect(datapacks(page).getByRole("listitem")).toHaveCount(1);
+  // The rest are still kept in the server's own files, as found, and say
+  // what they are: none became an upload the image would look for
+  // elsewhere.
+  await expect
+    .poll(async () => {
+      const { spec } = await api("owner").get(`/orgs/${slug}/servers/bingo`);
+      return spec.mods
+        .filter((m: { source: string }) => m.source === "upload")
+        .map((m: { project: string; file?: string; description?: string }) => `${m.project} ${m.file ?? "-"}${m.description ? ` ${m.description}` : ""}`)
+        .sort();
+    })
+    .toEqual([
+      "WI-Zoom-1.5-MC1.20.1.jar mods/WI-Zoom-1.5-MC1.20.1.jar",
+      "animatica-0.6+1.20.jar mods/animatica-0.6+1.20.jar",
+      "c2me-fabric-mc1.20.1-0.2.0.jar mods/c2me-fabric-mc1.20.1-0.2.0.jar",
+      "hi_drehmal.zip world/datapacks/hi_drehmal.zip Hi, Drehmal",
+    ]);
+  await page.reload();
+  await expect(datapacks(page).getByText("Hi, Drehmal", { exact: true })).toBeVisible();
+});
+
 test("anyone who sees a server sees what was taken from its folders; only admins change it", async ({ org, api, pageAs }) => {
   const slug = await bingo(org, api);
   for (const who of ["viewer", "operator"] as const) {

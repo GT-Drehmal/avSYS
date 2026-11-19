@@ -663,6 +663,22 @@ lines() { printf '%s\n' "$1" | tr , '\n' | sed 's/#.*//; s/^[[:space:]]*//; s/[[
 # The file a URL is saved as, as far as it can be told: the last part of its path.
 saved() { n=${1%%[?]*}; echo "${n##*/}"; }
 offline() { h=${1#*://}; echo "[avsys] ${h%%/*} does not answer: starting with the installed $2" >&2; }
+# A file of the server's own a list names that is not there is left out of
+# it, and said, rather than the image refusing to start over it.
+present() {
+  lines "$1" | while IFS= read -r e; do
+    case $e in
+      /*) if [ ! -e "$e" ]; then echo "[avsys] $e is not there: starting without it" >&2; continue; fi ;;
+    esac
+    printf '%s\n' "$e"
+  done
+}
+for v in MODS PLUGINS DATAPACKS; do
+  eval "was=\${$v:-}"
+  [ -n "$was" ] || continue
+  now=$(present "$was")
+  [ "$now" = "$(lines "$was")" ] || export "$v=$now"
+done
 # Files the image is told to remove before it installs.
 removes=
 for v in "${REMOVE_OLD_MODS:-}" "${REMOVE_OLD_DATAPACKS:-}"; do

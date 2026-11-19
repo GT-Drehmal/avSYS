@@ -361,7 +361,10 @@ Content is settled when it is added, not when the server starts.
    not. Required dependencies are fetched by the image and are not pinned.
 
 A restart never changes what is installed. Changing the game version or
-loader pins each entry again for the new one.
+loader pins each entry again for the new one. A file of the server's own
+that a list names (an upload) and that is not there is left out of what
+the image is given, with a line in the log, rather than the start
+failing over it.
 
 **Content found in a server's folders.** A server may have mods, plugins
 and datapacks the panel did not add: put in its folders by hand, or

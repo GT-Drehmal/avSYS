@@ -467,6 +467,7 @@ func (s *Server) settleImported(ctx context.Context, files ServerFiles, key clie
 	for _, m := range mc.Spec.Mods {
 		keys[contentKey(m)] = true
 	}
+	s.keepInPlace(ctx, files, key, imported)
 	managed := managedFiles(files, &avsysv1.MinecraftServerSpec{})
 	var done []string
 	for p, f := range imported {
@@ -495,6 +496,45 @@ func (s *Server) settleImported(ctx context.Context, files ServerFiles, key clie
 			delete(imported, p)
 		}
 		setImported(mc, imported)
+		return s.Client.Update(ctx, mc)
+	})
+}
+
+// keepInPlace puts back where an upload taken in from the server's folders
+// is kept, for one listed without it, as an older panel could leave it:
+// listed so, it would be handed to the image from where uploads are kept,
+// where it is not.
+func (s *Server) keepInPlace(ctx context.Context, files ServerFiles, key client.ObjectKey, imported map[string]importedFile) {
+	places := map[string]string{}
+	for p, f := range imported {
+		places[f.Key] = p
+	}
+	_ = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		mc := &avsysv1.MinecraftServer{}
+		if err := s.Client.Get(ctx, key, mc); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		changed := false
+		for i := range mc.Spec.Mods {
+			m := &mc.Spec.Mods[i]
+			if m.Source != avsysv1.SourceUpload || m.File != "" {
+				continue
+			}
+			p, ok := places[contentKey(*m)]
+			if !ok {
+				continue
+			}
+			if _, err := files.Stat(path.Join(controller.ContentDir, m.Project)); !errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if was := *m; func() bool { was.File = p; return inPlaceFile(was) }() {
+				m.File = p
+				changed = true
+			}
+		}
+		if !changed {
+			return nil
+		}
 		return s.Client.Update(ctx, mc)
 	})
 }
@@ -630,4 +670,31 @@ func fileHash(files ServerFiles, full string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// keepUploadPlaces gives each upload in spec the place it is kept at in
+// before, and none it is not kept at there: where an upload found in the
+// server's files is kept is the panel's to say, never a request's.
+func keepUploadPlaces(spec, before *avsysv1.MinecraftServerSpec) {
+	places := map[string]string{}
+	if before != nil {
+		for _, m := range before.Mods {
+			if m.Source == avsysv1.SourceUpload {
+				places[uploadKey(m)] = m.File
+			}
+		}
+	}
+	for i := range spec.Mods {
+		if m := &spec.Mods[i]; m.Source == avsysv1.SourceUpload {
+			m.File = places[uploadKey(*m)]
+		}
+	}
+}
+
+func uploadKey(m avsysv1.ContentRef) string {
+	kind := m.Kind
+	if kind == "" {
+		kind = avsysv1.KindMod
+	}
+	return string(kind) + "/" + m.Project
 }

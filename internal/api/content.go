@@ -436,9 +436,18 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		first error
 	)
 	// Where a datapack from a URL or Modrinth was saved is known from when it
-	// was added or pinned. What a request says of it is not taken: the panel
-	// deletes that file, or keeps another for it.
+	// was added or pinned, and where an upload found in the server's files
+	// is kept from when it was taken in. What a request says of either is
+	// not taken: the panel deletes that file, or keeps another for it. An
+	// entry a request sends back without it keeps it.
 	savedKey := func(m *avsysv1.ContentRef) string {
+		if m.Source == avsysv1.SourceUpload {
+			kind := m.Kind
+			if kind == "" {
+				kind = avsysv1.KindMod
+			}
+			return "upload:" + string(kind) + "/" + m.Project
+		}
 		if m.Kind != avsysv1.KindDatapack {
 			return ""
 		}
