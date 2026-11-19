@@ -550,16 +550,18 @@ interface ContentListProps {
   found?: FoundFile[];
   /** Where a found file's own picture is served, for one that has one. */
   foundPicture?: (f: FoundFile) => string | undefined;
+  /** Where an entry's own picture is served, for one without one from where it is from. */
+  picture?: (mod: ContentRef) => string | undefined;
   onRemoveFound?: (f: FoundFile) => void;
 }
 
-export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true, found = [], foundPicture, onRemoveFound }: ContentListProps) {
+export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true, found = [], foundPicture, picture, onRemoveFound }: ContentListProps) {
   const row = "flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0";
   return (
     <ul className="overflow-hidden rounded-lg border border-line bg-surface">
       {mods.map((m, i) => (
         <li key={`${m.source}/${m.project}`} className={row}>
-          <ProjectIcon url={m.iconUrl} size={32} kind={m.kind ?? "mod"} name={titleOf(m)} />
+          <ProjectIcon url={m.iconUrl || picture?.(m)} size={32} kind={m.kind ?? "mod"} name={titleOf(m)} />
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 truncate text-[13px] font-medium">
               {titleOf(m)}
@@ -583,7 +585,7 @@ export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = 
               {foundTitle(f)}
               {f.project && <ProjectLink project={f.slug || f.project} kind={f.kind} />}
             </p>
-            <p className="truncate text-xs text-faint">{["Added outside the panel", f.about].filter(Boolean).join(" · ")}</p>
+            {f.about && <p className="truncate text-xs text-faint">{f.about}</p>}
           </div>
           {f.version && <Chip className="max-w-40 truncate font-mono max-sm:hidden">{f.version}</Chip>}
           {showKind && <Chip>{f.kind}</Chip>}

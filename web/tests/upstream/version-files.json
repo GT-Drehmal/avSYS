@@ -7,16 +7,22 @@
  "8347af629753d9ecb76b80bb078bb7a22be84ccc": {
   "id": "V0000101",
   "project_id": "P0000101",
-  "version_number": "2.9.6+mc1.20.1"
+  "version_number": "2.9.6+mc1.20.1",
+  "files": [{ "filename": "bingo-2.9.6+mc1.20.1.jar", "primary": true, "hashes": { "sha1": "8347af629753d9ecb76b80bb078bb7a22be84ccc" } }],
+  "dependencies": [{ "project_id": "P0000102", "dependency_type": "required" }]
  },
  "1d48b9c98041055c08e674365d2e5fd6b885cd26": {
   "id": "V0000102",
   "project_id": "P0000102",
-  "version_number": "0.92.2+1.20.1"
+  "version_number": "0.92.2+1.20.1",
+  "files": [{ "filename": "fabric-api-0.92.2+1.20.1.jar", "primary": true, "hashes": { "sha1": "1d48b9c98041055c08e674365d2e5fd6b885cd26" } }],
+  "dependencies": []
  },
  "a53b75a80ba70ee2450e17ccf63b0c6c47a688b0": {
   "id": "V0000103",
   "project_id": "P0000103",
-  "version_number": "mc1.20.1-0.11.2"
+  "version_number": "mc1.20.1-0.11.2",
+  "files": [{ "filename": "lithium-fabric-mc1.20.1-0.11.2.jar", "primary": true, "hashes": { "sha1": "a53b75a80ba70ee2450e17ccf63b0c6c47a688b0" } }],
+  "dependencies": []
  }
 }

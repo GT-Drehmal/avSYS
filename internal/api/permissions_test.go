@@ -351,7 +351,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"POST " + server + "/content/look", "", "", store.RoleViewer, 200},
 		// 404: allowed, and nothing of that name was found there.
 		{"DELETE " + server + "/content/found", "/orgs/alpha/servers/world/content/found?path=mods/a.jar", "", store.RoleAdmin, 404},
-		{"GET " + server + "/content/found/icon", "/orgs/alpha/servers/world/content/found/icon?path=mods/a.jar", "", store.RoleViewer, 404},
+		{"GET " + server + "/content/icon", "/orgs/alpha/servers/world/content/icon?kind=mod&name=a.jar", "", store.RoleViewer, 404},
 		// 409: allowed, and then refused because the server is running.
 		{"PUT " + server + "/import", "", "x", store.RoleAdmin, 409},
 		{"GET " + server + "/import/upload", "", "", store.RoleAdmin, 0},

@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -68,6 +69,13 @@ type FoundFile struct {
 	// Looked is when Modrinth was last asked about it, in Unix seconds; 0
 	// until it has answered.
 	Looked int64 `json:"looked,omitempty"`
+	// Java is the Java release a mod's or plugin's classes were compiled for.
+	Java int32 `json:"java,omitempty"`
+	// Filename is the name Modrinth gives the file of its version, which the
+	// image saves it under, and Requires the Modrinth projects that version
+	// needs, which the image installs with it.
+	Filename string   `json:"filename,omitempty"`
+	Requires []string `json:"requires,omitempty"`
 }
 
 // ServerFiles are a server's files, as the panel reads the content in them.
@@ -78,6 +86,9 @@ type ServerFiles interface {
 	Open(path string) (ServerFile, error)
 	Remove(path string) error
 	RemoveAll(path string) error
+	MkdirAll(path string) error
+	// Create makes a file, or empties the one there, to write.
+	Create(path string) (io.WriteCloser, error)
 }
 
 // ServerFile is one of them, open to read.
@@ -91,6 +102,8 @@ type ServerFile interface {
 type sftpFiles struct{ *sftp.Client }
 
 func (f sftpFiles) Open(p string) (ServerFile, error) { return f.Client.Open(p) }
+
+func (f sftpFiles) Create(p string) (io.WriteCloser, error) { return f.Client.Create(p) }
 
 // contentFiles reaches a server's files to find content in, without waiting
 // for a workspace that is not up.
@@ -255,9 +268,16 @@ func (s *Server) lookAtContent(ctx context.Context, mc *avsysv1.MinecraftServer)
 	if err != nil {
 		return err
 	}
+	// What was taken off the list since it was taken into it goes first.
+	s.dropImported(ctx, files, key)
 	found, err := s.findContent(ctx, key.String(), files, &mc.Spec, foundOf(mc))
 	if err != nil {
 		return err
+	}
+	found = st.without(found, started)
+	// What is found is taken into the list: what is left is what cannot be.
+	if found, err = s.importFound(ctx, key, files, found); err != nil {
+		s.Log.Warn("could not take content found in a server's folders into its list", "server", key.Name, "error", err)
 	}
 	return s.keepFound(ctx, key, func([]FoundFile) []FoundFile { return st.without(found, started) })
 }
@@ -543,6 +563,11 @@ func (s *Server) readFound(owner string, files ServerFiles, f *FoundFile) {
 	if err != nil {
 		return
 	}
+	if f.Kind != avsysv1.KindDatapack {
+		if java, err := javaOfJar(tmp, size); err == nil {
+			f.Java = int32(java)
+		}
+	}
 	meta := contentMeta(zr, f.Kind)
 	if meta.title != "" {
 		f.Title = meta.title
@@ -569,8 +594,9 @@ func readSmall(files ServerFiles, p string) ([]byte, error) {
 // recognitions are Modrinth's answers about files, by SHA-1, for every
 // server: one file on several servers is asked about once.
 type recognition struct {
-	project, versionID, version string
-	at                          time.Time
+	project, versionID, version, filename string
+	requires                              []string
+	at                                    time.Time
 }
 
 // askAgain is how long a file Modrinth did not know is left before it is
@@ -605,13 +631,45 @@ func (s *Server) recognise(ctx context.Context, found []FoundFile) {
 			ID            string `json:"id"`
 			ProjectID     string `json:"project_id"`
 			VersionNumber string `json:"version_number"`
+			Files         []struct {
+				Filename string            `json:"filename"`
+				Hashes   map[string]string `json:"hashes"`
+			} `json:"files"`
+			Dependencies []struct {
+				VersionID string `json:"version_id"`
+				ProjectID string `json:"project_id"`
+				Type      string `json:"dependency_type"`
+			} `json:"dependencies"`
 		}
 		if json.Unmarshal(body, &versions) != nil {
 			break
 		}
 		for _, h := range chunk {
 			v := versions[h]
-			s.recognitions.Store(h, recognition{project: v.ProjectID, versionID: v.ID, version: v.VersionNumber, at: now})
+			rec := recognition{project: v.ProjectID, versionID: v.ID, version: v.VersionNumber, at: now}
+			for _, file := range v.Files {
+				if file.Hashes["sha1"] == h {
+					rec.filename = file.Filename
+				}
+			}
+			for _, d := range v.Dependencies {
+				if d.Type != "required" {
+					continue
+				}
+				// One named by its version alone is that version's project;
+				// one that cannot be told is a need nothing meets.
+				project := d.ProjectID
+				if project == "" && d.VersionID != "" {
+					project = "version:" + d.VersionID
+					if dv, err := s.modrinthVersion(ctx, d.VersionID); err == nil && dv.ProjectID != "" {
+						project = dv.ProjectID
+					}
+				}
+				if project != "" {
+					rec.requires = append(rec.requires, project)
+				}
+			}
+			s.recognitions.Store(h, rec)
 		}
 	}
 	var ids []string
@@ -621,7 +679,7 @@ func (s *Server) recognise(ctx context.Context, found []FoundFile) {
 			rec := r.(recognition)
 			if f.Looked == 0 || rec.at.Unix() > f.Looked {
 				f.Looked = rec.at.Unix()
-				f.Project, f.VersionID = rec.project, rec.versionID
+				f.Project, f.VersionID, f.Filename, f.Requires = rec.project, rec.versionID, rec.filename, rec.requires
 				if rec.project != "" && rec.version != "" {
 					f.Version = rec.version
 				}
@@ -938,6 +996,16 @@ func (s *Server) keepFoundIcon(key string, raw []byte) bool {
 	return true
 }
 
+// keepFoundPNG keeps a picture drawn already.
+func (s *Server) keepFoundPNG(key string, png []byte) {
+	s.foundIcons.mu.Lock()
+	defer s.foundIcons.mu.Unlock()
+	if s.foundIcons.pngs == nil || len(s.foundIcons.pngs) >= 2048 {
+		s.foundIcons.pngs = map[string][]byte{}
+	}
+	s.foundIcons.pngs[key] = png
+}
+
 func (s *Server) foundIcon(key string) ([]byte, bool) {
 	s.foundIcons.mu.Lock()
 	defer s.foundIcons.mu.Unlock()
@@ -1054,37 +1122,68 @@ func foundPlace(f FoundFile) bool {
 	return false
 }
 
-// getFoundIcon is the picture a found file has of its own.
-func (s *Server) getFoundIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {
+// getContentIcon is the picture a file of a server's content has of its
+// own: one found in its folders, or one listed as an upload, by its kind
+// and name.
+func (s *Server) getContentIcon(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	_, mc, err := s.server(r, u, store.RoleViewer)
 	if err != nil {
 		return err
 	}
-	want := r.URL.Query().Get("path")
-	i := slices.IndexFunc(foundOf(mc), func(f FoundFile) bool { return f.Path == want && f.Picture })
-	if i < 0 {
+	kind, name := avsysv1.ContentKind(r.URL.Query().Get("kind")), r.URL.Query().Get("name")
+	f, ok := contentFileOf(mc, kind, name)
+	if !ok {
 		return errNotFound
 	}
-	f := foundOf(mc)[i]
-	if !foundPlace(f) {
+	files, err := s.contentFiles(r.Context(), mc.Namespace, mc.Name)
+	if err != nil {
+		return errNotFound
+	}
+	info, err := files.Stat(path.Join(dataRoot, f.Path))
+	if err != nil {
 		return errNotFound
 	}
 	owner := client.ObjectKeyFromObject(mc).String()
-	png, ok := s.foundIcon(foundIconKey(owner, f))
+	key := owner + "\x00" + f.Path + "@" + strconv.FormatInt(info.Size(), 10) + "@" + strconv.FormatInt(info.ModTime().UnixNano(), 10)
+	png, ok := s.foundIcon(key)
 	if !ok {
-		// Not kept since the panel started: read out of the file again.
-		files, err := s.contentFiles(r.Context(), mc.Namespace, mc.Name)
-		if err != nil {
+		f.Size, f.Modified = info.Size(), info.ModTime().Unix()
+		s.readFound(owner, files, &f)
+		if png, ok = s.foundIcon(foundIconKey(owner, f)); !ok {
 			return errNotFound
 		}
-		again := FoundFile{Path: f.Path, Kind: f.Kind, Size: f.Size, Modified: f.Modified, Folder: f.Folder}
-		s.readFound(owner, files, &again)
-		if png, ok = s.foundIcon(foundIconKey(owner, again)); !ok {
-			return errNotFound
-		}
+		s.keepFoundPNG(key, png)
 	}
 	servePicture(w, r, png)
 	return nil
+}
+
+// contentFileOf is the file of a server's content of this kind and name:
+// one found in its folders, or an upload, kept with the uploads or, for a
+// datapack that is a folder, in its world.
+func contentFileOf(mc *avsysv1.MinecraftServer, kind avsysv1.ContentKind, name string) (FoundFile, bool) {
+	if !plainName(name) {
+		return FoundFile{}, false
+	}
+	for _, f := range foundOf(mc) {
+		if f.Kind == kind && path.Base(f.Path) == name && foundPlace(f) {
+			return FoundFile{Path: f.Path, Kind: f.Kind, Folder: f.Folder}, true
+		}
+	}
+	for _, m := range mc.Spec.Mods {
+		if m.Source != avsysv1.SourceUpload || m.Kind != kind || m.Project != name {
+			continue
+		}
+		if isDatapackFolder(m) {
+			level := levelOf(&mc.Spec)
+			if level == "" {
+				return FoundFile{}, false
+			}
+			return FoundFile{Path: path.Join(level, "datapacks", name), Kind: kind, Folder: true}, true
+		}
+		return FoundFile{Path: strings.TrimPrefix(path.Join(controller.ContentDir, name), dataRoot+"/"), Kind: kind}, true
+	}
+	return FoundFile{}, false
 }
 
 // DirFiles are a server's files kept in a folder of this machine, root
@@ -1141,6 +1240,22 @@ func (d dirFiles) Remove(p string) error {
 		return err
 	}
 	return os.Remove(full)
+}
+
+func (d dirFiles) MkdirAll(p string) error {
+	full, err := d.at(p)
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(full, 0o755)
+}
+
+func (d dirFiles) Create(p string) (io.WriteCloser, error) {
+	full, err := d.at(p)
+	if err != nil {
+		return nil, err
+	}
+	return os.Create(full)
 }
 
 func (d dirFiles) RemoveAll(p string) error {

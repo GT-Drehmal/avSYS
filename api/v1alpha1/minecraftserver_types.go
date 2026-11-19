@@ -69,6 +69,15 @@ const (
 	// content folders that it did not put there itself: mods, plugins and
 	// datapacks added by hand or brought in with its files, as JSON.
 	AnnotationFoundContent = "avsys.dev/found-content"
+	// AnnotationImported notes the files of content the panel took into a
+	// server's list from its folders, by path under /data, to the entry
+	// each is, as JSON, until the image has installed them as its own.
+	AnnotationImported = "avsys.dev/imported"
+	// AnnotationSettled is "<pod UID>@<generation>": the pod runs what the
+	// server's settings of that generation say, though it was made with
+	// earlier ones, as when content it has in its files was taken into its
+	// list. Such a change is not one to restart it for.
+	AnnotationSettled = "avsys.dev/settled"
 	// AnnotationPublicPorts records the public ports given out to the extra
 	// ports of a server that shares the router's address, as name=port,...
 	// They are the server's for as long as it has those ports.

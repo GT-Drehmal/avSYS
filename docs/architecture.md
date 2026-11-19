@@ -375,13 +375,37 @@ new or changed file (SHA-1), asks Modrinth about all of them in one
 `POST /v2/version_files`, and names those it has from
 `GET /v2/projects`; the rest are named by their `fabric.mod.json`,
 `quilt.mod.json`, `mods.toml`, `neoforge.mods.toml`, `plugin.yml`,
-`paper-plugin.yml` or `pack.mcmeta`, or by file name. What it found is
-kept on the server as the annotation `avsys.dev/found-content`, with each
-file's size, time and hash, so an unchanged file is not read or asked
-about again. It looks every five minutes, and sooner once a server starts
-or stops, its files are changed through the panel, an import or restore
-is done, or its Content page is opened. Found files are never changed;
-removing one deletes it.
+`paper-plugin.yml` or `pack.mcmeta`, or by file name. It looks every five
+minutes, and sooner once a server starts or stops, its files are changed
+through the panel, an import or restore is done, or its Content page is
+opened; not while the game is starting or stopping.
+
+What it finds it takes into `spec.mods` (`internal/api/foundimport.go`),
+without changing a file:
+
+- A file Modrinth has, under the name Modrinth gives it, becomes that
+  project pinned to that version, if every project it requires is listed
+  too. Given it, the image finds the file there (it skips a file that
+  exists and checks its hash), and does not fetch what an explicitly
+  listed project needs again. A mod that needs a project that is not
+  listed would make the image fetch a second copy of it, so it becomes an
+  upload instead.
+- Anything else becomes an upload: the file is copied to
+  `.avsys/content`, and the image copies it over itself. A datapack that
+  is a folder stays where it is and is not handed to the image.
+- The pod is noted as already running what the list says (the
+  annotation `avsys.dev/settled`, `<pod UID>@<generation>`), so the
+  controller neither restarts it nor says it waits for a restart. A pod
+  restarted in place keeps the settings it was made with, and the image,
+  whose records do not list the taken files, leaves them as they are.
+- The projects taken from Modrinth are also noted in
+  `.avsys/imported-modrinth`, which the game container's command counts
+  as installed: a server starts with them while Modrinth does not answer,
+  before the image has recorded them itself.
+- Which files were taken is noted on the server (`avsys.dev/imported`)
+  until the image has them in its records. One whose entry is taken off,
+  or changed to another version, is deleted then, so that it is not kept
+  beside the new one.
 
 **Starting while a site is down.** The image asks the sites it installs
 from about the loader and the content on every start, even when the server

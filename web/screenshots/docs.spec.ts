@@ -202,7 +202,7 @@ test("content found in a server's folders", async ({ page }) => {
   await page.goto("/o/club/s/bingo/content");
   await expect(page.getByRole("region", { name: "Mods", exact: true }).getByText("Yet Another Bingo", { exact: true })).toBeVisible();
   await expect
-    .poll(() => page.locator('main img[src*="/content/found/icon"]').evaluateAll((imgs) => imgs.every((i) => (i as HTMLImageElement).naturalWidth > 0) && imgs.length > 0))
+    .poll(() => page.locator('main img[src*="/content/icon"]').evaluateAll((imgs) => imgs.every((i) => (i as HTMLImageElement).naturalWidth > 0) && imgs.length > 0))
     .toBe(true);
   await shot(page, "content-found");
 });

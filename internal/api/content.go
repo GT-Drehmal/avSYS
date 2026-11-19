@@ -45,6 +45,7 @@ type modrinthFile struct {
 
 type modrinthVersion struct {
 	ID            string         `json:"id"`
+	ProjectID     string         `json:"project_id"`
 	VersionNumber string         `json:"version_number"`
 	VersionType   string         `json:"version_type"`
 	GameVersions  []string       `json:"game_versions"`
@@ -630,6 +631,14 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 	}
 
 	entry := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: kind, Project: name, Title: name, Java: int32(java)}
+	// Named as the file says of itself, as one found in the server's folders is.
+	if zr, err := zip.NewReader(tmp, size); err == nil {
+		meta := contentMeta(zr, kind)
+		if meta.title != "" {
+			entry.Title = meta.title
+		}
+		entry.VersionName = meta.version
+	}
 	// The file is in place; now list it. Someone may be editing the server at
 	// the same moment, so a conflicting write is retried on fresh state.
 	for attempt := 0; ; attempt++ {
@@ -679,6 +688,17 @@ func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Cli
 	defer cancel()
 	before = withSavedNames(ctx, spec, before)
 	gone := leftBehind(spec, before)
+	// What was taken into the list from the server's folders, and is off it
+	// now, or another version, is deleted too. Where its files cannot be
+	// reached now, the next look at them does it.
+	if changedContent(spec, before) {
+		key := client.ObjectKey{Namespace: namespace, Name: server}
+		if through != nil {
+			s.dropImported(ctx, sftpFiles{through}, key)
+		} else if files, err := s.contentFiles(ctx, namespace, server); err == nil {
+			s.dropImported(ctx, files, key)
+		}
+	}
 	if len(gone) == 0 {
 		return
 	}
@@ -702,6 +722,21 @@ func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Cli
 	}
 }
 
+// changedContent says an entry of a server's content was taken off or
+// changed.
+func changedContent(spec, before *avsysv1.MinecraftServerSpec) bool {
+	now := map[string]bool{}
+	for _, m := range spec.Mods {
+		now[contentKey(m)] = true
+	}
+	for _, m := range before.Mods {
+		if !now[contentKey(m)] {
+			return true
+		}
+	}
+	return false
+}
+
 // withSavedNames is before, with the saved name looked up of each URL
 // datapack taken off that was added before names were recorded.
 func withSavedNames(ctx context.Context, spec, before *avsysv1.MinecraftServerSpec) *avsysv1.MinecraftServerSpec {
@@ -719,11 +754,22 @@ func withSavedNames(ctx context.Context, spec, before *avsysv1.MinecraftServerSp
 	return out
 }
 
+// isDatapackFolder says an entry is a datapack that is a folder, taken into
+// a server's list from its world: kept there, not with the uploads.
+func isDatapackFolder(m avsysv1.ContentRef) bool {
+	return m.Source == avsysv1.SourceUpload && m.Kind == avsysv1.KindDatapack && !strings.HasSuffix(strings.ToLower(m.Project), ".zip")
+}
+
 // removeFiles deletes files of a server's, and returns those it could not.
+// A datapack that is a folder goes with all it holds.
 func removeFiles(s *Server, sc *sftp.Client, server string, files []string) []string {
 	var left []string
 	for _, file := range files {
-		if err := sc.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		remove := sc.Remove
+		if info, err := sc.Stat(file); err == nil && info.IsDir() && strings.HasSuffix(path.Dir(file), "/datapacks") {
+			remove = sc.RemoveAll
+		}
+		if err := remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			s.Log.Warn("could not delete content taken off a server", "server", server, "file", file, "error", err)
 			left = append(left, file)
 		}
@@ -875,7 +921,7 @@ func installedFiles(spec *avsysv1.MinecraftServerSpec) map[string]bool {
 	}
 	level := levelOf(spec)
 	for _, m := range spec.Mods {
-		if m.Source == avsysv1.SourceUpload {
+		if m.Source == avsysv1.SourceUpload && !isDatapackFolder(m) {
 			out[path.Join(controller.ContentDir, path.Base(m.Project))] = true
 		}
 		if name := installedDatapack(m); name != "" && level != "" {
@@ -910,7 +956,7 @@ func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 	}
 	for _, m := range before.Mods {
 		key := string(m.Source) + ":" + m.Project
-		if m.Source == avsysv1.SourceUpload && !listed[key] {
+		if m.Source == avsysv1.SourceUpload && !listed[key] && !isDatapackFolder(m) {
 			gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
 		}
 		// One from CurseForge that is still listed may be of another

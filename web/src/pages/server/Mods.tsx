@@ -3,7 +3,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AddContentDialog, ContentList, filtersFor, foundTitle, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { modPortsNote } from "../../components/ExtraPorts";
 import { PackContents, PackIcon } from "../../components/Modpack";
-import { Button, Field, Input, Notice, SearchBox, Toggle } from "../../components/ui";
+import { Button, Chip, Field, Input, Notice, SearchBox, Toggle } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
 import { NewerWorldConfirm } from "../../components/NewerWorld";
 import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type FoundFile, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
@@ -97,18 +97,20 @@ export function Mods() {
   // as the page is opened: put there a moment ago, it shows.
   const found = server.found ?? [];
   const path = serverPath(server.org, server.name);
-  const foundNow = useRef(found);
-  foundNow.current = found;
+  const now = useRef(server);
+  now.current = server;
   useEffect(() => {
     api.post<Server>(`${path}/content/look`).then(
-      // Only what it found is new: the rest comes as any change does.
-      (next) => JSON.stringify(next.found ?? []) !== JSON.stringify(foundNow.current) && applyServer(qc, next),
+      // What it found, or took into the list: nothing else is new.
+      (next) => (next.revision !== now.current.revision || JSON.stringify(next.found ?? []) !== JSON.stringify(now.current.found ?? [])) && applyServer(qc, next),
       () => {},
     );
   }, [path, qc]);
   const removeFound = useAction((f: FoundFile) => api.del<Server>(`${path}/content/found?${qs({ path: f.path })}`));
   const running = server.status.phase === "Running" || server.status.phase === "Starting";
-  const foundPicture = (f: FoundFile) => (f.picture ? `/api/v1${path}/content/found/icon?${qs({ path: f.path, v: f.sha1 ?? String(f.modified ?? "") })}` : undefined);
+  // The picture a file has of its own: one found, or an upload.
+  const foundPicture = (f: FoundFile) => (f.picture ? `/api/v1${path}/content/icon?${qs({ kind: f.kind, name: f.path.slice(f.path.lastIndexOf("/") + 1), v: f.sha1 ?? String(f.modified ?? "") })}` : undefined);
+  const uploadPicture = (m: ContentRef) => (m.source === "upload" ? `/api/v1${path}/content/icon?${qs({ kind: m.kind ?? "mod", name: m.project })}` : undefined);
   // A long list is searched, every section at once.
   const [query, setQuery] = useState("");
   const shown = (...said: (string | undefined)[]) => matches(query, ...said);
@@ -227,6 +229,7 @@ export function Mods() {
                 note={(m) => modPortsNote(m, server.spec.ports)}
                 found={foundHere}
                 foundPicture={foundPicture}
+                picture={uploadPicture}
                 onRemoveFound={
                   canEdit
                     ? (f) =>
@@ -240,10 +243,12 @@ export function Mods() {
                 }
                 onRemove={canEdit ? (j) => update.mutate({ mods: mods.filter((_, i) => i !== at[j]) }) : undefined}
                 extra={(m, j) =>
-                  isCatalog(m.source) && searchable(m.source) && (
+                  isCatalog(m.source) && searchable(m.source) ? (
                     <Button size="sm" disabled={!canEdit} onClick={() => setVersioning(at[j])} className="max-w-40">
                       <span className="truncate">{m.versionName || "Newest"}</span>
                     </Button>
+                  ) : (
+                    m.source === "upload" && m.versionName && <Chip className="max-w-40 truncate font-mono max-sm:hidden">{m.versionName}</Chip>
                   )
                 }
               />

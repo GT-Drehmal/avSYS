@@ -214,7 +214,18 @@ test("an imported server's mods, plugins and datapacks are on its Content page, 
   await expect(mods.getByRole("listitem")).toHaveCount(6);
   await expect(page.getByRole("region", { name: "Datapacks", exact: true }).getByText("hi_drehmal", { exact: true })).toHaveCount(1);
   const { spec } = await api("owner").get(`/orgs/${slug}/servers/bingo`);
-  expect(spec.mods.map((m: { project: string; version: string }) => `${m.project}@${m.version}`).sort()).toEqual(["P0000101@V0000101", "P0000102@V0000102", "P0000103@V0000103"]);
+  // Those Modrinth has, as the form listed them; the rest taken from the
+  // server's files as uploads.
+  expect(spec.mods.map((m: { source: string; project: string; version?: string }) => `${m.source} ${m.project}${m.version ? `@${m.version}` : ""}`).sort()).toEqual([
+    "modrinth P0000101@V0000101",
+    "modrinth P0000102@V0000102",
+    "modrinth P0000103@V0000103",
+    "upload WI-Zoom-1.5-MC1.20.1.jar",
+    "upload animatica-0.6+1.20.jar",
+    "upload bern.zip",
+    "upload c2me-fabric-mc1.20.1-0.2.0.jar",
+    "upload hi_drehmal.zip",
+  ]);
 });
 
 test("a server run by Fabric's launcher is known by the game jar it keeps", async ({ page, as, org }) => {

@@ -510,7 +510,7 @@ func (s *Server) Handler() http.Handler {
 	api("GET /orgs/{org}/servers/{server}/modpack/contents", s.authed(s.getModpackContents))
 	api("POST /orgs/{org}/servers/{server}/content/look", s.authed(s.lookAtFound))
 	api("DELETE /orgs/{org}/servers/{server}/content/found", s.authed(s.removeFound))
-	api("GET /orgs/{org}/servers/{server}/content/found/icon", s.authed(s.getFoundIcon))
+	api("GET /orgs/{org}/servers/{server}/content/icon", s.authed(s.getContentIcon))
 	api("GET /orgs/{org}/servers/{server}/modpack/icon", s.authed(s.getModpackIcon))
 	api("GET /orgs/{org}/templates", s.authed(s.listTemplates))
 	api("POST /orgs/{org}/templates", s.authed(s.createTemplate))

@@ -425,3 +425,56 @@ func TestKeepContentLearnsWhatTheImageInstalled(t *testing.T) {
 	image()
 	start("the other installed, and the first asked for again", v1, false)
 }
+
+// Projects the panel took into a server's list from its own files, which
+// the image has not installed yet, are there all the same: the server
+// starts with them while Modrinth does not answer, with or without what
+// the image installed before. One whose file is gone is left to the image.
+func TestKeepContentTakesWhatWasImported(t *testing.T) {
+	mods := []avsysv1.ContentRef{
+		{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindMod, Project: "P1", Version: "V1"},
+		{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindMod, Project: "P2", Version: "V2"},
+		{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindDatapack, Project: "P3", Version: "V3"},
+	}
+	for _, c := range []struct {
+		name  string
+		files map[string]string
+		keeps bool
+	}{
+		{"all taken from its files", map[string]string{
+			".avsys/imported-modrinth": "P1:V1\tmods/one.jar\nP2:V2\tmods/two.jar\ndatapack:P3:V3\tworld/datapacks/three.zip\n",
+		}, true},
+		{"some installed by the image, the rest taken from its files", map[string]string{
+			".modrinth-manifest.json":  `{"@type":"me.itzg.helpers.modrinth.ModrinthManifest","files":["mods/one.jar"],"projects":["P1:V1"]}`,
+			".avsys/imported-modrinth": "P2:V2\tmods/two.jar\ndatapack:P3:V3\tworld/datapacks/three.zip\n",
+		}, true},
+		{"one taken from its files gone since", map[string]string{
+			".avsys/imported-modrinth": "P1:V1\tmods/one.jar\nP2:V2\tmods/gone.jar\ndatapack:P3:V3\tworld/datapacks/three.zip\n",
+		}, false},
+		{"one not taken, nor installed", map[string]string{
+			".avsys/imported-modrinth": "P1:V1\tmods/one.jar\nP2:V2\tmods/two.jar\n",
+		}, false},
+		{"a record of the image's it cannot read", map[string]string{
+			".modrinth-manifest.json":  `{"files": "mods/one.jar"`,
+			".avsys/imported-modrinth": "P1:V1\tmods/one.jar\nP2:V2\tmods/two.jar\ndatapack:P3:V3\tworld/datapacks/three.zip\n",
+		}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, body := range map[string]string{"mods/one.jar": "1", "mods/two.jar": "2", "world/datapacks/three.zip": "3"} {
+				write(t, filepath.Join(dir, name), body)
+			}
+			for name, body := range c.files {
+				write(t, filepath.Join(dir, name), body)
+			}
+			mc := server(func(mc *avsysv1.MinecraftServer) {
+				mc.Spec.Loader = avsysv1.LoaderFabric
+				mc.Spec.Mods = mods
+			})
+			given, _, out := started(t, dir, mc, nil)
+			if kept := given["MODRINTH_PROJECTS"] == "unset"; kept != c.keeps {
+				t.Errorf("started with what it has: %v, want %v\n%s", kept, c.keeps, out)
+			}
+		})
+	}
+}

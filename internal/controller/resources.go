@@ -321,6 +321,11 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 			case avsysv1.KindPlugin:
 				pluginURLs = append(pluginURLs, location)
 			case avsysv1.KindDatapack:
+				// One that is a folder was taken into the list from the
+				// world, where it is: there is nothing to put there.
+				if m.Source == avsysv1.SourceUpload && !strings.HasSuffix(strings.ToLower(m.Project), ".zip") {
+					continue
+				}
 				datapackURLs = append(datapackURLs, location)
 			default:
 				modURLs = append(modURLs, location)
@@ -609,6 +614,11 @@ fi
 // list is installed, as JSON: the files, relative to its folder, and for
 // Modrinth the projects it was given, as given.
 const (
+	// ImportedRecord is the panel's record of the Modrinth projects it took
+	// into a server's list from its own files, which the image has not
+	// installed yet: "ref<TAB>file" a line, ref as MODRINTH_PROJECTS has it,
+	// the file relative to /data.
+	ImportedRecord = "/data/.avsys/imported-modrinth"
 	modrinthRecord = "/data/.modrinth-manifest.json"
 	listRecord     = ".var-list-manifest.json"
 )
@@ -659,11 +669,24 @@ for v in "${REMOVE_OLD_MODS:-}" "${REMOVE_OLD_DATAPACKS:-}"; do
   case $v in "" | [Ff][Aa][Ll][Ss][Ee]) ;; *) removes=yes ;; esac
 done
 m=` + modrinthRecord + `
-want=$(lines "${MODRINTH_PROJECTS:-}" | sort)
+r=` + ImportedRecord + `
+want=$(lines "${MODRINTH_PROJECTS:-}" | sort -u)
+# The image's record, and the panel's of what it took into the list from
+# the server's own files, which the image has not installed yet: they are
+# there all the same.
+had= files= readable=yes
+if [ -f "$m" ]; then
+  { had=$(listed projects "$m") && files=$(listed files "$m"); } || readable=
+fi
+if [ -f "$r" ]; then
+  had=$(printf '%s\n' "$had"; cut -f1 "$r")
+  files=$(printf '%s\n' "$files"; cut -f2 "$r")
+fi
+had=$(printf '%s\n' "$had" | sed '/^$/d' | sort -u)
+files=$(printf '%s\n' "$files" | sed '/^$/d' | awk '!seen[$0]++')
 # Installed as asked for, each pinned to a version, each file there, and
 # datapacks in this world.
-if [ -n "$want" ] && [ -z "$removes" ] && had=$(listed projects "$m") && [ "$(printf '%s\n' "$had" | sort)" = "$want" ] &&
-  files=$(listed files "$m") && [ -n "$files" ] &&
+if [ -n "$want" ] && [ -z "$removes" ] && [ -n "$readable" ] && [ "$had" = "$want" ] && [ -n "$files" ] &&
   ! printf '%s\n' "$want" | sed 's/^datapack://' | grep -qv : &&
   printf '%s\n' "$files" | {
     while IFS= read -r p; do

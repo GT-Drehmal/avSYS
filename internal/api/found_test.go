@@ -22,6 +22,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
@@ -164,6 +165,12 @@ func (m *hashModrinth) RoundTrip(r *http.Request) (*http.Response, error) {
 			}
 		}
 		body = "{" + strings.Join(parts, ",") + "}"
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.String(), "https://api.modrinth.com/v2/version/"):
+		id := strings.TrimPrefix(r.URL.Path, "/v2/version/")
+		body = `{"id":"` + id + `","version_number":"` + id + `","files":[]}`
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.String(), "https://api.modrinth.com/v2/project/"):
+		id := strings.TrimPrefix(r.URL.Path, "/v2/project/")
+		body = `{"id":"` + id + `","slug":"` + id + `","title":"` + id + `"}`
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.String(), "https://api.modrinth.com/v2/projects?"):
 		if m.noProjects {
 			return nil, errors.New("offline: projects")
@@ -382,82 +389,366 @@ func (p *panel) foundOn(server string) []FoundFile {
 	return foundOf(mc)
 }
 
-// The Content page asks for a look, and anyone who sees the server may; the
-// view of the server says what is there. Only an admin removes one, which
-// deletes its file, and only one found there.
-func TestFoundListedAndRemoved(t *testing.T) {
+// listedOn is a server's content as "source kind project@version", in order.
+func (p *panel) listedOn(server string) []string {
+	p.t.Helper()
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: server}, mc); err != nil {
+		p.t.Fatal(err)
+	}
+	var out []string
+	for _, m := range mc.Spec.Mods {
+		entry := string(m.Source) + " " + string(m.Kind) + " " + m.Project
+		if m.Version != "" {
+			entry += "@" + m.Version
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func (p *panel) serverOf(name string) *avsysv1.MinecraftServer {
+	p.t.Helper()
+	mc := &avsysv1.MinecraftServer{}
+	if err := p.srv.Client.Get(context.Background(), client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: name}, mc); err != nil {
+		p.t.Fatal(err)
+	}
+	return mc
+}
+
+// modrinthVersionOf is how hashModrinth tells of a version: its project,
+// and the file it has under this name and hash.
+func modrinthVersionOf(id, project, number, filename string, file []byte, requires ...string) string {
+	deps := `{"project_id":"optional-one","dependency_type":"optional"}`
+	for _, r := range requires {
+		deps += `,{"project_id":"` + r + `","dependency_type":"required"}`
+	}
+	return `{"id":"` + id + `","project_id":"` + project + `","version_number":"` + number + `","files":[{"filename":"` + filename + `","primary":true,"hashes":{"sha1":"` + sha1Of(file) + `"}}],"dependencies":[` + deps + `]}`
+}
+
+func exists(t *testing.T, file string) bool {
+	t.Helper()
+	_, err := os.Stat(file)
+	return err == nil
+}
+
+// Content found in a server's folders is taken into its list as if it had
+// been added there, the files left as they are. A file Modrinth has, under
+// Modrinth's own name for it, is that project at that version, as long as
+// all it needs is in the list too; anything else is an upload. Looked at
+// again, nothing is taken twice.
+func TestFoundTakenIntoTheList(t *testing.T) {
 	p := newPanel(t)
 	icon := aPicture(t)
-	root := t.TempDir()
+	bingo := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"bingo","version":"local"}`, "a/B.class": "\xca\xfe\xba\xbe\x00\x00\x00\x3d"})
+	api := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"Fabric API","version":"0.92.2"}`})
+	lithium := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"Lithium","version":"0.11.2"}`})
+	needy := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"Needy","version":"1.0"}`})
 	zoom := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"WI Zoom","version":"1.5","icon":"icon.png"}`, "icon.png": icon})
-	lay(t, root, map[string][]byte{
-		"mods/WI-Zoom-1.5.jar":          zoom,
-		"mods/c2me.jar":                 []byte("c2me"),
-		"world/datapacks/a/pack.mcmeta": []byte(`{"pack":{"description":"A"}}`),
-		"world/datapacks/b.zip":         []byte("b"),
-		"world/level.dat":               []byte("not content"),
-		"server.properties":             []byte("motd=hi\n"),
-	})
+	bern := jarOf(t, map[string]string{"pack.mcmeta": `{"pack":{"description":"Bern's trades"}}`})
+	root := t.TempDir()
+	files := map[string][]byte{
+		"mods/bingo-2.9.6.jar":             bingo,
+		"mods/fabric-api-0.92.2.jar":       api,
+		"mods/lithium-renamed.jar":         lithium,
+		"mods/needy-1.0.jar":               needy,
+		"mods/WI-Zoom-1.5.jar":             zoom,
+		"mods/bad,name.jar":                zoom,
+		"world/datapacks/bern.zip":         bern,
+		"world/datapacks/mael/pack.mcmeta": []byte(`{"pack":{"description":"Mael's"}}`),
+	}
+	lay(t, root, files)
 	p.fileServer(root)
-	p.srv.catalog.http.Transport = &hashModrinth{}
+	p.srv.catalog.http.Transport = &hashModrinth{
+		versions: map[string]string{
+			sha1Of(bingo):   modrinthVersionOf("V1", "P1", "2.9.6+mc1.20.1", "bingo-2.9.6.jar", bingo, "P2"),
+			sha1Of(api):     modrinthVersionOf("V2", "P2", "0.92.2+1.20.1", "fabric-api-0.92.2.jar", api),
+			sha1Of(lithium): modrinthVersionOf("V3", "P3", "mc1.20.1-0.11.2", "lithium-fabric-mc1.20.1-0.11.2.jar", lithium),
+			sha1Of(needy):   modrinthVersionOf("V4", "P4", "1.0", "needy-1.0.jar", needy, "P9"),
+		},
+		projects: `[{"id":"P1","slug":"yet-another-bingo","title":"Yet Another Bingo","icon_url":"https://cdn.modrinth.com/bingo.png"},{"id":"P2","slug":"fabric-api","title":"Fabric API"},{"id":"P3","slug":"lithium","title":"Lithium"},{"id":"P4","slug":"needy","title":"Needy"}]`,
+	}
 
-	code, view := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
-	if code != http.StatusOK {
-		t.Fatalf("look: %d %v", code, view)
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+		t.Fatalf("look: %d", code)
 	}
-	var paths []string
-	for _, f := range view["found"].([]any) {
-		paths = append(paths, f.(map[string]any)["path"].(string))
+	want := []string{
+		"upload mod WI-Zoom-1.5.jar", // Modrinth does not have it
+		"modrinth mod P1@V1",         // bingo, and what it needs, Fabric API, is taken with it
+		"modrinth mod P2@V2",
+		"upload mod lithium-renamed.jar", // not under Modrinth's name for it: the image would fetch another
+		"upload mod needy-1.0.jar",       // what it needs is not in the list: the image would fetch it
+		"upload datapack bern.zip",
+		"upload datapack mael", // a folder, kept where it is
 	}
-	if strings.Join(paths, " ") != "mods/WI-Zoom-1.5.jar mods/c2me.jar world/datapacks/a world/datapacks/b.zip" {
-		t.Fatalf("found %v", paths)
+	if got := p.listedOn("world"); strings.Join(got, ", ") != strings.Join(want, ", ") {
+		t.Fatalf("listed %q,\nwant %q", got, want)
 	}
-	// Its picture, drawn again by the panel, to whoever sees the server.
-	rec := p.send("viewer", "GET", "/orgs/alpha/servers/world/content/found/icon?path="+url.QueryEscape("mods/WI-Zoom-1.5.jar"), nil)
-	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" {
-		t.Errorf("its picture: %d %s", rec.Code, rec.Header().Get("Content-Type"))
+	mc := p.serverOf("world")
+	for _, m := range mc.Spec.Mods {
+		switch m.Project {
+		case "P1":
+			if m.Title != "Yet Another Bingo" || m.VersionName != "2.9.6+mc1.20.1" || m.IconURL != "https://cdn.modrinth.com/bingo.png" || m.Java != 17 {
+				t.Errorf("bingo: %+v", m)
+			}
+		case "WI-Zoom-1.5.jar":
+			if m.Title != "WI Zoom" || m.VersionName != "1.5" {
+				t.Errorf("WI Zoom: %+v", m)
+			}
+		}
 	}
-	// Kept by the panel only a while: read out of the file again.
-	p.srv.foundIcons = foundIcons{}
-	if rec := p.send("viewer", "GET", "/orgs/alpha/servers/world/content/found/icon?path="+url.QueryEscape("mods/WI-Zoom-1.5.jar"), nil); rec.Code != 200 {
-		t.Errorf("its picture, read again: %d", rec.Code)
+	// What cannot be listed as it is named stays found.
+	if got := pathsOf(foundOf(mc)); strings.Join(got, " ") != "mods/bad,name.jar" {
+		t.Errorf("left found: %v", got)
 	}
-	if rec := p.send("viewer", "GET", "/orgs/alpha/servers/world/content/found/icon?path="+url.QueryEscape("mods/c2me.jar"), nil); rec.Code != 404 {
+	// No file was changed; uploads are kept where uploads are, as well.
+	for name, body := range files {
+		if got, err := os.ReadFile(filepath.Join(root, name)); err != nil || !bytes.Equal(got, body) {
+			t.Errorf("%s changed: %v", name, err)
+		}
+	}
+	for _, name := range []string{"WI-Zoom-1.5.jar", "lithium-renamed.jar", "needy-1.0.jar", "bern.zip"} {
+		got, err := os.ReadFile(filepath.Join(root, ".avsys/content", name))
+		if err != nil || !bytes.Equal(got, files[strings.Replace("mods/"+name, "mods/bern.zip", "world/datapacks/bern.zip", 1)]) {
+			t.Errorf("upload %s: %v", name, err)
+		}
+	}
+	if exists(t, filepath.Join(root, ".avsys/content/mael")) {
+		t.Error("a datapack folder was copied")
+	}
+	// What a start without Modrinth starts with.
+	if record, _ := os.ReadFile(filepath.Join(root, ".avsys/imported-modrinth")); string(record) != "P1:V1\tmods/bingo-2.9.6.jar\nP2:V2\tmods/fabric-api-0.92.2.jar\n" {
+		t.Errorf("record %q", record)
+	}
+	// Its uploads' pictures are theirs.
+	if rec := p.send("viewer", "GET", "/orgs/alpha/servers/world/content/icon?kind=mod&name=WI-Zoom-1.5.jar", nil); rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" {
+		t.Errorf("an upload's picture: %d", rec.Code)
+	}
+	if rec := p.send("viewer", "GET", "/orgs/alpha/servers/world/content/icon?kind=mod&name=needy-1.0.jar", nil); rec.Code != 404 {
 		t.Errorf("one with no picture: %d", rec.Code)
 	}
 
+	// Looked at again, nothing more.
+	st := p.srv.foundStateOf(client.ObjectKeyFromObject(mc))
+	st.mu.Lock()
+	st.last = time.Time{}
+	st.mu.Unlock()
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+		t.Fatalf("look: %d", code)
+	}
+	if got := p.listedOn("world"); len(got) != len(want) {
+		t.Errorf("looked at again: %q", got)
+	}
+}
+
+// What was taken into the list is changed as any other: taken off, its file
+// goes, as one the image installed would; another version of it, the file
+// of the one before goes, so that it is not beside the new one; a datapack
+// folder taken off goes with all it holds.
+func TestFoundTakenOffAndChanged(t *testing.T) {
+	p := newPanel(t)
+	bingo := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"bingo"}`})
+	api := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"Fabric API"}`})
+	zoom := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"WI Zoom"}`})
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{
+		"mods/bingo.jar":                   bingo,
+		"mods/fabric-api.jar":              api,
+		"mods/WI-Zoom.jar":                 zoom,
+		"world/datapacks/mael/pack.mcmeta": []byte(`{"pack":{"description":"Mael's"}}`),
+		"world/datapacks/mael/data/x.json": []byte(`{}`),
+	})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{
+		versions: map[string]string{
+			sha1Of(bingo): modrinthVersionOf("V1", "P1", "1", "bingo.jar", bingo),
+			sha1Of(api):   modrinthVersionOf("V2", "P2", "2", "fabric-api.jar", api),
+		},
+	}
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+		t.Fatalf("look: %d", code)
+	}
+	if got := p.listedOn("world"); len(got) != 4 {
+		t.Fatalf("listed %q", got)
+	}
+	patch := func(mods []avsysv1.ContentRef) {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"spec": map[string]any{"mods": mods}})
+		if code, msg := p.do("admin", "PATCH", "/orgs/alpha/servers/world", string(raw)); code != 200 {
+			t.Fatalf("patch: %d %s", code, msg)
+		}
+	}
+	mods := p.serverOf("world").Spec.Mods
+	// Bingo to another version; WI Zoom and the datapack taken off.
+	var next []avsysv1.ContentRef
+	for _, m := range mods {
+		switch m.Project {
+		case "P1":
+			m.Version, m.VersionName = "V1b", ""
+			next = append(next, m)
+		case "P2":
+			next = append(next, m)
+		}
+	}
+	patch(next)
+	for name, there := range map[string]bool{
+		"mods/bingo.jar":       false, // another version: the image fetches it
+		"mods/fabric-api.jar":  true,
+		"mods/WI-Zoom.jar":     false,
+		"world/datapacks/mael": false,
+	} {
+		if got := exists(t, filepath.Join(root, name)); got != there {
+			t.Errorf("%s there: %v, want %v", name, got, there)
+		}
+	}
+	if record, _ := os.ReadFile(filepath.Join(root, ".avsys/imported-modrinth")); string(record) != "P2:V2\tmods/fabric-api.jar\n" {
+		t.Errorf("record %q", record)
+	}
+	if got := importedOf(p.serverOf("world")); len(got) != 1 || got["mods/fabric-api.jar"] == "" {
+		t.Errorf("noted as taken from its files: %v", got)
+	}
+	// Nothing taken off is found and taken again.
+	st := p.srv.foundStateOf(client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"})
+	st.mu.Lock()
+	st.last = time.Time{}
+	st.mu.Unlock()
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
+	if got := p.listedOn("world"); strings.Join(got, ", ") != "modrinth mod P1@V1b, modrinth mod P2@V2" {
+		t.Errorf("listed %q", got)
+	}
+	// Once the image has installed it as its own, it is the image's.
+	lay(t, root, map[string][]byte{".modrinth-manifest.json": []byte(`{"files":["mods/fabric-api.jar","mods/bingo-1b.jar"],"projects":["P1:V1b","P2:V2"]}`)})
+	st.mu.Lock()
+	st.last = time.Time{}
+	st.mu.Unlock()
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
+	if got := importedOf(p.serverOf("world")); len(got) != 0 {
+		t.Errorf("still noted: %v", got)
+	}
+	if exists(t, filepath.Join(root, ".avsys/imported-modrinth")) {
+		t.Error("the record is still there")
+	}
+}
+
+// A running server whose content was taken from its own files is not asked
+// to restart for it: the pod is noted as running what it lists. One that
+// was waiting for a restart already still is.
+func TestFoundTakenWithoutARestart(t *testing.T) {
+	for _, pendingBefore := range []bool{false, true} {
+		p := newPanel(t)
+		root := t.TempDir()
+		lay(t, root, map[string][]byte{"mods/a.jar": []byte("a")})
+		p.fileServer(root)
+		p.srv.catalog.http.Transport = &hashModrinth{}
+		ctx := context.Background()
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: p.srv.Namespace("alpha"), Name: "world", UID: "pod-1"}}
+		if err := p.srv.Client.Create(ctx, pod); err != nil {
+			t.Fatal(err)
+		}
+		mc := p.serverOf("world")
+		mc.Status.Phase = avsysv1.PhaseRunning
+		mc.Status.ObservedGeneration = mc.Generation
+		mc.Status.PendingRestart = pendingBefore
+		if err := p.srv.Client.Status().Update(ctx, mc); err != nil {
+			t.Fatal(err)
+		}
+		if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+			t.Fatalf("look: %d", code)
+		}
+		mc = p.serverOf("world")
+		if len(mc.Spec.Mods) != 1 {
+			t.Fatalf("listed %q", p.listedOn("world"))
+		}
+		if got := settledOn(mc, "pod-1"); got == pendingBefore {
+			t.Errorf("waiting for a restart before: %v; noted as running it: %v (%q at generation %d)", pendingBefore, got, mc.Annotations[avsysv1.AnnotationSettled], mc.Generation)
+		}
+	}
+}
+
+// Nothing is taken from a server's folders while its game is starting or
+// stopping, when the image may be putting files there or taking them away.
+func TestFoundNotTakenWhileStarting(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{"mods/a.jar": []byte("a")})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	p.setPhase("alpha", "world", avsysv1.PhaseStarting)
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
+	if got := p.listedOn("world"); len(got) != 0 {
+		t.Errorf("taken while starting: %q", got)
+	}
+	if got := pathsOf(p.foundOn("world")); strings.Join(got, " ") != "mods/a.jar" {
+		t.Errorf("found: %v", got)
+	}
+	p.setPhase("alpha", "world", avsysv1.PhaseRunning)
+	p.srv.lookRoundOnce(context.Background())
+	if got := p.listedOn("world"); strings.Join(got, " ") != "upload mod a.jar" {
+		t.Errorf("once running: %q", got)
+	}
+}
+
+// A file of another version of a project the list has is a second copy of
+// it: it is not listed besides, but left to be removed.
+func TestFoundSecondCopyNotListed(t *testing.T) {
+	p := newPanel(t)
+	old := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"Lithium","version":"0.10"}`})
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{"mods/lithium-0.10.jar": old})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{
+		versions: map[string]string{sha1Of(old): modrinthVersionOf("V0", "P3", "0.10", "lithium-0.10.jar", old)},
+	}
+	mc := p.serverOf("world")
+	mc.Spec.Mods = []avsysv1.ContentRef{{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindMod, Project: "P3", Version: "V3", Title: "Lithium", IconURL: "x", Java: 17}}
+	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
+	if got := p.listedOn("world"); strings.Join(got, ", ") != "modrinth mod P3@V3" {
+		t.Errorf("listed %q", got)
+	}
+	if got := pathsOf(p.foundOn("world")); strings.Join(got, " ") != "mods/lithium-0.10.jar" {
+		t.Errorf("found %v", got)
+	}
+}
+
+// What is left found, as a file whose name the list cannot have, can be
+// removed by an admin, which deletes it; nothing else of the server's can.
+func TestFoundLeftRemoved(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{
+		"mods/bad,name.jar": []byte("x"),
+		"world/level.dat":   []byte("not content"),
+		"server.properties": []byte("motd=hi\n"),
+	})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+		t.Fatal(code)
+	}
+	if got := pathsOf(p.foundOn("world")); strings.Join(got, " ") != "mods/bad,name.jar" {
+		t.Fatalf("found %v", got)
+	}
 	remove := func(who, file string) int {
 		code, _ := p.call(who, "DELETE", "/orgs/alpha/servers/world/content/found?path="+url.QueryEscape(file), "")
 		return code
 	}
-	if code := remove("operator", "mods/c2me.jar"); code != http.StatusForbidden {
+	if code := remove("operator", "mods/bad,name.jar"); code != http.StatusForbidden {
 		t.Errorf("an operator removing: %d", code)
 	}
-	if code := remove("admin", "mods/c2me.jar"); code != http.StatusOK {
+	if code := remove("admin", "mods/bad,name.jar"); code != http.StatusOK {
 		t.Fatalf("an admin removing: %d", code)
 	}
-	if _, err := os.Stat(filepath.Join(root, "mods/c2me.jar")); !os.IsNotExist(err) {
-		t.Errorf("its file is still there: %v", err)
+	if exists(t, filepath.Join(root, "mods/bad,name.jar")) {
+		t.Error("its file is still there")
 	}
-	if code := remove("admin", "world/datapacks/a"); code != http.StatusOK {
-		t.Fatalf("a datapack folder: %d", code)
-	}
-	if _, err := os.Stat(filepath.Join(root, "world/datapacks/a")); !os.IsNotExist(err) {
-		t.Errorf("the folder is still there: %v", err)
-	}
-	if got := strings.Join(pathsOf(p.foundOn("world")), " "); got != "mods/WI-Zoom-1.5.jar world/datapacks/b.zip" {
-		t.Errorf("found after removing: %s", got)
-	}
-	// Nothing else of the server's: only what was found.
-	for _, file := range []string{"world/level.dat", "server.properties", "mods/c2me.jar", "../etc/passwd"} {
+	for _, file := range []string{"world/level.dat", "server.properties", "mods/bad,name.jar", "../etc/passwd"} {
 		if code := remove("admin", file); code != http.StatusNotFound {
 			t.Errorf("removing %s: %d", file, code)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, "world/level.dat")); err != nil {
-		t.Errorf("the world: %v", err)
-	}
-	// Nor one the annotation was made to name elsewhere.
 	if err := p.srv.keepFound(context.Background(), client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"}, func(was []FoundFile) []FoundFile {
 		return append(was, FoundFile{Path: "world/level.dat", Kind: avsysv1.KindMod}, FoundFile{Path: "mods/../server.properties", Kind: avsysv1.KindMod})
 	}); err != nil {
@@ -468,8 +759,8 @@ func TestFoundListedAndRemoved(t *testing.T) {
 			t.Errorf("removing %s, named as found: %d", file, code)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, "server.properties")); err != nil {
-		t.Errorf("server.properties: %v", err)
+	if !exists(t, filepath.Join(root, "server.properties")) || !exists(t, filepath.Join(root, "world/level.dat")) {
+		t.Error("a file that is not content was removed")
 	}
 }
 
@@ -477,108 +768,89 @@ func TestFoundListedAndRemoved(t *testing.T) {
 // does not list it again once it is done.
 func TestFoundRemovedDuringALook(t *testing.T) {
 	p := newPanel(t)
-	root := t.TempDir()
-	lay(t, root, map[string][]byte{"mods/a.jar": []byte("a"), "mods/b.jar": []byte("b")})
-	p.fileServer(root)
-	p.srv.catalog.http.Transport = &hashModrinth{}
-	ctx := context.Background()
-	key := client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"}
-	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
-		t.Fatalf("look: %d", code)
-	}
-	// A look reads the folders; then a.jar is removed; then the look is done.
+	st := p.srv.foundStateOf(client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"})
+	found := []FoundFile{{Path: "mods/a.jar"}, {Path: "mods/b.jar"}}
 	started := time.Now()
-	mc := &avsysv1.MinecraftServer{}
-	if err := p.srv.Client.Get(ctx, key, mc); err != nil {
-		t.Fatal(err)
-	}
-	found, err := p.srv.findContent(ctx, "test", DirFiles(root), &mc.Spec, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(time.Millisecond)
-	if code, _ := p.call("admin", "DELETE", "/orgs/alpha/servers/world/content/found?path=mods/a.jar", ""); code != http.StatusOK {
-		t.Fatalf("remove: %d", code)
-	}
-	st := p.srv.foundStateOf(key)
-	if err := p.srv.keepFound(ctx, key, func([]FoundFile) []FoundFile { return st.without(found, started) }); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(pathsOf(p.foundOn("world")), " "); got != "mods/b.jar" {
-		t.Errorf("found %s", got)
+	st.mu.Lock()
+	st.removed["mods/a.jar"] = started.Add(time.Millisecond)
+	st.mu.Unlock()
+	if got := pathsOf(st.without(found, started)); strings.Join(got, " ") != "mods/b.jar" {
+		t.Errorf("found %v", got)
 	}
 	// A look begun after it, which would not find it anyway, is not held to it.
-	if got := pathsOf(st.without([]FoundFile{{Path: "mods/a.jar"}}, time.Now())); len(got) != 1 {
+	if got := pathsOf(st.without(found, time.Now().Add(time.Second))); len(got) != 2 {
 		t.Errorf("a later look: %v", got)
 	}
 }
 
 // Content put in a server's folders behind the panel's back, over SFTP or
-// the terminal, is found without anyone opening its page: at once when it
-// came through the panel's files, and otherwise with the next look, which
-// comes sooner once the server is started or stopped.
+// the terminal, is taken into its list without anyone opening its page: at
+// once when it came through the panel's files, and otherwise with the next
+// look, which comes sooner once the server is started or stopped.
 func TestFoundWithoutAsking(t *testing.T) {
 	p := newPanel(t)
 	root := t.TempDir()
 	p.fileServer(root)
 	p.srv.catalog.http.Transport = &hashModrinth{}
 	ctx := context.Background()
+	key := client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"}
+	listed := func() string { return strings.Join(p.listedOn("world"), ", ") }
 	p.srv.lookRoundOnce(ctx)
-	if got := p.foundOn("world"); len(got) != 0 {
-		t.Fatalf("found in an empty server: %v", got)
+	if got := listed(); got != "" {
+		t.Fatalf("an empty server: %s", got)
 	}
 	lay(t, root, map[string][]byte{"mods/a.jar": []byte("a")})
 	// Not due yet: looked at a moment ago, and nothing said it changed.
 	p.srv.lookRoundOnce(ctx)
-	if got := p.foundOn("world"); len(got) != 0 {
-		t.Fatalf("looked at again at once: %v", got)
+	if got := listed(); got != "" {
+		t.Fatalf("looked at again at once: %s", got)
 	}
-	// Started: due.
+	// Stopped, from running: due. (Started, it waits for its game to be up.)
 	p.setPhase("alpha", "world", avsysv1.PhaseRunning)
 	p.srv.lookRoundOnce(ctx)
-	if got := strings.Join(pathsOf(p.foundOn("world")), " "); got != "mods/a.jar" {
-		t.Fatalf("after it started: %s", got)
+	if got := listed(); got != "upload mod a.jar" {
+		t.Fatalf("once it ran: %s", got)
 	}
 	// A file put there through the panel's own files.
 	lay(t, root, map[string][]byte{"plugins/b.jar": []byte("b")})
-	p.srv.lookSoon(p.srv.Namespace("alpha"), "world")
+	p.srv.lookSoon(key.Namespace, key.Name)
 	p.srv.lookRoundOnce(ctx)
-	if got := strings.Join(pathsOf(p.foundOn("world")), " "); got != "mods/a.jar plugins/b.jar" {
+	if got := listed(); got != "upload mod a.jar, upload plugin b.jar" {
 		t.Fatalf("after its files changed: %s", got)
 	}
 	// And after a while, whatever happened.
 	lay(t, root, map[string][]byte{"mods/c.jar": []byte("c")})
-	st := p.srv.foundStateOf(client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"})
+	st := p.srv.foundStateOf(key)
 	st.mu.Lock()
 	st.last = time.Now().Add(-lookEvery - time.Second)
 	st.mu.Unlock()
 	p.srv.lookRoundOnce(ctx)
-	if got := strings.Join(pathsOf(p.foundOn("world")), " "); got != "mods/a.jar mods/c.jar plugins/b.jar" {
+	if got := listed(); got != "upload mod a.jar, upload plugin b.jar, upload mod c.jar" {
 		t.Fatalf("a while later: %s", got)
 	}
 	// Not while its files are being put back: then once they are.
-	if err := p.srv.markRestoring(ctx, client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"}, "abcd1234"); err != nil {
+	if err := p.srv.markRestoring(ctx, key, "abcd1234"); err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(filepath.Join(root, "mods/c.jar"))
-	p.srv.lookSoon(p.srv.Namespace("alpha"), "world")
+	lay(t, root, map[string][]byte{"mods/d.jar": []byte("d")})
+	p.srv.lookSoon(key.Namespace, key.Name)
 	p.srv.lookRoundOnce(ctx)
-	if got := strings.Join(pathsOf(p.foundOn("world")), " "); got != "mods/a.jar mods/c.jar plugins/b.jar" {
+	if got := listed(); strings.Contains(got, "d.jar") {
 		t.Fatalf("during a restore: %s", got)
 	}
-	if err := p.srv.markRestoring(ctx, client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"}, ""); err != nil {
+	if err := p.srv.markRestoring(ctx, key, ""); err != nil {
 		t.Fatal(err)
 	}
 	p.srv.lookRoundOnce(ctx)
-	if got := strings.Join(pathsOf(p.foundOn("world")), " "); got != "mods/a.jar plugins/b.jar" {
+	if got := listed(); !strings.Contains(got, "upload mod d.jar") {
 		t.Fatalf("after the restore: %s", got)
 	}
 }
 
-// A server imported from an archive of its folder lists the mods, plugins
-// and datapacks it brought as its content, once the import is done: as
-// Modrinth knows them, or as they say. Those the form listed for the panel
-// to install instead are not kept as files, and are not found twice.
+// A server imported from an archive of its folder has the mods, plugins and
+// datapacks it brought in its list once the import is done: as Modrinth
+// knows them, or as uploads. Those the form listed for the panel to install
+// instead are not kept as files, and are not listed twice.
 func TestImportedContentFound(t *testing.T) {
 	for _, tool := range []string{"bsdtar", "sh"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -622,7 +894,7 @@ func TestImportedContentFound(t *testing.T) {
 		}
 		p.fileServer(data)
 		p.srv.catalog.http.Transport = &hashModrinth{
-			versions: map[string]string{sha1Of(bingo): `{"id":"V1","project_id":"P1","version_number":"2.9.6+mc1.20.1"}`},
+			versions: map[string]string{sha1Of(bingo): modrinthVersionOf("V1", "P1", "2.9.6+mc1.20.1", "bingo-2.9.6+mc1.20.1.jar", bingo)},
 			projects: `[{"id":"P1","slug":"yet-another-bingo","title":"Yet Another Bingo","icon_url":"https://cdn.modrinth.com/bingo.png"}]`,
 		}
 		// As the import ends.
@@ -634,18 +906,21 @@ func TestImportedContentFound(t *testing.T) {
 
 		_, view := p.call("viewer", "GET", "/orgs/alpha/servers/world", "")
 		var got []string
-		for _, f := range view["found"].([]any) {
-			f := f.(map[string]any)
-			got = append(got, f["kind"].(string)+" "+f["title"].(string)+" "+stringOr(f["version"]))
+		for _, m := range view["spec"].(map[string]any)["mods"].([]any) {
+			m := m.(map[string]any)
+			got = append(got, m["source"].(string)+" "+m["kind"].(string)+" "+stringOr(m["title"])+" "+stringOr(m["versionName"]))
 		}
-		want := []string{"mod WI Zoom 1.5", "mod Yet Another Bingo 2.9.6+mc1.20.1", "plugin Essentials 2.20.1", "datapack emis ", "datapack hi_drehmal "}
+		want := []string{"upload mod WI Zoom 1.5", "modrinth mod Yet Another Bingo 2.9.6+mc1.20.1", "upload plugin Essentials 2.20.1", "upload datapack emis ", "upload datapack hi_drehmal "}
 		if listed {
 			// Its jars and datapack files are left out, for the list to
 			// install; a datapack in a folder stays.
-			want = []string{"datapack emis "}
+			want = []string{"upload datapack emis "}
 		}
 		if strings.Join(got, ", ") != strings.Join(want, ", ") {
-			t.Errorf("listed=%v: found %q, want %q", listed, got, want)
+			t.Errorf("listed=%v: %q, want %q", listed, got, want)
+		}
+		if found := view["found"].([]any); len(found) != 0 {
+			t.Errorf("listed=%v: left found: %v", listed, found)
 		}
 	}
 }
@@ -727,7 +1002,7 @@ func TestFoundPicturesKeptApart(t *testing.T) {
 		}
 	}
 	for name := range roots {
-		rec := p.send("viewer", "GET", "/orgs/alpha/servers/"+name+"/content/found/icon?path="+url.QueryEscape("world/datapacks/same"), nil)
+		rec := p.send("viewer", "GET", "/orgs/alpha/servers/"+name+"/content/icon?kind=datapack&name=same", nil)
 		want, err := squarePNG(strings.NewReader(pictures[name]), foundIconSide)
 		if err != nil {
 			t.Fatal(err)
