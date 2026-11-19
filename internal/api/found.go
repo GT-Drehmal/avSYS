@@ -143,6 +143,9 @@ func foundRefs(found []FoundFile) []avsysv1.ContentRef {
 	return out
 }
 
+// readsAtOnce is how many found files are read at a time.
+const readsAtOnce = 4
+
 // maxFound is the most found files kept on a server: the annotation holding
 // them stays well under what Kubernetes allows an object.
 var maxFound = 400
@@ -184,6 +187,10 @@ func (s *Server) lookSoon(namespace, name string) {
 	default:
 	}
 }
+
+// lookTime is how long a look at a server's folders may take: each file new
+// to it is read whole, which over a slow connection can take minutes.
+var lookTime = 15 * time.Minute
 
 // lookEvery is how often a server's folders are looked at when nothing says
 // they changed; lookRound is how often the panel goes over its servers to
@@ -229,7 +236,7 @@ func (s *Server) lookRoundOnce(ctx context.Context) {
 		if !due || ctx.Err() != nil {
 			continue
 		}
-		look, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		look, cancel := context.WithTimeout(ctx, lookTime)
 		_ = s.lookAtContent(look, mc)
 		cancel()
 	}
@@ -279,7 +286,15 @@ func (s *Server) lookAtContent(ctx context.Context, mc *avsysv1.MinecraftServer)
 	if found, err = s.importFound(ctx, key, files, found); err != nil {
 		s.Log.Warn("could not take content found in a server's folders into its list", "server", key.Name, "error", err)
 	}
-	return s.keepFound(ctx, key, func([]FoundFile) []FoundFile { return st.without(found, started) })
+	if err := s.keepFound(ctx, key, func([]FoundFile) []FoundFile { return st.without(found, started) }); err != nil {
+		return err
+	}
+	// Pages open on it are told, as where the cluster's own events are not
+	// heard. Twice is no harm.
+	if now := (&avsysv1.MinecraftServer{}); s.Client.Get(ctx, key, now) == nil {
+		s.Events.Publish(Event{Type: "server.updated", Namespace: now.Namespace, Data: s.view(store.RoleOwner, now)})
+	}
+	return nil
 }
 
 // without is what a look that read a server's folders at started found,
@@ -306,7 +321,7 @@ func (st *foundState) without(found []FoundFile, started time.Time) []FoundFile 
 // lookAtImported looks at the folders of a server whose files were just
 // put in place, so that its Content page lists them as soon as it is shown.
 func (s *Server) lookAtImported(ctx context.Context, key client.ObjectKey) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lookTime)
 	defer cancel()
 	mc := &avsysv1.MinecraftServer{}
 	if err := s.Client.Get(ctx, key, mc); err != nil {
@@ -371,6 +386,7 @@ func (s *Server) findContent(ctx context.Context, owner string, files ServerFile
 		places = append(places, place{path.Join(level, "datapacks"), avsysv1.KindDatapack})
 	}
 	var out []FoundFile
+	var toRead []int
 	reached := false
 folders:
 	for _, p := range places {
@@ -407,13 +423,33 @@ folders:
 			if folder {
 				f.Size = 0
 			}
-			if was, ok := known[rel]; ok && was.Size == f.Size && was.Modified == f.Modified && was.Folder == folder {
+			if was, ok := known[rel]; ok && was.Size == f.Size && was.Modified == f.Modified && was.Folder == folder && was.read() {
 				out = append(out, was)
 				continue
 			}
-			s.readFound(owner, files, &f)
 			out = append(out, f)
+			toRead = append(toRead, len(out)-1)
 		}
+	}
+	// The files read are read a few at a time: each is read whole, for its
+	// hash, which over a slow connection to the workspace takes a while.
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, readsAtOnce)
+	for _, i := range toRead {
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		slots <- struct{}{}
+		go func(f *FoundFile) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			s.readFound(owner, files, f)
+		}(&out[i])
+	}
+	wg.Wait()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 	if !reached {
 		return nil, errors.New("the server's folders could not be read")
@@ -524,6 +560,12 @@ func recordedFiles(raw []byte) []string {
 	return out
 }
 
+// read says a found file was read whole: a datapack folder, one too large
+// to read, or one whose hash was taken.
+func (f FoundFile) read() bool {
+	return f.Folder || f.Size > maxJar || f.SHA1 != ""
+}
+
 // readFound reads what a found file says of itself, and its hash. One that
 // cannot be read is known by its name.
 func (s *Server) readFound(owner string, files ServerFiles, f *FoundFile) {
@@ -551,6 +593,11 @@ func (s *Server) readFound(owner string, files ServerFiles, f *FoundFile) {
 		return
 	}
 	defer tmp.Close()
+	// Read whole, or not at all: a read cut short, as over a connection
+	// dropped part of the way, ends early without saying so.
+	if size != f.Size {
+		return
+	}
 	h := sha1.New()
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return
@@ -1017,9 +1064,11 @@ func (s *Server) foundIcon(key string) ([]byte, bool) {
 // Content page has its folders looked at again.
 const lookAgainAfter = 10 * time.Second
 
-// lookAtFound looks at a server's folders now, unless that was done a moment
-// ago, and returns the server as it is then. Anyone who sees the server may
-// ask: it changes nothing but what the panel knows.
+// lookAtFound has a server's folders looked at now, unless that was done a
+// moment ago, and answers at once: what the look finds comes as the
+// server's next event, as any change of it does. With ?wait=true it answers
+// once the look is done. Anyone who sees the server may ask: it changes
+// nothing but what the panel knows.
 func (s *Server) lookAtFound(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, mc, err := s.server(r, u, store.RoleViewer)
 	if err != nil {
@@ -1028,18 +1077,37 @@ func (s *Server) lookAtFound(w http.ResponseWriter, r *http.Request, u *store.Us
 	key := client.ObjectKeyFromObject(mc)
 	st := s.foundStateOf(key)
 	st.mu.Lock()
-	recent := time.Since(st.last) < lookAgainAfter
+	due := time.Since(st.last) >= lookAgainAfter
+	if due {
+		// Asked for again while this one runs, it is not run twice.
+		st.last = time.Now()
+	}
 	st.mu.Unlock()
-	if !recent && !s.filesInFlux(mc) {
-		ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
-		err := s.lookAtContent(ctx, mc)
-		cancel()
-		if err != nil {
+	if !due || s.filesInFlux(mc) {
+		writeJSON(w, http.StatusOK, s.view(a.Role, mc))
+		return nil
+	}
+	// Not the request's: a page left or reloaded does not cut it short.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), lookTime)
+		defer cancel()
+		if err := s.lookAtContent(ctx, mc); err != nil {
 			s.Log.Debug("could not look at a server's folders", "server", mc.Name, "error", err)
 		}
-		if err := s.Client.Get(r.Context(), key, mc); err != nil {
-			return err
-		}
+	}()
+	if r.URL.Query().Get("wait") != "true" {
+		writeJSON(w, http.StatusAccepted, s.view(a.Role, mc))
+		return nil
+	}
+	select {
+	case <-done:
+	case <-r.Context().Done():
+		return r.Context().Err()
+	}
+	if err := s.Client.Get(r.Context(), key, mc); err != nil {
+		return err
 	}
 	writeJSON(w, http.StatusOK, s.view(a.Role, mc))
 	return nil
@@ -1174,12 +1242,11 @@ func contentFileOf(mc *avsysv1.MinecraftServer, kind avsysv1.ContentKind, name s
 		if m.Source != avsysv1.SourceUpload || m.Kind != kind || m.Project != name {
 			continue
 		}
-		if isDatapackFolder(m) {
-			level := levelOf(&mc.Spec)
-			if level == "" {
+		if keptInPlace(m) {
+			if !inPlaceFile(m) {
 				return FoundFile{}, false
 			}
-			return FoundFile{Path: path.Join(level, "datapacks", name), Kind: kind, Folder: true}, true
+			return FoundFile{Path: m.File, Kind: kind, Folder: kind == avsysv1.KindDatapack && !strings.HasSuffix(strings.ToLower(name), ".zip")}, true
 		}
 		return FoundFile{Path: strings.TrimPrefix(path.Join(controller.ContentDir, name), dataRoot+"/"), Kind: kind}, true
 	}

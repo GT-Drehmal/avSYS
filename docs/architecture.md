@@ -378,7 +378,11 @@ new or changed file (SHA-1), asks Modrinth about all of them in one
 `paper-plugin.yml` or `pack.mcmeta`, or by file name. It looks every five
 minutes, and sooner once a server starts or stops, its files are changed
 through the panel, an import or restore is done, or its Content page is
-opened; not while the game is starting or stopping.
+opened; not while the game is starting or stopping. A look runs on its
+own, not on the request that asked for it, which is answered at once; the
+page hears what it changed as an event. Each new file is read whole for
+its hash, a few at a time, which over a slow connection to the workspace
+is most of what a look takes.
 
 What it finds it takes into `spec.mods` (`internal/api/foundimport.go`),
 without changing a file:
@@ -390,9 +394,11 @@ without changing a file:
   listed project needs again. A mod that needs a project that is not
   listed would make the image fetch a second copy of it, so it becomes an
   upload instead.
-- Anything else becomes an upload: the file is copied to
-  `.avsys/content`, and the image copies it over itself. A datapack that
-  is a folder stays where it is and is not handed to the image.
+- Anything else becomes an upload kept where it was found: the entry's
+  `file` is its place, and the image is not handed it, so nothing is
+  copied and no copy can ever be put over it. A file read only part of the
+  way, as over a connection dropped mid-read, is not listed until a later
+  look reads it whole. Taken off the list, the file is deleted.
 - The pod is noted as already running what the list says (the
   annotation `avsys.dev/settled`, `<pod UID>@<generation>`), so the
   controller neither restarts it nor says it waits for a restart. A pod

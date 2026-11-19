@@ -968,7 +968,7 @@ The `spec` of a server, as in `kubectl get mcs -o yaml`:
 | `loaderVersion` | A loader build to stay on; empty for the newest. |
 | `gameJava` | The Java the game version ships with. Set by the panel. |
 | `modpack` | `{source: modrinth\|curseforge\|upload, project, version, gameVersion, loader, title, versionName, iconUrl}`. |
-| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl}]`. |
+| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; `description` is what an uploaded datapack says of itself. |
 | `resourcePack` | `{url, sha1, enforce, prompt, uploaded, project, formats, stack}`. |
 | `properties` | `server.properties` entries the panel sets. |
 | `ops`, `whitelist` | Players, by name or UUID, up to 1000 each. |
@@ -1041,9 +1041,11 @@ SFTP or the terminal, or brought in with its files) are taken into
   finds the file in place, with the right hash, and keeps it.
 - Anything else becomes an upload (`source: upload`), named and versioned
   as the file says of itself (`fabric.mod.json`, `quilt.mod.json`,
-  `mods.toml`, `neoforge.mods.toml`, `plugin.yml`, `paper-plugin.yml`):
-  the file is copied to where uploads are kept. A datapack that is a
-  folder is listed by its folder's name and stays where it is.
+  `mods.toml`, `neoforge.mods.toml`, `plugin.yml`, `paper-plugin.yml`),
+  kept where it was found: its `file` is that place (`mods/x.jar`,
+  `world/datapacks/x.zip`, or a datapack's folder), and the image is not
+  handed it, so nothing is copied and nothing is ever put over it. A file
+  is listed only once it has been read whole.
 - A running server is not marked as waiting for a restart for it: the
   annotation `avsys.dev/settled` notes that its pod already runs what the
   list now says.
@@ -1062,8 +1064,11 @@ starting or stopping.
 ### `POST /orgs/{org}/servers/{server}/content/look`
 
 Look at the server's folders now, unless that was done in the last few
-seconds, and take what is found into its list. **Viewer.** Returns the
-server. Folders that cannot be reached leave everything as it was.
+seconds, and take what is found into its list. **Viewer.** Answers at once
+(`202`) with the server as it is: what the look changes comes as the
+server's next [event](#live-events). With `wait=true`, answers once the
+look is done (`200`). The look goes on if the request is cut short.
+Folders that cannot be reached leave everything as it was.
 
 ### `DELETE /orgs/{org}/servers/{server}/content/found`
 

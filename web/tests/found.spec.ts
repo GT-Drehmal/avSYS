@@ -46,8 +46,13 @@ test("content in a server's folders is taken into its list, as Modrinth or the f
   // And this one says nothing: its file's name.
   await expect(row(page, "c2me-fabric-mc1.20.1-0.2.0")).toHaveCount(1);
   await expect(mods(page).getByRole("heading")).toHaveText("Mods6");
-  await expect(datapacks(page).getByText("bern", { exact: true })).toBeVisible();
-  await expect(datapacks(page).getByText("hi_drehmal", { exact: true })).toBeVisible();
+  // Datapacks say what they are, and show their pack.png where they have one.
+  const bern = datapacks(page).getByRole("listitem").filter({ has: page.getByText("bern", { exact: true }) });
+  await expect(bern.getByText("Bern's trades", { exact: true })).toBeVisible();
+  await expect.poll(() => bern.locator("img").evaluate((i) => (i as HTMLImageElement).naturalWidth)).toBe(64);
+  const hi = datapacks(page).getByRole("listitem").filter({ has: page.getByText("hi_drehmal", { exact: true }) });
+  await expect(hi.getByText("Hi, Drehmal", { exact: true })).toBeVisible();
+  await expect(hi.locator("img")).toHaveCount(0);
   // Nothing sets them apart from what was added here.
   await expect(page.getByText("Added outside the panel")).toHaveCount(0);
   const server = await api("owner").get(`/orgs/${slug}/servers/bingo`);

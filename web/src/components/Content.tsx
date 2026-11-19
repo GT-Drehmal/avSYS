@@ -512,7 +512,7 @@ export function PackFit({ pack, version }: { pack: ResourcePack; version?: strin
 }
 
 // One from a catalog links there, which says it all.
-const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? "uploaded file" : undefined);
+const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? m.description || "uploaded file" : undefined);
 
 /** A small link to a project's page where it is from. */
 export function ProjectLink({ source = "modrinth", project, kind }: { source?: CatalogSource; project: string; kind?: string }) {

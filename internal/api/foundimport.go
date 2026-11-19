@@ -100,7 +100,7 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 	}
 	candidates := map[string]FoundFile{}
 	for _, f := range found {
-		if f.Folder || f.Project == "" || f.VersionID == "" || f.Filename != path.Base(f.Path) || listed[f.Project] {
+		if f.Folder || !f.read() || f.Project == "" || f.VersionID == "" || f.Filename != path.Base(f.Path) || listed[f.Project] {
 			continue
 		}
 		if _, twice := candidates[f.Project]; !twice {
@@ -147,7 +147,7 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 			left = append(left, f)
 			continue
 		}
-		m, ok := s.importAsUpload(files, f)
+		m, ok := importAsUpload(f)
 		if !ok {
 			left = append(left, f)
 			continue
@@ -169,22 +169,24 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 	return left, nil
 }
 
-// importAsUpload makes a found file an upload: copied to where uploads are
-// kept, or, for a datapack that is a folder, left where it is.
-func (s *Server) importAsUpload(files ServerFiles, f FoundFile) (avsysv1.ContentRef, bool) {
+// importAsUpload makes a found file an upload kept where it is: the entry
+// notes its place (File), and the image is not handed it, so nothing is
+// copied, and no copy can ever be put over it. One not read whole is left
+// for the next look.
+func importAsUpload(f FoundFile) (avsysv1.ContentRef, bool) {
 	name := path.Base(f.Path)
-	m := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: f.Kind, Project: name, Title: f.Title, VersionName: f.Version, Java: f.Java}
+	m := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: f.Kind, Project: name, File: f.Path, Title: f.Title, VersionName: f.Version, Java: f.Java}
+	if f.Kind == avsysv1.KindDatapack {
+		m.Description = f.About
+	}
 	if f.Folder {
 		return m, f.Kind == avsysv1.KindDatapack && datapackFolder(name)
 	}
-	if safe, err := contentFilename(name, f.Kind); err != nil || safe != name || f.Size > maxJar {
+	if !f.read() {
 		return m, false
 	}
-	if err := copyFile(files, path.Join(dataRoot, f.Path), path.Join(controller.ContentDir, name)); err != nil {
-		s.Log.Warn("could not keep a found file as an upload", "file", f.Path, "error", err)
-		return m, false
-	}
-	return m, true
+	safe, err := contentFilename(name, f.Kind)
+	return m, err == nil && safe == name
 }
 
 // datapackFolder says a name is one a datapack that is a folder may be
@@ -194,24 +196,30 @@ func datapackFolder(name string) bool {
 		strings.TrimSpace(name) == name && !strings.HasSuffix(strings.ToLower(name), ".zip") && len(name) <= 200
 }
 
-func copyFile(files ServerFiles, from, to string) error {
-	in, err := files.Open(from)
-	if err != nil {
-		return err
+// keptInPlace says an entry is an upload kept where it was found, at File
+// under /data, rather than with the uploads: the image is not handed it.
+func keptInPlace(m avsysv1.ContentRef) bool {
+	return m.Source == avsysv1.SourceUpload && m.File != ""
+}
+
+// inPlaceFile checks where an upload kept in place is: right in mods/ or
+// plugins/ for its kind, or in a world's datapacks folder, under its own
+// name.
+func inPlaceFile(m avsysv1.ContentRef) bool {
+	if m.File != path.Clean(m.File) || path.IsAbs(m.File) || path.Base(m.File) != m.Project {
+		return false
 	}
-	defer in.Close()
-	if err := files.MkdirAll(path.Dir(to)); err != nil {
-		return err
+	dir := path.Dir(m.File)
+	switch m.Kind {
+	case avsysv1.KindMod:
+		return dir == modsDir
+	case avsysv1.KindPlugin:
+		return dir == pluginsDir
+	case avsysv1.KindDatapack:
+		world, ok := strings.CutSuffix(dir, "/datapacks")
+		return ok && plainName(world) && !strings.HasPrefix(world, ".")
 	}
-	out, err := files.Create(to)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(out, io.LimitReader(in, maxJar+1))
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	return err
+	return false
 }
 
 // listImported adds what was taken from the folders to a server's list,

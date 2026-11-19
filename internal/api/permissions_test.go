@@ -348,7 +348,7 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"GET " + server + "/modpack/contents", "", "", store.RoleViewer, 200},
 		{"GET " + server + "/modpack/icon", "", "", store.RoleViewer, 404},
 		// Its folders cannot be reached here: what was found before is shown.
-		{"POST " + server + "/content/look", "", "", store.RoleViewer, 200},
+		{"POST " + server + "/content/look", "/orgs/alpha/servers/world/content/look?wait=true", "", store.RoleViewer, 200},
 		// 404: allowed, and nothing of that name was found there.
 		{"DELETE " + server + "/content/found", "/orgs/alpha/servers/world/content/found?path=mods/a.jar", "", store.RoleAdmin, 404},
 		{"GET " + server + "/content/icon", "/orgs/alpha/servers/world/content/icon?kind=mod&name=a.jar", "", store.RoleViewer, 404},

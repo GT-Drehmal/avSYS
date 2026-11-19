@@ -638,6 +638,9 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 			entry.Title = meta.title
 		}
 		entry.VersionName = meta.version
+		if kind == avsysv1.KindDatapack {
+			entry.Description = meta.about
+		}
 	}
 	// The file is in place; now list it. Someone may be editing the server at
 	// the same moment, so a conflicting write is retried on fresh state.
@@ -754,12 +757,6 @@ func withSavedNames(ctx context.Context, spec, before *avsysv1.MinecraftServerSp
 	return out
 }
 
-// isDatapackFolder says an entry is a datapack that is a folder, taken into
-// a server's list from its world: kept there, not with the uploads.
-func isDatapackFolder(m avsysv1.ContentRef) bool {
-	return m.Source == avsysv1.SourceUpload && m.Kind == avsysv1.KindDatapack && !strings.HasSuffix(strings.ToLower(m.Project), ".zip")
-}
-
 // removeFiles deletes files of a server's, and returns those it could not.
 // A datapack that is a folder goes with all it holds.
 func removeFiles(s *Server, sc *sftp.Client, server string, files []string) []string {
@@ -824,6 +821,11 @@ func contentLeftOf(mc *avsysv1.MinecraftServer) []string {
 			continue
 		}
 		dir = strings.TrimSuffix(dir, "/")
+		// An upload kept where it was found, taken off.
+		if dir == path.Join(dataRoot, modsDir) || dir == path.Join(dataRoot, pluginsDir) {
+			out = append(out, file)
+			continue
+		}
 		if dir == controller.ContentDir {
 			out = append(out, file)
 			continue
@@ -921,7 +923,11 @@ func installedFiles(spec *avsysv1.MinecraftServerSpec) map[string]bool {
 	}
 	level := levelOf(spec)
 	for _, m := range spec.Mods {
-		if m.Source == avsysv1.SourceUpload && !isDatapackFolder(m) {
+		if keptInPlace(m) {
+			if inPlaceFile(m) {
+				out[path.Join(dataRoot, m.File)] = true
+			}
+		} else if m.Source == avsysv1.SourceUpload {
 			out[path.Join(controller.ContentDir, path.Base(m.Project))] = true
 		}
 		if name := installedDatapack(m); name != "" && level != "" {
@@ -956,8 +962,14 @@ func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 	}
 	for _, m := range before.Mods {
 		key := string(m.Source) + ":" + m.Project
-		if m.Source == avsysv1.SourceUpload && !listed[key] && !isDatapackFolder(m) {
-			gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
+		if m.Source == avsysv1.SourceUpload && !listed[key] {
+			// One kept where it was found goes from there; it is the
+			// server's only copy.
+			if !keptInPlace(m) {
+				gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
+			} else if file := path.Join(dataRoot, m.File); inPlaceFile(m) && !inUse[file] && m.Kind != avsysv1.KindDatapack {
+				gone = append(gone, file)
+			}
 		}
 		// One from CurseForge that is still listed may be of another
 		// version now, in a file of another name: the one before is
@@ -990,6 +1002,9 @@ func installedDatapack(m avsysv1.ContentRef) string {
 	}
 	switch m.Source {
 	case avsysv1.SourceUpload:
+		if keptInPlace(m) && !inPlaceFile(m) {
+			return ""
+		}
 		return path.Base(m.Project)
 	case avsysv1.SourceModrinth, avsysv1.SourceCurseForge:
 		if plainName(m.File) {

@@ -335,6 +335,8 @@ export interface ContentRef {
   title?: string;
   versionName?: string;
   iconUrl?: string;
+  /** What an uploaded datapack says of itself. */
+  description?: string;
 }
 
 export interface Modpack {

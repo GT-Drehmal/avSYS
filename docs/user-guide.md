@@ -379,7 +379,7 @@ minutes, and at once when the page is opened or an import finishes.
 - A file Modrinth has becomes that project, at that very version, with its
   version button to update it.
 - Any other file becomes an upload, named as the file says, with its
-  picture. Upload a new file to replace it.
+  picture, and stays where it is. Upload a new file to replace it.
 - Nothing is downloaded and no file changes, and a running server does not
   need a restart for it.
 - A mod that needs another that Modrinth does not have is listed as an

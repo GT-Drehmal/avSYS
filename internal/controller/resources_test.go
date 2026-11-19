@@ -837,17 +837,29 @@ func TestSettledPodIsNotPending(t *testing.T) {
 	}
 }
 
-// A datapack that is a folder, taken into a server's list from its world,
-// is where it is: the image is not handed it.
-func TestDatapackFolderIsNotHandedOver(t *testing.T) {
+// An upload kept where it was found in the server's own files, a mod, a
+// plugin, a datapack or a datapack's folder, is there already: the image is
+// not handed it, so it never puts anything over it. An upload kept with
+// the uploads is handed over as before.
+func TestUploadsKeptInPlaceAreNotHandedOver(t *testing.T) {
 	env := envOf(server(func(mc *avsysv1.MinecraftServer) {
 		mc.Spec.Mods = []avsysv1.ContentRef{
-			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "mael"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "c2me.jar", File: "mods/c2me.jar"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "Own.jar"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindPlugin, Project: "Essentials.jar", File: "plugins/Essentials.jar"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "emis.zip", File: "world/datapacks/emis.zip"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "mael", File: "world/datapacks/mael"},
 			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "Mine.zip"},
 		}
 	}))
 	if got := env["DATAPACKS"]; got != ContentDir+"/Mine.zip" {
 		t.Errorf("DATAPACKS %q", got)
+	}
+	if got := env["MODS"]; got != ContentDir+"/Own.jar" {
+		t.Errorf("MODS %q", got)
+	}
+	if got := env["PLUGINS"]; got != "" {
+		t.Errorf("PLUGINS %q", got)
 	}
 }
 

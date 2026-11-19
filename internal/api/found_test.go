@@ -11,16 +11,19 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -469,7 +472,7 @@ func TestFoundTakenIntoTheList(t *testing.T) {
 		projects: `[{"id":"P1","slug":"yet-another-bingo","title":"Yet Another Bingo","icon_url":"https://cdn.modrinth.com/bingo.png"},{"id":"P2","slug":"fabric-api","title":"Fabric API"},{"id":"P3","slug":"lithium","title":"Lithium"},{"id":"P4","slug":"needy","title":"Needy"}]`,
 	}
 
-	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
 		t.Fatalf("look: %d", code)
 	}
 	want := []string{
@@ -501,20 +504,27 @@ func TestFoundTakenIntoTheList(t *testing.T) {
 	if got := pathsOf(foundOf(mc)); strings.Join(got, " ") != "mods/bad,name.jar" {
 		t.Errorf("left found: %v", got)
 	}
-	// No file was changed; uploads are kept where uploads are, as well.
+	// No file was changed, and none copied: the uploads are kept where they
+	// were found, and say where.
 	for name, body := range files {
 		if got, err := os.ReadFile(filepath.Join(root, name)); err != nil || !bytes.Equal(got, body) {
 			t.Errorf("%s changed: %v", name, err)
 		}
 	}
-	for _, name := range []string{"WI-Zoom-1.5.jar", "lithium-renamed.jar", "needy-1.0.jar", "bern.zip"} {
-		got, err := os.ReadFile(filepath.Join(root, ".avsys/content", name))
-		if err != nil || !bytes.Equal(got, files[strings.Replace("mods/"+name, "mods/bern.zip", "world/datapacks/bern.zip", 1)]) {
-			t.Errorf("upload %s: %v", name, err)
-		}
+	if exists(t, filepath.Join(root, ".avsys/content")) {
+		t.Error("files were copied to where uploads are kept")
 	}
-	if exists(t, filepath.Join(root, ".avsys/content/mael")) {
-		t.Error("a datapack folder was copied")
+	for _, m := range mc.Spec.Mods {
+		if m.Source != avsysv1.SourceUpload {
+			continue
+		}
+		want := "mods/" + m.Project
+		if m.Kind == avsysv1.KindDatapack {
+			want = "world/datapacks/" + m.Project
+		}
+		if m.File != want {
+			t.Errorf("%s kept at %q, want %q", m.Project, m.File, want)
+		}
 	}
 	// What a start without Modrinth starts with.
 	if record, _ := os.ReadFile(filepath.Join(root, ".avsys/imported-modrinth")); string(record) != "P1:V1\tmods/bingo-2.9.6.jar\nP2:V2\tmods/fabric-api-0.92.2.jar\n" {
@@ -533,7 +543,7 @@ func TestFoundTakenIntoTheList(t *testing.T) {
 	st.mu.Lock()
 	st.last = time.Time{}
 	st.mu.Unlock()
-	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
 		t.Fatalf("look: %d", code)
 	}
 	if got := p.listedOn("world"); len(got) != len(want) {
@@ -565,7 +575,7 @@ func TestFoundTakenOffAndChanged(t *testing.T) {
 			sha1Of(api):   modrinthVersionOf("V2", "P2", "2", "fabric-api.jar", api),
 		},
 	}
-	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
 		t.Fatalf("look: %d", code)
 	}
 	if got := p.listedOn("world"); len(got) != 4 {
@@ -612,7 +622,7 @@ func TestFoundTakenOffAndChanged(t *testing.T) {
 	st.mu.Lock()
 	st.last = time.Time{}
 	st.mu.Unlock()
-	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", "")
 	if got := p.listedOn("world"); strings.Join(got, ", ") != "modrinth mod P1@V1b, modrinth mod P2@V2" {
 		t.Errorf("listed %q", got)
 	}
@@ -621,7 +631,7 @@ func TestFoundTakenOffAndChanged(t *testing.T) {
 	st.mu.Lock()
 	st.last = time.Time{}
 	st.mu.Unlock()
-	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", "")
 	if got := importedOf(p.serverOf("world")); len(got) != 0 {
 		t.Errorf("still noted: %v", got)
 	}
@@ -652,7 +662,7 @@ func TestFoundTakenWithoutARestart(t *testing.T) {
 		if err := p.srv.Client.Status().Update(ctx, mc); err != nil {
 			t.Fatal(err)
 		}
-		if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+		if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
 			t.Fatalf("look: %d", code)
 		}
 		mc = p.serverOf("world")
@@ -674,7 +684,7 @@ func TestFoundNotTakenWhileStarting(t *testing.T) {
 	p.fileServer(root)
 	p.srv.catalog.http.Transport = &hashModrinth{}
 	p.setPhase("alpha", "world", avsysv1.PhaseStarting)
-	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", "")
 	if got := p.listedOn("world"); len(got) != 0 {
 		t.Errorf("taken while starting: %q", got)
 	}
@@ -704,7 +714,7 @@ func TestFoundSecondCopyNotListed(t *testing.T) {
 	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
 		t.Fatal(err)
 	}
-	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", "")
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", "")
 	if got := p.listedOn("world"); strings.Join(got, ", ") != "modrinth mod P3@V3" {
 		t.Errorf("listed %q", got)
 	}
@@ -725,7 +735,7 @@ func TestFoundLeftRemoved(t *testing.T) {
 	})
 	p.fileServer(root)
 	p.srv.catalog.http.Transport = &hashModrinth{}
-	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
 		t.Fatal(code)
 	}
 	if got := pathsOf(p.foundOn("world")); strings.Join(got, " ") != "mods/bad,name.jar" {
@@ -997,7 +1007,7 @@ func TestFoundPicturesKeptApart(t *testing.T) {
 		return nil, errors.New("not reachable")
 	}
 	for name := range roots {
-		if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/"+name+"/content/look", ""); code != http.StatusOK {
+		if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/"+name+"/content/look?wait=true", ""); code != http.StatusOK {
 			t.Fatalf("look at %s: %d", name, code)
 		}
 	}
@@ -1082,5 +1092,205 @@ func TestFoundModsKeepTheirPorts(t *testing.T) {
 	}
 	if got := patch(`{"spec":{"mods":[]}}`); len(got) != 1 || got[0].Name != "voice-chat" {
 		t.Errorf("a mod taken off: %+v", got)
+	}
+}
+
+// cutFiles are a server's files whose reads of some files stop short, as
+// when the connection to its workspace is dropped part of the way: the
+// cut-th time a file is opened, and after, it ends early, with no error.
+type cutFiles struct {
+	ServerFiles
+	mu    sync.Mutex
+	cut   map[string]int
+	opens map[string]int
+}
+
+type shortFile struct {
+	ServerFile
+	left int64
+}
+
+func (f *shortFile) Read(p []byte) (int, error) {
+	if f.left <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > f.left {
+		p = p[:f.left]
+	}
+	n, err := f.ServerFile.Read(p)
+	f.left -= int64(n)
+	return n, err
+}
+
+func (c *cutFiles) Open(p string) (ServerFile, error) {
+	f, err := c.ServerFiles.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.opens[p]++
+	if at, ok := c.cut[p]; ok && c.opens[p] >= at {
+		return &shortFile{ServerFile: f, left: 100}, nil
+	}
+	return f, nil
+}
+
+// A datapack read only part of the way, as over a connection dropped while
+// it is read, is never kept in place of the whole one: nothing is written
+// beside it for the image to copy over it, and it is listed only once it
+// has been read whole.
+func TestFoundReadCutShort(t *testing.T) {
+	big := jarOf(t, map[string]string{"pack.mcmeta": `{"pack":{"description":"Emi's"}}`, "data/x.json": strings.Repeat("emi ", 4000)})
+	for _, cutAt := range []int{1, 2} {
+		p := newPanel(t)
+		root := t.TempDir()
+		lay(t, root, map[string][]byte{"world/datapacks/emis.zip": big})
+		cut := &cutFiles{ServerFiles: DirFiles(root), cut: map[string]int{dataRoot + "/world/datapacks/emis.zip": cutAt}, opens: map[string]int{}}
+		p.srv.ContentFiles = func(context.Context, string, string) (ServerFiles, error) { return cut, nil }
+		p.srv.catalog.http.Transport = &hashModrinth{}
+		if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
+			t.Fatalf("look: %d", code)
+		}
+		// The datapack as it was.
+		if got, _ := os.ReadFile(filepath.Join(root, "world/datapacks/emis.zip")); !bytes.Equal(got, big) {
+			t.Errorf("cut at open %d: the datapack changed", cutAt)
+		}
+		// No copy of it for the image to put over it.
+		if copied, err := os.ReadFile(filepath.Join(root, ".avsys/content/emis.zip")); err == nil {
+			t.Errorf("cut at open %d: a copy of %d bytes of %d kept", cutAt, len(copied), len(big))
+		}
+		mc := p.serverOf("world")
+		for _, m := range mc.Spec.Mods {
+			if m.Project == "emis.zip" && m.File != "world/datapacks/emis.zip" {
+				t.Errorf("cut at open %d: listed as one the image is handed: %+v", cutAt, m)
+			}
+		}
+		// Read whole the next time, it is listed, where it is.
+		cut.mu.Lock()
+		cut.cut = map[string]int{}
+		cut.mu.Unlock()
+		st := p.srv.foundStateOf(client.ObjectKeyFromObject(mc))
+		st.mu.Lock()
+		st.last = time.Time{}
+		st.mu.Unlock()
+		p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", "")
+		if got := p.listedOn("world"); strings.Join(got, ", ") != "upload datapack emis.zip" {
+			t.Errorf("cut at open %d, then read whole: listed %q", cutAt, got)
+		}
+	}
+}
+
+// slowFiles are a server's files that are slow to open until let go.
+type slowFiles struct {
+	ServerFiles
+	release chan struct{}
+}
+
+func (s slowFiles) Open(p string) (ServerFile, error) {
+	<-s.release
+	return s.ServerFiles.Open(p)
+}
+
+// Asked for by a page, a look answers at once, and goes on when the page
+// is left: what it finds comes as an event. Asked to wait, and cut short,
+// it goes on too.
+func TestFoundLookOutlivesItsRequest(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{"mods/a.jar": []byte("a")})
+	slow := slowFiles{ServerFiles: DirFiles(root), release: make(chan struct{})}
+	p.srv.ContentFiles = func(context.Context, string, string) (ServerFiles, error) { return slow, nil }
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	events := p.srv.Events.subscribe()
+	defer p.srv.Events.unsubscribe(events)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("POST", "/api/v1/orgs/alpha/servers/world/content/look?wait=true", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer "+p.tokens["viewer"])
+	rec := httptest.NewRecorder()
+	answered := make(chan struct{})
+	go func() {
+		p.h.ServeHTTP(rec, req)
+		close(answered)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	// The page is left.
+	cancel()
+	select {
+	case <-answered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request was not let go")
+	}
+	if got := p.listedOn("world"); len(got) != 0 {
+		t.Fatalf("listed before the files were read: %q", got)
+	}
+	close(slow.release)
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case e := <-events:
+			if e.Type != "server.updated" {
+				continue
+			}
+			if got := p.listedOn("world"); strings.Join(got, ", ") == "upload mod a.jar" {
+				// Asked again a moment later, it answers at once.
+				if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look", ""); code != http.StatusOK {
+					t.Errorf("asked again at once: %d", code)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatalf("the look did not finish: listed %q", p.listedOn("world"))
+		}
+	}
+}
+
+// A datapack says what it is, in its pack.mcmeta, and shows its pack.png:
+// one taken from the server's world, as a file or a folder, and one
+// uploaded from the page alike. One without a pack.png has no picture.
+func TestDatapacksDescribedAndPictured(t *testing.T) {
+	p := newPanel(t)
+	icon := aPicture(t)
+	bern := jarOf(t, map[string]string{"pack.mcmeta": `{"pack":{"description":"Bern's trades"}}`, "pack.png": icon})
+	plain := jarOf(t, map[string]string{"pack.mcmeta": `{"pack":{"description":[{"text":"Hi, "},{"text":"Drehmal"}]}}`})
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{
+		"world/datapacks/bern.zip":         bern,
+		"world/datapacks/hi_drehmal.zip":   plain,
+		"world/datapacks/mael/pack.mcmeta": []byte(`{"pack":{"description":"Mael's"}}`),
+		"world/datapacks/mael/pack.png":    []byte(icon),
+	})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
+		t.Fatal(code)
+	}
+	described := map[string]string{}
+	for _, m := range p.serverOf("world").Spec.Mods {
+		described[m.Project] = m.Description
+	}
+	if want := map[string]string{"bern.zip": "Bern's trades", "hi_drehmal.zip": "Hi, Drehmal", "mael": "Mael's"}; !reflect.DeepEqual(described, want) {
+		t.Errorf("described %v, want %v", described, want)
+	}
+	for name, want := range map[string]int{"bern.zip": 200, "mael": 200, "hi_drehmal.zip": 404} {
+		if rec := p.send("viewer", "GET", "/orgs/alpha/servers/world/content/icon?kind=datapack&name="+name, nil); rec.Code != want {
+			t.Errorf("%s's picture: %d, want %d", name, rec.Code, want)
+		}
+	}
+
+	// Uploaded from the page, to a server reached through its workspace.
+	q := newPanel(t)
+	filesFrom(t, q, sftp.InMemHandler())
+	rec := q.send("admin", "PUT", "/orgs/alpha/servers/world/content?kind=datapack&name=bern.zip", bern)
+	if rec.Code != 200 {
+		t.Fatalf("upload: %d %s", rec.Code, rec.Body)
+	}
+	mods := q.serverOf("world").Spec.Mods
+	if len(mods) != 1 || mods[0].Description != "Bern's trades" || mods[0].File != "" {
+		t.Errorf("uploaded: %+v", mods)
+	}
+	if rec := q.send("viewer", "GET", "/orgs/alpha/servers/world/content/icon?kind=datapack&name=bern.zip", nil); rec.Code != 200 {
+		t.Errorf("an uploaded datapack's picture: %d", rec.Code)
 	}
 }

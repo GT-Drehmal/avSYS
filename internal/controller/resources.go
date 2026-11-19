@@ -312,6 +312,11 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 			}
 			curseforge = append(curseforge, ref)
 		case avsysv1.SourceURL, avsysv1.SourceUpload:
+			// An upload kept where it was found, in the server's own files,
+			// is there already: nothing is put over it.
+			if m.Source == avsysv1.SourceUpload && m.File != "" {
+				continue
+			}
 			// The image takes a URL or a path inside the container alike.
 			location := m.Project
 			if m.Source == avsysv1.SourceUpload {
@@ -321,11 +326,6 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 			case avsysv1.KindPlugin:
 				pluginURLs = append(pluginURLs, location)
 			case avsysv1.KindDatapack:
-				// One that is a folder was taken into the list from the
-				// world, where it is: there is nothing to put there.
-				if m.Source == avsysv1.SourceUpload && !strings.HasSuffix(strings.ToLower(m.Project), ".zip") {
-					continue
-				}
 				datapackURLs = append(datapackURLs, location)
 			default:
 				modURLs = append(modURLs, location)

@@ -317,11 +317,14 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		}
 		if m.Source == avsysv1.SourceUpload {
 			// Uploads are named by the upload endpoint; anything else here
-			// would let a path reach outside the content directory. A
-			// datapack that is a folder is one taken from the world.
-			if isDatapackFolder(m) {
-				if !datapackFolder(m.Project) {
-					return errBadRequest("%q is not a datapack's folder.", m.Project)
+			// would let a path reach outside the content directory. One
+			// kept where it was found names its place, which must be one
+			// for its kind, and may be a datapack's folder.
+			if keptInPlace(m) {
+				name, err := contentFilename(m.Project, m.Kind)
+				folder := m.Kind == avsysv1.KindDatapack && datapackFolder(m.Project)
+				if !inPlaceFile(m) || (!folder && (err != nil || name != m.Project)) {
+					return errBadRequest("%q is not a file of the server's content.", m.File)
 				}
 			} else if name, err := contentFilename(m.Project, m.Kind); err != nil || name != m.Project {
 				return errBadRequest("%q is not an uploaded file.", m.Project)
