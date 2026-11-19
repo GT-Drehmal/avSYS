@@ -614,7 +614,7 @@ func TestFoundTakenOffAndChanged(t *testing.T) {
 	if record, _ := os.ReadFile(filepath.Join(root, ".avsys/imported-modrinth")); string(record) != "P2:V2\tmods/fabric-api.jar\n" {
 		t.Errorf("record %q", record)
 	}
-	if got := importedOf(p.serverOf("world")); len(got) != 1 || got["mods/fabric-api.jar"] == "" {
+	if got := importedOf(p.serverOf("world")); len(got) != 1 || got["mods/fabric-api.jar"].Key == "" {
 		t.Errorf("noted as taken from its files: %v", got)
 	}
 	// Nothing taken off is found and taken again.
@@ -1292,5 +1292,145 @@ func TestDatapacksDescribedAndPictured(t *testing.T) {
 	}
 	if rec := q.send("viewer", "GET", "/orgs/alpha/servers/world/content/icon?kind=datapack&name=bern.zip", nil); rec.Code != 200 {
 		t.Errorf("an uploaded datapack's picture: %d", rec.Code)
+	}
+}
+
+// A server whose list was changed outside the panel, as by kubectl, a
+// restore or a template, while the panel still notes files it took into
+// the list: nothing is deleted for it. Files no longer on the list are
+// found again, and taken in again.
+func TestFoundNotDeletedForAListChangedElsewhere(t *testing.T) {
+	p := newPanel(t)
+	bern := jarOf(t, map[string]string{"pack.mcmeta": `{"pack":{"description":"Bern's trades"}}`})
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{
+		"world/datapacks/bern.zip":         bern,
+		"world/datapacks/mael/pack.mcmeta": []byte(`{"pack":{"description":"Mael's"}}`),
+		"mods/a.jar":                       []byte("a"),
+	})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	// As an earlier import left it: noted, then the list emptied by hand.
+	mc := p.serverOf("world")
+	mc.Annotations = map[string]string{avsysv1.AnnotationImported: `{"world/datapacks/bern.zip":"upload:datapack/bern.zip","world/datapacks/mael":"upload:datapack/mael","mods/a.jar":"upload:mod/a.jar"}`}
+	mc.Spec.Mods = nil
+	if err := p.srv.Client.Update(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
+		t.Fatal(code)
+	}
+	for _, name := range []string{"world/datapacks/bern.zip", "world/datapacks/mael/pack.mcmeta", "mods/a.jar"} {
+		if !exists(t, filepath.Join(root, name)) {
+			t.Errorf("%s was deleted", name)
+		}
+	}
+	if got := p.listedOn("world"); strings.Join(got, ", ") != "upload mod a.jar, upload datapack bern.zip, upload datapack mael" {
+		t.Errorf("listed %q", got)
+	}
+}
+
+// Taken off through the panel, a file taken from the server's folders is
+// deleted only while it is the file that was taken in: one changed since
+// stays, and is found and taken in again.
+func TestFoundRemovedOnlyAsItWas(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{"mods/a.jar": []byte("a"), "mods/b.jar": []byte("b")})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	look := func() {
+		t.Helper()
+		st := p.srv.foundStateOf(client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"})
+		st.mu.Lock()
+		st.last = time.Time{}
+		st.mu.Unlock()
+		if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
+			t.Fatal(code)
+		}
+	}
+	look()
+	if got := p.listedOn("world"); strings.Join(got, ", ") != "upload mod a.jar, upload mod b.jar" {
+		t.Fatalf("listed %q", got)
+	}
+	// a.jar is replaced by hand; then both are taken off.
+	lay(t, root, map[string][]byte{"mods/a.jar": []byte("another a")})
+	if code, msg := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"mods":[]}}`); code != 200 {
+		t.Fatalf("patch: %d %s", code, msg)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "mods/a.jar")); string(got) != "another a" {
+		t.Errorf("a.jar, changed since it was taken in: %q", got)
+	}
+	if exists(t, filepath.Join(root, "mods/b.jar")) {
+		t.Error("b.jar, as it was taken in, is still there")
+	}
+	if got := removalsOf(p.serverOf("world")); len(got) != 0 {
+		t.Errorf("removals left: %+v", got)
+	}
+	look()
+	if got := p.listedOn("world"); strings.Join(got, ", ") != "upload mod a.jar" {
+		t.Errorf("listed again %q", got)
+	}
+}
+
+// Taken off while the server's files cannot be reached, a file is noted to
+// go, is not taken in again meanwhile, and goes once they can be.
+func TestFoundRemovedOnceReachable(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{"world/datapacks/mael/pack.mcmeta": []byte(`{"pack":{"description":"Mael's"}}`)})
+	reachable := true
+	p.srv.ContentFiles = func(context.Context, string, string) (ServerFiles, error) {
+		if !reachable {
+			return nil, errors.New("not reachable")
+		}
+		return DirFiles(root), nil
+	}
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", ""); code != http.StatusOK {
+		t.Fatal(code)
+	}
+	if got := p.listedOn("world"); strings.Join(got, ", ") != "upload datapack mael" {
+		t.Fatalf("listed %q", got)
+	}
+	reachable = false
+	if code, msg := p.do("admin", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"mods":[]}}`); code != 200 {
+		t.Fatalf("patch: %d %s", code, msg)
+	}
+	if got := removalsOf(p.serverOf("world")); len(got) != 1 || got[0].Path != "world/datapacks/mael" || got[0].SHA1 == "" {
+		t.Fatalf("noted to go: %+v", got)
+	}
+	reachable = true
+	st := p.srv.foundStateOf(client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"})
+	st.mu.Lock()
+	st.last = time.Time{}
+	st.mu.Unlock()
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", "")
+	if exists(t, filepath.Join(root, "world/datapacks/mael")) {
+		t.Error("the datapack is still there")
+	}
+	if got := p.listedOn("world"); len(got) != 0 {
+		t.Errorf("taken in again: %q", got)
+	}
+	if got := removalsOf(p.serverOf("world")); len(got) != 0 {
+		t.Errorf("still noted: %+v", got)
+	}
+}
+
+// A file left found, removed from the page, is deleted only while it is
+// the file that was found.
+func TestFoundLeftRemovedOnlyAsItWas(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{"mods/bad,name.jar": []byte("x")})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	p.call("viewer", "POST", "/orgs/alpha/servers/world/content/look?wait=true", "")
+	lay(t, root, map[string][]byte{"mods/bad,name.jar": []byte("y")})
+	if code, _ := p.call("admin", "DELETE", "/orgs/alpha/servers/world/content/found?path="+url.QueryEscape("mods/bad,name.jar"), ""); code != http.StatusConflict {
+		t.Errorf("removing one changed since: %d", code)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "mods/bad,name.jar")); string(got) != "y" {
+		t.Errorf("the file: %q", got)
 	}
 }

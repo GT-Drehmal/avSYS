@@ -73,6 +73,10 @@ const (
 	// server's list from its folders, by path under /data, to the entry
 	// each is, as JSON, until the image has installed them as its own.
 	AnnotationImported = "avsys.dev/imported"
+	// AnnotationContentRemoved notes files taken into a server's list from
+	// its folders whose entries someone took off it through the panel: each
+	// is deleted while it still has the SHA-1 noted, as JSON.
+	AnnotationContentRemoved = "avsys.dev/content-removed"
 	// AnnotationSettled is "<pod UID>@<generation>": the pod runs what the
 	// server's settings of that generation say, though it was made with
 	// earlier ones, as when content it has in its files was taken into its

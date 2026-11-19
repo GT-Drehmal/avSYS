@@ -275,13 +275,22 @@ func (s *Server) lookAtContent(ctx context.Context, mc *avsysv1.MinecraftServer)
 	if err != nil {
 		return err
 	}
-	// What was taken off the list since it was taken into it goes first.
-	s.dropImported(ctx, files, key)
+	// What someone took off the list through the panel goes first; what is
+	// off it any other way is forgotten, and found again.
+	s.finishRemovals(ctx, files, key)
+	s.settleImported(ctx, files, key)
+	if err := s.Client.Get(ctx, key, mc); err != nil {
+		return err
+	}
 	found, err := s.findContent(ctx, key.String(), files, &mc.Spec, foundOf(mc))
 	if err != nil {
 		return err
 	}
 	found = st.without(found, started)
+	// Not one still to be deleted.
+	found = slices.DeleteFunc(found, func(f FoundFile) bool {
+		return slices.ContainsFunc(removalsOf(mc), func(r contentRemoval) bool { return r.Path == f.Path })
+	})
 	// What is found is taken into the list: what is left is what cannot be.
 	if found, err = s.importFound(ctx, key, files, found); err != nil {
 		s.Log.Warn("could not take content found in a server's folders into its list", "server", key.Name, "error", err)
@@ -1142,6 +1151,12 @@ func (s *Server) removeFound(w http.ResponseWriter, r *http.Request, u *store.Us
 		return &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now. The server may be restarting."}
 	}
 	full := path.Join(dataRoot, f.Path)
+	// Only the file that was found: one put there since stays.
+	if f.SHA1 != "" {
+		if sum, err := contentHash(files, full); err == nil && sum != f.SHA1 {
+			return &Error{Status: http.StatusConflict, Code: "changed", Message: "That file changed since it was found. Open the page again."}
+		}
+	}
 	if f.Folder {
 		err = files.RemoveAll(full)
 	} else {

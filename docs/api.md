@@ -1049,6 +1049,9 @@ SFTP or the terminal, or brought in with its files) are taken into
 - A running server is not marked as waiting for a restart for it: the
   annotation `avsys.dev/settled` notes that its pod already runs what the
   list now says.
+- Taken off through `PATCH`, or changed to another version, its file is
+  deleted, while it is still the file that was taken in. A list changed
+  any other way deletes nothing: what is no longer on it is taken in again.
 
 Until then, and for a file that cannot be listed (a name the list cannot
 hold, another copy of a project already listed), it is in the server's

@@ -691,15 +691,15 @@ func (s *Server) removeDroppedUploadsWith(ctx context.Context, through *sftp.Cli
 	defer cancel()
 	before = withSavedNames(ctx, spec, before)
 	gone := leftBehind(spec, before)
-	// What was taken into the list from the server's folders, and is off it
-	// now, or another version, is deleted too. Where its files cannot be
-	// reached now, the next look at them does it.
+	// What was taken into the list from the server's folders and taken off
+	// it through the panel is deleted too, while it is that file. Where its
+	// files cannot be reached now, the next look at them does it.
 	if changedContent(spec, before) {
 		key := client.ObjectKey{Namespace: namespace, Name: server}
 		if through != nil {
-			s.dropImported(ctx, sftpFiles{through}, key)
+			s.finishRemovals(ctx, sftpFiles{through}, key)
 		} else if files, err := s.contentFiles(ctx, namespace, server); err == nil {
-			s.dropImported(ctx, files, key)
+			s.finishRemovals(ctx, files, key)
 		}
 	}
 	if len(gone) == 0 {
@@ -962,14 +962,14 @@ func leftBehind(spec, before *avsysv1.MinecraftServerSpec) []string {
 	}
 	for _, m := range before.Mods {
 		key := string(m.Source) + ":" + m.Project
+		// One kept where it was found is deleted only as someone taking it
+		// off through the panel says (see noteRemovals), never for a list
+		// that changed.
+		if keptInPlace(m) {
+			continue
+		}
 		if m.Source == avsysv1.SourceUpload && !listed[key] {
-			// One kept where it was found goes from there; it is the
-			// server's only copy.
-			if !keptInPlace(m) {
-				gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
-			} else if file := path.Join(dataRoot, m.File); inPlaceFile(m) && !inUse[file] && m.Kind != avsysv1.KindDatapack {
-				gone = append(gone, file)
-			}
+			gone = append(gone, path.Join(controller.ContentDir, path.Base(m.Project)))
 		}
 		// One from CurseForge that is still listed may be of another
 		// version now, in a file of another name: the one before is

@@ -337,6 +337,8 @@ export interface ContentRef {
   iconUrl?: string;
   /** What an uploaded datapack says of itself. */
   description?: string;
+  /** For a datapack from a URL, the name it is saved under; for an upload found in the server's files, where it is kept. */
+  file?: string;
 }
 
 export interface Modpack {

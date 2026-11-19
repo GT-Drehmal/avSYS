@@ -408,10 +408,14 @@ without changing a file:
   `.avsys/imported-modrinth`, which the game container's command counts
   as installed: a server starts with them while Modrinth does not answer,
   before the image has recorded them itself.
-- Which files were taken is noted on the server (`avsys.dev/imported`)
-  until the image has them in its records. One whose entry is taken off,
-  or changed to another version, is deleted then, so that it is not kept
-  beside the new one.
+- Which files were taken is noted on the server (`avsys.dev/imported`),
+  with each one's SHA-1 (a folder's from the files in it), until the image
+  has them in its records. When someone takes an entry off through the
+  panel, or changes it to another version, its file is noted to go
+  (`avsys.dev/content-removed`) in the same change, and deleted while it
+  still has that hash: one changed since stays, and is found again. A list
+  changed any other way (kubectl, a restore, a template) deletes nothing:
+  what is no longer on it is found again and taken in again.
 
 **Starting while a site is down.** The image asks the sites it installs
 from about the loader and the content on every start, even when the server

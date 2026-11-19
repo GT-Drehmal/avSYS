@@ -119,7 +119,15 @@ export function Mods() {
   // goes unseen.
   const takes = kindsFor(server.spec);
   const sections = [...takes, ...(["mod", "plugin", "datapack"] as const).filter((k) => !takes.includes(k) && (mods.some((m) => (m.kind ?? "mod") === k) || found.some((f) => f.kind === k)))];
-  const total = mods.length + found.length;
+  // A file found that is on the list already, as while it is being taken
+  // into it, shows once: as what it is on the list.
+  const listedAlready = (f: FoundFile) => {
+    const name = f.path.slice(f.path.lastIndexOf("/") + 1);
+    return mods.some((m) =>
+      m.source === "upload" ? m.file === f.path || ((m.kind ?? "mod") === f.kind && m.project === name) : m.source === "modrinth" && !!f.versionId && m.version === f.versionId,
+    );
+  };
+  const total = mods.length + found.filter((f) => !listedAlready(f)).length;
   const versionTarget = typeof versioning === "number" ? mods[versioning] : null;
 
   // Another version of the modpack can be built for an older game than the
@@ -199,7 +207,7 @@ export function Mods() {
         // Where each is in the server's whole list, which is what is saved.
         const all = mods.flatMap((m, i) => ((m.kind ?? "mod") === kind ? [i] : []));
         const at = all.filter((i) => shown(mods[i].title, mods[i].project, mods[i].versionName));
-        const inFolders = found.filter((f) => f.kind === kind);
+        const inFolders = found.filter((f) => f.kind === kind && !listedAlready(f));
         const foundHere = inFolders.filter((f) => shown(f.title, f.path, f.version, f.about)).sort((a, b) => foundTitle(a).localeCompare(foundTitle(b), undefined, { sensitivity: "base" }));
         const name = kindNames[kind].toLowerCase();
         const onAdd = canEdit && takes.includes(kind) ? () => setAdding(kind) : undefined;

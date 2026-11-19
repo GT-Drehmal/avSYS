@@ -141,3 +141,32 @@ test("a search stays to be cleared while it is on, however few are left", async 
   // Six, and nothing searched for: no box.
   await expect(search).toHaveCount(0);
 });
+
+test("a file found that is on the list already shows once, as it is on the list", async ({ page, as, org, api }) => {
+  const slug = await bingo(org, api);
+  await as("owner");
+  await page.goto(`/o/${slug}/s/bingo/content`);
+  await expect(mods(page).getByRole("listitem")).toHaveCount(6);
+  // As in the moment a file is taken into the list: listed, and still noted
+  // as found.
+  type Listed = { source: string; kind: string; project: string; version?: string; file?: string; title?: string };
+  const twice = (server: { name: string; spec: { mods: Listed[] }; found: unknown[] }) => {
+    if (server.name !== "bingo") return server;
+    server.found = server.spec.mods.map((m) => ({
+      path: m.file ?? `mods/${m.project}.jar`,
+      kind: m.kind,
+      size: 1,
+      title: m.title,
+      ...(m.source === "modrinth" ? { project: m.project, versionId: m.version } : {}),
+    }));
+    return server;
+  };
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/servers(/bingo)?$`), async (route) => {
+    const got = await (await route.fetch()).json();
+    await route.fulfill({ json: Array.isArray(got) ? got.map(twice) : twice(got) });
+  });
+  await page.reload();
+  await expect(mods(page).getByRole("heading")).toHaveText("Mods6");
+  await expect(mods(page).getByRole("listitem")).toHaveCount(6);
+  await expect(datapacks(page).getByRole("listitem")).toHaveCount(2);
+});

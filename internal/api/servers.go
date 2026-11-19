@@ -806,6 +806,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if unlock == nil {
 			unlock = s.lockContent(client.ObjectKeyFromObject(mc))
 		}
+		// Files taken into the list from its folders whose entries are taken
+		// off now are noted to go, with the change.
+		noteRemovals(mc, previous)
 		update := func() error { return s.Client.Update(r.Context(), mc) }
 		// A hostname it has already is left alone, even under a domain claimed
 		// by another since; only a new one is held to who claims what. It is
