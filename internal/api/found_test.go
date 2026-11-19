@@ -134,6 +134,8 @@ type hashModrinth struct {
 	asked    int
 	hashes   [][]string
 	down     bool
+	// noProjects is Modrinth answering about files but not projects.
+	noProjects bool
 }
 
 func (m *hashModrinth) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -163,6 +165,9 @@ func (m *hashModrinth) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		body = "{" + strings.Join(parts, ",") + "}"
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.String(), "https://api.modrinth.com/v2/projects?"):
+		if m.noProjects {
+			return nil, errors.New("offline: projects")
+		}
 		body = m.projects
 	default:
 		return nil, errors.New("offline: " + r.URL.String())
@@ -243,7 +248,7 @@ func TestFindContent(t *testing.T) {
 	}}
 	// Lithium's file is of the very version the panel pinned: it is the
 	// panel's, though the image has not said so yet.
-	found, err := p.srv.findContent(context.Background(), DirFiles(root), spec, nil)
+	found, err := p.srv.findContent(context.Background(), "test", DirFiles(root), spec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +283,7 @@ func TestFindContent(t *testing.T) {
 	}
 
 	// Looked at again, nothing that has not changed is read or asked about.
-	again, err := p.srv.findContent(context.Background(), DirFiles(root), spec, found)
+	again, err := p.srv.findContent(context.Background(), "test", DirFiles(root), spec, found)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +297,7 @@ func TestFindContent(t *testing.T) {
 	// found before: what Modrinth said is kept with it. Only what was not
 	// kept, the panel's own Lithium, is asked about again.
 	p.srv.recognitions.Clear()
-	if _, err := p.srv.findContent(context.Background(), DirFiles(root), spec, found); err != nil {
+	if _, err := p.srv.findContent(context.Background(), "test", DirFiles(root), spec, found); err != nil {
 		t.Fatal(err)
 	}
 	if modrinth.asked != 2 || strings.Join(modrinth.hashes[1], " ") != sha1Of(lithium) {
@@ -303,7 +308,7 @@ func TestFindContent(t *testing.T) {
 	// and asked about the next time.
 	p.srv.recognitions.Clear()
 	modrinth.down = true
-	off, err := p.srv.findContent(context.Background(), DirFiles(root), spec, nil)
+	off, err := p.srv.findContent(context.Background(), "test", DirFiles(root), spec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +316,7 @@ func TestFindContent(t *testing.T) {
 		t.Errorf("bingo, Modrinth down: %+v", f)
 	}
 	modrinth.down = false
-	back, err := p.srv.findContent(context.Background(), DirFiles(root), spec, off)
+	back, err := p.srv.findContent(context.Background(), "test", DirFiles(root), spec, off)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +325,7 @@ func TestFindContent(t *testing.T) {
 	}
 
 	// A server with none of the folders has nothing found.
-	if _, err := p.srv.findContent(context.Background(), DirFiles(filepath.Join(root, "nowhere")), spec, nil); err != nil {
+	if _, err := p.srv.findContent(context.Background(), "test", DirFiles(filepath.Join(root, "nowhere")), spec, nil); err != nil {
 		t.Errorf("a server with none of the folders: %v", err)
 	}
 }
@@ -349,11 +354,11 @@ func TestFoundDatapacksOfItsWorld(t *testing.T) {
 	// Its settings say nothing for sure (LEVEL comes from elsewhere): the
 	// properties say.
 	unsure := &avsysv1.MinecraftServerSpec{Env: []corev1.EnvVar{{Name: "CF_SET_LEVEL_FROM", Value: "WORLD_FILE"}}}
-	if found, _ := p.srv.findContent(ctx, DirFiles(root), unsure, nil); strings.Join(pathsOf(found), " ") != "lobby/datapacks/b.zip" {
+	if found, _ := p.srv.findContent(ctx, "test", DirFiles(root), unsure, nil); strings.Join(pathsOf(found), " ") != "lobby/datapacks/b.zip" {
 		t.Errorf("by its properties: %v", pathsOf(found))
 	}
 	named := &avsysv1.MinecraftServerSpec{Env: []corev1.EnvVar{{Name: "LEVEL", Value: "realm"}}}
-	if found, _ := p.srv.findContent(ctx, DirFiles(root), named, nil); strings.Join(pathsOf(found), " ") != "realm/datapacks/c.zip" {
+	if found, _ := p.srv.findContent(ctx, "test", DirFiles(root), named, nil); strings.Join(pathsOf(found), " ") != "realm/datapacks/c.zip" {
 		t.Errorf("by its settings: %v", pathsOf(found))
 	}
 }
@@ -487,7 +492,7 @@ func TestFoundRemovedDuringALook(t *testing.T) {
 	if err := p.srv.Client.Get(ctx, key, mc); err != nil {
 		t.Fatal(err)
 	}
-	found, err := p.srv.findContent(ctx, DirFiles(root), &mc.Spec, nil)
+	found, err := p.srv.findContent(ctx, "test", DirFiles(root), &mc.Spec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,4 +653,159 @@ func TestImportedContentFound(t *testing.T) {
 func stringOr(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// No more than maxFound files are kept, whether read now or before, and
+// no folder is read once there are.
+func TestFoundKeptToTheLimit(t *testing.T) {
+	p := newPanel(t)
+	was := maxFound
+	maxFound = 3
+	t.Cleanup(func() { maxFound = was })
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{
+		"mods/a.jar": []byte("a"), "mods/b.jar": []byte("b"), "mods/c.jar": []byte("c"), "mods/d.jar": []byte("d"),
+		"plugins/e.jar": []byte("e"),
+	})
+	spec := &avsysv1.MinecraftServerSpec{}
+	ctx := context.Background()
+	first, err := p.srv.findContent(ctx, "test", DirFiles(root), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 3 {
+		t.Fatalf("first look: %v", pathsOf(first))
+	}
+	for range 3 {
+		again, err := p.srv.findContent(ctx, "test", DirFiles(root), spec, first)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(again) != 3 {
+			t.Fatalf("looked at again with what was found: %v", pathsOf(again))
+		}
+		first = again
+	}
+}
+
+// Two servers' datapack folders of one name and time have each their own
+// picture: one server's is never shown for another's.
+func TestFoundPicturesKeptApart(t *testing.T) {
+	p := newPanel(t)
+	p.addServer("alpha", "other", "other.alpha.example")
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	pictureOf := func(c color.NRGBA) string {
+		img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+		for i := range 16 {
+			img.Set(i%4, i/4, c)
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+	roots := map[string]string{"world": t.TempDir(), "other": t.TempDir()}
+	pictures := map[string]string{"world": pictureOf(color.NRGBA{R: 255, A: 255}), "other": pictureOf(color.NRGBA{B: 255, A: 255})}
+	when := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for name, root := range roots {
+		lay(t, root, map[string][]byte{"world/datapacks/same/pack.mcmeta": []byte(`{"pack":{"description":"x"}}`), "world/datapacks/same/pack.png": []byte(pictures[name])})
+		if err := os.Chtimes(filepath.Join(root, "world/datapacks/same"), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.srv.ContentFiles = func(_ context.Context, namespace, name string) (ServerFiles, error) {
+		if root, ok := roots[name]; ok && namespace == p.srv.Namespace("alpha") {
+			return DirFiles(root), nil
+		}
+		return nil, errors.New("not reachable")
+	}
+	for name := range roots {
+		if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/"+name+"/content/look", ""); code != http.StatusOK {
+			t.Fatalf("look at %s: %d", name, code)
+		}
+	}
+	for name := range roots {
+		rec := p.send("viewer", "GET", "/orgs/alpha/servers/"+name+"/content/found/icon?path="+url.QueryEscape("world/datapacks/same"), nil)
+		want, err := squarePNG(strings.NewReader(pictures[name]), foundIconSide)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), want) {
+			t.Errorf("%s's picture: %d, its own: %v", name, rec.Code, bytes.Equal(rec.Body.Bytes(), want))
+		}
+	}
+}
+
+// A file Modrinth knew, whose project's name could not be had then, is
+// named once it can be: by a panel started since too, which does not ask
+// about the file again.
+func TestFoundNamedOnceModrinthAnswers(t *testing.T) {
+	p := newPanel(t)
+	bingo := jarOf(t, map[string]string{"fabric.mod.json": `{"name":"bingo","version":"2.9.6"}`})
+	root := t.TempDir()
+	lay(t, root, map[string][]byte{"mods/bingo.jar": bingo})
+	modrinth := &hashModrinth{
+		versions:   map[string]string{sha1Of(bingo): `{"id":"V1","project_id":"P1","version_number":"2.9.6+mc1.20.1"}`},
+		projects:   `[{"id":"P1","slug":"yet-another-bingo","title":"Yet Another Bingo","icon_url":"https://cdn.modrinth.com/bingo.png"}]`,
+		noProjects: true,
+	}
+	p.srv.catalog.http.Transport = modrinth
+	ctx := context.Background()
+	spec := &avsysv1.MinecraftServerSpec{}
+	found, err := p.srv.findContent(ctx, "test", DirFiles(root), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := found[0]; f.Project != "P1" || f.Title != "bingo" || f.IconURL != "" {
+		t.Fatalf("projects not answered: %+v", f)
+	}
+	// Started again, with Modrinth answering.
+	p.srv.recognitions.Clear()
+	modrinth.noProjects = false
+	again, err := p.srv.findContent(ctx, "test", DirFiles(root), spec, found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := again[0]; f.Title != "Yet Another Bingo" || f.Slug != "yet-another-bingo" || f.IconURL != "https://cdn.modrinth.com/bingo.png" {
+		t.Errorf("once answered: %+v", f)
+	}
+	if modrinth.asked != 1 {
+		t.Errorf("asked about the file again: %d", modrinth.asked)
+	}
+}
+
+// A port opened for a mod found in the server's folders stays when the
+// content the panel lists is changed: the mod is still there.
+func TestFoundModsKeepTheirPorts(t *testing.T) {
+	p := newPanel(t)
+	p.srv.catalog.http.Transport = offline{
+		"https://api.modrinth.com/v2/version/g1": `{"id":"g1","version_number":"2.12.1","files":[]}`,
+	}
+	key := client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"}
+	if err := p.srv.keepFound(context.Background(), key, func([]FoundFile) []FoundFile {
+		return []FoundFile{{Path: "mods/voicechat.jar", Kind: avsysv1.KindMod, Project: "9eGKb6K1", VersionID: "vc1", Title: "Simple Voice Chat"}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	patch := func(body string) []avsysv1.ExtraPort {
+		t.Helper()
+		if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/world", body); code != 200 {
+			t.Fatalf("%s: %d %s", body, code, msg)
+		}
+		mc := &avsysv1.MinecraftServer{}
+		if err := p.srv.Client.Get(context.Background(), key, mc); err != nil {
+			t.Fatal(err)
+		}
+		return mc.Spec.Ports
+	}
+	patch(`{"spec":{"ports":[{"name":"voice-chat","port":24454,"protocol":"UDP","for":"simple-voice-chat"}]}}`)
+	const geyser = `{"source":"modrinth","kind":"mod","project":"geyser","version":"g1","title":"Geyser","iconUrl":"https://cdn.example/geyser.png"}`
+	if got := patch(`{"spec":{"mods":[` + geyser + `]}}`); len(got) != 3 || got[0].Name != "voice-chat" {
+		t.Errorf("a mod added: %+v", got)
+	}
+	if got := patch(`{"spec":{"mods":[]}}`); len(got) != 1 || got[0].Name != "voice-chat" {
+		t.Errorf("a mod taken off: %+v", got)
+	}
 }

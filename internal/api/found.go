@@ -118,9 +118,21 @@ func foundOf(mc *avsysv1.MinecraftServer) []FoundFile {
 	return out
 }
 
+// foundRefs are the found files Modrinth knows, as entries of a server's
+// content, for what looks at which mods it has: the ports opened for them.
+func foundRefs(found []FoundFile) []avsysv1.ContentRef {
+	var out []avsysv1.ContentRef
+	for _, f := range found {
+		if f.Project != "" {
+			out = append(out, avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: f.Kind, Project: f.Project, Version: f.VersionID, Title: f.Title})
+		}
+	}
+	return out
+}
+
 // maxFound is the most found files kept on a server: the annotation holding
 // them stays well under what Kubernetes allows an object.
-const maxFound = 400
+var maxFound = 400
 
 // The folders content is found in, under /data.
 const (
@@ -243,7 +255,7 @@ func (s *Server) lookAtContent(ctx context.Context, mc *avsysv1.MinecraftServer)
 	if err != nil {
 		return err
 	}
-	found, err := s.findContent(ctx, files, &mc.Spec, foundOf(mc))
+	found, err := s.findContent(ctx, key.String(), files, &mc.Spec, foundOf(mc))
 	if err != nil {
 		return err
 	}
@@ -320,7 +332,7 @@ func (s *Server) keepFound(ctx context.Context, key client.ObjectKey, change fun
 // findContent lists the content in a server's folders that the panel did
 // not put there. before is what was found the last time: a file that has
 // not changed since is not read again.
-func (s *Server) findContent(ctx context.Context, files ServerFiles, spec *avsysv1.MinecraftServerSpec, before []FoundFile) ([]FoundFile, error) {
+func (s *Server) findContent(ctx context.Context, owner string, files ServerFiles, spec *avsysv1.MinecraftServerSpec, before []FoundFile) ([]FoundFile, error) {
 	managed := managedFiles(files, spec)
 	known := map[string]FoundFile{}
 	for _, f := range before {
@@ -340,6 +352,7 @@ func (s *Server) findContent(ctx context.Context, files ServerFiles, spec *avsys
 	}
 	var out []FoundFile
 	reached := false
+folders:
 	for _, p := range places {
 		entries, err := files.ReadDir(path.Join(dataRoot, p.dir))
 		if errors.Is(err, fs.ErrNotExist) {
@@ -353,6 +366,10 @@ func (s *Server) findContent(ctx context.Context, files ServerFiles, spec *avsys
 		for _, e := range entries {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
+			}
+			// No more are kept, read before or not, in any folder.
+			if len(out) >= maxFound {
+				break folders
 			}
 			name := e.Name()
 			rel := path.Join(p.dir, name)
@@ -374,11 +391,8 @@ func (s *Server) findContent(ctx context.Context, files ServerFiles, spec *avsys
 				out = append(out, was)
 				continue
 			}
-			s.readFound(files, &f)
+			s.readFound(owner, files, &f)
 			out = append(out, f)
-			if len(out) >= maxFound {
-				break
-			}
 		}
 	}
 	if !reached {
@@ -492,13 +506,13 @@ func recordedFiles(raw []byte) []string {
 
 // readFound reads what a found file says of itself, and its hash. One that
 // cannot be read is known by its name.
-func (s *Server) readFound(files ServerFiles, f *FoundFile) {
+func (s *Server) readFound(owner string, files ServerFiles, f *FoundFile) {
 	full := path.Join(dataRoot, f.Path)
 	if f.Folder {
 		meta := packMeta(func(name string) ([]byte, error) { return readSmall(files, path.Join(full, name)) })
 		f.About = meta.about
 		if meta.icon != nil {
-			f.Picture = s.keepFoundIcon(foundIconKey(*f), meta.icon)
+			f.Picture = s.keepFoundIcon(foundIconKey(owner, *f), meta.icon)
 		}
 		f.Title = path.Base(f.Path)
 		return
@@ -535,7 +549,7 @@ func (s *Server) readFound(files ServerFiles, f *FoundFile) {
 	}
 	f.Version, f.About = meta.version, meta.about
 	if meta.icon != nil {
-		f.Picture = s.keepFoundIcon(foundIconKey(*f), meta.icon)
+		f.Picture = s.keepFoundIcon(foundIconKey(owner, *f), meta.icon)
 	}
 }
 
@@ -603,21 +617,18 @@ func (s *Server) recognise(ctx context.Context, found []FoundFile) {
 	var ids []string
 	for i := range found {
 		f := &found[i]
-		if f.SHA1 == "" {
-			continue
-		}
-		r, ok := s.recognitions.Load(f.SHA1)
-		if !ok {
-			continue
-		}
-		rec := r.(recognition)
-		if f.Looked == 0 || rec.at.Unix() > f.Looked {
-			f.Looked = rec.at.Unix()
-			f.Project, f.VersionID = rec.project, rec.versionID
-			if rec.project != "" && rec.version != "" {
-				f.Version = rec.version
+		if r, ok := s.recognitions.Load(f.SHA1); ok && f.SHA1 != "" {
+			rec := r.(recognition)
+			if f.Looked == 0 || rec.at.Unix() > f.Looked {
+				f.Looked = rec.at.Unix()
+				f.Project, f.VersionID = rec.project, rec.versionID
+				if rec.project != "" && rec.version != "" {
+					f.Version = rec.version
+				}
 			}
 		}
+		// Its project's name and picture are looked up, from what Modrinth
+		// said now or before: one that could not be had then is had now.
 		if f.Project != "" {
 			ids = append(ids, f.Project)
 		}
@@ -901,11 +912,14 @@ type foundIcons struct {
 // foundIconSide is how large the panel draws found files' pictures.
 const foundIconSide = 64
 
-func foundIconKey(f FoundFile) string {
+// foundIconKey is what a found file's picture is kept by: the server it is
+// on, owner (namespace/name), and the file as it is. One server's picture
+// is never another's, though their files have the same name and time.
+func foundIconKey(owner string, f FoundFile) string {
 	if f.SHA1 != "" {
-		return f.SHA1
+		return owner + "\x00" + f.SHA1
 	}
-	return f.Path + "@" + strconv.FormatInt(f.Modified, 10)
+	return owner + "\x00" + f.Path + "@" + strconv.FormatInt(f.Modified, 10)
 }
 
 // keepFoundIcon draws a found file's picture again and keeps it, and says
@@ -1055,7 +1069,8 @@ func (s *Server) getFoundIcon(w http.ResponseWriter, r *http.Request, u *store.U
 	if !foundPlace(f) {
 		return errNotFound
 	}
-	png, ok := s.foundIcon(foundIconKey(f))
+	owner := client.ObjectKeyFromObject(mc).String()
+	png, ok := s.foundIcon(foundIconKey(owner, f))
 	if !ok {
 		// Not kept since the panel started: read out of the file again.
 		files, err := s.contentFiles(r.Context(), mc.Namespace, mc.Name)
@@ -1063,8 +1078,8 @@ func (s *Server) getFoundIcon(w http.ResponseWriter, r *http.Request, u *store.U
 			return errNotFound
 		}
 		again := FoundFile{Path: f.Path, Kind: f.Kind, Size: f.Size, Modified: f.Modified, Folder: f.Folder}
-		s.readFound(files, &again)
-		if png, ok = s.foundIcon(foundIconKey(again)); !ok {
+		s.readFound(owner, files, &again)
+		if png, ok = s.foundIcon(foundIconKey(owner, again)); !ok {
 			return errNotFound
 		}
 	}

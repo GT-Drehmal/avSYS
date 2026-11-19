@@ -589,7 +589,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	var named map[string]json.RawMessage
 	_ = json.Unmarshal(raw.Spec, &named)
-	fitModPorts(&in.Spec, nil, named)
+	fitModPorts(&in.Spec, nil, named, nil)
 	// A new server has Aikar's flags unless asked not to. Only here: one
 	// made before they were offered keeps starting as it always has.
 	if in.Spec.JVM.AikarFlags == nil {
@@ -873,7 +873,7 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	// not touched, is left to be settled on the version it runs (see
 	// PinLatest).
 	_, picked := named["version"]
-	fitModPorts(&spec, mc.Spec.Mods, named)
+	fitModPorts(&spec, mc.Spec.Mods, named, foundRefs(foundOf(mc)))
 	stillLatest := !picked && mc.Spec.Version == "LATEST" && mc.Spec.Modpack == nil && spec.Loader == mc.Spec.Loader
 	if !stillLatest {
 		if err := s.settleLatest(ctx, &spec); err != nil {
@@ -1198,11 +1198,15 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 // those opened for mods taken off, in the same change (see
 // controller.FitModPorts). A request that says the ports itself, as the
 // panel's forms do, has them as it says.
-func fitModPorts(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef, given map[string]json.RawMessage) {
+func fitModPorts(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef, given map[string]json.RawMessage, found []avsysv1.ContentRef) {
 	_, mods := given["mods"]
 	_, ports := given["ports"]
 	if mods && !ports {
-		spec.Ports = controller.FitModPorts(before, spec.Mods, spec.Ports)
+		// Mods in its folders that the panel did not add are there before
+		// and after: the ports opened for them stay.
+		was := append(slices.Clone(before), found...)
+		now := append(slices.Clone(spec.Mods), found...)
+		spec.Ports = controller.FitModPorts(was, now, spec.Ports)
 	}
 }
 

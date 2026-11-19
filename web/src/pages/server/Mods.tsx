@@ -190,7 +190,8 @@ export function Mods() {
         </Notice>
       )}
 
-      {total > searchFrom && <SearchBox value={query} onChange={setQuery} label="Search content" />}
+      {/* Kept while something is searched for, to clear it, however few are left. */}
+      {(total > searchFrom || query !== "") && <SearchBox value={query} onChange={setQuery} label="Search content" />}
 
       {sections.map((kind) => {
         // Where each is in the server's whole list, which is what is saved.

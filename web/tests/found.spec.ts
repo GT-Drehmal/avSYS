@@ -98,3 +98,23 @@ test("anyone who sees a server sees what is in its folders; only admins remove i
     await expect(page.getByRole("button", { name: /^Remove / })).toHaveCount(0);
   }
 });
+
+test("a search stays to be cleared while it is on, however few are left", async ({ page, as, org, api }) => {
+  const slug = await bingo(org, api);
+  await as("owner");
+  await page.goto(`/o/${slug}/s/bingo/content`);
+  const search = page.getByRole("searchbox", { name: "Search content" });
+  // Eight: a search box. Two taken off while searched for leaves six.
+  await search.fill("c2me");
+  await page.getByRole("button", { name: "Remove c2me-fabric-mc1.20.1-0.2.0" }).click();
+  await expect(mods(page).getByText("No mods match.")).toBeVisible();
+  await search.fill("bern");
+  await page.getByRole("button", { name: "Remove bern" }).click();
+  await expect(datapacks(page).getByText("No datapacks match.")).toBeVisible();
+  await expect(search).toBeVisible();
+  await search.fill("");
+  await expect(mods(page).getByRole("listitem")).toHaveCount(5);
+  await expect(datapacks(page).getByRole("listitem")).toHaveCount(1);
+  // Six, and nothing searched for: no box.
+  await expect(search).toHaveCount(0);
+});
