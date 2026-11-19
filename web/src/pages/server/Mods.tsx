@@ -197,7 +197,7 @@ export function Mods() {
         const all = mods.flatMap((m, i) => ((m.kind ?? "mod") === kind ? [i] : []));
         const at = all.filter((i) => shown(mods[i].title, mods[i].project, mods[i].versionName));
         const inFolders = found.filter((f) => f.kind === kind);
-        const foundHere = inFolders.filter((f) => shown(f.title, f.path, f.version, f.about));
+        const foundHere = inFolders.filter((f) => shown(f.title, f.path, f.version, f.about)).sort((a, b) => foundTitle(a).localeCompare(foundTitle(b), undefined, { sensitivity: "base" }));
         const name = kindNames[kind].toLowerCase();
         const onAdd = canEdit && takes.includes(kind) ? () => setAdding(kind) : undefined;
         // On a modpack, mods here are those added to the pack's own, and an
