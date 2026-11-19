@@ -1,22 +1,26 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { AddContentDialog, ContentList, filtersFor, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
+import { AddContentDialog, ContentList, filtersFor, foundTitle, kindNames, kindsFor, newestPack, PackCard, PackFit, packOfVersion, type PickKind } from "../../components/Content";
 import { modPortsNote } from "../../components/ExtraPorts";
 import { PackContents, PackIcon } from "../../components/Modpack";
-import { Button, Field, Input, Notice, Toggle } from "../../components/ui";
+import { Button, Chip, Field, Input, Notice, SearchBox, Toggle } from "../../components/ui";
 import { cancelled, UploadProgress, useUpload } from "../../components/Uploading";
 import { NewerWorldConfirm } from "../../components/NewerWorld";
-import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
+import { api, ApiError, atLeast, qs, serverPath, type ContentKind, type ContentRef, type FoundFile, type ModrinthVersion, type ResourcePack, type Server } from "../../lib/api";
 import { ArchiveError } from "../../lib/archive";
 import { softwareWords } from "../../lib/format";
 import { inspectPack } from "../../lib/mrpack";
 import { newerThan, pinnedOf } from "../../lib/worlds";
 import { isCatalog, useSearchable, versionsKey } from "../../lib/catalog";
 import { applyServer, keys, useAction, useMeta, useUpdateServer } from "../../lib/queries";
+import { matches } from "../../lib/search";
 import { toast } from "../../lib/toast";
 import { useGameVersions } from "../../lib/software";
 import { EmptySection, PackFromModpack, PackStack, SectionHead, VersionDialog } from "../../components/ContentParts";
 import { useServerContext } from "./ServerPage";
+
+/** How many items of content a server has before its page has a search box. */
+const searchFrom = 6;
 
 export function Mods() {
   const { server, role } = useServerContext();
@@ -89,10 +93,41 @@ export function Mods() {
   };
 
   const setMod = (index: number, patch: Partial<ContentRef>) => update.mutate({ mods: mods.map((m, i) => (i === index ? { ...m, ...patch } : m)) });
+  // What is in its folders that the panel did not add is looked at again
+  // as the page is opened: put there a moment ago, it shows.
+  const found = server.found ?? [];
+  const path = serverPath(server.org, server.name);
+  const now = useRef(server);
+  now.current = server;
+  useEffect(() => {
+    api.post<Server>(`${path}/content/look`).then(
+      // What it found, or took into the list: nothing else is new.
+      (next) => (next.revision !== now.current.revision || JSON.stringify(next.found ?? []) !== JSON.stringify(now.current.found ?? [])) && applyServer(qc, next),
+      () => {},
+    );
+  }, [path, qc]);
+  const removeFound = useAction((f: FoundFile) => api.del<Server>(`${path}/content/found?${qs({ path: f.path })}`));
+  const running = server.status.phase === "Running" || server.status.phase === "Starting";
+  // The picture a file has of its own: one found, or an upload.
+  const foundPicture = (f: FoundFile) => (f.picture ? `/api/v1${path}/content/icon?${qs({ kind: f.kind, name: f.path.slice(f.path.lastIndexOf("/") + 1), v: f.sha1 ?? String(f.modified ?? "") })}` : undefined);
+  const uploadPicture = (m: ContentRef) => (m.source === "upload" ? `/api/v1${path}/content/icon?${qs({ kind: m.kind ?? "mod", name: m.project })}` : undefined);
+  // A long list is searched, every section at once.
+  const [query, setQuery] = useState("");
+  const shown = (...said: (string | undefined)[]) => matches(query, ...said);
   // A section for each kind the server takes, and for any it has from
-  // before its software was changed, so nothing on it goes unseen.
+  // before its software was changed, or in its folders, so nothing on it
+  // goes unseen.
   const takes = kindsFor(server.spec);
-  const sections = [...takes, ...(["mod", "plugin", "datapack"] as const).filter((k) => !takes.includes(k) && mods.some((m) => (m.kind ?? "mod") === k))];
+  const sections = [...takes, ...(["mod", "plugin", "datapack"] as const).filter((k) => !takes.includes(k) && (mods.some((m) => (m.kind ?? "mod") === k) || found.some((f) => f.kind === k)))];
+  // A file found that is on the list already, as while it is being taken
+  // into it, shows once: as what it is on the list.
+  const listedAlready = (f: FoundFile) => {
+    const name = f.path.slice(f.path.lastIndexOf("/") + 1);
+    return mods.some((m) =>
+      m.source === "upload" ? m.file === f.path || ((m.kind ?? "mod") === f.kind && m.project === name) : m.source === "modrinth" && !!f.versionId && m.version === f.versionId,
+    );
+  };
+  const total = mods.length + found.filter((f) => !listedAlready(f)).length;
   const versionTarget = typeof versioning === "number" ? mods[versioning] : null;
 
   // Another version of the modpack can be built for an older game than the
@@ -165,15 +200,22 @@ export function Mods() {
         </Notice>
       )}
 
+      {/* Kept while something is searched for, to clear it, however few are left. */}
+      {(total > searchFrom || query !== "") && <SearchBox value={query} onChange={setQuery} label="Search content" />}
+
       {sections.map((kind) => {
         // Where each is in the server's whole list, which is what is saved.
-        const at = mods.flatMap((m, i) => ((m.kind ?? "mod") === kind ? [i] : []));
+        const all = mods.flatMap((m, i) => ((m.kind ?? "mod") === kind ? [i] : []));
+        const at = all.filter((i) => shown(mods[i].title, mods[i].project, mods[i].versionName));
+        const inFolders = found.filter((f) => f.kind === kind && !listedAlready(f));
+        const foundHere = inFolders.filter((f) => shown(f.title, f.path, f.version, f.about)).sort((a, b) => foundTitle(a).localeCompare(foundTitle(b), undefined, { sensitivity: "base" }));
         const name = kindNames[kind].toLowerCase();
         const onAdd = canEdit && takes.includes(kind) ? () => setAdding(kind) : undefined;
         // On a modpack, mods here are those added to the pack's own, and an
         // empty section is one quiet line.
         const extra = !!modpack && kind === "mod";
-        if (modpack && at.length === 0) {
+        const count = all.length + inFolders.length;
+        if (modpack && count === 0) {
           return (
             <section key={kind} aria-label={kindNames[kind]}>
               <EmptySection text={extra ? "No mods added on top of the pack." : `No ${name}.`} addLabel={`Add ${name}`} onAdd={onAdd} />
@@ -182,21 +224,39 @@ export function Mods() {
         }
         return (
           <section key={kind} aria-label={kindNames[kind]} className="flex flex-col gap-2.5">
-            <SectionHead title={extra ? "Mods added on top of the pack" : kindNames[kind]} count={at.length} addLabel={`Add ${name}`} onAdd={onAdd} />
-            {at.length === 0 ? (
+            <SectionHead title={extra ? "Mods added on top of the pack" : kindNames[kind]} count={count} addLabel={`Add ${name}`} onAdd={onAdd} />
+            {count === 0 ? (
               <p className="text-[13px] text-muted">{`No ${name}.`}</p>
+            ) : at.length + foundHere.length === 0 ? (
+              <p className="text-[13px] text-muted">{`No ${name} match.`}</p>
             ) : (
               <ContentList
                 mods={at.map((i) => mods[i])}
                 gameJava={server.java.game}
                 showKind={false}
                 note={(m) => modPortsNote(m, server.spec.ports)}
+                found={foundHere}
+                foundPicture={foundPicture}
+                picture={uploadPicture}
+                onRemoveFound={
+                  canEdit
+                    ? (f) =>
+                        removeFound.mutate(f, {
+                          onSuccess: (next) => {
+                            applyServer(qc, next);
+                            if (running) toast.info(`Removed ${foundTitle(f)}. Restart to apply.`);
+                          },
+                        })
+                    : undefined
+                }
                 onRemove={canEdit ? (j) => update.mutate({ mods: mods.filter((_, i) => i !== at[j]) }) : undefined}
                 extra={(m, j) =>
-                  isCatalog(m.source) && searchable(m.source) && (
+                  isCatalog(m.source) && searchable(m.source) ? (
                     <Button size="sm" disabled={!canEdit} onClick={() => setVersioning(at[j])} className="max-w-40">
                       <span className="truncate">{m.versionName || "Newest"}</span>
                     </Button>
+                  ) : (
+                    m.source === "upload" && m.versionName && <Chip className="max-w-40 truncate font-mono max-sm:hidden">{m.versionName}</Chip>
                   )
                 }
               />

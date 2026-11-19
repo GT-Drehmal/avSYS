@@ -781,6 +781,88 @@ func TestSettledVersionIsNotPending(t *testing.T) {
 	}
 }
 
+// A pod noted as running what the server's settings now say, as when
+// content it had in its files was taken into its list, is neither waited
+// on for a restart nor replaced, whatever its game is doing. The note is
+// for that pod and those settings only: a change after, or another pod, is
+// as before.
+func TestSettledPodIsNotPending(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := avsysv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	ready := corev1.ContainerStatus{Name: MinecraftContainer, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now().Add(-time.Hour))}}}
+	loading := corev1.ContainerStatus{Name: MinecraftContainer, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now().Add(-time.Hour))}}}
+	imported := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindMod, Project: "P1", Version: "V1", Java: 17}
+	for _, c := range []struct {
+		name     string
+		settled  string
+		game     corev1.ContainerStatus
+		pending  bool
+		replaced bool
+	}{
+		{"noted for this pod and these settings", "pod-1@3", ready, false, false},
+		{"noted, while its game loads", "pod-1@3", loading, false, false},
+		{"noted for other settings", "pod-1@2", ready, true, false},
+		{"noted for another pod", "pod-0@3", ready, true, false},
+		{"not noted", "", ready, true, false},
+		{"not noted, while its game loads", "", loading, false, true},
+	} {
+		pod := buildPod(server(func(mc *avsysv1.MinecraftServer) { mc.Spec.Loader = avsysv1.LoaderFabric }), Config{})
+		pod.UID = "pod-1"
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{c.game}
+		mc := server(func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.Loader = avsysv1.LoaderFabric
+			mc.Spec.Mods = []avsysv1.ContentRef{imported}
+			mc.Generation = 3
+			if c.settled != "" {
+				mc.Annotations = map[string]string{avsysv1.AnnotationSettled: c.settled}
+			}
+		})
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mc, pod).Build()
+		r := &Reconciler{Client: cl, Reader: cl, Scheme: scheme}
+		got, pending, _, err := r.ensurePod(context.Background(), mc)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if replaced := !got.DeletionTimestamp.IsZero(); replaced != c.replaced {
+			t.Errorf("%s: replaced = %v, want %v", c.name, replaced, c.replaced)
+		}
+		if pending != c.pending {
+			t.Errorf("%s: pending restart %v, want %v", c.name, pending, c.pending)
+		}
+	}
+}
+
+// An upload kept where it was found in the server's own files, a mod, a
+// plugin, a datapack or a datapack's folder, is there already: the image is
+// not handed it, so it never puts anything over it. An upload kept with
+// the uploads is handed over as before.
+func TestUploadsKeptInPlaceAreNotHandedOver(t *testing.T) {
+	env := envOf(server(func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.Mods = []avsysv1.ContentRef{
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "c2me.jar", File: "mods/c2me.jar"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindMod, Project: "Own.jar"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindPlugin, Project: "Essentials.jar", File: "plugins/Essentials.jar"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "emis.zip", File: "world/datapacks/emis.zip"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "mael", File: "world/datapacks/mael"},
+			{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "Mine.zip"},
+		}
+	}))
+	if got := env["DATAPACKS"]; got != ContentDir+"/Mine.zip" {
+		t.Errorf("DATAPACKS %q", got)
+	}
+	if got := env["MODS"]; got != ContentDir+"/Own.jar" {
+		t.Errorf("MODS %q", got)
+	}
+	if got := env["PLUGINS"]; got != "" {
+		t.Errorf("PLUGINS %q", got)
+	}
+}
+
 func TestRanVersion(t *testing.T) {
 	for status, want := range map[string]string{"Paper 1.21.4": "1.21.4", "1.21.4": "1.21.4", "Folia 26.2": "26.2", "26.4-snapshot-1": "26.4-snapshot-1", "": "", "  ": ""} {
 		if got := RanVersion(status); got != want {

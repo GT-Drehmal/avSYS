@@ -1,6 +1,6 @@
 import { ExternalLink, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { api, type CatalogSource, type ContentKind, type ContentRef, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec, type StackedPack } from "../lib/api";
+import { api, type CatalogSource, type ContentKind, type ContentRef, type FoundFile, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec, type StackedPack } from "../lib/api";
 import { fetchVersions, isCatalog, projectPage, sourceNames, sources, useSearchable } from "../lib/catalog";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { packFormatsOf, useGameFormat, useGameVersions } from "../lib/software";
@@ -512,7 +512,7 @@ export function PackFit({ pack, version }: { pack: ResourcePack; version?: strin
 }
 
 // One from a catalog links there, which says it all.
-const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? "uploaded file" : undefined);
+const sourceLine = (m: ContentRef) => (m.source === "url" ? m.project : m.source === "upload" ? m.description || "uploaded file" : undefined);
 
 /** A small link to a project's page where it is from. */
 export function ProjectLink({ source = "modrinth", project, kind }: { source?: CatalogSource; project: string; kind?: string }) {
@@ -525,6 +525,16 @@ export function ProjectLink({ source = "modrinth", project, kind }: { source?: C
 
 const titleOf = (m: ContentRef) => (m.source === "upload" ? withoutExtension(m.title || m.project) : m.title || m.project);
 
+/** What a file found in a server's folders is called: as Modrinth or the file says, or its name. */
+export const foundTitle = (f: FoundFile) => f.title || withoutExtension(f.path.slice(f.path.lastIndexOf("/") + 1));
+
+/**
+ * Found files Modrinth knows, as entries of a server's content, for what
+ * looks at which mods it has: the ports they need, Bedrock players.
+ */
+export const foundRefs = (found: FoundFile[] | null | undefined): ContentRef[] =>
+  (found ?? []).flatMap((f) => (f.project ? [{ source: "modrinth" as const, kind: f.kind, project: f.project, version: f.versionId, title: f.title }] : []));
+
 interface ContentListProps {
   mods: ContentRef[];
   /** The Java the game version ships with. Entries needing more say so. */
@@ -536,14 +546,22 @@ interface ContentListProps {
   onRemove?: (index: number) => void;
   /** Says of each entry what kind it is, where the list has more than one. */
   showKind?: boolean;
+  /** Content in the server's folders that the panel did not add, after its own. */
+  found?: FoundFile[];
+  /** Where a found file's own picture is served, for one that has one. */
+  foundPicture?: (f: FoundFile) => string | undefined;
+  /** Where an entry's own picture is served, for one without one from where it is from. */
+  picture?: (mod: ContentRef) => string | undefined;
+  onRemoveFound?: (f: FoundFile) => void;
 }
 
-export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true }: ContentListProps) {
+export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true, found = [], foundPicture, picture, onRemoveFound }: ContentListProps) {
+  const row = "flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0";
   return (
     <ul className="overflow-hidden rounded-lg border border-line bg-surface">
       {mods.map((m, i) => (
-        <li key={`${m.source}/${m.project}`} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
-          <ProjectIcon url={m.iconUrl} size={32} kind={m.kind ?? "mod"} name={titleOf(m)} />
+        <li key={`${m.source}/${m.project}`} className={row}>
+          <ProjectIcon url={m.iconUrl || picture?.(m)} size={32} kind={m.kind ?? "mod"} name={titleOf(m)} />
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 truncate text-[13px] font-medium">
               {titleOf(m)}
@@ -557,6 +575,21 @@ export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = 
           {showKind && <Chip>{m.kind ?? "mod"}</Chip>}
           {extra?.(m, i)}
           {onRemove && <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${titleOf(m)}`} onClick={() => onRemove(i)} />}
+        </li>
+      ))}
+      {found.map((f) => (
+        <li key={`found/${f.path}`} className={row} title={f.path}>
+          <ProjectIcon url={f.iconUrl || foundPicture?.(f)} size={32} kind={f.kind} name={foundTitle(f)} />
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-2 truncate text-[13px] font-medium">
+              {foundTitle(f)}
+              {f.project && <ProjectLink project={f.slug || f.project} kind={f.kind} />}
+            </p>
+            {f.about && <p className="truncate text-xs text-faint">{f.about}</p>}
+          </div>
+          {f.version && <Chip className="max-w-40 truncate font-mono max-sm:hidden">{f.version}</Chip>}
+          {showKind && <Chip>{f.kind}</Chip>}
+          {onRemoveFound && <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${foundTitle(f)}`} onClick={() => onRemoveFound(f)} />}
         </li>
       ))}
     </ul>

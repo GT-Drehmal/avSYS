@@ -361,7 +361,69 @@ Content is settled when it is added, not when the server starts.
    not. Required dependencies are fetched by the image and are not pinned.
 
 A restart never changes what is installed. Changing the game version or
-loader pins each entry again for the new one.
+loader pins each entry again for the new one. A file of the server's own
+that a list names (an upload) and that is not there is left out of what
+the image is given, with a line in the log, rather than the start
+failing over it.
+
+**Content found in a server's folders.** A server may have mods, plugins
+and datapacks the panel did not add: put in its folders by hand, or
+brought in with an import or a snapshot. The panel looks for them
+(`internal/api/found.go`) through the workspace, in `mods/`, `plugins/`
+and the world's `datapacks/`, leaving out what it or the image put there:
+its own uploads and datapacks, and every file in the image's records
+(`.modrinth-manifest.json`, `.curseforge-files-manifest.json`,
+`.var-list-manifest.json` in each folder, and a modpack's), and what the
+software keeps there by itself: only `.jar` files right in `mods/` and
+`plugins/` count, never their folders (Paper's `.paper-remapped`,
+plugins' own folders), and in `datapacks/` only `.zip` files and folders
+with a `pack.mcmeta`, but Bukkit's own `bukkit`. Names and descriptions
+are kept as one line of plain text. It hashes each
+new or changed file (SHA-1), asks Modrinth about all of them in one
+`POST /v2/version_files`, and names those it has from
+`GET /v2/projects`; the rest are named by their `fabric.mod.json`,
+`quilt.mod.json`, `mods.toml`, `neoforge.mods.toml`, `plugin.yml`,
+`paper-plugin.yml` or `pack.mcmeta`, or by file name. It looks every five
+minutes, and sooner once a server starts or stops, its files are changed
+through the panel, an import or restore is done, or its Content page is
+opened; not while the game is starting or stopping. A look runs on its
+own, not on the request that asked for it, which is answered at once; the
+page hears what it changed as an event. Each new file is read whole for
+its hash, a few at a time, which over a slow connection to the workspace
+is most of what a look takes.
+
+What it finds it takes into `spec.mods` (`internal/api/foundimport.go`),
+without changing a file:
+
+- A file Modrinth has, under the name Modrinth gives it, becomes that
+  project pinned to that version, if every project it requires is listed
+  too. Given it, the image finds the file there (it skips a file that
+  exists and checks its hash), and does not fetch what an explicitly
+  listed project needs again. A mod that needs a project that is not
+  listed would make the image fetch a second copy of it, so it becomes an
+  upload instead.
+- Anything else becomes an upload kept where it was found: the entry's
+  `file` is its place, and the image is not handed it, so nothing is
+  copied and no copy can ever be put over it. A file read only part of the
+  way, as over a connection dropped mid-read, is not listed until a later
+  look reads it whole. Taken off the list, the file is deleted.
+- The pod is noted as already running what the list says (the
+  annotation `avsys.dev/settled`, `<pod UID>@<generation>`), so the
+  controller neither restarts it nor says it waits for a restart. A pod
+  restarted in place keeps the settings it was made with, and the image,
+  whose records do not list the taken files, leaves them as they are.
+- The projects taken from Modrinth are also noted in
+  `.avsys/imported-modrinth`, which the game container's command counts
+  as installed: a server starts with them while Modrinth does not answer,
+  before the image has recorded them itself.
+- Which files were taken is noted on the server (`avsys.dev/imported`),
+  with each one's SHA-1 (a folder's from the files in it), until the image
+  has them in its records. When someone takes an entry off through the
+  panel, or changes it to another version, its file is noted to go
+  (`avsys.dev/content-removed`) in the same change, and deleted while it
+  still has that hash: one changed since stays, and is found again. A list
+  changed any other way (kubectl, a restore, a template) deletes nothing:
+  what is no longer on it is found again and taken in again.
 
 **Starting while a site is down.** The image asks the sites it installs
 from about the loader and the content on every start, even when the server

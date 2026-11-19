@@ -53,6 +53,9 @@ type serverView struct {
 	// Notes are what admins noted of it in the panel: never in its spec,
 	// its files or the game.
 	Notes string `json:"notes"`
+	// Found is the content in its folders that the panel did not add, as
+	// last looked at.
+	Found []FoundFile `json:"found"`
 }
 
 // forRole is the view as someone with this role is shown it.
@@ -79,6 +82,7 @@ func (s *Server) view(role store.Role, mc *avsysv1.MinecraftServer) serverView {
 		v.Unfinished = why.Message
 	}
 	v.Notes = s.notesOf(context.Background(), mc)
+	v.Found = foundOf(mc)
 	return v
 }
 
@@ -313,8 +317,16 @@ func (s *Server) validateSpec(ctx context.Context, namespace, name string, spec 
 		}
 		if m.Source == avsysv1.SourceUpload {
 			// Uploads are named by the upload endpoint; anything else here
-			// would let a path reach outside the content directory.
-			if name, err := contentFilename(m.Project, m.Kind); err != nil || name != m.Project {
+			// would let a path reach outside the content directory. One
+			// kept where it was found names its place, which must be one
+			// for its kind, and may be a datapack's folder.
+			if keptInPlace(m) {
+				name, err := contentFilename(m.Project, m.Kind)
+				folder := m.Kind == avsysv1.KindDatapack && datapackFolder(m.Project)
+				if !inPlaceFile(m) || (!folder && (err != nil || name != m.Project)) {
+					return errBadRequest("%q is not a file of the server's content.", m.File)
+				}
+			} else if name, err := contentFilename(m.Project, m.Kind); err != nil || name != m.Project {
 				return errBadRequest("%q is not an uploaded file.", m.Project)
 			}
 		}
@@ -585,7 +597,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 	s.applyDefaults(a.Org.Slug, in.Name, &in.Spec)
 	var named map[string]json.RawMessage
 	_ = json.Unmarshal(raw.Spec, &named)
-	fitModPorts(&in.Spec, nil, named)
+	fitModPorts(&in.Spec, nil, named, nil)
+	// A new server has no uploads kept in place: none is taken from a request.
+	keepUploadPlaces(&in.Spec, nil)
 	// A new server has Aikar's flags unless asked not to. Only here: one
 	// made before they were offered keeps starting as it always has.
 	if in.Spec.JVM.AikarFlags == nil {
@@ -794,6 +808,9 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		if unlock == nil {
 			unlock = s.lockContent(client.ObjectKeyFromObject(mc))
 		}
+		// Files taken into the list from its folders whose entries are taken
+		// off now are noted to go, with the change.
+		noteRemovals(mc, previous)
 		update := func() error { return s.Client.Update(r.Context(), mc) }
 		// A hostname it has already is left alone, even under a domain claimed
 		// by another since; only a new one is held to who claims what. It is
@@ -869,7 +886,10 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	// not touched, is left to be settled on the version it runs (see
 	// PinLatest).
 	_, picked := named["version"]
-	fitModPorts(&spec, mc.Spec.Mods, named)
+	fitModPorts(&spec, mc.Spec.Mods, named, foundRefs(foundOf(mc)))
+	// An upload found in its files keeps where it is kept, whatever the
+	// request says of it.
+	keepUploadPlaces(&spec, &mc.Spec)
 	stillLatest := !picked && mc.Spec.Version == "LATEST" && mc.Spec.Modpack == nil && spec.Loader == mc.Spec.Loader
 	if !stillLatest {
 		if err := s.settleLatest(ctx, &spec); err != nil {
@@ -1194,11 +1214,15 @@ func keepUploadedPack(spec, previous *avsysv1.MinecraftServerSpec) error {
 // those opened for mods taken off, in the same change (see
 // controller.FitModPorts). A request that says the ports itself, as the
 // panel's forms do, has them as it says.
-func fitModPorts(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef, given map[string]json.RawMessage) {
+func fitModPorts(spec *avsysv1.MinecraftServerSpec, before []avsysv1.ContentRef, given map[string]json.RawMessage, found []avsysv1.ContentRef) {
 	_, mods := given["mods"]
 	_, ports := given["ports"]
 	if mods && !ports {
-		spec.Ports = controller.FitModPorts(before, spec.Mods, spec.Ports)
+		// Mods in its folders that the panel did not add are there before
+		// and after: the ports opened for them stay.
+		was := append(slices.Clone(before), found...)
+		now := append(slices.Clone(spec.Mods), found...)
+		spec.Ports = controller.FitModPorts(was, now, spec.Ports)
 	}
 }
 

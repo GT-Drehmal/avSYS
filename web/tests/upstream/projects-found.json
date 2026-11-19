@@ -1,0 +1,23 @@
+[
+ {
+  "id": "P0000101",
+  "slug": "yet-another-bingo",
+  "title": "Yet Another Bingo",
+  "icon_url": null,
+  "project_type": "mod"
+ },
+ {
+  "id": "P0000102",
+  "slug": "fabric-api",
+  "title": "Fabric API",
+  "icon_url": null,
+  "project_type": "mod"
+ },
+ {
+  "id": "P0000103",
+  "slug": "lithium",
+  "title": "Lithium",
+  "icon_url": null,
+  "project_type": "mod"
+ }
+]

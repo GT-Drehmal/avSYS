@@ -11,7 +11,7 @@ import { softwareWords } from "../../lib/format";
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
-import { PackFit } from "../../components/Content";
+import { foundRefs, PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, imageDocs, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, playersExample, propertiesDocs, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
@@ -385,7 +385,7 @@ export function Settings() {
           value={draft.whitelistLists}
           onChange={(ids) => set("whitelistLists", ids)}
         />
-        <BedrockNeedsMods org={server.org} server={server.name} mods={server.spec.mods ?? []} ids={[...draft.whitelistLists, ...draft.opLists]} />
+        <BedrockNeedsMods org={server.org} server={server.name} mods={[...(server.spec.mods ?? []), ...foundRefs(server.found)]} ids={[...draft.whitelistLists, ...draft.opLists]} />
         <div className="grid grid-cols-2 gap-4">
           {(["whitelist", "ops"] as const).map((list) => (
             <div key={list} className="flex flex-col gap-3">
@@ -467,7 +467,7 @@ export function Settings() {
           </Field>
         )}
         <Field label="Extra ports" hint="For mods like voice chat, Geyser or a web map.">
-          {() => <ExtraPorts ports={draft.ports} onChange={(ports) => set("ports", ports)} mods={server.spec.mods ?? []} status={server.status.ports ?? []} expose={draft.exposeType} sleeps={draft.sleepEnabled && draft.exposeType === "Router"} />}
+          {() => <ExtraPorts ports={draft.ports} onChange={(ports) => set("ports", ports)} mods={[...(server.spec.mods ?? []), ...foundRefs(server.found)]} status={server.status.ports ?? []} expose={draft.exposeType} sleeps={draft.sleepEnabled && draft.exposeType === "Router"} />}
         </Field>
         {draft.exposeType === "LoadBalancer" && (
           <Field label="Requested IP" hint="Optional.">

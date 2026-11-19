@@ -173,6 +173,61 @@ test("a Fabric server in a .zip keeps its loader's version", async ({ page, as, 
   expect(spec.properties).toMatchObject({ "white-list": "true" });
 });
 
+test("an imported server's mods, plugins and datapacks are on its Content page, each once", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/new`);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  // As the test panel has a server named bingo's files (cmd/avsys-uitest/loose.go):
+  // three mods Modrinth knows, and others it does not.
+  const archive = gzipSync(
+    tar({
+      "Bingo/server.properties": "motd=Drehmal Bingo\n",
+      "Bingo/fabric-server-mc.1.21.4-loader.0.16.5-launcher.1.0.1.jar": "jar",
+      "Bingo/world/level.dat": levelDat("1.21.4"),
+      "Bingo/mods/bingo-2.9.6+mc1.20.1.jar": "bingo 2.9.6 jar",
+      "Bingo/mods/fabric-api-0.92.2+1.20.1.jar": "fabric api 0.92.2 jar",
+      "Bingo/mods/lithium-fabric-mc1.20.1-0.11.2.jar": "lithium 0.11.2 jar",
+      "Bingo/mods/c2me-fabric-mc1.20.1-0.2.0.jar": "not a jar that can be read",
+      "Bingo/world/datapacks/hi_drehmal.zip": "a datapack",
+    }),
+  );
+  await page.getByLabel("Server archive").setInputFiles({ name: "bingo.tar.gz", mimeType: "application/gzip", buffer: archive });
+  await expect(page.getByTestId("archive-summary")).toContainText("4 mods");
+  // The import itself, and the uploads of what Modrinth does not have, are
+  // the panel's to do behind it; here they are taken as done.
+  await page.route(`**/api/v1/orgs/${slug}/servers/bingo/import?*`, async (route) => route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/bingo`) }));
+  await page.route(new RegExp(`/api/v1/orgs/${slug}/servers/bingo/content\\?`), async (route) => route.fulfill({ json: await api("owner").get(`/orgs/${slug}/servers/bingo`) }));
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/bingo$`));
+  await expect(page.getByText("Bingo is set up")).toBeVisible();
+
+  await page.getByRole("link", { name: "Content", exact: true }).click();
+  const mods = page.getByRole("region", { name: "Mods", exact: true });
+  // What the form listed to keep up to date, and what was found in its
+  // folders besides, each once: Modrinth's names, at the versions it had.
+  for (const title of ["Yet Another Bingo", "Fabric API", "Lithium", "WI Zoom", "Animatica", "c2me-fabric-mc1.20.1-0.2.0"]) {
+    await expect(mods.getByText(title, { exact: true })).toHaveCount(1);
+  }
+  await expect(mods.getByRole("listitem")).toHaveCount(6);
+  await expect(page.getByRole("region", { name: "Datapacks", exact: true }).getByText("hi_drehmal", { exact: true })).toHaveCount(1);
+  const { spec } = await api("owner").get(`/orgs/${slug}/servers/bingo`);
+  // Those Modrinth has, as the form listed them; the rest taken from the
+  // server's files as uploads.
+  expect(spec.mods.map((m: { source: string; project: string; version?: string }) => `${m.source} ${m.project}${m.version ? `@${m.version}` : ""}`).sort()).toEqual([
+    "modrinth P0000101@V0000101",
+    "modrinth P0000102@V0000102",
+    "modrinth P0000103@V0000103",
+    "upload WI-Zoom-1.5-MC1.20.1.jar",
+    "upload animatica-0.6+1.20.jar",
+    "upload bern.zip",
+    "upload c2me-fabric-mc1.20.1-0.2.0.jar",
+    "upload hi_drehmal.zip",
+  ]);
+});
+
 test("a server run by Fabric's launcher is known by the game jar it keeps", async ({ page, as, org }) => {
   const slug = await org([]);
   await as("owner");

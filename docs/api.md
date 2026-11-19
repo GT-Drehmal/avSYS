@@ -85,7 +85,9 @@ two routes that set it up.
   `conflict` (409), `rate_limited` (429), `internal` (500). Routes list
   others where they matter.
 - A server, in answers and in [events](#live-events), is
-  `{org, name, createdAt, revision, generation, java: {game, effective}, spec, status, unfinished?, notes}`.
+  `{org, name, createdAt, revision, generation, java: {game, effective}, spec, status, unfinished?, notes, found}`;
+  `found` is content in its folders the panel did not add and has not
+  taken into its list yet (see [A server's content](#a-servers-content)).
   `spec` is the `MinecraftServer` resource's spec, the same as in
   Kubernetes, so GitOps tools can manage servers as manifests. See
   [The server resource](#the-server-resource).
@@ -966,7 +968,7 @@ The `spec` of a server, as in `kubectl get mcs -o yaml`:
 | `loaderVersion` | A loader build to stay on; empty for the newest. |
 | `gameJava` | The Java the game version ships with. Set by the panel. |
 | `modpack` | `{source: modrinth\|curseforge\|upload, project, version, gameVersion, loader, title, versionName, iconUrl}`. |
-| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl}]`. |
+| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; it is the panel's to say: a request's is not taken, and an entry sent back without it keeps it; `description` is what an uploaded datapack says of itself. |
 | `resourcePack` | `{url, sha1, enforce, prompt, uploaded, project, formats, stack}`. |
 | `properties` | `server.properties` entries the panel sets. |
 | `ops`, `whitelist` | Players, by name or UUID, up to 1000 each. |
@@ -1027,6 +1029,62 @@ start. Returns the server.
 Content from Modrinth, CurseForge or an address is added by changing
 `spec.mods` with `PATCH`; the panel pins each entry to a version that fits
 the server's loader, game version and Java.
+
+**Content found in the server's folders.** Mods, plugins and datapacks in
+the server's folders that the panel did not add (put there by hand, over
+SFTP or the terminal, or brought in with its files) are taken into
+`spec.mods` as if they had been added, without a file being changed:
+
+- A file Modrinth has by its SHA-1, under the name Modrinth gives it,
+  becomes that project pinned to that version (`source: modrinth`), if
+  every project that version requires is in `spec.mods` too. The image
+  finds the file in place, with the right hash, and keeps it.
+- Anything else becomes an upload (`source: upload`), named and versioned
+  as the file says of itself (`fabric.mod.json`, `quilt.mod.json`,
+  `mods.toml`, `neoforge.mods.toml`, `plugin.yml`, `paper-plugin.yml`),
+  kept where it was found: its `file` is that place (`mods/x.jar`,
+  `world/datapacks/x.zip`, or a datapack's folder), and the image is not
+  handed it, so nothing is copied and nothing is ever put over it. A file
+  is listed only once it has been read whole.
+- A running server is not marked as waiting for a restart for it: the
+  annotation `avsys.dev/settled` notes that its pod already runs what the
+  list now says.
+- Taken off through `PATCH`, or changed to another version, its file is
+  deleted, while it is still the file that was taken in. A list changed
+  any other way deletes nothing: what is no longer on it is taken in again.
+
+Until then, and for a file that cannot be listed (a name the list cannot
+hold, another copy of a project already listed), it is in the server's
+`found`: `{path, kind, size, modified, sha1?, title?, version?, about?,
+project?, slug?, versionId?, iconUrl?, picture?, folder?, looked?, java?,
+filename?, requires?}`, with `path` under the server's folder
+(`mods/x.jar`, `plugins/x.jar`, `world/datapacks/x.zip`). Files the panel
+or the server's image installed are never in it. The panel looks every
+few minutes, sooner once the server starts or stops, its files are changed
+through the panel, or an import or restore is done; not while its game is
+starting or stopping.
+
+### `POST /orgs/{org}/servers/{server}/content/look`
+
+Look at the server's folders now, unless that was done in the last few
+seconds, and take what is found into its list. **Viewer.** Answers at once
+(`202`) with the server as it is: what the look changes comes as the
+server's next [event](#live-events). With `wait=true`, answers once the
+look is done (`200`). The look goes on if the request is cut short.
+Folders that cannot be reached leave everything as it was.
+
+### `DELETE /orgs/{org}/servers/{server}/content/found`
+
+Delete a file in `found`. **Admin.** Query: `path`, as `found` has it. A
+running game has it until it restarts. Returns the server. `404` for a
+path not in `found`; `502 workspace` when the server's files cannot be
+reached.
+
+### `GET /orgs/{org}/servers/{server}/content/icon`
+
+The picture a mod, plugin or datapack has of its own, as a PNG: an upload
+in `spec.mods`, or a file in `found`. **Viewer.** Query: `kind` and
+`name` (the upload's name, or the file's). `404` where it has none.
 
 ### `PUT /orgs/{org}/servers/{server}/modpack`
 

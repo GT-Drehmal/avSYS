@@ -197,6 +197,16 @@ test("content", async ({ page }) => {
   await shot(page, "content-add");
 });
 
+test("content found in a server's folders", async ({ page }) => {
+  // Drehmal Bingo, moved in with its mods as files (cmd/avsys-uitest/loose.go).
+  await page.goto("/o/club/s/bingo/content");
+  await expect(page.getByRole("region", { name: "Mods", exact: true }).getByText("Yet Another Bingo", { exact: true })).toBeVisible();
+  await expect
+    .poll(() => page.locator('main img[src*="/content/icon"]').evaluateAll((imgs) => imgs.every((i) => (i as HTMLImageElement).naturalWidth > 0) && imgs.length > 0))
+    .toBe(true);
+  await shot(page, "content-found");
+});
+
 test("players", async ({ page, api }) => {
   const list = await api("owner").post<{ id: string; players: { uuid: string; name: string }[] }>("/orgs/friends/player-lists", {
     name: "Regulars",

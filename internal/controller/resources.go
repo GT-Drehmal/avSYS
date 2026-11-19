@@ -312,6 +312,11 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 			}
 			curseforge = append(curseforge, ref)
 		case avsysv1.SourceURL, avsysv1.SourceUpload:
+			// An upload kept where it was found, in the server's own files,
+			// is there already: nothing is put over it.
+			if m.Source == avsysv1.SourceUpload && m.File != "" {
+				continue
+			}
 			// The image takes a URL or a path inside the container alike.
 			location := m.Project
 			if m.Source == avsysv1.SourceUpload {
@@ -609,6 +614,11 @@ fi
 // list is installed, as JSON: the files, relative to its folder, and for
 // Modrinth the projects it was given, as given.
 const (
+	// ImportedRecord is the panel's record of the Modrinth projects it took
+	// into a server's list from its own files, which the image has not
+	// installed yet: "ref<TAB>file" a line, ref as MODRINTH_PROJECTS has it,
+	// the file relative to /data.
+	ImportedRecord = "/data/.avsys/imported-modrinth"
 	modrinthRecord = "/data/.modrinth-manifest.json"
 	listRecord     = ".var-list-manifest.json"
 )
@@ -653,17 +663,46 @@ lines() { printf '%s\n' "$1" | tr , '\n' | sed 's/#.*//; s/^[[:space:]]*//; s/[[
 # The file a URL is saved as, as far as it can be told: the last part of its path.
 saved() { n=${1%%[?]*}; echo "${n##*/}"; }
 offline() { h=${1#*://}; echo "[avsys] ${h%%/*} does not answer: starting with the installed $2" >&2; }
+# A file of the server's own a list names that is not there is left out of
+# it, and said, rather than the image refusing to start over it.
+present() {
+  lines "$1" | while IFS= read -r e; do
+    case $e in
+      /*) if [ ! -e "$e" ]; then echo "[avsys] $e is not there: starting without it" >&2; continue; fi ;;
+    esac
+    printf '%s\n' "$e"
+  done
+}
+for v in MODS PLUGINS DATAPACKS; do
+  eval "was=\${$v:-}"
+  [ -n "$was" ] || continue
+  now=$(present "$was")
+  [ "$now" = "$(lines "$was")" ] || export "$v=$now"
+done
 # Files the image is told to remove before it installs.
 removes=
 for v in "${REMOVE_OLD_MODS:-}" "${REMOVE_OLD_DATAPACKS:-}"; do
   case $v in "" | [Ff][Aa][Ll][Ss][Ee]) ;; *) removes=yes ;; esac
 done
 m=` + modrinthRecord + `
-want=$(lines "${MODRINTH_PROJECTS:-}" | sort)
+r=` + ImportedRecord + `
+want=$(lines "${MODRINTH_PROJECTS:-}" | sort -u)
+# The image's record, and the panel's of what it took into the list from
+# the server's own files, which the image has not installed yet: they are
+# there all the same.
+had= files= readable=yes
+if [ -f "$m" ]; then
+  { had=$(listed projects "$m") && files=$(listed files "$m"); } || readable=
+fi
+if [ -f "$r" ]; then
+  had=$(printf '%s\n' "$had"; cut -f1 "$r")
+  files=$(printf '%s\n' "$files"; cut -f2 "$r")
+fi
+had=$(printf '%s\n' "$had" | sed '/^$/d' | sort -u)
+files=$(printf '%s\n' "$files" | sed '/^$/d' | awk '!seen[$0]++')
 # Installed as asked for, each pinned to a version, each file there, and
 # datapacks in this world.
-if [ -n "$want" ] && [ -z "$removes" ] && had=$(listed projects "$m") && [ "$(printf '%s\n' "$had" | sort)" = "$want" ] &&
-  files=$(listed files "$m") && [ -n "$files" ] &&
+if [ -n "$want" ] && [ -z "$removes" ] && [ -n "$readable" ] && [ "$had" = "$want" ] && [ -n "$files" ] &&
   ! printf '%s\n' "$want" | sed 's/^datapack://' | grep -qv : &&
   printf '%s\n' "$files" | {
     while IFS= read -r p; do

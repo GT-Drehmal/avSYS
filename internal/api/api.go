@@ -105,6 +105,14 @@ type Server struct {
 	packsPruned time.Time
 	// contentLocks holds a lock per server, by namespace/name: see lockContent.
 	contentLocks sync.Map
+	// found holds the panel's looks at each server's folders for content it
+	// did not add, by namespace/name; lookNow asks for a look round at once.
+	found   sync.Map
+	lookNow chan struct{}
+	// recognitions are Modrinth's answers about found files, by SHA-1, and
+	// foundIcons the pictures found files have of their own.
+	recognitions sync.Map
+	foundIcons   foundIcons
 	// saveLocks holds a lock per server, by namespace/name, for a file saved
 	// from the editor: looked at and written as one.
 	saveLocks sync.Map
@@ -133,8 +141,11 @@ type Server struct {
 	// its commands.json, in place of running the game's data generator in
 	// a pod. The browser tests stand one in.
 	CommandTree func(ctx context.Context, version string) ([]byte, error)
-	Dialer      kube.PodDialer
-	Gateway     *sshgw.Gateway
+	// ContentFiles, where set, reaches a server's files to find content in,
+	// in place of its workspace. The browser tests stand one in.
+	ContentFiles func(ctx context.Context, namespace, name string) (ServerFiles, error)
+	Dialer       kube.PodDialer
+	Gateway      *sshgw.Gateway
 	// Backups keeps each organization's snapshot repository.
 	Backups *backup.Manager
 	Events  *Hub
@@ -397,6 +408,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	s.offsite.since()
 	s.workspaces = newWorkspacePool(s.Gateway)
+	s.lookNow = make(chan struct{}, 1)
 
 	mux := http.NewServeMux()
 	api := func(pattern string, h http.Handler) {
@@ -496,6 +508,9 @@ func (s *Server) Handler() http.Handler {
 	api("PUT /orgs/{org}/servers/{server}/content", s.authed(s.uploadContent))
 	api("PUT /orgs/{org}/servers/{server}/modpack", s.authed(s.putModpack))
 	api("GET /orgs/{org}/servers/{server}/modpack/contents", s.authed(s.getModpackContents))
+	api("POST /orgs/{org}/servers/{server}/content/look", s.authed(s.lookAtFound))
+	api("DELETE /orgs/{org}/servers/{server}/content/found", s.authed(s.removeFound))
+	api("GET /orgs/{org}/servers/{server}/content/icon", s.authed(s.getContentIcon))
 	api("GET /orgs/{org}/servers/{server}/modpack/icon", s.authed(s.getModpackIcon))
 	api("GET /orgs/{org}/templates", s.authed(s.listTemplates))
 	api("POST /orgs/{org}/templates", s.authed(s.createTemplate))

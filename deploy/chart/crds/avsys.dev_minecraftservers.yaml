@@ -425,11 +425,19 @@ spec:
                 items:
                   description: ContentRef is one installed mod, plugin or datapack.
                   properties:
+                    description:
+                      description: |-
+                        Description is what an uploaded datapack says of itself, in its
+                        pack.mcmeta, recorded when the entry was added.
+                      type: string
                     file:
                       description: |-
                         File is the name a datapack from a URL is saved under, as its download
                         gave it, recorded by the panel when the entry was added. It is what
-                        the panel deletes when the entry is taken off.
+                        the panel deletes when the entry is taken off. For source "upload" it
+                        is where the file is kept in the server's own files, relative to
+                        /data, for one the panel found there and listed as it is: the image is
+                        not handed it.
                       type: string
                     iconUrl:
                       type: string

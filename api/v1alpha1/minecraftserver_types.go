@@ -65,6 +65,23 @@ const (
 	// the panel could not delete then, one path per line, for it to delete
 	// when it next can.
 	AnnotationContentLeft = "avsys.dev/content-left"
+	// AnnotationFoundContent is what the panel last found in a server's
+	// content folders that it did not put there itself: mods, plugins and
+	// datapacks added by hand or brought in with its files, as JSON.
+	AnnotationFoundContent = "avsys.dev/found-content"
+	// AnnotationImported notes the files of content the panel took into a
+	// server's list from its folders, by path under /data, to the entry
+	// each is, as JSON, until the image has installed them as its own.
+	AnnotationImported = "avsys.dev/imported"
+	// AnnotationContentRemoved notes files taken into a server's list from
+	// its folders whose entries someone took off it through the panel: each
+	// is deleted while it still has the SHA-1 noted, as JSON.
+	AnnotationContentRemoved = "avsys.dev/content-removed"
+	// AnnotationSettled is "<pod UID>@<generation>": the pod runs what the
+	// server's settings of that generation say, though it was made with
+	// earlier ones, as when content it has in its files was taken into its
+	// list. Such a change is not one to restart it for.
+	AnnotationSettled = "avsys.dev/settled"
 	// AnnotationPublicPorts records the public ports given out to the extra
 	// ports of a server that shares the router's address, as name=port,...
 	// They are the server's for as long as it has those ports.
@@ -133,12 +150,18 @@ type ContentRef struct {
 	Java int32 `json:"java,omitempty"`
 	// File is the name a datapack from a URL is saved under, as its download
 	// gave it, recorded by the panel when the entry was added. It is what
-	// the panel deletes when the entry is taken off.
+	// the panel deletes when the entry is taken off. For source "upload" it
+	// is where the file is kept in the server's own files, relative to
+	// /data, for one the panel found there and listed as it is: the image is
+	// not handed it.
 	File string `json:"file,omitempty"`
 	// Title and VersionName are display metadata recorded when the entry was added.
 	Title       string `json:"title,omitempty"`
 	VersionName string `json:"versionName,omitempty"`
 	IconURL     string `json:"iconUrl,omitempty"`
+	// Description is what an uploaded datapack says of itself, in its
+	// pack.mcmeta, recorded when the entry was added.
+	Description string `json:"description,omitempty"`
 }
 
 // MemberPicks are members put on a list, or left off it, whatever their role.

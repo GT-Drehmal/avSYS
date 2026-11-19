@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -381,7 +382,9 @@ func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer)
 	finished := existing.Status.Phase == corev1.PodFailed || existing.Status.Phase == corev1.PodSucceeded
 	stateChanged := hasContainer(existing, MinecraftContainer) != wantsMinecraft(mc)
 	restartAsked := existing.Annotations[avsysv1.AnnotationRestart] != desired.Annotations[avsysv1.AnnotationRestart]
-	specChanged := existing.Annotations[annotationSpecHash] != desired.Annotations[annotationSpecHash]
+	// What the pod is noted as running already, as content taken into the
+	// list from its own files, is no change to it.
+	specChanged := existing.Annotations[annotationSpecHash] != desired.Annotations[annotationSpecHash] && !settledPod(existing, mc)
 	serving := hasContainer(existing, MinecraftContainer) && containerReady(existing, MinecraftContainer)
 	// A change that only says what the game already runs is not one to
 	// restart it for, though the next start is made with it.
@@ -403,6 +406,13 @@ func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer)
 		return existing, false, 0, nil
 	}
 	return existing, toApply, 0, nil
+}
+
+// settledPod says whether a server is noted as running what its settings
+// say now in this pod, though the pod was made with earlier ones: content
+// it had in its files that the panel took into its list since.
+func settledPod(pod *corev1.Pod, mc *avsysv1.MinecraftServer) bool {
+	return mc.Annotations[avsysv1.AnnotationSettled] == string(pod.UID)+"@"+strconv.FormatInt(mc.Generation, 10)
 }
 
 // settledOn says whether all that changed of a server since its pod was
