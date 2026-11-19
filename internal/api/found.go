@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/pkg/sftp"
 	"k8s.io/client-go/util/retry"
@@ -422,6 +423,12 @@ folders:
 				continue
 			}
 			folder := e.IsDir()
+			// What the server's software makes there itself is not
+			// content: Bukkit's datapack, which Spigot, Paper, Purpur and
+			// Folia keep in each world for their plugins.
+			if p.kind == avsysv1.KindDatapack && folder && (madeBySoftware[name] || !hasPackMeta(files, path.Join(dataRoot, rel))) {
+				continue
+			}
 			switch {
 			case p.kind == avsysv1.KindDatapack && (folder || strings.HasSuffix(strings.ToLower(name), ".zip")):
 			case p.kind != avsysv1.KindDatapack && !folder && e.Mode().IsRegular() && strings.HasSuffix(strings.ToLower(name), ".jar"):
@@ -485,6 +492,16 @@ folders:
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].Path < kept[j].Path })
 	return kept, nil
+}
+
+// madeBySoftware are datapack folders a server's software makes in its
+// world by itself.
+var madeBySoftware = map[string]bool{"bukkit": true}
+
+// hasPackMeta says a folder is a datapack: it has a pack.mcmeta.
+func hasPackMeta(files ServerFiles, dir string) bool {
+	info, err := files.Stat(path.Join(dir, "pack.mcmeta"))
+	return err == nil && !info.IsDir()
 }
 
 // propertiesLevel is the world's folder as the server's properties name
@@ -870,7 +887,7 @@ func contentMeta(zr *zip.Reader, kind avsysv1.ContentKind) selfDescribed {
 	if strings.Contains(meta.version, "${") {
 		meta.version = ""
 	}
-	meta.title, meta.version = strings.TrimSpace(meta.title), strings.TrimSpace(meta.version)
+	meta.title, meta.version, meta.about = oneLine(meta.title), oneLine(meta.version), oneLine(meta.about)
 	if iconAt != "" {
 		if data, err := read(strings.TrimPrefix(path.Clean("/"+iconAt), "/")); err == nil {
 			meta.icon = data
@@ -900,7 +917,7 @@ func packMeta(read func(string) ([]byte, error)) selfDescribed {
 			} `json:"pack"`
 		}
 		if json.Unmarshal(bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf")), &m) == nil {
-			meta.about = strings.TrimSpace(plainText(m.Pack.Description))
+			meta.about = oneLine(plainText(m.Pack.Description))
 		}
 	}
 	if data, err := read("pack.png"); err == nil {
@@ -988,7 +1005,21 @@ func scalar(v any) string {
 	return ""
 }
 
-var formatCodes = regexp.MustCompile(`§.`)
+var formatCodes = regexp.MustCompile(`§.?`)
+
+// oneLine is what a file says of itself, as one line of plain text: without
+// the game's formatting codes, its line breaks, tabs and other control
+// characters made spaces, and spaces run together.
+func oneLine(s string) string {
+	s = formatCodes.ReplaceAllString(s, "")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
+}
 
 // plainText is the text of a game text component: a string, an object with
 // text and extra, or a list of them, without formatting codes.

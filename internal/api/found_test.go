@@ -1523,3 +1523,108 @@ func TestFoundPlaceRepaired(t *testing.T) {
 		t.Errorf("kept at %v, want %v", places, want)
 	}
 }
+
+// What a file says of itself is shown as one line of plain text: the
+// game's formatting codes go, and line breaks, tabs and every other control
+// character become spaces. Nothing in what the panel answers then needs
+// more than plain escapes, however it is passed on.
+func TestSaidOnOneLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"§6§lVeinminer §7| §61.21+\n§eBy Miraculixx": "Veinminer | 1.21+ By Miraculixx",
+		"Tabbed\tName\r\n":                  "Tabbed Name",
+		"Bell\a and nul\x00 and esc\x1b[0m": "Bell and nul and esc [0m",
+		"line sep para\u0085next":           "line sep para next",
+		"  plain  ":                         "plain",
+		"ends with §":                       "ends with",
+	} {
+		if got := oneLine(in); got != want {
+			t.Errorf("oneLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// From the files themselves, and as the API answers.
+	pack := jarOf(t, map[string]string{"pack.mcmeta": "{\r\n \"pack\": {\"pack_format\": 48, \"description\": \"§6§lVeinminer §7| §61.21+\\n§eBy Miraculixx\"}\r\n}"})
+	mod := jarOf(t, map[string]string{"fabric.mod.json": "{\"name\":\"Multi\\nLine\\tMod\",\"version\":\"1.0\\u0007\"}"})
+	p := newPanel(t)
+	filesFrom(t, p, sftp.InMemHandler())
+	for _, up := range []struct {
+		kind, name string
+		body       []byte
+	}{{"datapack", "Veinminer-1.2.4.zip", pack}, {"mod", "multi.jar", mod}} {
+		rec := p.send("admin", "PUT", "/orgs/alpha/servers/world/content?kind="+up.kind+"&name="+up.name, up.body)
+		if rec.Code != 200 {
+			t.Fatalf("upload %s: %d %s", up.name, rec.Code, rec.Body)
+		}
+		if bytes.Contains(rec.Body.Bytes(), []byte(`\n`)) || bytes.Contains(rec.Body.Bytes(), []byte(`\t`)) || bytes.Contains(rec.Body.Bytes(), []byte(`\u00`)) {
+			t.Errorf("answered with an escaped control character: %s", rec.Body)
+		}
+	}
+	got := map[string]string{}
+	for _, m := range p.serverOf("world").Spec.Mods {
+		got[m.Project] = m.Title + " / " + m.VersionName + " / " + m.Description
+	}
+	if want := map[string]string{"Veinminer-1.2.4.zip": "Veinminer-1.2.4.zip /  / Veinminer | 1.21+ By Miraculixx", "multi.jar": "Multi Line Mod / 1.0 / "}; !reflect.DeepEqual(got, want) {
+		t.Errorf("listed %q, want %q", got, want)
+	}
+}
+
+// What a server's software keeps in its content folders by itself is not
+// content: on Paper, its remapped copies of plugins, plugins' own folders,
+// bStats and update folders, and Bukkit's datapack in each world; on Forge
+// and NeoForge, folders in mods; a folder without a pack.mcmeta is no
+// datapack. A server restored from a snapshot with only its listed content
+// and these has nothing taken into its list after.
+func TestFoundLeavesWhatTheSoftwareKeeps(t *testing.T) {
+	p := newPanel(t)
+	root := t.TempDir()
+	lp, we := []byte("luckperms jar"), []byte("worldedit jar")
+	lay(t, root, map[string][]byte{
+		// Paper, with two plugins from Modrinth, as the image installed them.
+		".modrinth-manifest.json":                          []byte(`{"files":["plugins/LuckPerms-Bukkit-5.4.jar","plugins/worldedit-bukkit-7.3.jar"],"projects":["luckperms:lp1","worldedit:we1"]}`),
+		"plugins/LuckPerms-Bukkit-5.4.jar":                 lp,
+		"plugins/worldedit-bukkit-7.3.jar":                 we,
+		"plugins/.paper-remapped/LuckPerms-Bukkit-5.4.jar": lp,
+		"plugins/.paper-remapped/index.json":               []byte("{}"),
+		"plugins/.paper-remapped/unknown-origin/x.jar":     we,
+		"plugins/LuckPerms/config.yml":                     []byte("x"),
+		"plugins/LuckPerms/libs/h2.jar":                    []byte("lib"),
+		"plugins/bStats/config.yml":                        []byte("x"),
+		"plugins/update/WorldEdit.jar":                     we,
+		"plugins/PluginMetrics/config.yml":                 []byte("x"),
+		"world/datapacks/bukkit/pack.mcmeta":               []byte(`{"pack":{"description":"Data pack for resources provided by Bukkit plugins","pack_format":61}}`),
+		"world/datapacks/notes/readme.txt":                 []byte("not a datapack"),
+		"world/level.dat":                                  []byte("level"),
+		// Forge and NeoForge, Fabric.
+		"mods/1.20.1/old.jar":        []byte("x"),
+		"mods/.connector/cache.jar":  []byte("x"),
+		"mods/.index/x.json":         []byte("x"),
+		".fabric/remappedJars/x.jar": []byte("x"),
+		"config/x.toml":              []byte("x"),
+	})
+	p.fileServer(root)
+	p.srv.catalog.http.Transport = &hashModrinth{}
+	ctx := context.Background()
+	key := client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "world"}
+	mc := p.serverOf("world")
+	mc.Spec.Loader = avsysv1.LoaderPaper
+	mc.Spec.Mods = []avsysv1.ContentRef{
+		{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindPlugin, Project: "luckperms", Version: "lp1"},
+		{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindPlugin, Project: "worldedit", Version: "we1"},
+	}
+	if err := p.srv.Client.Update(ctx, mc); err != nil {
+		t.Fatal(err)
+	}
+	// As a restore ends.
+	if err := p.srv.markRestoring(ctx, key, "abcd1234"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.srv.markRestoring(ctx, key, ""); err != nil {
+		t.Fatal(err)
+	}
+	p.srv.lookRoundOnce(ctx)
+	if got := p.listedOn("world"); strings.Join(got, ", ") != "modrinth plugin luckperms@lp1, modrinth plugin worldedit@we1" {
+		t.Errorf("listed %q", got)
+	}
+	if got := p.foundOn("world"); len(got) != 0 {
+		t.Errorf("found %v", pathsOf(got))
+	}
+}

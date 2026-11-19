@@ -373,7 +373,12 @@ brought in with an import or a snapshot. The panel looks for them
 and the world's `datapacks/`, leaving out what it or the image put there:
 its own uploads and datapacks, and every file in the image's records
 (`.modrinth-manifest.json`, `.curseforge-files-manifest.json`,
-`.var-list-manifest.json` in each folder, and a modpack's). It hashes each
+`.var-list-manifest.json` in each folder, and a modpack's), and what the
+software keeps there by itself: only `.jar` files right in `mods/` and
+`plugins/` count, never their folders (Paper's `.paper-remapped`,
+plugins' own folders), and in `datapacks/` only `.zip` files and folders
+with a `pack.mcmeta`, but Bukkit's own `bukkit`. Names and descriptions
+are kept as one line of plain text. It hashes each
 new or changed file (SHA-1), asks Modrinth about all of them in one
 `POST /v2/version_files`, and names those it has from
 `GET /v2/projects`; the rest are named by their `fabric.mod.json`,
