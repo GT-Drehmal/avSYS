@@ -48,6 +48,21 @@ func TestEntriesAndExtract(t *testing.T) {
 	if strings.Join(got, ", ") != "a.zip false 5, b true 0, c true 0, we[ird]*.zip false 11, weirder[ true 0" {
 		t.Errorf("listed %q", got)
 	}
+	// Several folders in one go, each entry where it is.
+	entries, err = m.Entries(ctx, "alpha", kept.ID, "/data/world/datapacks/b", "/data/world/datapacks/weirder[")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	for _, e := range entries {
+		got = append(got, fmt.Sprintf("%s %v %d", e.Path, e.Dir, e.Size))
+	}
+	if strings.Join(got, ", ") != "/data/world/datapacks/b/data true 0, /data/world/datapacks/b/pack.mcmeta false 3, /data/world/datapacks/weirder[/pack.mcmeta false 9" {
+		t.Errorf("listed %q", got)
+	}
+	if entries, err := m.Entries(ctx, "alpha", kept.ID); err != nil || len(entries) != 0 {
+		t.Errorf("no folders: %v, %v", entries, err)
+	}
 	if entries, err := m.Entries(ctx, "alpha", kept.ID, "/data/elsewhere"); err != nil || len(entries) != 0 {
 		t.Errorf("a folder it does not have: %v, %v", entries, err)
 	}

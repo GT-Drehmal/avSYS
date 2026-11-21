@@ -121,12 +121,15 @@ func zipPackMeta(files ServerFiles, full string, size int64) selfDescribed {
 	return contentMeta(zr, avsysv1.KindDatapack)
 }
 
-// snapshotFolder is a folder of a world's snapshot as listed there, with
-// the files taken out of it under a folder here.
+// snapshotFolder is a world's datapacks folder in its snapshot, and the
+// folders in it, as listed there, with the files taken out of it under a
+// folder here: what is listed is there, as the snapshot has it, whether or
+// not it was taken out.
 type snapshotFolder struct {
 	ServerFiles
 	dir     string
 	entries []os.FileInfo
+	listed  map[string]os.FileInfo
 }
 
 func (s snapshotFolder) ReadDir(p string) ([]os.FileInfo, error) {
@@ -135,6 +138,26 @@ func (s snapshotFolder) ReadDir(p string) ([]os.FileInfo, error) {
 	}
 	return s.ServerFiles.ReadDir(p)
 }
+
+func (s snapshotFolder) Stat(p string) (os.FileInfo, error) {
+	if info, ok := s.listed[path.Clean(p)]; ok {
+		return info, nil
+	}
+	return s.ServerFiles.Stat(p)
+}
+
+// What is taken out of a world's snapshot to read its datapacks is held to
+// so much: a datapack that is a .zip larger than maxKeptDatapackZip, or one
+// past maxKeptDatapackBytes in all, is listed by its name alone, without
+// what its pack.mcmeta says or its picture; and a pack.mcmeta or pack.png
+// of a folder larger than a picture may be is left where it is.
+var (
+	maxKeptDatapackZip   int64 = 64 << 20
+	maxKeptDatapackBytes int64 = 512 << 20
+	// datapackRoom is how much room there is to take them out into, of
+	// which the room kept free while a world is unpacked stays free.
+	datapackRoom = freeSpace
+)
 
 // snapshotEntry is an entry of a snapshot's folder, as a file's is.
 type snapshotEntry struct{ backup.Entry }
@@ -152,36 +175,100 @@ func (e snapshotEntry) Mode() fs.FileMode {
 }
 
 // readKeptDatapacks reads the datapacks of a world kept as its own files,
-// whose folder is level, from its snapshot.
+// whose folder is level, from its snapshot. Its datapacks folder, and the
+// folders in it, are listed, with how large each file is; then only what is
+// needed of the datapacks read is taken out (keptDatapacksPlan), and only
+// with room for it on the panel.
 func (s *Server) readKeptDatapacks(ctx context.Context, org string, snap *backup.Snapshot, level string) ([]worldDatapack, map[string][]byte, error) {
 	dir := path.Join(dataRoot, level, "datapacks")
-	list, err := s.Backups.Entries(ctx, org, snap.ID, dir)
+	top, err := s.Backups.Entries(ctx, org, snap.ID, dir)
 	if err != nil {
 		return nil, nil, err
 	}
-	var want []string
-	entries := make([]os.FileInfo, 0, len(list))
-	for _, e := range list {
-		entries = append(entries, snapshotEntry{e})
-		full := path.Join(dir, e.Name)
-		switch {
-		case strings.HasPrefix(e.Name, ".") || !plainName(e.Name):
-		case e.Dir && !madeBySoftware[e.Name]:
-			want = append(want, full+"/pack.mcmeta", full+"/pack.png")
-		case !e.Dir && strings.HasSuffix(strings.ToLower(e.Name), ".zip") && e.Size <= maxJar:
-			want = append(want, full)
+	// The folders that may be datapacks, to as many as could be read.
+	var folders []string
+	for _, e := range top {
+		if e.Dir && visibleEntry(e) && !madeBySoftware[e.Name] && len(folders) < 4*maxFound {
+			folders = append(folders, e.Path)
 		}
 	}
+	inner, err := s.Backups.Entries(ctx, org, snap.ID, folders...)
+	if err != nil {
+		return nil, nil, err
+	}
+	plan := keptDatapacksPlan(top, inner)
 	work, done, err := s.worldWork(org)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer done()
-	if err := s.Backups.Extract(ctx, org, snap.ID, want, work); err != nil {
+	if len(plan.take) > 0 {
+		if free, err := datapackRoom(work); err != nil {
+			return nil, nil, err
+		} else if free < plan.bytes+worldRoomReserve {
+			return nil, nil, errNoRoomFor(free)
+		}
+	}
+	if err := s.Backups.Extract(ctx, org, snap.ID, plan.take, work); err != nil {
 		return nil, nil, err
 	}
-	files := snapshotFolder{ServerFiles: DirFiles(filepath.Join(work, keptData)), dir: dir, entries: entries}
+	files := snapshotFolder{ServerFiles: DirFiles(filepath.Join(work, keptData)), dir: dir, entries: plan.entries, listed: plan.listed}
 	return readDatapacks(ctx, files, level)
+}
+
+func visibleEntry(e backup.Entry) bool { return !strings.HasPrefix(e.Name, ".") && plainName(e.Name) }
+
+// datapacksPlan is what is taken out of a world's snapshot to read its
+// datapacks, and how large that is in all; and what its datapacks folder,
+// and the folders in it, were listed as having.
+type datapacksPlan struct {
+	take    []string
+	bytes   int64
+	entries []os.FileInfo
+	listed  map[string]os.FileInfo
+}
+
+// keptDatapacksPlan is what is taken out of a world's snapshot to read its
+// datapacks, from what its datapacks folder has (top) and the folders in it
+// have (inner): for the datapacks readDatapacks reads, in its order, to as
+// many as it reads, each .zip and each folder's pack.mcmeta and pack.png,
+// within the bounds above.
+func keptDatapacksPlan(top, inner []backup.Entry) datapacksPlan {
+	plan := datapacksPlan{entries: make([]os.FileInfo, 0, len(top)), listed: map[string]os.FileInfo{}}
+	for _, e := range inner {
+		plan.listed[e.Path] = snapshotEntry{e}
+	}
+	take := func(p string, size int64) {
+		if plan.bytes+size <= maxKeptDatapackBytes {
+			plan.take, plan.bytes = append(plan.take, p), plan.bytes+size
+		}
+	}
+	n := 0
+	for _, e := range top {
+		plan.entries = append(plan.entries, snapshotEntry{e})
+		plan.listed[e.Path] = snapshotEntry{e}
+		if !visibleEntry(e) || n >= maxFound {
+			continue
+		}
+		if e.Dir {
+			meta, ok := plan.listed[e.Path+"/pack.mcmeta"]
+			if madeBySoftware[e.Name] || !ok || meta.IsDir() {
+				continue
+			}
+			n++
+			for _, name := range []string{"pack.mcmeta", "pack.png"} {
+				if f, ok := plan.listed[e.Path+"/"+name]; ok && !f.IsDir() && f.Size() <= maxPictureBytes {
+					take(e.Path+"/"+name, f.Size())
+				}
+			}
+		} else if strings.HasSuffix(strings.ToLower(e.Name), ".zip") {
+			n++
+			if e.Size <= maxKeptDatapackZip {
+				take(e.Path, e.Size)
+			}
+		}
+	}
+	return plan
 }
 
 // keepDatapacks keeps what was read of a world's datapacks with it, and

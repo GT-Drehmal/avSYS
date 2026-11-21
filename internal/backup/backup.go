@@ -831,19 +831,28 @@ func (m *Manager) File(ctx context.Context, org, id, path string, limit int64) (
 
 // Entry is one of what a folder of a snapshot has: a file or a folder.
 type Entry struct {
+	// Path is where it is in the snapshot, and Name its last part.
+	Path     string
 	Name     string
 	Dir      bool
 	Size     int64
 	Modified time.Time
 }
 
-// Entries lists what is right in a folder of a snapshot, a full path in it
-// such as /data/world/datapacks, and not what is in its folders: none for a
-// folder it does not have. Only the snapshot's list of its folders is read,
-// not a byte of its files.
-func (m *Manager) Entries(ctx context.Context, org, id, dir string) ([]Entry, error) {
-	if !path.IsAbs(dir) || path.Clean(dir) != dir {
-		return nil, fmt.Errorf("%q is not a folder of a snapshot", dir)
+// Entries lists what is right in folders of a snapshot, full paths in it
+// such as /data/world/datapacks, in one go, and not what is in their
+// folders: none for a folder it does not have. Only the snapshot's list of
+// its folders is read, not a byte of its files.
+func (m *Manager) Entries(ctx context.Context, org, id string, dirs ...string) ([]Entry, error) {
+	if len(dirs) == 0 {
+		return []Entry{}, nil
+	}
+	in := map[string]bool{}
+	for _, dir := range dirs {
+		if !path.IsAbs(dir) || path.Clean(dir) != dir {
+			return nil, fmt.Errorf("%q is not a folder of a snapshot", dir)
+		}
+		in[dir] = true
 	}
 	lock := m.lock(org)
 	lock.RLock()
@@ -852,7 +861,7 @@ func (m *Manager) Entries(ctx context.Context, org, id, dir string) ([]Entry, er
 	if err != nil {
 		return nil, err
 	}
-	out, err := m.restic(ctx, org, "ls", "--json", "--no-lock", snap.ID, dir)
+	out, err := m.restic(ctx, org, append([]string{"ls", "--json", "--no-lock", snap.ID}, dirs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -866,13 +875,13 @@ func (m *Manager) Entries(ctx context.Context, org, id, dir string) ([]Entry, er
 			MTime  time.Time `json:"mtime"`
 			Struct string    `json:"struct_type"`
 		}
-		if json.Unmarshal(line, &node) != nil || node.Struct != "node" || path.Dir(node.Path) != dir {
+		if json.Unmarshal(line, &node) != nil || node.Struct != "node" || !in[path.Dir(node.Path)] {
 			continue
 		}
 		if node.Type != "file" && node.Type != "dir" {
 			continue
 		}
-		entries = append(entries, Entry{Name: node.Name, Dir: node.Type == "dir", Size: node.Size, Modified: node.MTime})
+		entries = append(entries, Entry{Path: node.Path, Name: node.Name, Dir: node.Type == "dir", Size: node.Size, Modified: node.MTime})
 	}
 	return entries, nil
 }
