@@ -261,20 +261,130 @@ type autoOps struct {
 	missing sync.Map
 }
 
-// missingFor is how long a name the game knows no player of is left before
-// it is tried again.
-const missingFor = time.Hour
+var (
+	// missingFor is how long a name no account has, as Mojang says, is
+	// left before it is tried again, and missingSoon one the game could not
+	// look up while Mojang did not answer the panel either.
+	missingFor  = time.Hour
+	missingSoon = 2 * time.Minute
+	// opTries is how many more times a player Mojang knows is made an
+	// operator where the game could not look them up, opRetryWait apart.
+	opTries     = 3
+	opRetryWait = 2 * time.Second
+)
 
-// notMissing is the names to add less those the game lately knew no player of.
+// leaveOut has a name not tried again on a list for a while.
+func (o *autoOps) leaveOut(list, name string, d time.Duration) {
+	o.missing.Store(list+"/"+strings.ToLower(name), time.Now().Add(d))
+}
+
+// notMissing is the names to add less those left out for now.
 func (o *autoOps) notMissing(list string, names []string) []string {
 	var out []string
 	for _, name := range names {
-		if at, ok := o.missing.Load(list + "/" + strings.ToLower(name)); ok && time.Since(at.(time.Time)) < missingFor {
+		if until, ok := o.missing.Load(list + "/" + strings.ToLower(name)); ok && time.Now().Before(until.(time.Time)) {
 			continue
 		}
 		out = append(out, name)
 	}
 	return out
+}
+
+// knownUUIDs is the UUIDs the panel has of the Java players a server's
+// lists may name, by lowercase name in game: those of its organization's
+// saved lists and its members' linked accounts.
+func knownUUIDs(members []store.Member, saved map[string]*store.PlayerList, fg floodgate) map[string]string {
+	out := map[string]string{}
+	for _, l := range saved {
+		for _, p := range l.Players {
+			if !p.Bedrock() {
+				out[strings.ToLower(fg.inGame(p))] = p.UUID
+			}
+		}
+	}
+	for _, m := range members {
+		for _, a := range m.Minecraft {
+			if a.UUID != "" && a.Name != "" {
+				out[strings.ToLower(a.Name)] = a.UUID
+			}
+		}
+	}
+	return out
+}
+
+// lookAgain sorts out the names the game said it knows no player of. The
+// game asks Mojang itself, once, and Mojang does not always answer it (see
+// package mojang). So each name is looked up by the panel too: one it
+// knows the account of is put on a whitelist by its file, with its UUID
+// (no game takes a UUID in its commands), and made an operator by asking
+// the game again a few times. A name no account has, as Mojang says, is
+// missing; one that still could not be added is tried again soon. Names of
+// Bedrock players (bedrock) are missing, as they were.
+func (s *Server) lookAgain(ctx context.Context, mc *avsysv1.MinecraftServer, list roleList, names []string, known map[string]string, bedrock func(string) bool) (onFile []listedPlayer, added, missing, soon []string, err error) {
+	uuids := map[string]string{}
+	var ask []string
+	for _, name := range names {
+		switch uuid := known[strings.ToLower(name)]; {
+		case bedrock(name) || !minecraftNamePattern.MatchString(name):
+			missing = append(missing, name)
+		case uuid != "":
+			uuids[strings.ToLower(name)] = uuid
+		default:
+			ask = append(ask, name)
+		}
+	}
+	if len(ask) > 0 {
+		lookup, cancel := context.WithTimeout(ctx, 20*time.Second)
+		found, none, unchecked := s.minecraftProfiles(lookup, ask)
+		cancel()
+		for _, name := range ask {
+			if a, ok := found[strings.ToLower(name)]; ok {
+				uuids[strings.ToLower(name)] = a.UUID
+			}
+		}
+		missing = append(missing, none...)
+		soon = append(soon, unchecked...)
+	}
+	for _, name := range names {
+		uuid := uuids[strings.ToLower(name)]
+		if uuid == "" {
+			continue
+		}
+		if list.key == "whitelist" {
+			onFile = append(onFile, listedPlayer{Name: name, UUID: dashedUUID(uuid)})
+			continue
+		}
+		ok, err := s.tryAgain(ctx, mc, list.add+name)
+		if err != nil {
+			return onFile, added, missing, soon, err
+		}
+		if ok {
+			added = append(added, name)
+		} else {
+			soon = append(soon, name)
+		}
+	}
+	return onFile, added, missing, soon, nil
+}
+
+// tryAgain runs a command that named a player the game could not look up,
+// opTries more times, until it can.
+func (s *Server) tryAgain(ctx context.Context, mc *avsysv1.MinecraftServer, command string) (bool, error) {
+	for range opTries {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(opRetryWait):
+		}
+		out, err := s.listCommand(ctx, mc, command)
+		if err != nil {
+			return false, err
+		}
+		if !noSuchPlayer.MatchString(plain(out)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // A roleList is one of the lists of players a server keeps that the panel
@@ -622,6 +732,7 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 	changed := false
 	var failed error
 	fg := s.floodgateOf(ctx, fresh)
+	uuids := knownUUIDs(members, saved, fg)
 	for _, list := range roleLists {
 		made := splitNames(fresh.Annotations[list.note])
 		wanted := withKept(wantedOn(list, &fresh.Spec, members, saved, fg), list.kept(&fresh.Spec))
@@ -700,6 +811,19 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			}
 			return err
 		}, list.add, list.remove, isBedrock)
+		var soon []string
+		if err == nil && len(missing) > 0 {
+			isSaved := func(name string) bool { _, ok := bedrock[strings.ToLower(name)]; return ok || isBedrock(name) }
+			var onFile []listedPlayer
+			var added []string
+			onFile, added, missing, soon, err = s.lookAgain(ctx, fresh, list, missing, uuids, isSaved)
+			fileAdd = append(fileAdd, onFile...)
+			for _, name := range added {
+				if !hasName(done, name) {
+					done = append(done, name)
+				}
+			}
+		}
 		if err == nil && (len(fileAdd) > 0 || len(fileRemove) > 0) {
 			if err = s.changeBedrockWhitelist(ctx, fresh, fileAdd, fileRemove); err == nil {
 				for _, p := range fileAdd {
@@ -724,8 +848,12 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			if _, ok := bedrock[strings.ToLower(name)]; ok {
 				continue
 			}
-			s.autoOps.missing.Store(listKey+"/"+strings.ToLower(name), time.Now())
+			s.autoOps.leaveOut(listKey, name, missingFor)
 			s.Log.Warn("the game knows no player of a name for its "+list.what, "server", key.String(), "player", name)
+		}
+		for _, name := range soon {
+			s.autoOps.leaveOut(listKey, name, missingSoon)
+			s.Log.Warn("could not look up a player for its "+list.what+"; trying again soon", "server", key.String(), "player", name)
 		}
 		if note := strings.Join(done, ","); note == "" {
 			delete(fresh.Annotations, list.note)
@@ -846,30 +974,46 @@ func (s *Server) syncOrgOps(ctx context.Context, org *store.Org) {
 func (s *Server) refreshNames(ctx context.Context, members []store.Member) {
 	// Each is asked again where Mojang does not answer, for a while: not
 	// so long that the servers' lists wait on it. Those left are looked up
-	// with the next look.
-	ctx, cancel := context.WithTimeout(ctx, refreshFor)
-	defer cancel()
+	// with the next look, which starts with those looked up longest ago, so
+	// that one that never answers does not keep the others from their turn.
+	type account struct{ member, account int }
+	var turns []account
 	for i := range members {
-		m := &members[i]
-		for k := range m.Minecraft {
-			a := &m.Minecraft[k]
-			body, err := s.catalog.getOr(ctx, sessionProfileURL(a.UUID), 6*time.Hour, noContent)
-			if err != nil {
-				continue
-			}
-			var profile struct{ Name string }
-			if json.Unmarshal(body, &profile) != nil || !minecraftNamePattern.MatchString(profile.Name) || profile.Name == a.Name {
-				continue
-			}
-			if err := s.Store.RenameMinecraftAccount(ctx, a.UUID, profile.Name); err != nil {
-				continue
-			}
-			s.Log.Info("a linked Minecraft account was renamed", "user", m.Username, "from", a.Name, "to", profile.Name)
-			if a.Main {
-				m.MinecraftName = profile.Name
-			}
-			a.Name = profile.Name
+		for k := range members[i].Minecraft {
+			turns = append(turns, account{i, k})
 		}
+	}
+	last := func(a account) time.Time {
+		at, _ := s.memberNameChecks.Load(members[a.member].Minecraft[a.account].UUID)
+		t, _ := at.(time.Time)
+		return t
+	}
+	slices.SortStableFunc(turns, func(a, b account) int { return last(a).Compare(last(b)) })
+	lookups, cancel := context.WithTimeout(ctx, refreshFor)
+	defer cancel()
+	for _, turn := range turns {
+		if lookups.Err() != nil {
+			return
+		}
+		m := &members[turn.member]
+		a := &m.Minecraft[turn.account]
+		s.memberNameChecks.Store(a.UUID, time.Now())
+		body, err := s.catalog.getOr(lookups, sessionProfileURL(a.UUID), 6*time.Hour, noContent)
+		if err != nil {
+			continue
+		}
+		var profile struct{ Name string }
+		if json.Unmarshal(body, &profile) != nil || !minecraftNamePattern.MatchString(profile.Name) || profile.Name == a.Name {
+			continue
+		}
+		if err := s.Store.RenameMinecraftAccount(ctx, a.UUID, profile.Name); err != nil {
+			continue
+		}
+		s.Log.Info("a linked Minecraft account was renamed", "user", m.Username, "from", a.Name, "to", profile.Name)
+		if a.Main {
+			m.MinecraftName = profile.Name
+		}
+		a.Name = profile.Name
 	}
 }
 
@@ -920,7 +1064,7 @@ func (s *Server) refreshListNames(ctx context.Context, orgID string, budget *int
 
 // refreshFor is how long the names of an organization's members are looked
 // up for at most, in one look.
-const refreshFor = 20 * time.Second
+var refreshFor = 20 * time.Second
 
 // sessionProfileURL is where Mojang has an account's name and skin.
 func sessionProfileURL(uuid string) string {

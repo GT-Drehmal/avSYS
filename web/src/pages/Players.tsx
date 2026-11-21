@@ -9,6 +9,7 @@ import { Button, Confirm, Empty, Field, Input, Loading, Menu, MenuContent, MenuI
 import { api, ApiError, atLeast, type NotAdded, type PlayerList, type PlayerListChange } from "../lib/api";
 import { byCount, byText, byTime, type ListOptions, useList } from "../lib/list";
 import { keys, usePlayerLists } from "../lib/queries";
+import { stillUnchecked } from "../lib/names";
 import { matches } from "../lib/search";
 
 const listOptions: ListOptions<PlayerList> = {
@@ -191,25 +192,29 @@ export function PlayerListPage() {
       setBusy(null);
     }
   };
-  const add = async () => {
-    const now = await act("add", () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, namesOf(edition, adding)));
-    if (now) {
-      setNotAdded(notAddedOf(now));
-      setAdding([...now.missing, ...now.missingBedrock].join("\n"));
-    }
-  };
-  /** Asks again about the names that could not be checked. */
-  const tryAgain = async () => {
-    const now = await act("again", () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, { names: notAdded.unchecked, bedrock: notAdded.uncheckedBedrock }));
+  /**
+   * Sends names to add. Names not found are said as this request found
+   * them (the box keeps them, to be fixed); names that could not be checked
+   * are kept until a request checks them.
+   */
+  const send = async (what: string, sent: { names: string[]; bedrock: string[] }, keepMissing: boolean) => {
+    const now = await act(what, () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, sent));
     if (now) {
       setNotAdded((was) => ({
-        missing: [...was.missing, ...now.missing],
-        missingBedrock: [...was.missingBedrock, ...now.missingBedrock],
-        unchecked: now.unchecked,
-        uncheckedBedrock: now.uncheckedBedrock,
+        missing: keepMissing ? [...was.missing, ...now.missing] : now.missing,
+        missingBedrock: keepMissing ? [...was.missingBedrock, ...now.missingBedrock] : now.missingBedrock,
+        unchecked: stillUnchecked(was.unchecked, sent.names, now.unchecked),
+        uncheckedBedrock: stillUnchecked(was.uncheckedBedrock, sent.bedrock, now.uncheckedBedrock),
       }));
     }
+    return now;
   };
+  const add = async () => {
+    const now = await send("add", namesOf(edition, adding), false);
+    if (now) setAdding([...now.missing, ...now.missingBedrock].join("\n"));
+  };
+  /** Asks again about the names that could not be checked. */
+  const tryAgain = () => send("again", { names: notAdded.unchecked, bedrock: notAdded.uncheckedBedrock }, true);
   const shown = list.players.filter((p) => matches(query, p.name));
 
   return (

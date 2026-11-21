@@ -83,14 +83,21 @@ test("names Mojang doesn't answer for are said and tried again, and the rest are
   await expect(page.getByText(`Mojang didn't answer for 2 names: ${late}, ${other}`)).toBeVisible();
   await expect(page.getByLabel("Add players")).toHaveValue("Herobrine");
 
-  // Asked again, they are added too; the name nobody has is still said.
+  // The name not found is fixed and added: those not checked are still said.
+  const fixed = `player_${tag}y`;
+  await page.getByLabel("Add players").fill(fixed);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await players(page).toEqual([...first.slice(1), fixed]);
+  await expect(page.getByText(/not found/)).toHaveCount(0);
+  await expect(page.getByText(`Mojang didn't answer for 2 names: ${late}, ${other}`)).toBeVisible();
+
+  // Asked again, they are added too.
   await page.getByRole("button", { name: "Try again" }).click();
-  await players(page).toEqual([late, ...first.slice(1), other]);
+  await players(page).toEqual([late, ...first.slice(1), other, fixed]);
   await expect(page.getByText(/Mojang didn't answer/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
-  await expect(page.getByText("1 name not found: Herobrine")).toBeVisible();
   const [now] = await api("owner").get<List[]>(`/orgs/${slug}/player-lists`);
-  expect(now.players).toHaveLength(11);
+  expect(now.players).toHaveLength(12);
 });
 
 test("a new list made while Mojang doesn't answer for some names opens saying which", async ({ page, as, org }) => {

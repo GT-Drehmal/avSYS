@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 	corev1 "k8s.io/api/core/v1"
@@ -207,8 +208,10 @@ type listGame struct {
 	mu        sync.Mutex
 	whitelist []string
 	ran       []string
-	// unknown are names the game knows no player of.
-	unknown []string
+	// unknown are names the game knows no player of, and failFirst how
+	// many more times it says so of a name before it finds them.
+	unknown   []string
+	failFirst map[string]int
 	// joined are the Bedrock players who have joined, by their names in
 	// game: the game knows no other Bedrock player by name.
 	joined []string
@@ -239,6 +242,10 @@ func (g *listGame) answer(command string) string {
 	}
 	verb, name := splitCommand(command)
 	if slices.Contains(g.unknown, name) || (bedrockListed(listedPlayer{Name: name}) && !hasName(g.joined, name)) {
+		return "That player does not exist"
+	}
+	if g.failFirst[name] > 0 {
+		g.failFirst[name]--
 		return "That player does not exist"
 	}
 	switch verb {
@@ -503,6 +510,104 @@ func TestListsFollowTheGame(t *testing.T) {
 	// All of it over one connection: the game logs each one made to it.
 	if n := g.console.connections(); n != 1 {
 		t.Errorf("%d connections to the game, want one", n)
+	}
+}
+
+// The game looks a name up with Mojang itself, once, and Mojang does not
+// always answer it: "That player does not exist" of players who do. The
+// panel looks them up too. One it knows the account of is put on the
+// whitelist by its file and UUID, and made an operator by asking the game
+// again; only a name Mojang says nobody has is left out for an hour, and
+// one Mojang did not answer for either is tried again in minutes.
+func TestListsWhenTheGameCannotLookUp(t *testing.T) {
+	p := newPanel(t)
+	ctx := context.Background()
+	g := runningWithLists(t, p)
+	m := newMojangAccounts("Steve", "Alex", "Notch")
+	p.srv.catalog.http.Transport = m
+	defer func(wait, soon time.Duration) { opRetryWait, missingSoon = wait, soon }(opRetryWait, missingSoon)
+	opRetryWait, missingSoon = time.Millisecond, 100*time.Millisecond
+	look := func() string {
+		t.Helper()
+		if err := p.srv.syncOps(ctx, world(t, p), nil); err != nil {
+			t.Fatal(err)
+		}
+		return g.commands()
+	}
+	notes := func() string {
+		a := world(t, p).Annotations
+		return a[avsysv1.AnnotationAutoWhitelist] + " | " + a[avsysv1.AnnotationAutoOps]
+	}
+	// Ada is an admin, whose account the panel has; Steve is named in the
+	// settings; neither can the game look up. Herobrine is nobody's. Alex
+	// the game finds the third time it is asked.
+	g.unknown = []string{"Ada", "Steve", "Herobrine", "Notch"}
+	g.failFirst = map[string]int{"Alex": 2}
+	changeWorld(t, p, func(mc *avsysv1.MinecraftServer) {
+		mc.Spec.AutoWhitelist, mc.Spec.AutoOp = "admin", "off"
+		mc.Spec.Whitelist = []string{"Steve", "Herobrine"}
+		mc.Spec.Ops = []string{"Alex"}
+	})
+	if got := look(); got != "op Alex; op Alex; op Alex; whitelist add Ada; whitelist add Herobrine; whitelist add Olive; whitelist add Steve; whitelist reload" {
+		t.Errorf("put on: %s", got)
+	}
+	if got := notes(); got != "Ada,Olive,Steve | Alex" {
+		t.Errorf("notes: %s", got)
+	}
+	players, err := listFile(g.sc, dataRoot+"/whitelist.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uuids := map[string]string{}
+	for _, pl := range players {
+		uuids[pl.Name] = pl.UUID
+	}
+	if uuids["Steve"] != dashedUUID(m.known["steve"]) || uuids["Ada"] != dashedUUID(strings.Repeat("3", 32)) || len(players) != 3 {
+		t.Errorf("whitelist.json: %+v", players)
+	}
+	// Mojang was asked only about those the panel has no account of: not Ada.
+	asked := m.lookups()
+	slices.Sort(asked)
+	if strings.Join(asked, ",") != "alex,herobrine,steve" {
+		t.Errorf("asked Mojang about %v", asked)
+	}
+	// In step: Herobrine is left out for an hour.
+	if got := look(); got != "" {
+		t.Errorf("again: %s", got)
+	}
+
+	// Mojang does not answer the panel either: tried again in minutes,
+	// not noted meanwhile.
+	m.down = true
+	changeWorld(t, p, func(mc *avsysv1.MinecraftServer) { mc.Spec.Whitelist = []string{"Steve", "Herobrine", "Notch"} })
+	if got := look(); got != "whitelist add Notch" {
+		t.Errorf("with Mojang down: %s", got)
+	}
+	if got := look(); got != "" {
+		t.Errorf("at once again: %s", got)
+	}
+	time.Sleep(missingSoon + 20*time.Millisecond)
+	m.down = false
+	if got := look(); got != "whitelist add Notch; whitelist reload" {
+		t.Errorf("a moment later: %s", got)
+	}
+	if got := notes(); got != "Ada,Notch,Olive,Steve | Alex" {
+		t.Errorf("notes: %s", got)
+	}
+
+	// An operator the game never finds, though Mojang knows them, is tried
+	// again in minutes too.
+	g.unknown = append(g.unknown, "Steve")
+	changeWorld(t, p, func(mc *avsysv1.MinecraftServer) { mc.Spec.Ops = []string{"Alex", "Steve"} })
+	if got := look(); got != "op Steve; op Steve; op Steve; op Steve" {
+		t.Errorf("an operator the game never finds: %s", got)
+	}
+	if got := look(); got != "" {
+		t.Errorf("at once again: %s", got)
+	}
+	time.Sleep(missingSoon + 20*time.Millisecond)
+	if got := look(); got != "op Steve; op Steve; op Steve; op Steve" {
+		t.Errorf("a moment later: %s", got)
 	}
 }
 

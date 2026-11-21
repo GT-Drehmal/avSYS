@@ -479,7 +479,19 @@ Names pasted for a saved list are checked ten at a time
 for all. The players of batches that are answered are added; the names of
 a batch that never is come back as `unchecked`, apart from those no account
 has (`missing`), and the page offers to try them again. Names looked up in
-the last 5 minutes are not asked again.
+the last 5 minutes are not asked again. A name or UUID lookup kept past its
+time is never used, as the version list's is: who a name belongs to can
+change. Members' accounts are looked up for new names in turn, those looked
+up longest ago first, 20 seconds a look.
+
+The game looks names up with Mojang itself, once, for `whitelist add` and
+`op`, and says "That player does not exist" when it gets no answer. For such
+a name the panel finds the account itself: from its saved lists and members'
+links, or Mojang. No game takes a UUID in these commands, so a whitelisted
+player goes into `whitelist.json` by UUID, followed by `whitelist reload`,
+and an operator is asked for three more times, 2 seconds apart. A name is
+left out for an hour only when Mojang says no account has it; one that
+still could not be added is tried again in 2 minutes.
 
 ## Snapshots
 

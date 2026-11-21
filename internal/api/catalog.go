@@ -187,8 +187,10 @@ func isMojang(u string) bool {
 }
 
 // getMojang reads a URL of Mojang's, at either of its names where it has
-// two, trying again a few times (mojang.Do). When it gets no answer, what
-// was read from it before is used, however old.
+// two, trying again a few times (mojang.Do). When the version catalog (a
+// site with two names) gets no answer, what was read from it before is
+// used, however old: a game version does not change. Who a name or UUID is
+// can, so a lookup of one is never answered past its time.
 func (c *catalog) getMojang(ctx context.Context, u string, ttl time.Duration, notFound func(status int, body []byte) bool) ([]byte, error) {
 	urls := []string{u}
 	if m := mojangMirror(u); m != "" {
@@ -210,7 +212,7 @@ func (c *catalog) getMojang(ctx context.Context, u string, ttl time.Duration, no
 	case err == nil:
 		c.keep(u, body, ttl)
 		return body, nil
-	case errors.Is(err, errNotFound):
+	case errors.Is(err, errNotFound), len(urls) == 1:
 		return nil, err
 	}
 	return c.staleOr(u, err)
