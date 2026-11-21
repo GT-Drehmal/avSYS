@@ -744,11 +744,16 @@ export interface PlayerList {
   servers: ListUse[];
 }
 
-/** A list as a change to it answers: with the names asked for that no Minecraft account has, and the gamertags no Bedrock player was found for. */
-export interface PlayerListChange extends PlayerList {
+/** The names asked for that were not added: those no account has, and those Mojang (or, for gamertags, GeyserMC) didn't answer for. */
+export interface NotAdded {
   missing: string[];
   missingBedrock: string[];
+  unchecked: string[];
+  uncheckedBedrock: string[];
 }
+
+/** A list as a change to it answers: with the names asked for that were not added. */
+export interface PlayerListChange extends PlayerList, NotAdded {}
 
 /** Where a player's head is drawn from. */
 export const playerHead = (uuid: string) => `/api/v1/players/${uuid}/head`;

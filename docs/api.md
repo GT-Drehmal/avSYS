@@ -739,8 +739,11 @@ whitelist or operators. A list is
 
 Make one. **Admin.** Body: `{name, names?: [Java names], bedrock?: [gamertags]}`,
 or `{name, fromServer, list}` to copy a server's `whitelist` or `ops`.
-Returns `201` with the list, plus `missing` and `missingBedrock`: names
-that could not be found. Up to 1000 players a list and 200 lists.
+Returns `201` with the list, plus the names that were not added:
+`missing` and `missingBedrock`, names and gamertags no account has, and
+`unchecked` and `uncheckedBedrock`, those Mojang or GeyserMC did not
+answer for, after trying again. The rest are added either way; send the
+unchecked ones again to add them. Up to 1000 players a list and 200 lists.
 `name_taken` (409).
 
 ### `GET /orgs/{org}/player-lists/{list}`
@@ -758,7 +761,13 @@ Delete it, and take it off every server using it. **Admin.** Returns `204`.
 ### `POST /orgs/{org}/player-lists/{list}/players`
 
 Add players. **Admin.** Body: `{names?, bedrock?}`. Returns the list with
-`missing` and `missingBedrock`.
+`missing`, `missingBedrock`, `unchecked` and `uncheckedBedrock`, as above:
+
+```json
+{"id": "…", "name": "Event", "players": […], "servers": [],
+ "missing": ["Herobrine"], "missingBedrock": [],
+ "unchecked": ["late_one", "Grumm"], "uncheckedBedrock": []}
+```
 
 ### `DELETE /orgs/{org}/player-lists/{list}/players/{uuid}`
 

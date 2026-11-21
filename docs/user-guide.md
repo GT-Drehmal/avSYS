@@ -441,6 +441,11 @@ Minecraft name, **Bedrock** by Xbox gamertag. A list shows which servers use
 it. Changing a list changes every server using it. **Save as list** under a
 server's whitelist or operators makes one from what it has.
 
+Names are checked with Mojang (gamertags with GeyserMC) as they are added.
+The list says which names were not found, and leaves them in the box to fix.
+If Mojang didn't answer for some names, the rest are still added, and
+**Try again** adds those.
+
 ![A saved player list with Java and Bedrock players](images/players.png)
 
 ### Bedrock players

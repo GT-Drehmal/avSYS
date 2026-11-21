@@ -53,6 +53,31 @@ func (m *mojangAccounts) RoundTrip(r *http.Request) (*http.Response, error) {
 	answer := func(status int, body []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
 	}
+	if r.Method == http.MethodPost && r.URL.String() == bulkByName {
+		// Up to ten names at once: those with an account are answered.
+		var names []string
+		if err := json.NewDecoder(r.Body).Decode(&names); err != nil || len(names) > nameBatch {
+			return answer(http.StatusBadRequest, nil)
+		}
+		for _, name := range names {
+			m.asked = append(m.asked, strings.ToLower(name))
+		}
+		if m.down {
+			return nil, errors.New("offline")
+		}
+		type profile struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		out := []profile{}
+		for _, name := range names {
+			if uuid, ok := m.known[strings.ToLower(name)]; ok {
+				out = append(out, profile{uuid, m.names[strings.ToLower(name)]})
+			}
+		}
+		body, _ := json.Marshal(out)
+		return answer(http.StatusOK, body)
+	}
 	if name, ok := strings.CutPrefix(r.URL.String(), "https://api.mojang.com/users/profiles/minecraft/"); ok {
 		m.asked = append(m.asked, name)
 		if m.down {
@@ -81,8 +106,10 @@ func (m *mojangAccounts) lookups() []string {
 // listAnswer is a saved list as the API answers with it.
 type listAnswer struct {
 	playerListView
-	Missing        []string `json:"missing"`
-	MissingBedrock []string `json:"missingBedrock"`
+	Missing          []string `json:"missing"`
+	MissingBedrock   []string `json:"missingBedrock"`
+	Unchecked        []string `json:"unchecked"`
+	UncheckedBedrock []string `json:"uncheckedBedrock"`
 }
 
 func (l listAnswer) names() string {
@@ -107,7 +134,7 @@ func sendList(t *testing.T, p *panel, who, method, path, body string) (int, list
 
 // A list is made, named players are looked up with Mojang and put on it as
 // their accounts have them, and taken off. A name nobody has is said to be
-// missing; Mojang out of reach fails the whole, adding nobody.
+// missing; names Mojang does not answer for are said to be unchecked.
 func TestSavedPlayerLists(t *testing.T) {
 	p := newPanel(t)
 	m := newMojangAccounts("Steve", "Alex", "Notch")
@@ -142,15 +169,25 @@ func TestSavedPlayerLists(t *testing.T) {
 		t.Errorf("asked Mojang about %v, want Notch alone", asked)
 	}
 
-	// Out of reach: nothing is added, and it says so.
+	// Out of reach: those it could not check are said to be, and not added;
+	// one looked up a moment ago is taken as it was.
 	m.down = true
-	code, text := call(p, "admin", "POST", "/orgs/alpha/player-lists/"+id+"/players", `{"names":["Dinnerbone","Alex"]}`)
-	if code != http.StatusBadGateway || !strings.Contains(text, "Could not check the names with Mojang") {
-		t.Errorf("with Mojang down: %d %s", code, text)
+	m.known["dinnerbone"], m.names["dinnerbone"] = strings.Repeat("d", 32), "Dinnerbone"
+	code, club = sendList(t, p, "admin", "POST", "/orgs/alpha/player-lists/"+id+"/players", `{"names":["Dinnerbone","Alex"]}`)
+	if code != http.StatusOK || club.names() != "Alex Notch Steve" || strings.Join(club.Unchecked, ",") != "Dinnerbone" || len(club.Missing) != 0 {
+		t.Errorf("with Mojang down: %d %+v", code, club)
 	}
 	m.down = false
-	if _, got := sendList(t, p, "viewer", "GET", "/orgs/alpha/player-lists/"+id, ""); got.names() != "Alex Notch Steve" {
-		t.Errorf("after a failed add: %s", got.names())
+	if _, got := sendList(t, p, "viewer", "GET", "/orgs/alpha/player-lists/"+id, ""); got.names() != "Alex Notch Steve" || got.Unchecked == nil || len(got.Unchecked) != 0 {
+		t.Errorf("after a failed add: %+v", got)
+	}
+	// Tried again, once Mojang answers.
+	if code, club = sendList(t, p, "admin", "POST", "/orgs/alpha/player-lists/"+id+"/players", `{"names":["Dinnerbone"]}`); code != http.StatusOK || club.names() != "Alex Dinnerbone Notch Steve" || len(club.Unchecked) != 0 {
+		t.Errorf("tried again: %d %+v", code, club)
+	}
+	delete(m.known, "dinnerbone")
+	if code, _ := call(p, "admin", "DELETE", "/orgs/alpha/player-lists/"+id+"/players/"+strings.Repeat("d", 32), ""); code != http.StatusOK {
+		t.Errorf("taking Dinnerbone off: %d", code)
 	}
 
 	// Taken off by UUID; renamed.

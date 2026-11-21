@@ -160,17 +160,12 @@ first time someone at a console of that version asks:
    `commands/<version>.json.gz` on its volume. Browsers are sent it as it
    is kept, and keep it by its ETag.
 
-From inside some clusters, connections to Mojang's sites from some source
-ports never get an answer, while the same sites answer other ports at once
-(on one install: a pod's connection, whose port the cluster's NAT picks at
-random from 1024 to 65535, one time in four to seven). So what is read from
-Mojang is asked for a few times, each on a new connection, given up after
-4 seconds without an answer, at both of the names each site answers at:
+Mojang's sites do not always answer (see [Asking Mojang](#asking-mojang)),
+so both are asked again:
 
 - The list of versions and a version's page, at `launchermeta.mojang.com`
-  and `piston-meta.mojang.com` in turn: 6 seconds each try, 5 tries, 0.5,
-  1, 2 and 4 seconds apart, under 40 seconds at most. Where neither
-  answers, what was read from it before is used, however old.
+  and `piston-meta.mojang.com` in turn. Where neither answers, what was
+  read from it before is used, however old.
 - The jar, in the pod, at `piston-data.mojang.com` and
   `launcher.mojang.com` in turn, in up to three rounds 5 and 10 seconds
   apart: 4 seconds to connect, 3 minutes to download, and curl tries twice
@@ -460,6 +455,44 @@ must be reachable by them.
 role. While the game runs, the panel keeps them up with `whitelist` and
 `op` commands over RCON, and reads the game's lists once a minute.
 
+### Asking Mojang
+
+From some networks, a new connection to Mojang's sites (Azure Front Door,
+150.171.110.x) never gets an answer: about one in six from a home line, and
+one in four to seven from a pod, whose source port the cluster's NAT picks
+at random from 1024 to 65535. It is the port: one that fails fails every
+time, and a new connection almost always works. So everything the panel and
+the router ask Mojang goes through `internal/mojang`:
+
+- Connecting gives up after 4 seconds, and each try is on a new connection
+  (an HTTP/2 connection that stops answering is pinged and closed).
+- A request is tried up to 5 times, 6 seconds each, 0.5, 1, 2 and 4 seconds
+  apart: under 40 seconds at most. No answer, 408, 429 and 5xx are tried
+  again; any other answer, such as 404 for a name nobody has, is Mojang's
+  answer and is not.
+
+This covers the version lists, name and UUID lookups
+(`api.mojang.com`, `sessionserver.mojang.com`), skins
+(`textures.minecraft.net`), and the router's check that a player joined.
+Names pasted for a saved list are checked ten at a time
+(`api.minecraftservices.com`'s bulk lookup), four batches at once, 45 seconds
+for all. The players of batches that are answered are added; the names of
+a batch that never is come back as `unchecked`, apart from those no account
+has (`missing`), and the page offers to try them again. Names looked up in
+the last 5 minutes are not asked again. A name or UUID lookup kept past its
+time is never used, as the version list's is: who a name belongs to can
+change. Members' accounts are looked up for new names in turn, those looked
+up longest ago first, 20 seconds a look.
+
+The game looks names up with Mojang itself, once, for `whitelist add` and
+`op`, and says "That player does not exist" when it gets no answer. For such
+a name the panel finds the account itself: from its saved lists and members'
+links, or Mojang. No game takes a UUID in these commands, so a whitelisted
+player goes into `whitelist.json` by UUID, followed by `whitelist reload`,
+and an operator is asked for three more times, 2 seconds apart. A name is
+left out for an hour only when Mojang says no account has it; one that
+still could not be added is tried again in 2 minutes.
+
 ## Snapshots
 
 Each organization has one restic repository on the panel's backups volume,
@@ -641,6 +674,7 @@ image follows the panel's version.
 | `internal/store` | The SQLite database |
 | `internal/backup` | Snapshot repositories, snapshot, restore and offsite |
 | `internal/packmerge` | Joining resource packs |
+| `internal/mojang` | Asking Mojang's sites again on a new connection |
 | `internal/release` | Looking for newer releases |
 | `images/workspace` | The workspace image |
 | `web` | The React web UI |

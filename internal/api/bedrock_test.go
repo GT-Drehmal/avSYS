@@ -243,8 +243,8 @@ func TestFloodgateTranscript(t *testing.T) {
 
 // Bedrock players are put on a list by gamertag, looked up with GeyserMC,
 // each once and kept a while; one GeyserMC does not know is said to be
-// missing, and GeyserMC out of reach fails the whole, adding nobody, Java
-// players neither. A Java name behind Floodgate's prefix is a gamertag.
+// missing, and those it does not answer for unchecked, with the rest added.
+// A Java name behind Floodgate's prefix is a gamertag.
 func TestBedrockPlayersLookedUp(t *testing.T) {
 	p := newPanel(t)
 	ctx := context.Background()
@@ -282,13 +282,15 @@ func TestBedrockPlayersLookedUp(t *testing.T) {
 		t.Errorf("asked again: %v", got)
 	}
 
-	// GeyserMC is down: nobody is added.
+	// GeyserMC is down: the gamertags it did not answer for are said to be
+	// unchecked, and the Java players are added.
 	g.down = true
-	if code, errCode := p.do("admin", "POST", "/orgs/alpha/player-lists/"+l.ID+"/players", `{"names":["Alex"],"bedrock":["Someone New"]}`); code != http.StatusBadGateway || errCode != "upstream" {
-		t.Errorf("GeyserMC down: %d %s", code, errCode)
+	code, l = sendList(t, p, "admin", "POST", "/orgs/alpha/player-lists/"+l.ID+"/players", `{"names":["Alex"],"bedrock":["Someone New"]}`)
+	if code != http.StatusOK || l.names() != "Alex Redned235 Steve Tim203" || strings.Join(l.UncheckedBedrock, ",") != "Someone New" || len(l.Unchecked)+len(l.MissingBedrock) != 0 {
+		t.Errorf("GeyserMC down: %d %+v", code, l)
 	}
 	got, err := p.srv.Store.PlayerList(ctx, mustOrg(t, p, "alpha"), l.ID)
-	if err != nil || len(got.Players) != 3 {
+	if err != nil || len(got.Players) != 4 {
 		t.Errorf("after GeyserMC was down: %+v %v", got, err)
 	}
 }

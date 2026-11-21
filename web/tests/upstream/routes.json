@@ -141,6 +141,19 @@
   "status": 404
  },
  {
+  "url": "https://api.mojang.com/users/profiles/minecraft/player_",
+  "has": "",
+  "file": "profile.json",
+  "named": true
+ },
+ {
+  "url": "https://api.mojang.com/users/profiles/minecraft/late_",
+  "has": "",
+  "file": "profile.json",
+  "named": true,
+  "unanswered": 5
+ },
+ {
   "url": "https://api.mojang.com/users/profiles/minecraft/",
   "has": "",
   "file": "profile.json"

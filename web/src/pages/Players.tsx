@@ -2,13 +2,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MoreHorizontal, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
-import { BedrockMark, type Edition, Heads, Missing, namesOf, PlayerHead, PlayerNamesField, playerCount } from "../components/PlayerLists";
+import { BedrockMark, type Edition, Heads, NotAddedNotices, namesOf, notAddedOf, PlayerHead, PlayerNamesField, playerCount } from "../components/PlayerLists";
 import { ListBar } from "../components/ListBar";
 import { useOrg } from "../components/Shell";
 import { Button, Confirm, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox } from "../components/ui";
-import { api, ApiError, atLeast, type PlayerList, type PlayerListChange } from "../lib/api";
+import { api, ApiError, atLeast, type NotAdded, type PlayerList, type PlayerListChange } from "../lib/api";
 import { byCount, byText, byTime, type ListOptions, useList } from "../lib/list";
 import { keys, usePlayerLists } from "../lib/queries";
+import { stillUnchecked } from "../lib/names";
 import { matches } from "../lib/search";
 
 const listOptions: ListOptions<PlayerList> = {
@@ -107,7 +108,7 @@ function NewList({ org, onClose }: { org: string; onClose: () => void }) {
     try {
       const made = await api.post<PlayerListChange>(`/orgs/${org}/player-lists`, { name, ...namesOf(edition, names) });
       await qc.invalidateQueries({ queryKey: keys.playerLists(org) });
-      navigate(made.id, { state: { missing: made.missing, missingBedrock: made.missingBedrock } });
+      navigate(made.id, { state: notAddedOf(made) });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not make the list.");
       setBusy(false);
@@ -151,9 +152,8 @@ export function PlayerListPage() {
   const [edition, setEdition] = useState<Edition>("java");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Names no account has, from what was last added: on making the list too.
-  const made = location.state as { missing?: string[]; missingBedrock?: string[] } | null;
-  const [missing, setMissing] = useState({ java: made?.missing ?? [], bedrock: made?.missingBedrock ?? [] });
+  // Names not added, from what was last added: on making the list too.
+  const [notAdded, setNotAdded] = useState(() => notAddedOf(location.state as Partial<NotAdded> | null));
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -192,13 +192,29 @@ export function PlayerListPage() {
       setBusy(null);
     }
   };
-  const add = async () => {
-    const now = await act("add", () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, namesOf(edition, adding)));
+  /**
+   * Sends names to add. Names not found are said as this request found
+   * them (the box keeps them, to be fixed); names that could not be checked
+   * are kept until a request checks them.
+   */
+  const send = async (what: string, sent: { names: string[]; bedrock: string[] }, keepMissing: boolean) => {
+    const now = await act(what, () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, sent));
     if (now) {
-      setMissing({ java: now.missing, bedrock: now.missingBedrock });
-      setAdding([...now.missing, ...now.missingBedrock].join("\n"));
+      setNotAdded((was) => ({
+        missing: keepMissing ? [...was.missing, ...now.missing] : now.missing,
+        missingBedrock: keepMissing ? [...was.missingBedrock, ...now.missingBedrock] : now.missingBedrock,
+        unchecked: stillUnchecked(was.unchecked, sent.names, now.unchecked),
+        uncheckedBedrock: stillUnchecked(was.uncheckedBedrock, sent.bedrock, now.uncheckedBedrock),
+      }));
     }
+    return now;
   };
+  const add = async () => {
+    const now = await send("add", namesOf(edition, adding), false);
+    if (now) setAdding([...now.missing, ...now.missingBedrock].join("\n"));
+  };
+  /** Asks again about the names that could not be checked. */
+  const tryAgain = () => send("again", { names: notAdded.unchecked, bedrock: notAdded.uncheckedBedrock }, true);
   const shown = list.players.filter((p) => matches(query, p.name));
 
   return (
@@ -256,7 +272,7 @@ export function PlayerListPage() {
             </div>
           </form>
         )}
-        <Missing names={missing.java} bedrock={missing.bedrock} />
+        <NotAddedNotices names={notAdded} onTryAgain={canEdit ? tryAgain : undefined} trying={busy === "again"} />
         {error && <Notice tone="danger">{error}</Notice>}
         {list.players.length === 0 ? (
           <Empty title="No players yet">{canEdit ? "Add some above." : "An admin can add some."}</Empty>

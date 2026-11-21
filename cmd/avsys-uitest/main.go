@@ -18,9 +18,12 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"compress/gzip"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -31,8 +34,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -51,6 +56,7 @@ import (
 	"github.com/GT-Drehmal/avSYS/internal/auth"
 	"github.com/GT-Drehmal/avSYS/internal/auth/fakeidp"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/mojang"
 	"github.com/GT-Drehmal/avSYS/internal/release"
 	"github.com/GT-Drehmal/avSYS/internal/router"
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
@@ -107,6 +113,9 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 	if err != nil {
 		return err
 	}
+	// Mojang is asked again as the panel does, a moment apart, not seconds:
+	// some names in --upstream get no answer for one round of tries.
+	mojang.Backoff = 20 * time.Millisecond
 	if _, err := os.Stat(filepath.Join(webDir, "index.html")); err != nil {
 		return fmt.Errorf("the web UI is not built in %s: run `bun run build` in web/", webDir)
 	}
@@ -500,6 +509,9 @@ type seed struct {
 // starts with, and whose "has" (if any) it contains, is the answer. An
 // address nothing answers is an error, as being offline would be, and is
 // said on stderr so that a test asking for something new shows up.
+//
+// Mojang's lookup of several names at once is answered name by name, from
+// the routes of its lookup of one.
 type upstream struct {
 	dir    string
 	routes []struct {
@@ -508,8 +520,20 @@ type upstream struct {
 		File string `json:"file"`
 		// Status is what it answers with, where that is not 200 OK.
 		Status int `json:"status"`
+		// Unanswered is how many times each address it answers is asked
+		// with no answer at all, as Mojang now and then is, before it is
+		// answered.
+		Unanswered int `json:"unanswered"`
+		// Named is a Mojang account answered as having the name asked,
+		// whatever the file says.
+		Named bool `json:"named"`
 	}
+	mu    sync.Mutex
+	asked map[string]int // by address, of routes with Unanswered
 }
+
+// bulkByName is where Mojang is asked about several names at once.
+const bulkByName = "https://api.minecraftservices.com/minecraft/profile/lookup/bulk/byname"
 
 // commandTree is a game version's commands.json, as recorded in
 // commands/<version>.json.gz under dir.
@@ -559,17 +583,71 @@ func loadUpstream(dir string) (*upstream, error) {
 
 func (u *upstream) RoundTrip(r *http.Request) (*http.Response, error) {
 	address, _ := url.QueryUnescape(r.URL.String())
+	if r.Method == http.MethodPost && address == bulkByName {
+		return u.names(r)
+	}
+	status, body, err := u.answer(address)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
+}
+
+// answer is what the first route for an address answers.
+func (u *upstream) answer(address string) (int, []byte, error) {
 	for _, route := range u.routes {
 		if !strings.HasPrefix(address, route.URL) || !strings.Contains(address, route.Has) {
 			continue
 		}
-		f, err := os.Open(filepath.Join(u.dir, route.File))
-		if err != nil {
-			return nil, err
+		if route.Unanswered > 0 {
+			u.mu.Lock()
+			if u.asked == nil {
+				u.asked = map[string]int{}
+			}
+			u.asked[address]++
+			n := u.asked[address]
+			u.mu.Unlock()
+			if n <= route.Unanswered {
+				return 0, nil, errors.New("no answer: " + address)
+			}
 		}
-		status := cmp.Or(route.Status, http.StatusOK)
-		return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Header: http.Header{"Content-Type": {"application/json"}}, Body: f, Request: r}, nil
+		body, err := os.ReadFile(filepath.Join(u.dir, route.File))
+		if err != nil {
+			return 0, nil, err
+		}
+		if route.Named {
+			name := path.Base(address)
+			sum := sha1.Sum([]byte(strings.ToLower(name)))
+			body, _ = json.Marshal(map[string]string{"id": hex.EncodeToString(sum[:16]), "name": name})
+		}
+		return cmp.Or(route.Status, http.StatusOK), body, nil
 	}
 	fmt.Fprintln(os.Stderr, "avsys-uitest: nothing answers", address)
-	return nil, errors.New("offline: " + r.URL.Host)
+	return 0, nil, errors.New("offline: " + address)
+}
+
+// names answers Mojang's lookup of several names at once from its lookup
+// of each: with the accounts there are, or nothing at all where any one of
+// them gets no answer.
+func (u *upstream) names(r *http.Request) (*http.Response, error) {
+	var names []string
+	if err := json.NewDecoder(r.Body).Decode(&names); err != nil || len(names) > 10 {
+		return nil, errors.New("not a list of up to 10 names")
+	}
+	found := []json.RawMessage{}
+	var failed error
+	for _, name := range names {
+		status, body, err := u.answer("https://api.mojang.com/users/profiles/minecraft/" + strings.ToLower(name))
+		switch {
+		case err != nil:
+			failed = err
+		case status == http.StatusOK:
+			found = append(found, body)
+		}
+	}
+	if failed != nil {
+		return nil, failed
+	}
+	body, _ := json.Marshal(found)
+	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
 }

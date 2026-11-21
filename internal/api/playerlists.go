@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -87,9 +86,10 @@ func listViewOf(l *store.PlayerList, uses map[string][]listUse) playerListView {
 	return v
 }
 
-// notFound is what was asked for that no account has: names of Java
-// players, and gamertags of Bedrock ones.
-type notFound struct{ java, bedrock []string }
+// notFound is what was asked for and not added: names of Java players and
+// gamertags of Bedrock ones that no account has, and those that could not
+// be checked, with Mojang or GeyserMC not answering.
+type notFound struct{ java, bedrock, uncheckedJava, uncheckedBedrock []string }
 
 // writePlayerList answers with one list as it is now.
 func (s *Server) writePlayerList(w http.ResponseWriter, r *http.Request, a *access, id string, status int, missing notFound) error {
@@ -108,7 +108,12 @@ func (s *Server) writePlayerList(w http.ResponseWriter, r *http.Request, a *acce
 		// MissingBedrock are the gamertags asked for that GeyserMC knows
 		// no Bedrock player of.
 		MissingBedrock []string `json:"missingBedrock"`
-	}{listViewOf(l, uses), orNone(missing.java), orNone(missing.bedrock)})
+		// Unchecked are the names Mojang did not answer for, and
+		// UncheckedBedrock the gamertags GeyserMC did not: not added, to
+		// be tried again.
+		Unchecked        []string `json:"unchecked"`
+		UncheckedBedrock []string `json:"uncheckedBedrock"`
+	}{listViewOf(l, uses), orNone(missing.java), orNone(missing.bedrock), orNone(missing.uncheckedJava), orNone(missing.uncheckedBedrock)})
 	return nil
 }
 
@@ -324,15 +329,18 @@ func (s *Server) lookUpAll(ctx context.Context, names, gamertags []string) ([]st
 	if len(java)+len(gamertags) > store.MaxListPlayers {
 		return nil, notFound{}, errBadRequest("Up to %d players can be added at once.", store.MaxListPlayers)
 	}
-	found, missing, err := s.lookUpPlayers(ctx, java)
+	var out notFound
+	found, missing, unchecked, err := s.lookUpPlayers(ctx, java)
 	if err != nil {
 		return nil, notFound{}, err
 	}
-	bedrock, missingBedrock, err := s.lookUpBedrock(ctx, gamertags)
+	out.java, out.uncheckedJava = missing, unchecked
+	bedrock, missing, unchecked, err := s.lookUpBedrock(ctx, gamertags)
 	if err != nil {
 		return nil, notFound{}, err
 	}
-	return append(found, bedrock...), notFound{java: missing, bedrock: missingBedrock}, nil
+	out.bedrock, out.uncheckedBedrock = missing, unchecked
+	return append(found, bedrock...), out, nil
 }
 
 // bareUUID is a player's UUID as Mojang gives it, without dashes, or "" for
@@ -344,12 +352,12 @@ func bareUUID(uuid string) string {
 	return strings.ToLower(strings.ReplaceAll(uuid, "-", ""))
 }
 
-// lookUpPlayers asks Mojang who each name belongs to, a few at a time.
-// Names no account has, and what could not be a name, are missing. Any
-// other failure fails the whole: nothing is added on half an answer.
-func (s *Server) lookUpPlayers(ctx context.Context, names []string) ([]store.ListPlayer, []string, error) {
+// lookUpPlayers asks Mojang who each name belongs to, ten at a time. Names
+// no account has, and what could not be a name, are missing; those Mojang
+// did not answer for, after asking again, are unchecked. The rest are
+// added: a few names that could not be checked do not hold up the others.
+func (s *Server) lookUpPlayers(ctx context.Context, names []string) (out []store.ListPlayer, missing, unchecked []string, err error) {
 	var asked []string
-	var missing []string
 	for _, name := range names {
 		name = strings.TrimSpace(name)
 		switch {
@@ -361,40 +369,16 @@ func (s *Server) lookUpPlayers(ctx context.Context, names []string) ([]store.Lis
 		}
 	}
 	if len(asked) > store.MaxListPlayers {
-		return nil, nil, errBadRequest("Up to %d players can be added at once.", store.MaxListPlayers)
+		return nil, nil, nil, errBadRequest("Up to %d players can be added at once.", store.MaxListPlayers)
 	}
-	found := make([]*store.MinecraftAccount, len(asked))
-	errs := make([]error, len(asked))
-	var wg sync.WaitGroup
-	next := make(chan int)
-	for range min(6, len(asked)) {
-		wg.Go(func() {
-			for i := range next {
-				found[i], errs[i] = s.minecraftProfile(ctx, asked[i])
-			}
-		})
-	}
-	for i := range asked {
-		next <- i
-	}
-	close(next)
-	wg.Wait()
-	var out []store.ListPlayer
-	for i, name := range asked {
-		var e *Error
-		switch {
-		case errs[i] == nil:
-			if !slices.ContainsFunc(out, func(p store.ListPlayer) bool { return p.UUID == found[i].UUID }) {
-				out = append(out, store.ListPlayer{UUID: found[i].UUID, Name: found[i].Name, Kind: store.KindJava})
-			}
-		case errors.As(errs[i], &e) && e.Code == "no_such_player":
-			missing = append(missing, name)
-		default:
-			s.Log.Warn("could not look up a player", "name", name, "error", errs[i])
-			return nil, nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not check the names with Mojang. Try again in a moment."}
+	found, none, unchecked := s.minecraftProfiles(ctx, asked)
+	for _, name := range asked {
+		a, ok := found[strings.ToLower(name)]
+		if ok && !slices.ContainsFunc(out, func(p store.ListPlayer) bool { return p.UUID == a.UUID }) {
+			out = append(out, store.ListPlayer{UUID: a.UUID, Name: a.Name, Kind: store.KindJava})
 		}
 	}
-	return out, missing, nil
+	return out, append(missing, none...), unchecked, nil
 }
 
 // updatePlayerList renames a list.

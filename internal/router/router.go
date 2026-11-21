@@ -23,6 +23,7 @@ import (
 	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/kube"
 	"github.com/GT-Drehmal/avSYS/internal/mcproto"
+	"github.com/GT-Drehmal/avSYS/internal/mojang"
 )
 
 // HostnameIndex is the cache index servers are looked up by. It must be
@@ -69,32 +70,53 @@ type Verifier interface {
 }
 
 // mojangHasJoined asks Mojang's session server whether a player joined the
-// server of a hash, as an online-mode server does.
+// server of a hash, as an online-mode server does: again where it gets no
+// answer (see package mojang), for as long as the game waits.
 func mojangHasJoined(ctx context.Context, name, hash string) (string, error) {
-	u := "https://sessionserver.mojang.com/session/minecraft/hasJoined?" + url.Values{"username": {name}, "serverId": {hash}}.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := mojangHTTP.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusForbidden {
-		return "", mcproto.ErrNotJoined
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("mojang answered %s", resp.Status)
-	}
-	var profile struct{ ID string }
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&profile); err != nil || profile.ID == "" {
-		return "", mcproto.ErrNotJoined
-	}
-	return profile.ID, nil
+	return hasJoined(ctx, "https://sessionserver.mojang.com", name, hash)
 }
 
-var mojangHTTP = &http.Client{Timeout: 10 * time.Second}
+// hasJoinedFor is how long Mojang is asked whether a player joined, at
+// most: the game gives up on a login after 30 seconds.
+const hasJoinedFor = 20 * time.Second
+
+// hasJoined asks the session server at site.
+func hasJoined(ctx context.Context, site, name, hash string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, hasJoinedFor)
+	defer cancel()
+	u := site + "/session/minecraft/hasJoined?" + url.Values{"username": {name}, "serverId": {hash}}.Encode()
+	var uuid string
+	err := mojang.Do(ctx, func(ctx context.Context, _ int) (bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return false, err
+		}
+		resp, err := mojangHTTP.Do(req)
+		if err != nil {
+			return true, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusForbidden {
+			return false, mcproto.ErrNotJoined
+		}
+		if resp.StatusCode != http.StatusOK {
+			return mojang.Again(resp.StatusCode), fmt.Errorf("mojang answered %s", resp.Status)
+		}
+		var profile struct{ ID string }
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&profile); err != nil {
+			// Cut off part of the way: as good as no answer.
+			return true, err
+		}
+		if profile.ID == "" {
+			return false, mcproto.ErrNotJoined
+		}
+		uuid = profile.ID
+		return false, nil
+	})
+	return uuid, err
+}
+
+var mojangHTTP = &http.Client{Transport: mojang.Transport()}
 
 // iconWait is how long a server list is kept waiting for an icon that has
 // to be read out of the server's files. One that takes longer is left out
