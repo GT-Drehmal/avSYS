@@ -176,7 +176,8 @@ CREATE TABLE IF NOT EXISTS worlds (
 	source      TEXT NOT NULL DEFAULT '',
 	failed      TEXT NOT NULL DEFAULT '',
 	pack        TEXT NOT NULL DEFAULT '',
-	unpack_failed TEXT NOT NULL DEFAULT ''
+	unpack_failed TEXT NOT NULL DEFAULT '',
+	datapacks   TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS worlds_name ON worlds(org_id, name);
 CREATE TABLE IF NOT EXISTS player_lists (
@@ -290,6 +291,10 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
 	if err := addColumn(db, "worlds", "unpack_failed", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating %s: %w", path, err)
+	}
+	if err := addColumn(db, "worlds", "datapacks", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}

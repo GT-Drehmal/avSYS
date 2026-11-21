@@ -298,7 +298,9 @@ func TestLibraryUnpackedAsThePanelStarts(t *testing.T) {
 	}
 	// Saved from a server: a tar of its folders, the Nether beside it.
 	saved := &store.World{Name: "Survival", CreatedBy: "alex", Root: "world", Version: "1.21.4", Source: "server:survival"}
-	oldWorld(t, p, saved, tarOf(t, map[string]string{"world/level.dat": "the world", "world/region/r.0.0.mca": "land", "world_nether/DIM-1/r.0.0.mca": "fire"}))
+	// With a datapack, read as it is unpacked.
+	mael := `{"pack":{"description":"Mael's"}}`
+	oldWorld(t, p, saved, tarOf(t, map[string]string{"world/level.dat": "the world", "world/region/r.0.0.mca": "land", "world_nether/DIM-1/r.0.0.mca": "fire", "world/datapacks/mael/pack.mcmeta": mael}))
 	// One whose archive is not one, which stays as it is.
 	broken := &store.World{Name: "Broken", CreatedBy: "alex", Root: "Broken", File: "broken.zip", Source: "upload"}
 	oldWorld(t, p, broken, []byte("not an archive"))
@@ -338,15 +340,19 @@ func TestLibraryUnpackedAsThePanelStarts(t *testing.T) {
 	}
 
 	p.srv.UnpackLibrary(ctx)
+	// Then, as the panel does, the datapacks of those not read as they
+	// were unpacked: the one cut short once it had been.
+	p.srv.ReadLibraryDatapacks(ctx)
 
 	unpacked := float64(len("the island") + len("sand"))
 	for _, w := range []struct {
-		world *store.World
-		size  float64
-	}{{upload, unpacked}, {saved, float64(len("the world") + len("land") + len("fire"))}, {halfway, unpacked}, {copied, unpacked}} {
+		world     *store.World
+		size      float64
+		datapacks float64
+	}{{upload, unpacked, 0}, {saved, float64(len("the world") + len("land") + len("fire") + len(mael)), 1}, {halfway, unpacked, 0}, {copied, unpacked, 0}} {
 		_, raw := call("viewer", "GET", "/orgs/alpha/worlds/"+w.world.ID, "")
 		got := objectOf(raw)
-		if got["id"] != w.world.ID || got["kept"] != "folders" || got["ready"] != true || got["root"] != "world" || got["size"] != w.size || got["unpacked"] != w.size || got["unpackError"] != nil || got["name"] != w.world.Name {
+		if got["id"] != w.world.ID || got["kept"] != "folders" || got["ready"] != true || got["root"] != "world" || got["size"] != w.size || got["unpacked"] != w.size || got["unpackError"] != nil || got["name"] != w.world.Name || got["datapacks"] != w.datapacks || got["readingDatapacks"] != nil {
 			t.Errorf("%s after: %v", w.world.Name, got)
 		}
 		kept, unpacking := libraryOf(t, p, w.world.ID)

@@ -767,13 +767,17 @@ Take one off. **Admin.** Returns the list.
 ## World library
 
 Worlds kept to give to servers. A world is
-`{id, name, description, createdBy, createdAt, updatedAt, root, version?, file?, size, unpacked?, source, saving?, ready, error?, kept?, unpacking?, unpackError?, resourcePack?}`.
+`{id, name, description, createdBy, createdAt, updatedAt, root, version?, file?, size, unpacked?, source, saving?, ready, error?, kept?, unpacking?, unpackError?, resourcePack?, datapacks?, readingDatapacks?}`.
 `source` is `upload`, `server:<name>` or `snapshot:<server>`; `ready` is
 false while it is being saved. `kept` is `folders` for a world kept as its
 own files, whose `size` is the world's, or `archive` for one kept as the
 archive it came in, as worlds were before; such a one says `unpacking`
 while it is being kept as its own files instead, and `unpackError` if it
-could not be, and is used as it is meanwhile.
+could not be, and is used as it is meanwhile. `datapacks` is how many
+datapacks its `datapacks` folder has, once they have been read: as it is
+added, or for a world added before, in the background, when the panel
+starts or the world is first listed, which says `readingDatapacks` while
+they are read.
 
 ### `GET /orgs/{org}/worlds`
 
@@ -827,6 +831,19 @@ was uploaded.
 ### `DELETE /orgs/{org}/worlds/{world}/icon`
 
 **Operator.** Returns `204`.
+
+### `GET /orgs/{org}/worlds/{world}/datapacks`
+
+**Viewer.** The world's datapacks, by name: each
+`{name, title, about?, folder?, picture?}`. `name` is its name in the
+`datapacks` folder, `title` that without `.zip`, `about` what its
+`pack.mcmeta` says, on one line, `folder` for one that is a folder, and
+`picture` for one with a `pack.png`. Empty until they have been read.
+
+### `GET /orgs/{org}/worlds/{world}/datapacks/icon`
+
+**Viewer.** A datapack's `pack.png`, as a 64-pixel PNG. Query: `name`.
+`404` for one without a picture.
 
 ### `PUT /orgs/{org}/worlds/{world}/resource-pack`
 

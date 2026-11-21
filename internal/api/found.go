@@ -423,14 +423,8 @@ folders:
 				continue
 			}
 			folder := e.IsDir()
-			// What the server's software makes there itself is not
-			// content: Bukkit's datapack, which Spigot, Paper, Purpur and
-			// Folia keep in each world for their plugins.
-			if p.kind == avsysv1.KindDatapack && folder && (madeBySoftware[name] || !hasPackMeta(files, path.Join(dataRoot, rel))) {
-				continue
-			}
 			switch {
-			case p.kind == avsysv1.KindDatapack && (folder || strings.HasSuffix(strings.ToLower(name), ".zip")):
+			case p.kind == avsysv1.KindDatapack && isDatapack(files, path.Join(dataRoot, p.dir), e):
 			case p.kind != avsysv1.KindDatapack && !folder && e.Mode().IsRegular() && strings.HasSuffix(strings.ToLower(name), ".jar"):
 			default:
 				continue
@@ -497,6 +491,17 @@ folders:
 // madeBySoftware are datapack folders a server's software makes in its
 // world by itself.
 var madeBySoftware = map[string]bool{"bukkit": true}
+
+// isDatapack says an entry of a world's datapacks folder, dir, is a
+// datapack: a .zip file, or a folder with a pack.mcmeta. What the server's
+// software makes there itself is not: Bukkit's datapack, which Spigot,
+// Paper, Purpur and Folia keep in each world for their plugins.
+func isDatapack(files ServerFiles, dir string, e os.FileInfo) bool {
+	if e.IsDir() {
+		return !madeBySoftware[e.Name()] && hasPackMeta(files, path.Join(dir, e.Name()))
+	}
+	return strings.HasSuffix(strings.ToLower(e.Name()), ".zip")
+}
 
 // hasPackMeta says a folder is a datapack: it has a pack.mcmeta.
 func hasPackMeta(files ServerFiles, dir string) bool {

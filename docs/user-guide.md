@@ -636,6 +636,9 @@ The **Worlds** page keeps maps to start servers from.
   **Edit**.
 - **New server** on a world opens the form with it chosen. **Download**
   gives it back as a single-player save.
+- A world's datapacks come with it. Its row says how many (*4 datapacks*);
+  click its name to see each one, with its description and picture. A
+  server given the world lists them on its **Content** tab straight away.
 
 A world in the library is kept unpacked, as its own files, with the
 organization's snapshots. An uploaded archive is unpacked on the panel

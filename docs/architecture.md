@@ -523,6 +523,19 @@ copy.
   keeps them, links dropped, the snapshot first for a replace.
 - **Download** builds a single-player save zip as it is sent, from
   `restic dump` of the world's folders.
+- **Datapacks** (`internal/api/worlddatapacks.go`) are read as the world is
+  kept, by the rules and code of content found in a server's folders, and
+  kept with it in the store, their pictures with the images: listing the
+  library reads no snapshot. An upload's are read where it was unpacked; a
+  saved one's from its snapshot, with `restic ls` of its `datapacks` folder
+  and the folders in it, and a `restic restore` of only each `.zip` and
+  each folder's `pack.mcmeta` and `pack.png`, by the sizes listed: for at
+  most the 400 datapacks read, each `.zip` up to 64 MB and each picture or
+  `pack.mcmeta` up to 4 MB, 512 MB in all, and only with that and the
+  room kept free while a world is unpacked free on the panel. A datapack
+  past those is listed by its name alone. Those of a world kept before are
+  read so once, in the background, as the panel starts or when the library
+  is first listed.
 
 Before, a library world was one file in its snapshot, the archive as it was
 uploaded or a tar of the saved folders, which shares nothing with a

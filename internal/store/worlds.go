@@ -48,14 +48,17 @@ type World struct {
 	// worlds before, could not be kept as its own files instead. It is
 	// still used as it is.
 	UnpackFailed string
+	// Datapacks are those in its datapacks folder, as JSON, or "" while
+	// they have not been read.
+	Datapacks string
 }
 
-const worldColumns = `id, org_id, name, description, created_by, created_at, updated_at, root, version, file, size, unpacked, source, failed, pack, unpack_failed`
+const worldColumns = `id, org_id, name, description, created_by, created_at, updated_at, root, version, file, size, unpacked, source, failed, pack, unpack_failed, datapacks`
 
 func scanWorld(row interface{ Scan(...any) error }) (*World, error) {
 	var w World
 	var created, updated int64
-	if err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.CreatedBy, &created, &updated, &w.Root, &w.Version, &w.File, &w.Size, &w.Unpacked, &w.Source, &w.Failed, &w.Pack, &w.UnpackFailed); err != nil {
+	if err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.CreatedBy, &created, &updated, &w.Root, &w.Version, &w.File, &w.Size, &w.Unpacked, &w.Source, &w.Failed, &w.Pack, &w.UnpackFailed, &w.Datapacks); err != nil {
 		return nil, err
 	}
 	w.CreatedAt, w.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
@@ -67,8 +70,8 @@ func (s *Store) CreateWorld(ctx context.Context, w *World) error {
 	w.ID = NewID(8)
 	w.CreatedAt = time.Now().Truncate(time.Second)
 	w.UpdatedAt = w.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO worlds (`+worldColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.OrgID, w.Name, w.Description, w.CreatedBy, w.CreatedAt.Unix(), w.UpdatedAt.Unix(), w.Root, w.Version, w.File, w.Size, w.Unpacked, w.Source, w.Failed, w.Pack, w.UnpackFailed)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO worlds (`+worldColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.OrgID, w.Name, w.Description, w.CreatedBy, w.CreatedAt.Unix(), w.UpdatedAt.Unix(), w.Root, w.Version, w.File, w.Size, w.Unpacked, w.Source, w.Failed, w.Pack, w.UnpackFailed, w.Datapacks)
 	return worldNameTaken(err)
 }
 
@@ -180,8 +183,44 @@ func (s *Store) SetWorldFailed(ctx context.Context, orgID, id, why string) error
 	return nil
 }
 
-// DeleteWorld forgets a world, and its picture. Its snapshot is the
-// caller's to delete.
+// SetWorldDatapacks keeps what was read of a world's datapacks, as JSON,
+// and their pictures, by each one's name, in place of any it had. It is not
+// a change to the world, and does not say it was changed.
+func (s *Store) SetWorldDatapacks(ctx context.Context, orgID, id, list string, pictures map[string][]byte) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE worlds SET datapacks = ? WHERE org_id = ? AND id = ?`, list, orgID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if err := deleteDatapackImages(ctx, tx, id); err != nil {
+		return err
+	}
+	for name, data := range pictures {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO images (key, data, updated_at) VALUES (?, ?, ?)`, WorldDatapackImage(id, name), data, now()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// deleteDatapackImages removes the pictures of a world's datapacks.
+func deleteDatapackImages(ctx context.Context, tx interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, id string) error {
+	prefix := WorldDatapackImage(id, "")
+	_, err := tx.ExecContext(ctx, `DELETE FROM images WHERE substr(key, 1, ?) = ?`, len(prefix), prefix)
+	return err
+}
+
+// DeleteWorld forgets a world, its picture and those of its datapacks. Its
+// snapshot is the caller's to delete.
 func (s *Store) DeleteWorld(ctx context.Context, orgID, id string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM worlds WHERE org_id = ? AND id = ?`, orgID, id)
 	if err != nil {
@@ -189,6 +228,9 @@ func (s *Store) DeleteWorld(ctx context.Context, orgID, id string) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	if err := deleteDatapackImages(ctx, s.db, id); err != nil {
+		return err
 	}
 	return s.DeleteImage(ctx, WorldImage(id))
 }

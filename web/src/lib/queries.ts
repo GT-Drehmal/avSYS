@@ -266,7 +266,7 @@ export const useWorlds = (org: string, enabled = true) =>
     queryKey: keys.worlds(org),
     queryFn: () => api.get<LibraryWorld[]>(`/orgs/${org}/worlds`),
     enabled,
-    refetchInterval: (q) => (q.state.data?.some((w) => w.saving || w.unpacking) ? 3000 : false),
+    refetchInterval: (q) => (q.state.data?.some((w) => w.saving || w.unpacking || w.readingDatapacks) ? 3000 : false),
   });
 export const useTemplates = (org: string, enabled = true) => useQuery({ queryKey: keys.templates(org), queryFn: () => api.get<Template[]>(`/orgs/${org}/templates`), enabled });
 /** An organization's saved lists of players, each with its players and the servers that use it. */

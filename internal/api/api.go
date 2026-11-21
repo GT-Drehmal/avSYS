@@ -544,6 +544,8 @@ func (s *Server) Handler() http.Handler {
 	api("PUT /orgs/{org}/worlds/{world}/icon", s.authed(s.putWorldIcon))
 	api("PUT /orgs/{org}/worlds/{world}/resource-pack", s.authed(s.putWorldPack))
 	api("DELETE /orgs/{org}/worlds/{world}/icon", s.authed(s.deleteWorldIcon))
+	api("GET /orgs/{org}/worlds/{world}/datapacks", s.authed(s.getWorldDatapacks))
+	api("GET /orgs/{org}/worlds/{world}/datapacks/icon", s.authed(s.getWorldDatapackIcon))
 	api("PUT /orgs/{org}/servers/{server}/import", s.authed(s.importFiles))
 	api("GET /orgs/{org}/servers/{server}/import/upload", s.authed(s.importUploaded))
 	api("PUT /orgs/{org}/servers/{server}/import/upload", s.authed(s.importUploadPart))

@@ -500,6 +500,8 @@ func run(opts options, log *slog.Logger) error {
 		// Then the worlds of the library still kept as archives are kept as
 		// their own files, one at a time.
 		server.UnpackLibrary(ctx)
+		// And the datapacks of those kept before they were read are read.
+		server.ReadLibraryDatapacks(ctx)
 		return nil
 	})); err != nil {
 		return err

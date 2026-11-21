@@ -141,6 +141,10 @@ type worldView struct {
 	// ResourcePack is the pack it is played with, given to each server it
 	// is given to: one from an address, or one uploaded, with no address.
 	ResourcePack *avsysv1.ResourcePackSpec `json:"resourcePack,omitempty"`
+	// Datapacks is how many datapacks it has, once they have been read;
+	// ReadingDatapacks says they are being read now.
+	Datapacks        *int `json:"datapacks,omitempty"`
+	ReadingDatapacks bool `json:"readingDatapacks,omitempty"`
 }
 
 // librarySnapshots are the snapshots of the library's worlds, by world.
@@ -165,6 +169,10 @@ func worldOf(w *store.World, snaps map[string]backup.Snapshot, busy bool) worldV
 		Root: w.Root, Version: w.Version, File: w.File, Size: w.Size, Unpacked: w.Unpacked, Source: w.Source,
 		Saving: busy && w.Failed == "", Ready: kept && !busy && w.Failed == "", Error: w.Failed,
 		ResourcePack: worldPackOf(w),
+	}
+	if list, read := datapacksOf(w); read {
+		n := len(list)
+		v.Datapacks = &n
 	}
 	if kept {
 		v.Root = keptRoot(w, &snap)
@@ -232,6 +240,11 @@ func (s *Server) listWorlds(w http.ResponseWriter, r *http.Request, u *store.Use
 	out := make([]worldView, len(worlds))
 	for i := range worlds {
 		out[i] = worldOf(&worlds[i], snaps, busy[worlds[i].ID])
+		// Those of a world kept before they were read are read now, in the
+		// background, and are in the list once they have been.
+		if snap, ok := snaps[worlds[i].ID]; ok {
+			out[i].ReadingDatapacks = s.readDatapacksSoon(a.Org, &worlds[i], &snap, busy[worlds[i].ID])
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
@@ -247,7 +260,9 @@ func (s *Server) getWorld(w http.ResponseWriter, r *http.Request, u *store.User)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, worldOfSnap(world, snap, busy))
+	v := worldOfSnap(world, snap, busy)
+	v.ReadingDatapacks = s.readDatapacksSoon(a.Org, world, snap, busy)
+	writeJSON(w, http.StatusOK, v)
 	return nil
 }
 
@@ -315,12 +330,15 @@ func (s *Server) uploadWorld(w http.ResponseWriter, r *http.Request, u *store.Us
 	}
 	defer release()
 	ctx := context.WithoutCancel(r.Context())
-	kept, err := s.keepUploadedWorld(ctx, w, r, a, world, root, u.Username)
+	kept, unpacked, err := s.keepUploadedWorld(ctx, w, r, a, world, root, u.Username)
 	if err == nil {
 		err = s.noteTemplateSnapshot(ctx, a.Org, kept)
 	}
 	if err == nil {
 		err = s.Store.SetWorldArchive(ctx, a.Org.ID, world.ID, world.Root, world.Version, world.Size, world.Unpacked)
+	}
+	if err == nil {
+		s.keepUnpackedDatapacks(ctx, unpacked, world)
 	}
 	if err != nil {
 		s.forgetWorld(ctx, a, world.ID, kept)
@@ -353,10 +371,10 @@ func (s *Server) forgetWorld(ctx context.Context, a *access, id string, kept *ba
 // keepUploadedWorld unpacks the archive a request sends, the file sent in
 // parts that ?upload= names or else its body, and keeps the world in it,
 // whose folder in it is root, as world's, which is told how large it is.
-func (s *Server) keepUploadedWorld(ctx context.Context, w http.ResponseWriter, r *http.Request, a *access, world *store.World, root, by string) (*backup.Snapshot, error) {
+func (s *Server) keepUploadedWorld(ctx context.Context, w http.ResponseWriter, r *http.Request, a *access, world *store.World, root, by string) (*backup.Snapshot, *unpackedWorld, error) {
 	dir, done, err := s.worldWork(a.Org.Slug)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer done()
 	var file string
@@ -364,7 +382,7 @@ func (s *Server) keepUploadedWorld(ctx context.Context, w http.ResponseWriter, r
 	if q := r.URL.Query(); q.Get("upload") != "" {
 		f, closeIt, err := s.takeStaged(a, q)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		file = f.Name()
 		closeIt()
@@ -373,23 +391,23 @@ func (s *Server) keepUploadedWorld(ctx context.Context, w http.ResponseWriter, r
 		file = filepath.Join(dir, "archive")
 		f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		_, err = io.Copy(f, http.MaxBytesReader(w, r.Body, maxUpload))
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		drop = func() { _ = os.Remove(file) }
 	}
 	kept, unpacked, err := s.keepUnpacked(ctx, a.Org.Slug, dir, file, root, libraryHost(world.ID), by, drop)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	world.Size, world.Unpacked = unpacked.Bytes, unpacked.Bytes
-	return kept, nil
+	return kept, unpacked, nil
 }
 
 // saveWorld puts a world in the library from a snapshot, or from a server
@@ -536,6 +554,11 @@ func (s *Server) saveWorld(w http.ResponseWriter, r *http.Request, u *store.User
 		}
 		if err := s.Store.SetWorldArchive(ctx, a.Org.ID, saved.ID, saved.Root, saved.Version, saved.Size, saved.Unpacked); err != nil {
 			return kept, err
+		}
+		// Its datapacks, read from what was kept. Not read, they are read
+		// when the library is next looked at.
+		if err := s.readDatapacksOf(ctx, a.Org, &saved, kept); err != nil {
+			s.Log.Warn("could not read the datapacks of a world saved to the library", "world", saved.Name, "error", err)
 		}
 		// Its resource pack, as the server had one. Without it, the world is
 		// still the world: the pack can be given to it again.
