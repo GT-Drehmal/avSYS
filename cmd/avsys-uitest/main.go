@@ -319,7 +319,12 @@ func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir s
 		}
 	}
 
-	if err := seedSnapshots(dir, offsite); err != nil {
+	// A world in the first organization's library, with datapacks.
+	world, err := seedLibrary(ctx, srv, dir, friends)
+	if err != nil {
+		return nil, err
+	}
+	if err := seedSnapshots(dir, offsite, world); err != nil {
 		return nil, err
 	}
 	if offsite {
@@ -357,10 +362,11 @@ esac
 `
 
 // seedSnapshots gives the first organization a repository with snapshots in
-// it: several of a server that runs every day, one of another, and the last
-// one of a server that has since been deleted. With offsite, the offsite
-// repository has copies of those more than a few hours old.
-func seedSnapshots(dir string, offsite bool) error {
+// it: several of a server that runs every day, one of another, the last
+// one of a server that has since been deleted, and that of the library's
+// world. With offsite, the offsite repository has copies of those more than
+// a few hours old.
+func seedSnapshots(dir string, offsite bool, world string) error {
 	if err := os.WriteFile(filepath.Join(dir, "restic"), []byte(resticStandIn), 0o755); err != nil {
 		return err
 	}
@@ -437,6 +443,9 @@ func seedSnapshots(dir string, offsite bool) error {
 		}
 		return os.WriteFile(filepath.Join(repo, name), data, 0o600)
 	}
+	// The library's world, kept as its own files an hour ago.
+	list = append(list, snapshot{ID: id(len(taken) + 1), Time: now.Add(-time.Hour), Hostname: "world-" + world,
+		Tags: []string{"avsys", "trigger=template", "form=folders", "by=owner"}, Summary: summary{Bytes: 1_610_612_736, Files: 9_000, Added: 900 << 20}})
 	if err := write("snapshots.json", list); err != nil {
 		return err
 	}

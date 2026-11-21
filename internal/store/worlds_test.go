@@ -143,3 +143,82 @@ func TestWorldPackAdded(t *testing.T) {
 		t.Error("an old world was not given a pack")
 	}
 }
+
+// What was read of a world's datapacks is kept with it, their pictures by
+// name, each time in place of what it had; not another organization's, and
+// gone with the world. A table of worlds from before gets the column, its
+// worlds' not read yet.
+func TestWorldDatapacks(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "worlds.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := user(t, s, "owner")
+	a, b := &Org{Slug: "a", Name: "A"}, &Org{Slug: "b", Name: "B"}
+	for _, o := range []*Org{a, b} {
+		if err := s.CreateOrg(ctx, o, owner.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := &World{OrgID: a.ID, Name: "Old", Root: "world"}
+	other := &World{OrgID: a.ID, Name: "Other", Root: "world"}
+	for _, w := range []*World{old, other} {
+		if err := s.CreateWorld(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE worlds DROP COLUMN datapacks`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if s, err = Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if got, err := s.World(ctx, a.ID, old.ID); err != nil || got.Datapacks != "" || got.Root != "world" {
+		t.Fatalf("from before: %+v %v", got, err)
+	}
+
+	if err := s.SetWorldDatapacks(ctx, a.ID, old.ID, `[{"name":"a.zip"},{"name":"b"}]`, map[string][]byte{"a.zip": []byte("a"), "b": []byte("b")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWorldDatapacks(ctx, a.ID, other.ID, `[{"name":"a.zip"}]`, map[string][]byte{"a.zip": []byte("other a")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWorldDatapacks(ctx, b.ID, old.ID, `[]`, nil); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another organization's: %v", err)
+	}
+	was, _ := s.World(ctx, a.ID, old.ID)
+	if was.Datapacks != `[{"name":"a.zip"},{"name":"b"}]` {
+		t.Errorf("kept %q", was.Datapacks)
+	}
+	// Read again: what it no longer has goes.
+	if err := s.SetWorldDatapacks(ctx, a.ID, old.ID, `[{"name":"b"}]`, map[string][]byte{"b": []byte("b2")}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _, err := s.Image(ctx, WorldDatapackImage(old.ID, "a.zip")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a picture it no longer has: %q %v", data, err)
+	}
+	if data, _, _ := s.Image(ctx, WorldDatapackImage(old.ID, "b")); string(data) != "b2" {
+		t.Errorf("its picture: %q", data)
+	}
+	if got, _ := s.World(ctx, a.ID, old.ID); got.UpdatedAt != was.UpdatedAt {
+		t.Error("said to be changed")
+	}
+	if err := s.DeleteWorld(ctx, a.ID, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Image(ctx, WorldDatapackImage(old.ID, "b")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a picture stayed with its world gone: %v", err)
+	}
+	if data, _, _ := s.Image(ctx, WorldDatapackImage(other.ID, "a.zip")); string(data) != "other a" {
+		t.Errorf("another world's picture: %q", data)
+	}
+}

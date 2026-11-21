@@ -25,9 +25,12 @@ export const newerThan = (order: readonly string[] | undefined, a: string | unde
   return i >= 0 && j >= 0 && i < j;
 };
 
-/** What a world is, in a line: its version, size, where it came from, and whether it has a resource pack. */
+/** "4 datapacks", for a world with any. */
+export const datapackCount = (w: Pick<LibraryWorld, "datapacks">) => (w.datapacks ? `${w.datapacks} datapack${w.datapacks === 1 ? "" : "s"}` : null);
+
+/** What a world is, in a line: its version, size, where it came from, whether it has a resource pack, and how many datapacks. */
 export function worldSummary(w: LibraryWorld) {
-  return [w.version, w.ready ? bytes(w.size) : null, worldSource(w), w.resourcePack ? "with a resource pack" : null].filter(Boolean).join(" · ");
+  return [w.version, w.ready ? bytes(w.size) : null, worldSource(w), w.resourcePack ? "with a resource pack" : null, datapackCount(w)].filter(Boolean).join(" · ");
 }
 
 /**

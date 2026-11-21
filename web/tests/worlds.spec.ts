@@ -878,3 +878,47 @@ test("a world's resource pack the form has already is not added twice, and a tem
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/templates$`));
   expect(put).toEqual(["PUT ?library=w2"]);
 });
+
+test("a world shows the datapacks that come with it, each with what it says of itself and its picture", async ({ page, as }) => {
+  // The panel's own world, as it read it (see cmd/avsys-uitest/library.go).
+  await as("viewer");
+  await page.goto("/o/friends/worlds");
+  const row = page.getByRole("list", { name: "Worlds" }).getByRole("listitem", { name: "Drehmal" });
+  await expect(row).toContainText("1.20.1 · 1.5 GB · uploaded · 4 datapacks");
+  await row.getByRole("button", { name: "About Drehmal" }).click();
+  const dialog = page.getByRole("dialog", { name: "Drehmal" });
+  await expect(dialog).toContainText("4 datapacks");
+  const packs = dialog.getByRole("list", { name: "Datapacks" }).getByRole("listitem");
+  // Bukkit's own is not one; the rest by name, each on one line.
+  await expect(packs).toHaveText([/bern_trades\s*Villager trades of Bern/, /drehmal_core\s*Quests, bosses and lore of Drehmal/, /hi_drehmal\s*Hi, Drehmal/, /mael\s*Mael's music discs/]);
+  // Those with a picture show it; the rest a mark of their own.
+  for (const name of ["drehmal_core", "mael"]) {
+    const img = packs.filter({ hasText: name }).locator("img");
+    await expect(img).toHaveAttribute("src", /\/datapacks\/icon\?name=/);
+    await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBe(64);
+  }
+  for (const name of ["bern_trades", "hi_drehmal"]) await expect(packs.filter({ hasText: name }).locator("img")).toHaveCount(0);
+  // Read-only: nothing to change them with.
+  await expect(dialog.getByRole("button", { name: /Remove|Add/ })).toHaveCount(0);
+});
+
+test("a world without datapacks says so, and one whose are being read says that", async ({ page, as }) => {
+  await as("viewer");
+  const worlds = [world("w1", "Island", { datapacks: 0 }), world("w2", "Arena", { readingDatapacks: true })];
+  await library(page, worlds);
+  await page.goto("/o/friends/worlds");
+  const list = page.getByRole("list", { name: "Worlds" });
+  await expect(list.getByRole("listitem", { name: "Island" })).not.toContainText("datapack");
+  await list.getByRole("button", { name: "About Island" }).click();
+  await expect(page.getByRole("dialog", { name: "Island" }).getByRole("region", { name: "Datapacks" })).toContainText("None.");
+  await page.keyboard.press("Escape");
+  await list.getByRole("button", { name: "About Arena" }).click();
+  const dialog = page.getByRole("dialog", { name: "Arena" });
+  await expect(dialog.getByRole("region", { name: "Datapacks" })).toContainText("Reading");
+  // Read meanwhile: the page asks again, and shows them.
+  await page.route(/\/api\/v1\/orgs\/friends\/worlds\/w2\/datapacks$/, (route) => route.fulfill({ json: [{ name: "arena.zip", title: "arena", about: "Rounds and resets" }] }));
+  worlds[1] = world("w2", "Arena", { datapacks: 1 });
+  await expect(dialog.getByRole("list", { name: "Datapacks" }).getByRole("listitem")).toHaveText([/arena\s*Rounds and resets/]);
+  await page.keyboard.press("Escape");
+  await expect(list.getByRole("listitem", { name: "Arena" })).toContainText("1 datapack");
+});

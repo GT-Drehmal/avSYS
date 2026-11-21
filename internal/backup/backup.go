@@ -829,6 +829,79 @@ func (m *Manager) File(ctx context.Context, org, id, path string, limit int64) (
 	return data, err
 }
 
+// Entry is one of what a folder of a snapshot has: a file or a folder.
+type Entry struct {
+	Name     string
+	Dir      bool
+	Size     int64
+	Modified time.Time
+}
+
+// Entries lists what is right in a folder of a snapshot, a full path in it
+// such as /data/world/datapacks, and not what is in its folders: none for a
+// folder it does not have. Only the snapshot's list of its folders is read,
+// not a byte of its files.
+func (m *Manager) Entries(ctx context.Context, org, id, dir string) ([]Entry, error) {
+	if !path.IsAbs(dir) || path.Clean(dir) != dir {
+		return nil, fmt.Errorf("%q is not a folder of a snapshot", dir)
+	}
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	snap, err := m.get(ctx, org, id)
+	if err != nil {
+		return nil, err
+	}
+	out, err := m.restic(ctx, org, "ls", "--json", "--no-lock", snap.ID, dir)
+	if err != nil {
+		return nil, err
+	}
+	entries := []Entry{}
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		var node struct {
+			Name   string    `json:"name"`
+			Type   string    `json:"type"`
+			Path   string    `json:"path"`
+			Size   int64     `json:"size"`
+			MTime  time.Time `json:"mtime"`
+			Struct string    `json:"struct_type"`
+		}
+		if json.Unmarshal(line, &node) != nil || node.Struct != "node" || path.Dir(node.Path) != dir {
+			continue
+		}
+		if node.Type != "file" && node.Type != "dir" {
+			continue
+		}
+		entries = append(entries, Entry{Name: node.Name, Dir: node.Type == "dir", Size: node.Size, Modified: node.MTime})
+	}
+	return entries, nil
+}
+
+// Extract puts files of a snapshot, full paths in it, under target, where
+// they are in it: /data/world/x as target/data/world/x. One it does not
+// have is left out. Only those files are read out of it.
+func (m *Manager) Extract(ctx context.Context, org, id string, files []string, target string) error {
+	if len(files) == 0 {
+		return nil
+	}
+	args := []string{"restore", "--no-lock", "--target", target}
+	for _, f := range files {
+		if !path.IsAbs(f) || path.Clean(f) != f || f == "/" {
+			return fmt.Errorf("%q is not a file of a snapshot", f)
+		}
+		args = append(args, "--include", literalPattern(f))
+	}
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	snap, err := m.get(ctx, org, id)
+	if err != nil {
+		return err
+	}
+	_, err = m.restic(ctx, org, append(args, snap.ID)...)
+	return err
+}
+
 // KeepFile saves what r gives as a snapshot of one file called name, under
 // host, as a template's that by gave it: a world of its own, kept as it was
 // sent, to be unpacked into each server made from the template.

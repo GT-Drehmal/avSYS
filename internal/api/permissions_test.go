@@ -284,6 +284,8 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"PUT /orgs/{org}/worlds/{world}/icon", "/orgs/alpha/worlds/nope/icon", "", store.RoleOperator, 404},
 		{"PUT /orgs/{org}/worlds/{world}/resource-pack", "/orgs/alpha/worlds/nope/resource-pack", "x", store.RoleOperator, 503},
 		{"DELETE /orgs/{org}/worlds/{world}/icon", "/orgs/alpha/worlds/nope/icon", "", store.RoleOperator, 404},
+		{"GET /orgs/{org}/worlds/{world}/datapacks", "/orgs/alpha/worlds/nope/datapacks", "", store.RoleViewer, 404},
+		{"GET /orgs/{org}/worlds/{world}/datapacks/icon", "/orgs/alpha/worlds/nope/datapacks/icon?name=a.zip", "", store.RoleViewer, 404},
 		{"GET /orgs/{org}/presence", "", "", store.RoleViewer, 200},
 		{"PUT /orgs/{org}/presence", "", `{"tab":"tab-of-{who}","server":"survival"}`, store.RoleViewer, 204},
 		// 503 below: allowed, and then told that this panel has no restic.

@@ -272,6 +272,7 @@ func (s *Server) unpackArchived(ctx context.Context, org *store.Org, w *store.Wo
 	if err := s.Store.SetWorldUnpacked(ctx, org.ID, w.ID, keptWorld, unpacked.Bytes); err != nil {
 		s.Log.Warn("could not note a world as unpacked", "world", w.ID, "error", err)
 	}
+	s.keepUnpackedDatapacks(ctx, unpacked, w)
 	// The archive is let go of with the world no longer held: its files are
 	// the world now, and removing the archive, which prunes the repository,
 	// can take a while. An import reading it meanwhile is waited for.

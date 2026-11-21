@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, MoreHorizontal, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
@@ -12,7 +12,7 @@ import { NotesField } from "../components/Notes";
 import { ListBar } from "../components/ListBar";
 import { McText } from "../components/McText";
 import { cancelled, UploadProgress, useUpload } from "../components/Uploading";
-import { api, ApiError, atLeast, qs, type LibraryWorld, type ResourcePack, worldIcon } from "../lib/api";
+import { api, ApiError, atLeast, qs, type LibraryWorld, type ResourcePack, type WorldDatapack, worldDatapackIcon, worldIcon } from "../lib/api";
 import { ArchiveError } from "../lib/archive";
 import { ago, bytes } from "../lib/format";
 import { keys, useMeta, useWorlds } from "../lib/queries";
@@ -49,6 +49,7 @@ export function Worlds() {
   const { shown } = listed;
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<LibraryWorld | null>(null);
+  const [looking, setLooking] = useState<LibraryWorld | null>(null);
   const [deleting, setDeleting] = useState<LibraryWorld | null>(null);
   const canAdd = !!membership && atLeast(membership.role, "operator");
   const canDelete = !!membership && atLeast(membership.role, "admin");
@@ -106,7 +107,12 @@ export function Worlds() {
                   {canDelete && <RowCheckbox checked={selection.has(w.id)} quiet={selection.count === 0} label={`Select ${w.name}`} onChange={(range) => selection.toggle(w.id, range)} className="mr-1" />}
                   <PictureZoom name={w.name} url={worldIcon(org, w.id)} retryKey={w.updatedAt} size={36} path={canAdd ? `/orgs/${org}/worlds/${w.id}/icon` : undefined} />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-medium">{w.name}</p>
+                    <p className="truncate text-[13px] font-medium">
+                      {/* The way into what the world has. */}
+                      <button type="button" onClick={() => setLooking(w)} className="max-w-full truncate rounded-sm text-left hover:text-accent" aria-label={`About ${w.name}`}>
+                        {w.name}
+                      </button>
+                    </p>
                     {w.description && <p className="line-clamp-2 text-xs text-muted">{w.description}</p>}
                     <p className={cx("mt-0.5 text-xs", w.error ? "text-danger" : "text-faint", w.saving && "flex items-center gap-1.5")}>
                       {w.ready ? (
@@ -164,9 +170,58 @@ export function Worlds() {
       </div>
       {adding && <AddWorld org={org} onClose={() => setAdding(false)} />}
       {latest(editing) && <EditWorld key={editing?.id} org={org} world={latest(editing)!} onClose={() => setEditing(null)} />}
+      {latest(looking) && <WorldDetails org={org} world={latest(looking)!} onClose={() => setLooking(null)} />}
       <DeleteWorld org={org} world={deleting} onClose={() => setDeleting(null)} />
       {canDelete && <DeleteWorlds org={org} chosen={list.filter((w) => selection.has(w.id))} selection={selection} />}
     </div>
+  );
+}
+
+/** One world opened up: what it is, and the datapacks that come with it. */
+function WorldDetails({ org, world, onClose }: { org: string; world: LibraryWorld; onClose: () => void }) {
+  const count = world.datapacks ?? 0;
+  const datapacks = useQuery({
+    queryKey: [...keys.worlds(org), world.id, "datapacks", count],
+    queryFn: () => api.get<WorldDatapack[]>(`/orgs/${org}/worlds/${world.id}/datapacks`),
+    enabled: count > 0,
+  });
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title={world.name} description={world.ready ? worldSummary(world) : undefined}>
+      <div className="flex flex-col gap-5">
+        {world.description && <p className="text-[13px] whitespace-pre-line text-muted">{world.description}</p>}
+        <section aria-label="Datapacks" className="flex flex-col gap-2.5">
+          <h3 className="text-[13px] font-semibold">Datapacks</h3>
+          {world.datapacks === undefined ? (
+            world.readingDatapacks ? (
+              <p className="flex items-center gap-1.5 text-[13px] text-muted">
+                <Spinner className="size-3" />
+                Reading
+              </p>
+            ) : (
+              <p className="text-[13px] text-muted">Not known yet.</p>
+            )
+          ) : count === 0 ? (
+            <p className="text-[13px] text-muted">None.</p>
+          ) : datapacks.isPending ? (
+            <Loading />
+          ) : !datapacks.data ? (
+            <Notice tone="danger">{datapacks.error instanceof ApiError ? datapacks.error.message : "Could not load the datapacks."}</Notice>
+          ) : (
+            <ul className="overflow-hidden rounded-lg border border-line bg-surface" aria-label="Datapacks">
+              {datapacks.data.map((d) => (
+                <li key={d.name} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0" title={d.name} aria-label={d.title}>
+                  <ProjectIcon url={d.picture ? worldDatapackIcon(org, world.id, d.name) : undefined} size={32} kind="datapack" name={d.title} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium">{d.title}</p>
+                    {d.about && <p className="truncate text-xs text-faint">{d.about}</p>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </Modal>
   );
 }
 

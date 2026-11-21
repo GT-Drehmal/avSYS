@@ -15,6 +15,10 @@ func OrgImage(orgID string) string   { return "org:" + orgID }
 func UserImage(userID string) string { return "user:" + userID }
 func WorldImage(id string) string    { return "world:" + id }
 
+// WorldDatapackImage names the picture of one of a world's datapacks, by
+// its name in the world's datapacks folder.
+func WorldDatapackImage(id, name string) string { return "world-datapack:" + id + "/" + name }
+
 // Image returns a stored picture and when it was last set, or ErrNotFound.
 func (s *Store) Image(ctx context.Context, key string) ([]byte, time.Time, error) {
 	var data []byte

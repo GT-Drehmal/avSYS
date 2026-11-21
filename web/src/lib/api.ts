@@ -631,10 +631,27 @@ export interface LibraryWorld {
   error?: string;
   /** The resource pack it is played with: one from an address, or one uploaded, with no address. */
   resourcePack?: ResourcePack | null;
+  /** How many datapacks its datapacks folder has, once they have been read; and whether they are being read now. */
+  datapacks?: number;
+  readingDatapacks?: boolean;
+}
+
+/** One of a library world's datapacks, as its pack.mcmeta and pack.png say. */
+export interface WorldDatapack {
+  /** Its name in the world's datapacks folder: x.zip, or a folder's. */
+  name: string;
+  title: string;
+  about?: string;
+  folder?: boolean;
+  /** Whether it has a picture, at worldDatapackIcon. */
+  picture?: boolean;
 }
 
 /** Where a library world's picture is. */
 export const worldIcon = (org: string, id: string) => `/api/v1/orgs/${org}/worlds/${id}/icon`;
+
+/** Where the picture of one of a library world's datapacks is. */
+export const worldDatapackIcon = (org: string, id: string, name: string) => `/api/v1/orgs/${org}/worlds/${id}/datapacks/icon?${new URLSearchParams({ name })}`;
 
 export interface Operation {
   kind: "snapshot" | "restore" | "create" | "delete-server" | "move" | "import" | "template";

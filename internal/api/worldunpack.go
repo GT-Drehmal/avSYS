@@ -58,6 +58,10 @@ type unpackedWorld struct {
 	Folders []string
 	// Files and Bytes are how many files it has and how large they are.
 	Files, Bytes int64
+	// datapacks are those in its datapacks folder, with their pictures,
+	// as read there; nil where they could not be.
+	datapacks []worldDatapack
+	pictures  map[string][]byte
 }
 
 // worldEntry is where an entry of an archive goes in the folder it is
@@ -376,6 +380,12 @@ func (s *Server) keepUnpacked(ctx context.Context, org, dir, file, root, host, b
 	}
 	if drop != nil {
 		drop()
+	}
+	// Its datapacks are read as it is here, for the library to show.
+	if list, pictures, err := readDatapacks(ctx, DirFiles(filepath.Join(dir, keptData)), keptWorld); err == nil {
+		unpacked.datapacks, unpacked.pictures = list, pictures
+	} else {
+		s.Log.Warn("could not read the datapacks of a world unpacked", "error", err)
 	}
 	kept, err := s.Backups.KeepFolders(ctx, org, dir, unpacked.Folders, host, by)
 	if err != nil {
