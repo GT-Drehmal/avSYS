@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/mojang"
 )
 
 // commandsFixture is the commands.json the game's data generator wrote for
@@ -555,12 +556,11 @@ func TestMojangIsAskedAgain(t *testing.T) {
 	// As set: a few tries, each giving up on connecting sooner than on the
 	// whole, in about half a minute.
 	set := mojangAsSet
-	if most := time.Duration(set.tries)*set.try + set.backoff*time.Duration(1<<(set.tries-1)-1); set.tries < 4 || most > 40*time.Second || catalogDial >= set.try {
-		t.Errorf("%d tries in up to %v, connecting in %v", set.tries, most, catalogDial)
+	if most := time.Duration(set.tries)*set.try + set.backoff*time.Duration(1<<(set.tries-1)-1); set.tries < 4 || most > 40*time.Second || set.dial >= set.try {
+		t.Errorf("%d tries in up to %v, connecting in %v", set.tries, most, set.dial)
 	}
-	defer func(try, backoff time.Duration) { mojangTry, mojangBackoff = try, backoff }(mojangTry, mojangBackoff)
-	mojangTry, mojangBackoff = 100*time.Millisecond, 20*time.Millisecond
-	most := time.Duration(mojangTries)*mojangTry + mojangBackoff*time.Duration(1<<(mojangTries-1)-1)
+	askMojang(t, 100*time.Millisecond, 20*time.Millisecond, mojang.Dial)
+	most := time.Duration(mojang.Tries)*mojang.Try + mojang.Backoff*time.Duration(1<<(mojang.Tries-1)-1)
 	ctx := context.Background()
 	version := "https://piston-meta.mojang.com/v1/packages/fb73/1.20.1.json"
 
@@ -577,7 +577,7 @@ func TestMojangIsAskedAgain(t *testing.T) {
 	if want := []string{"launchermeta.mojang.com", "piston-meta.mojang.com", "launchermeta.mojang.com", "piston-meta.mojang.com"}; !reflect.DeepEqual(f.hosts(), want) {
 		t.Errorf("asked %q", f.hosts())
 	}
-	if took < 3*mojangTry || took > most+time.Second {
+	if took < 3*mojang.Try || took > most+time.Second {
 		t.Errorf("took %v", took)
 	}
 	// Kept: not asked again.
@@ -593,7 +593,7 @@ func TestMojangIsAskedAgain(t *testing.T) {
 	if _, err := c.get(ctx, version, time.Hour); err == nil || !strings.Contains(err.Error(), "Could not reach") {
 		t.Errorf("never answering: %v", err)
 	}
-	if took := time.Since(start); len(f.hosts()) != mojangTries || took > most+time.Second {
+	if took := time.Since(start); len(f.hosts()) != mojang.Tries || took > most+time.Second {
 		t.Errorf("asked %d times in %v", len(f.hosts()), took)
 	}
 	if !strings.HasPrefix(f.hosts()[1], "launchermeta") {
@@ -605,7 +605,7 @@ func TestMojangIsAskedAgain(t *testing.T) {
 		t.Errorf("with an old copy: %s %v", body, err)
 	}
 	// So is it once the one asking gives up.
-	gone, cancel := context.WithTimeout(ctx, mojangTry+mojangBackoff/2)
+	gone, cancel := context.WithTimeout(ctx, mojang.Try+mojang.Backoff/2)
 	defer cancel()
 	if body, err := c.get(gone, version, time.Hour); err != nil || string(body) != `{"old":true}` {
 		t.Errorf("given up: %s %v", body, err)
@@ -742,15 +742,14 @@ exit 0
 
 // From inside a cluster, a connection to Mojang's sites from some source
 // ports gets no answer at all, while one from another port answers at once.
-// Such a connection is given up after catalogDial, not held for the whole
+// Such a connection is given up after mojang.Dial, not held for the whole
 // try, and each try makes a new one.
 func TestMojangDialsAnew(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer srv.Close()
-	defer func(try, backoff, dial time.Duration) { mojangTry, mojangBackoff, catalogDial = try, backoff, dial }(mojangTry, mojangBackoff, catalogDial)
-	mojangTry, mojangBackoff, catalogDial = 3*time.Second, 10*time.Millisecond, 300*time.Millisecond
+	askMojang(t, 3*time.Second, 10*time.Millisecond, 300*time.Millisecond)
 	c := newCatalog("test")
 	tr := c.http.Transport.(*http.Transport)
 	dial := tr.DialContext
@@ -763,7 +762,7 @@ func TestMojangDialsAnew(t *testing.T) {
 		return dial(ctx, network, addr)
 	}
 	start := time.Now()
-	body, err := c.getMojang(context.Background(), srv.URL+"/version_manifest_v2.json", time.Hour)
+	body, err := c.getMojang(context.Background(), srv.URL+"/version_manifest_v2.json", time.Hour, nil)
 	took := time.Since(start)
 	if err != nil || string(body) != `{"ok":true}` {
 		t.Fatalf("got %s %v", body, err)
@@ -771,7 +770,7 @@ func TestMojangDialsAnew(t *testing.T) {
 	if n := dials.Load(); n != 3 {
 		t.Errorf("connected %d times, want a new connection each try", n)
 	}
-	if took > 2*catalogDial+time.Second {
-		t.Errorf("took %v: a connection with no answer was held past %v", took, catalogDial)
+	if took > 2*mojang.Dial+time.Second {
+		t.Errorf("took %v: a connection with no answer was held past %v", took, mojang.Dial)
 	}
 }

@@ -33,7 +33,7 @@ test("a list is made with many players pasted at once, searched, and changed", a
   // Opened, with each player as their account has them, once, and the name nobody has said.
   await expect(page.getByRole("heading", { name: "Club members" })).toBeVisible();
   await players(page).toEqual(["Alex", "jeb_", "Notch"]);
-  await expect(page.getByText("No Minecraft account: Herobrine")).toBeVisible();
+  await expect(page.getByText("1 name not found: Herobrine")).toBeVisible();
   await expect(page.getByText("3 players · Not used by any server")).toBeVisible();
 
   await page.getByRole("searchbox", { name: "Search players" }).fill("no");
@@ -46,7 +46,7 @@ test("a list is made with many players pasted at once, searched, and changed", a
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await players(page).toEqual(["Alex", "Dinnerbone", "Grumm", "Notch"]);
   await expect(page.getByLabel("Add players")).toHaveValue("");
-  await expect(page.getByText(/No Minecraft account/)).toHaveCount(0);
+  await expect(page.getByText(/not found/)).toHaveCount(0);
 
   const [list] = await api("owner").get<List[]>(`/orgs/${slug}/player-lists`);
   expect(list.players.map((p) => p.name)).toEqual(["Alex", "Dinnerbone", "Grumm", "Notch"]);
@@ -59,6 +59,58 @@ test("a list is made with many players pasted at once, searched, and changed", a
   await expect(row).toBeVisible();
   await page.getByRole("searchbox", { name: "Search lists and players" }).fill("herobrine");
   await expect(page.getByText("No lists match.")).toBeVisible();
+});
+
+// Names are checked ten at a time. In tests/upstream every player_ name has
+// an account, and a late_ name gets no answer for one round of tries, so
+// the ten it is asked with can't be checked until it is asked again. Names
+// looked up a moment ago are not asked again: these are new each time.
+test("names Mojang doesn't answer for are said and tried again, and the rest are added", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  const list = await api("owner").post<List>(`/orgs/${slug}/player-lists`, { name: "Event", names: [] });
+  await as("owner");
+  await page.goto(`/o/${slug}/players/${list.id}`);
+  const tag = Math.random().toString(36).slice(2, 7);
+  const late = `late_${tag}`;
+  const first = ["Herobrine", ...Array.from({ length: 9 }, (_, i) => `player_${tag}${i}`)];
+  const other = `player_${tag}x`;
+  await page.getByLabel("Add players").fill([...first, late, other].join("\n"));
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+
+  // The first ten are checked, and those with an account added.
+  await players(page).toEqual(first.slice(1));
+  await expect(page.getByText("1 name not found: Herobrine")).toBeVisible();
+  await expect(page.getByText(`Mojang didn't answer for 2 names: ${late}, ${other}`)).toBeVisible();
+  await expect(page.getByLabel("Add players")).toHaveValue("Herobrine");
+
+  // Asked again, they are added too; the name nobody has is still said.
+  await page.getByRole("button", { name: "Try again" }).click();
+  await players(page).toEqual([late, ...first.slice(1), other]);
+  await expect(page.getByText(/Mojang didn't answer/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  await expect(page.getByText("1 name not found: Herobrine")).toBeVisible();
+  const [now] = await api("owner").get<List[]>(`/orgs/${slug}/player-lists`);
+  expect(now.players).toHaveLength(11);
+});
+
+test("a new list made while Mojang doesn't answer for some names opens saying which", async ({ page, as, org }) => {
+  const slug = await org([]);
+  await as("owner");
+  await page.goto(`/o/${slug}/players`);
+  await page.getByRole("button", { name: "New list" }).click();
+  const dialog = page.getByRole("dialog", { name: "New list" });
+  await dialog.getByLabel("Name").fill("Late ones");
+  const late = `late_${Math.random().toString(36).slice(2, 8)}`;
+  await dialog.getByLabel("Players").fill(`${late}, Herobrine`);
+  await dialog.getByRole("button", { name: "Make list" }).click();
+
+  await expect(page.getByRole("heading", { name: "Late ones" })).toBeVisible();
+  await expect(page.getByText(`Mojang didn't answer for 2 names: ${late}, Herobrine`)).toBeVisible();
+  await expect(page.getByText("No players yet")).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await players(page).toEqual([late]);
+  await expect(page.getByText("1 name not found: Herobrine")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
 });
 
 test("everyone sees saved lists; only admins change them", async ({ page, as, api }) => {
@@ -221,7 +273,7 @@ test("Bedrock players are added by gamertag and shown as Bedrock", async ({ page
   await expect(page.getByRole("heading", { name: "Event" })).toBeVisible();
   await players(page).toEqual(["Tim203"]);
   await expect(page.getByRole("listitem", { name: "Tim203" }).getByText("Bedrock", { exact: true })).toBeVisible();
-  await expect(page.getByText("No Bedrock player found: Nobody Here.")).toBeVisible();
+  await expect(page.getByText("1 gamertag not found: Nobody Here.")).toBeVisible();
 
   // Java and Bedrock players on one list, each as they are.
   const edition = page.getByRole("group", { name: "Edition" });
@@ -235,7 +287,7 @@ test("Bedrock players are added by gamertag and shown as Bedrock", async ({ page
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await players(page).toEqual(["Alex", "Redned235", "Tim203"]);
   await expect(page.getByLabel("Add players")).toHaveValue("Nobody Else");
-  await expect(page.getByText("No Bedrock player found: Nobody Else.")).toBeVisible();
+  await expect(page.getByText("1 gamertag not found: Nobody Else.")).toBeVisible();
 
   const [list] = await api("owner").get<List[]>(`/orgs/${slug}/player-lists`);
   expect(list.players).toEqual([

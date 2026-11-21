@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { api, ApiError, type ContentRef, playerHead, type ListPlayer, type Member, type PlayerList, type PlayerListChange } from "../lib/api";
+import { api, ApiError, type ContentRef, playerHead, type ListPlayer, type Member, type NotAdded, type PlayerList, type PlayerListChange } from "../lib/api";
 import { keys, usePlayerLists } from "../lib/queries";
 import { matches } from "../lib/search";
 import { Picture } from "./Picture";
@@ -86,13 +86,53 @@ export function Heads({ players, max = 5, size = 18 }: { players: Player[]; max?
   );
 }
 
-/** What is said of names no Minecraft account has, and of gamertags no Bedrock player was found for. */
-export function Missing({ names, bedrock = [] }: { names: string[]; bedrock?: string[] }) {
-  if (names.length === 0 && bedrock.length === 0) return null;
+/** No names left out. */
+export const noneLeftOut: NotAdded = { missing: [], missingBedrock: [], unchecked: [], uncheckedBedrock: [] };
+
+/** The names that were not added, out of an answer, or out of what a page was opened with. */
+export const notAddedOf = (from?: Partial<NotAdded> | null): NotAdded => ({
+  missing: from?.missing ?? [],
+  missingBedrock: from?.missingBedrock ?? [],
+  unchecked: from?.unchecked ?? [],
+  uncheckedBedrock: from?.uncheckedBedrock ?? [],
+});
+
+/** "1 name", "3 names". */
+const counted = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+
+/**
+ * Says which names were not added: those no account has, and those that
+ * could not be checked, which can be tried again.
+ */
+export function NotAddedNotices({ names, onTryAgain, trying }: { names: NotAdded; onTryAgain?: () => void; trying?: boolean }) {
+  const again = onTryAgain && (
+    <Button size="sm" onClick={onTryAgain} loading={trying}>
+      Try again
+    </Button>
+  );
+  const { missing, missingBedrock, unchecked, uncheckedBedrock } = names;
   return (
     <>
-      {names.length > 0 && <Notice>No Minecraft account: {names.join(", ")}</Notice>}
-      {bedrock.length > 0 && <Notice>No Bedrock player found: {bedrock.join(", ")}. A Bedrock player can be found once they have played on any server with Geyser.</Notice>}
+      {missing.length > 0 && (
+        <Notice>
+          {counted(missing.length, "name")} not found: {missing.join(", ")}
+        </Notice>
+      )}
+      {missingBedrock.length > 0 && (
+        <Notice>
+          {counted(missingBedrock.length, "gamertag")} not found: {missingBedrock.join(", ")}. A Bedrock player can be found once they have played on any server with Geyser.
+        </Notice>
+      )}
+      {unchecked.length > 0 && (
+        <Notice action={uncheckedBedrock.length === 0 && again}>
+          Mojang didn't answer for {counted(unchecked.length, "name")}: {unchecked.join(", ")}
+        </Notice>
+      )}
+      {uncheckedBedrock.length > 0 && (
+        <Notice action={again}>
+          GeyserMC didn't answer for {counted(uncheckedBedrock.length, "gamertag")}: {uncheckedBedrock.join(", ")}
+        </Notice>
+      )}
     </>
   );
 }
@@ -196,7 +236,7 @@ export function SaveAsList({ org, server, list, open, onOpenChange }: { org: str
       qc.setQueryData<PlayerList[]>(keys.playerLists(org), (all) => (all ? [...all, made] : all));
       await qc.invalidateQueries({ queryKey: keys.playerLists(org) });
       onOpenChange(false);
-      navigate(`/o/${org}/players/${made.id}`, { state: { missing: made.missing, missingBedrock: made.missingBedrock } });
+      navigate(`/o/${org}/players/${made.id}`, { state: notAddedOf(made) });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save the list.");
     } finally {

@@ -253,10 +253,10 @@ func (s *Server) currentGamertag(ctx context.Context, xuid string) (string, erro
 // lookUpBedrock asks GeyserMC who each gamertag belongs to, a few at a
 // time, as lookUpPlayers asks Mojang. A gamertag may be given as the game
 // shows it, behind Floodgate's prefix. Gamertags GeyserMC does not know,
-// and what could not be one, are missing; any other failure fails the
-// whole.
-func (s *Server) lookUpBedrock(ctx context.Context, gamertags []string) ([]store.ListPlayer, []string, error) {
-	var asked, missing []string
+// and what could not be one, are missing; those it did not answer for are
+// unchecked, and the rest are added.
+func (s *Server) lookUpBedrock(ctx context.Context, gamertags []string) (out []store.ListPlayer, missing, unchecked []string, err error) {
+	var asked []string
 	for _, tag := range gamertags {
 		tag = strings.TrimSpace(tag)
 		bare := strings.TrimSpace(strings.TrimLeft(tag, ".*!~+-"))
@@ -269,7 +269,7 @@ func (s *Server) lookUpBedrock(ctx context.Context, gamertags []string) ([]store
 		}
 	}
 	if len(asked) > store.MaxListPlayers {
-		return nil, nil, errBadRequest("Up to %d players can be added at once.", store.MaxListPlayers)
+		return nil, nil, nil, errBadRequest("Up to %d players can be added at once.", store.MaxListPlayers)
 	}
 	found := make([]*store.ListPlayer, len(asked))
 	errs := make([]error, len(asked))
@@ -287,7 +287,6 @@ func (s *Server) lookUpBedrock(ctx context.Context, gamertags []string) ([]store
 	}
 	close(next)
 	wg.Wait()
-	var out []store.ListPlayer
 	for i, tag := range asked {
 		var e *Error
 		switch {
@@ -299,10 +298,10 @@ func (s *Server) lookUpBedrock(ctx context.Context, gamertags []string) ([]store
 			missing = append(missing, tag)
 		default:
 			s.Log.Warn("could not look up a Bedrock player", "gamertag", tag, "error", errs[i])
-			return nil, nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not check the gamertags with GeyserMC. Try again in a moment."}
+			unchecked = append(unchecked, tag)
 		}
 	}
-	return out, missing, nil
+	return out, missing, unchecked, nil
 }
 
 // changeWhitelistFile puts players on whitelist.json and takes others off

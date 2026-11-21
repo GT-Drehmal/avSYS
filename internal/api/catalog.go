@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GT-Drehmal/avSYS/internal/mojang"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -40,17 +41,11 @@ type cacheEntry struct {
 	expires time.Time
 }
 
-// catalogDial is how long connecting to a site may take. From inside a
-// cluster, a connection to Mojang's sites from some ports never gets an
-// answer while one from another port does at once: a connection that does
-// not answer is given up soon, and the next try makes a new one.
-var catalogDial = 4 * time.Second
-
 func newCatalog(version string) *catalog {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = (&net.Dialer{Timeout: catalogDial, KeepAlive: 30 * time.Second}).DialContext
 	return &catalog{
-		http: &http.Client{Timeout: 15 * time.Second, Transport: transport},
+		// Connecting gives up after mojang.Dial: Mojang's sites are asked
+		// again on a new connection (getMojang), and others fail sooner.
+		http: &http.Client{Timeout: 15 * time.Second, Transport: mojang.Transport()},
 		// Modrinth asks for a User-Agent that identifies the application.
 		userAgent: "GT-Drehmal/avSYS/" + version,
 		entries:   map[string]cacheEntry{},
@@ -70,8 +65,8 @@ func (c *catalog) getOr(ctx context.Context, u string, ttl time.Duration, notFou
 	if body, ok := c.cached(u, false); ok {
 		return body, nil
 	}
-	if mojangMirror(u) != "" {
-		return c.getMojang(ctx, u, ttl)
+	if isMojang(u) {
+		return c.getMojang(ctx, u, ttl, notFound)
 	}
 	body, err := c.fetch(ctx, u, notFound)
 	if err != nil {
@@ -103,36 +98,69 @@ func (c *catalog) keep(u string, body []byte, ttl time.Duration) {
 
 // fetch reads a URL as JSON.
 func (c *catalog) fetch(ctx context.Context, u string, notFound func(status int, body []byte) bool) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", c.userAgent)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not reach " + req.URL.Host + "."}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, errNotFound
-	}
-	if resp.StatusCode != http.StatusOK {
-		if notFound != nil {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-			if notFound(resp.StatusCode, body) {
-				return nil, errNotFound
-			}
-		}
-		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: fmt.Sprintf("%s answered %s.", req.URL.Host, resp.Status)}
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	status, body, err := c.send(ctx, http.MethodGet, u, nil)
+	return answerOf(u, status, body, err, notFound)
 }
 
-// Mojang's sites, each with the other name it also answers at. From inside
-// some clusters a connection to them now and then gets no answer at all
-// (from some source ports, which a cluster's NAT picks at random), so what
-// is read from them is asked for a few times, each on a new connection, at
-// one name and then the other, for a few seconds each time.
+// send makes one request, with a JSON body if one is given, and reads the
+// answer: its status (0 for none), and what it says.
+func (c *catalog) send(ctx context.Context, method, u string, in []byte) (int, []byte, error) {
+	var body io.Reader
+	if in != nil {
+		body = bytes.NewReader(in)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, body)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	unreachable := &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not reach " + req.URL.Host + "."}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, unreachable
+	}
+	defer resp.Body.Close()
+	limit := int64(8 << 20)
+	if resp.StatusCode != http.StatusOK {
+		limit = 64 << 10
+	}
+	out, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	if err != nil {
+		// Cut off part of the way: as good as no answer.
+		return 0, nil, unreachable
+	}
+	return resp.StatusCode, out, nil
+}
+
+// answerOf is what an answer to a GET means: what it says for 200,
+// errNotFound for 404 or one notFound says so of, and an error for any
+// other.
+func answerOf(u string, status int, body []byte, err error, notFound func(status int, body []byte) bool) ([]byte, error) {
+	switch {
+	case err != nil:
+		return nil, err
+	case status == http.StatusOK:
+		return body, nil
+	case status == http.StatusNotFound, notFound != nil && notFound(status, body):
+		return nil, errNotFound
+	}
+	return nil, answered(u, status)
+}
+
+// answered is the error for an answer that is not what was asked for.
+func answered(u string, status int) error {
+	host := u
+	if p, err := url.Parse(u); err == nil {
+		host = p.Host
+	}
+	return &Error{Status: http.StatusBadGateway, Code: "upstream", Message: fmt.Sprintf("%s answered %d %s.", host, status, http.StatusText(status))}
+}
+
+// Mojang's sites that have another name they also answer at. What is read
+// from them is asked for at one name and then the other (getMojang).
 var mojangHosts = map[string]string{
 	"launchermeta.mojang.com": "piston-meta.mojang.com",
 	"piston-meta.mojang.com":  "launchermeta.mojang.com",
@@ -151,51 +179,63 @@ func mojangMirror(u string) string {
 	return p.String()
 }
 
-var (
-	// mojangTries is how many times something of Mojang's is asked for,
-	// mojangTry how long each may take (connecting, catalogDial of it),
-	// and mojangBackoff how long is waited after the first that fails,
-	// twice that after each next: 5 tries in under 40 seconds, about 28
-	// where it is connecting that fails.
-	mojangTries   = 5
-	mojangTry     = 6 * time.Second
-	mojangBackoff = 500 * time.Millisecond
-)
+// isMojang says whether a URL is one of Mojang's, which is asked for again
+// when it gets no answer.
+func isMojang(u string) bool {
+	p, err := url.Parse(u)
+	return err == nil && p.Scheme == "https" && mojang.Is(p.Host)
+}
 
-// getMojang reads a URL of Mojang's at either of its names, trying again a
-// few times. When neither answers, what was read from it before is used,
-// however old.
-func (c *catalog) getMojang(ctx context.Context, u string, ttl time.Duration) ([]byte, error) {
+// getMojang reads a URL of Mojang's, at either of its names where it has
+// two, trying again a few times (mojang.Do). When it gets no answer, what
+// was read from it before is used, however old.
+func (c *catalog) getMojang(ctx context.Context, u string, ttl time.Duration, notFound func(status int, body []byte) bool) ([]byte, error) {
 	urls := []string{u}
 	if m := mojangMirror(u); m != "" {
 		urls = append(urls, m)
 	}
-	wait := mojangBackoff
-	var err error
-	for i := range mojangTries {
-		if i > 0 {
-			select {
-			case <-ctx.Done():
-				return c.staleOr(u, err)
-			case <-time.After(wait):
-			}
-			wait *= 2
+	var body []byte
+	err := mojang.Do(ctx, func(ctx context.Context, n int) (bool, error) {
+		at := urls[n%len(urls)]
+		status, b, err := c.send(ctx, http.MethodGet, at, nil)
+		body, err = answerOf(at, status, b, err, notFound)
+		if errors.Is(err, errNotFound) {
+			// Mojang says there is no such thing: no use asking again.
+			// (Its other name may not have what the first has.)
+			return n%len(urls) != 0, err
 		}
-		try, cancel := context.WithTimeout(ctx, mojangTry)
-		var body []byte
-		body, err = c.fetch(try, urls[i%len(urls)], nil)
-		cancel()
-		if err == nil {
-			c.keep(u, body, ttl)
-			return body, nil
-		}
-		// Mojang says there is no such thing: no use asking again. (Its
-		// other name may not have what the first has.)
-		if errors.Is(err, errNotFound) && i%len(urls) == 0 {
-			return nil, err
-		}
+		return mojang.Again(status), err
+	})
+	switch {
+	case err == nil:
+		c.keep(u, body, ttl)
+		return body, nil
+	case errors.Is(err, errNotFound):
+		return nil, err
 	}
 	return c.staleOr(u, err)
+}
+
+// postMojang sends JSON to one of Mojang's addresses and reads the answer,
+// trying again as getMojang does. It is not cached.
+func (c *catalog) postMojang(ctx context.Context, u string, in any) ([]byte, error) {
+	sent, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	var body []byte
+	err = mojang.Do(ctx, func(ctx context.Context, _ int) (bool, error) {
+		status, b, err := c.send(ctx, http.MethodPost, u, sent)
+		if err == nil && status != http.StatusOK {
+			err = answered(u, status)
+		}
+		body = b
+		return mojang.Again(status), err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 func (c *catalog) staleOr(u string, err error) ([]byte, error) {
@@ -207,25 +247,18 @@ func (c *catalog) staleOr(u string, err error) ([]byte, error) {
 
 // post sends JSON to a URL and reads the JSON answer. It is not cached.
 func (c *catalog) post(ctx context.Context, u string, in any) ([]byte, error) {
-	body, err := json.Marshal(in)
+	sent, err := json.Marshal(in)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	status, body, err := c.send(ctx, http.MethodPost, u, sent)
+	if err == nil && status != http.StatusOK {
+		err = answered(u, status)
+	}
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not reach " + req.URL.Host + "."}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: fmt.Sprintf("%s answered %s.", req.URL.Host, resp.Status)}
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	return body, nil
 }
 
 func writeRawJSON(w http.ResponseWriter, body []byte, maxAge time.Duration) {

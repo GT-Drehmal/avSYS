@@ -8,13 +8,13 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sync"
 	"time"
 
+	"github.com/GT-Drehmal/avSYS/internal/mojang"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -98,7 +98,7 @@ func (s *Server) headOf(ctx context.Context, uuid string) ([]byte, error) {
 			return nil, err
 		}
 	} else {
-		body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(uuid), 6*time.Hour)
+		body, err := s.catalog.getOr(ctx, sessionProfileURL(uuid), 6*time.Hour, noContent)
 		if err != nil {
 			return nil, err
 		}
@@ -109,20 +109,16 @@ func (s *Server) headOf(ctx context.Context, uuid string) ([]byte, error) {
 	if skin == "" {
 		return nil, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, skin, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", s.catalog.userAgent)
-	resp, err := s.catalog.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, errNotFound
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// Mojang's texture server, asked again as Mojang is.
+	var data []byte
+	err := mojang.Do(ctx, func(ctx context.Context, _ int) (bool, error) {
+		status, body, err := s.catalog.send(ctx, http.MethodGet, skin, nil)
+		if err == nil && status != http.StatusOK {
+			err = errNotFound
+		}
+		data = body
+		return mojang.Again(status), err
+	})
 	if err != nil {
 		return nil, err
 	}

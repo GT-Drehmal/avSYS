@@ -100,9 +100,9 @@ func jarWith(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// mojang serves a manifest, version files and server jars as Mojang does,
+// mojangSite serves a manifest, version files and server jars as Mojang does,
 // jars in ranges, and counts what is asked of it.
-type mojang struct {
+type mojangSite struct {
 	t      *testing.T
 	jars   map[string][]byte
 	ranges bool
@@ -110,8 +110,8 @@ type mojang struct {
 	srv    *httptest.Server
 }
 
-func newMojang(t *testing.T, jars map[string][]byte) *mojang {
-	m := &mojang{t: t, jars: jars, ranges: true}
+func newMojang(t *testing.T, jars map[string][]byte) *mojangSite {
+	m := &mojangSite{t: t, jars: jars, ranges: true}
 	m.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.asked.Add(1)
 		jar, ok := m.jars[strings.TrimPrefix(r.URL.Path, "/jar/")]
@@ -130,7 +130,7 @@ func newMojang(t *testing.T, jars map[string][]byte) *mojang {
 
 // RoundTrip answers Mojang's manifest and version files itself, and sends
 // the jars to its server.
-func (m *mojang) RoundTrip(r *http.Request) (*http.Response, error) {
+func (m *mojangSite) RoundTrip(r *http.Request) (*http.Response, error) {
 	if strings.HasPrefix(r.URL.String(), m.srv.URL) {
 		return http.DefaultTransport.RoundTrip(r)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -17,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
+	"github.com/GT-Drehmal/avSYS/internal/mojang"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -38,8 +38,7 @@ func (s *Server) minecraftProfile(ctx context.Context, name string) (*store.Mine
 	if !minecraftNamePattern.MatchString(name) {
 		return nil, errBadRequest("%q is not a Minecraft username.", name)
 	}
-	// Asked in one case, so that a name typed in another is not asked again.
-	body, err := s.catalog.get(ctx, "https://api.mojang.com/users/profiles/minecraft/"+url.PathEscape(strings.ToLower(name)), 5*time.Minute)
+	body, err := s.catalog.getOr(ctx, profileURL(name), profileFor, noContent)
 	if errors.Is(err, errNotFound) {
 		return nil, &Error{Status: http.StatusNotFound, Code: "no_such_player", Message: "There is no Minecraft account named " + name + "."}
 	}
@@ -51,6 +50,118 @@ func (s *Server) minecraftProfile(ctx context.Context, name string) (*store.Mine
 		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not check that name with Mojang."}
 	}
 	return &store.MinecraftAccount{UUID: profile.ID, Name: profile.Name}, nil
+}
+
+// profileURL is where Mojang says who a name belongs to, and what is kept
+// of its answer is kept by: in one case, so that a name typed in another is
+// not asked again.
+func profileURL(name string) string {
+	return "https://api.mojang.com/users/profiles/minecraft/" + url.PathEscape(strings.ToLower(name))
+}
+
+// profileFor is how long who a name belongs to is kept.
+const profileFor = 5 * time.Minute
+
+// noContent takes Mojang's 204, which it has answered for a name or UUID
+// nobody has, as 404.
+func noContent(status int, _ []byte) bool { return status == http.StatusNoContent }
+
+const (
+	// bulkByName is where Mojang says who several names belong to at once,
+	// and nameBatch how many it takes at a time.
+	bulkByName = "https://api.minecraftservices.com/minecraft/profile/lookup/bulk/byname"
+	nameBatch  = 10
+	// nameBatches is how many batches are asked at once, and nameChecks
+	// how long checking a list of names takes at most: a batch not
+	// answered by then is left unchecked.
+	nameBatches = 4
+	nameChecks  = 45 * time.Second
+)
+
+// minecraftProfiles asks Mojang who each name belongs to, nameBatch at a
+// time, each batch tried again as anything of Mojang's is. Names are given
+// checked and once each. What it says is each name's account (found), the
+// names no account has (missing), and those of batches it never answered
+// (unchecked), each in the order given. Names looked up a moment ago are
+// not asked again.
+func (s *Server) minecraftProfiles(ctx context.Context, names []string) (found map[string]store.MinecraftAccount, missing, unchecked []string) {
+	found = map[string]store.MinecraftAccount{}
+	var ask []string
+	for _, name := range names {
+		var profile struct{ ID, Name string }
+		if body, ok := s.catalog.cached(profileURL(name), false); ok && json.Unmarshal(body, &profile) == nil && profile.ID != "" {
+			found[strings.ToLower(name)] = store.MinecraftAccount{UUID: profile.ID, Name: profile.Name}
+		} else {
+			ask = append(ask, name)
+		}
+	}
+	var batches [][]string
+	for batch := range slices.Chunk(ask, nameBatch) {
+		batches = append(batches, batch)
+	}
+	ctx, cancel := context.WithTimeout(ctx, nameChecks)
+	defer cancel()
+	answers := make([][]store.MinecraftAccount, len(batches))
+	errs := make([]error, len(batches))
+	var wg sync.WaitGroup
+	next := make(chan int)
+	for range min(nameBatches, len(batches)) {
+		wg.Go(func() {
+			for i := range next {
+				answers[i], errs[i] = s.profileBatch(ctx, batches[i])
+			}
+		})
+	}
+	for i := range batches {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	var failed error
+	for i, batch := range batches {
+		if errs[i] != nil {
+			failed = errs[i]
+			unchecked = append(unchecked, batch...)
+			continue
+		}
+		for _, a := range answers[i] {
+			found[strings.ToLower(a.Name)] = a
+			// Kept as a lookup of the one name would keep it.
+			if body, err := json.Marshal(map[string]string{"id": a.UUID, "name": a.Name}); err == nil {
+				s.catalog.keep(profileURL(a.Name), body, profileFor)
+			}
+		}
+	}
+	if failed != nil {
+		s.Log.Warn("Mojang did not answer for some names", "names", len(unchecked), "error", failed)
+	}
+	for _, name := range ask {
+		if _, ok := found[strings.ToLower(name)]; !ok && !hasName(unchecked, name) {
+			missing = append(missing, name)
+		}
+	}
+	return found, missing, unchecked
+}
+
+// profileBatch asks Mojang who a few names belong to. A name it does not
+// answer with is one no account has.
+func (s *Server) profileBatch(ctx context.Context, names []string) ([]store.MinecraftAccount, error) {
+	body, err := s.catalog.postMojang(ctx, bulkByName, names)
+	if err != nil {
+		return nil, err
+	}
+	var profiles []struct{ ID, Name string }
+	if err := json.Unmarshal(body, &profiles); err != nil {
+		return nil, &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Could not read Mojang's answer."}
+	}
+	var out []store.MinecraftAccount
+	for _, p := range profiles {
+		// Only what was asked: anything else is not an answer to it.
+		if p.ID != "" && minecraftNamePattern.MatchString(p.Name) && hasName(names, p.Name) {
+			out = append(out, store.MinecraftAccount{UUID: p.ID, Name: p.Name})
+		}
+	}
+	return out, nil
 }
 
 // setMinecraftAccount links the Minecraft account of the given name to the
@@ -733,11 +844,16 @@ func (s *Server) syncOrgOps(ctx context.Context, org *store.Org) {
 // someone else. Mojang is asked a few times a day per account at most, and
 // a name that cannot be looked up is left as it is.
 func (s *Server) refreshNames(ctx context.Context, members []store.Member) {
+	// Each is asked again where Mojang does not answer, for a while: not
+	// so long that the servers' lists wait on it. Those left are looked up
+	// with the next look.
+	ctx, cancel := context.WithTimeout(ctx, refreshFor)
+	defer cancel()
 	for i := range members {
 		m := &members[i]
 		for k := range m.Minecraft {
 			a := &m.Minecraft[k]
-			body, err := s.catalog.get(ctx, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(a.UUID), 6*time.Hour)
+			body, err := s.catalog.getOr(ctx, sessionProfileURL(a.UUID), 6*time.Hour, noContent)
 			if err != nil {
 				continue
 			}
@@ -802,25 +918,32 @@ func (s *Server) refreshListNames(ctx context.Context, orgID string, budget *int
 	}
 }
 
-// currentName asks Mojang what an account is called now.
+// refreshFor is how long the names of an organization's members are looked
+// up for at most, in one look.
+const refreshFor = 20 * time.Second
+
+// sessionProfileURL is where Mojang has an account's name and skin.
+func sessionProfileURL(uuid string) string {
+	return "https://sessionserver.mojang.com/session/minecraft/profile/" + url.PathEscape(uuid)
+}
+
+// currentName asks Mojang what an account is called now: again where it
+// does not answer, for a few seconds.
 func (s *Server) currentName(ctx context.Context, uuid string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://sessionserver.mojang.com/session/minecraft/profile/"+url.PathEscape(uuid), nil)
+	var body []byte
+	err := mojang.Do(ctx, func(ctx context.Context, _ int) (bool, error) {
+		u := sessionProfileURL(uuid)
+		status, b, err := s.catalog.send(ctx, http.MethodGet, u, nil)
+		body, err = answerOf(u, status, b, err, noContent)
+		return mojang.Again(status), err
+	})
 	if err != nil {
 		return "", err
-	}
-	req.Header.Set("User-Agent", s.catalog.userAgent)
-	resp, err := s.catalog.http.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", errNotFound
 	}
 	var profile struct{ Name string }
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&profile); err != nil || !minecraftNamePattern.MatchString(profile.Name) {
+	if err := json.Unmarshal(body, &profile); err != nil || !minecraftNamePattern.MatchString(profile.Name) {
 		return "", errNotFound
 	}
 	return profile.Name, nil

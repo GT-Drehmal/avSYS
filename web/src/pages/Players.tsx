@@ -2,11 +2,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MoreHorizontal, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
-import { BedrockMark, type Edition, Heads, Missing, namesOf, PlayerHead, PlayerNamesField, playerCount } from "../components/PlayerLists";
+import { BedrockMark, type Edition, Heads, NotAddedNotices, namesOf, notAddedOf, PlayerHead, PlayerNamesField, playerCount } from "../components/PlayerLists";
 import { ListBar } from "../components/ListBar";
 import { useOrg } from "../components/Shell";
 import { Button, Confirm, Empty, Field, Input, Loading, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Notice, PageHeader, SearchBox } from "../components/ui";
-import { api, ApiError, atLeast, type PlayerList, type PlayerListChange } from "../lib/api";
+import { api, ApiError, atLeast, type NotAdded, type PlayerList, type PlayerListChange } from "../lib/api";
 import { byCount, byText, byTime, type ListOptions, useList } from "../lib/list";
 import { keys, usePlayerLists } from "../lib/queries";
 import { matches } from "../lib/search";
@@ -107,7 +107,7 @@ function NewList({ org, onClose }: { org: string; onClose: () => void }) {
     try {
       const made = await api.post<PlayerListChange>(`/orgs/${org}/player-lists`, { name, ...namesOf(edition, names) });
       await qc.invalidateQueries({ queryKey: keys.playerLists(org) });
-      navigate(made.id, { state: { missing: made.missing, missingBedrock: made.missingBedrock } });
+      navigate(made.id, { state: notAddedOf(made) });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not make the list.");
       setBusy(false);
@@ -151,9 +151,8 @@ export function PlayerListPage() {
   const [edition, setEdition] = useState<Edition>("java");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Names no account has, from what was last added: on making the list too.
-  const made = location.state as { missing?: string[]; missingBedrock?: string[] } | null;
-  const [missing, setMissing] = useState({ java: made?.missing ?? [], bedrock: made?.missingBedrock ?? [] });
+  // Names not added, from what was last added: on making the list too.
+  const [notAdded, setNotAdded] = useState(() => notAddedOf(location.state as Partial<NotAdded> | null));
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -195,8 +194,20 @@ export function PlayerListPage() {
   const add = async () => {
     const now = await act("add", () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, namesOf(edition, adding)));
     if (now) {
-      setMissing({ java: now.missing, bedrock: now.missingBedrock });
+      setNotAdded(notAddedOf(now));
       setAdding([...now.missing, ...now.missingBedrock].join("\n"));
+    }
+  };
+  /** Asks again about the names that could not be checked. */
+  const tryAgain = async () => {
+    const now = await act("again", () => api.post<PlayerListChange>(`/orgs/${org}/player-lists/${id}/players`, { names: notAdded.unchecked, bedrock: notAdded.uncheckedBedrock }));
+    if (now) {
+      setNotAdded((was) => ({
+        missing: [...was.missing, ...now.missing],
+        missingBedrock: [...was.missingBedrock, ...now.missingBedrock],
+        unchecked: now.unchecked,
+        uncheckedBedrock: now.uncheckedBedrock,
+      }));
     }
   };
   const shown = list.players.filter((p) => matches(query, p.name));
@@ -256,7 +267,7 @@ export function PlayerListPage() {
             </div>
           </form>
         )}
-        <Missing names={missing.java} bedrock={missing.bedrock} />
+        <NotAddedNotices names={notAdded} onTryAgain={canEdit ? tryAgain : undefined} trying={busy === "again"} />
         {error && <Notice tone="danger">{error}</Notice>}
         {list.players.length === 0 ? (
           <Empty title="No players yet">{canEdit ? "Add some above." : "An admin can add some."}</Empty>
