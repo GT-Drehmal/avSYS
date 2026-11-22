@@ -2,11 +2,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Monitor, Smartphone } from "lucide-react";
 import { useState } from "react";
 import { Navigate } from "react-router";
+import { ProviderIcon } from "../components/ProviderIcon";
 import { Button, Chip, CopyText, Field, Input, Modal, Notice, Section } from "../components/ui";
-import { api, type Session } from "../lib/api";
+import { api, ApiError, qs, type Session } from "../lib/api";
 import { describeDevice } from "../lib/device";
 import { ago } from "../lib/format";
-import { keys, useAction, useMe } from "../lib/queries";
+import { keys, useAction, useMe, useMeta } from "../lib/queries";
 import { toast } from "../lib/toast";
 import { AuthFrame } from "./Login";
 
@@ -30,11 +31,59 @@ function RecoveryCodes({ codes }: { codes: string[] }) {
 }
 
 /**
- * Turning two-factor on: the password, then the QR code and a code from the
- * app, then the recovery codes. onDone is called once those are put away.
+ * How someone shows it is them before changing their two-factor: their
+ * password, or, with none to give, having signed in a moment ago. stale is
+ * set once the panel said that was too long ago.
+ */
+function useProof() {
+  const me = useMe().data!;
+  const meta = useMeta().data;
+  const [stale, setStale] = useState(false);
+  const password = me.hasPassword && meta?.passwords !== false;
+  return {
+    password,
+    /** Whether they have to sign in again first. */
+    again: !password && (!me.recentSignIn || stale),
+    /** Notes an error that says to sign in again. */
+    failed: (err: unknown) => {
+      if (err instanceof ApiError && err.code === "recent_sign_in") setStale(true);
+    },
+  };
+}
+
+/** Links to sign in again through each provider they have, back to this page. */
+function SignInAgain() {
+  const me = useMe().data!;
+  const meta = useMeta().data;
+  const linked = new Set(me.identities.map((i) => i.provider));
+  const next = window.location.pathname;
+  return (
+    <div className="flex flex-col gap-3">
+      <Notice tone="info">Sign in again to continue.</Notice>
+      {(meta?.providers ?? [])
+        .filter((p) => linked.has(p.id))
+        .map((p) => (
+          <a
+            key={p.id}
+            href={`/api/v1/auth/${p.id}/start?${qs({ next })}`}
+            className="flex h-9 items-center justify-center gap-2 rounded-md border border-line-strong bg-raised text-[13px] font-medium hover:bg-hover"
+          >
+            <ProviderIcon id={p.id} />
+            Continue with {p.name}
+          </a>
+        ))}
+    </div>
+  );
+}
+
+/**
+ * Turning two-factor on: the password (or a recent sign-in, for someone
+ * with none), then the QR code and a code from the app, then the recovery
+ * codes. onDone is called once those are put away.
  */
 export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCancel?: () => void }) {
   const qc = useQueryClient();
+  const proof = useProof();
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [key, setKey] = useState<{ secret: string; qr: string } | null>(null);
@@ -86,17 +135,33 @@ export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCan
       </form>
     );
   }
+  if (proof.again) {
+    return (
+      <div className="flex flex-col gap-4">
+        <SignInAgain />
+        {onCancel && (
+          <div className="flex justify-end">
+            <Button onClick={onCancel}>Cancel</Button>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <form
       className="flex flex-col gap-4"
       onSubmit={(e) => {
         e.preventDefault();
-        start.mutate(undefined, { onSuccess: setKey });
+        start.mutate(undefined, { onSuccess: setKey, onError: proof.failed });
       }}
     >
-      <Field label="Password" missing="Enter your password.">
-        {(id) => <Input id={id} type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
-      </Field>
+      {proof.password ? (
+        <Field label="Password" missing="Enter your password.">
+          {(id) => <Input id={id} type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
+        </Field>
+      ) : (
+        <p className="text-[13px] text-muted">You need an authenticator app on your phone.</p>
+      )}
       <div className="flex justify-end gap-2">
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
         <Button type="submit" variant="primary" loading={start.isPending}>
@@ -107,29 +172,41 @@ export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCan
   );
 }
 
-/** Asks for the password before doing something to two-factor. */
-function WithPassword({ title, action, danger, run, onClose }: { title: string; action: string; danger?: boolean; run: (password: string) => Promise<unknown>; onClose: () => void }) {
+/** Asks for the password, or a recent sign-in, before doing something to two-factor. */
+function Confirming({ title, action, danger, run, onClose }: { title: string; action: string; danger?: boolean; run: (password: string) => Promise<unknown>; onClose: () => void }) {
+  const proof = useProof();
   const [password, setPassword] = useState("");
   const go = useAction(() => run(password));
   return (
     <Modal open onOpenChange={onClose} title={title}>
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          go.mutate(undefined);
-        }}
-      >
-        <Field label="Password" missing="Enter your password.">
-          {(id) => <Input id={id} type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
-        </Field>
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant={danger ? "danger" : "primary"} loading={go.isPending}>
-            {action}
-          </Button>
+      {proof.again ? (
+        <div className="flex flex-col gap-4">
+          <SignInAgain />
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Cancel</Button>
+          </div>
         </div>
-      </form>
+      ) : (
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            go.mutate(undefined, { onError: proof.failed });
+          }}
+        >
+          {proof.password && (
+            <Field label="Password" missing="Enter your password.">
+              {(id) => <Input id={id} type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
+            </Field>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant={danger ? "danger" : "primary"} loading={go.isPending}>
+              {action}
+            </Button>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }
@@ -140,12 +217,9 @@ export function TwoFactor() {
   const [open, setOpen] = useState<"setup" | "off" | "codes" | null>(null);
   const [codes, setCodes] = useState<string[] | null>(null);
   const close = () => setOpen(null);
-  const required = me.user.isAdmin && me.adminTwoFactor;
   return (
-    <Section title="Two-factor" description="A code from your phone, as well as your password, to sign in.">
-      {!me.hasPassword ? (
-        <p className="text-[13px] text-muted">Set a password to use two-factor.</p>
-      ) : me.twoFactor ? (
+    <Section title="Two-factor" description="A code from your phone each time you sign in.">
+      {me.twoFactor ? (
         <div className="flex flex-wrap items-center gap-3">
           <Chip className="border-accent/40 text-accent">On</Chip>
           <span className="text-xs text-muted">
@@ -155,7 +229,7 @@ export function TwoFactor() {
           <Button size="sm" onClick={() => setOpen("codes")}>
             New recovery codes
           </Button>
-          <Button size="sm" disabled={required} title={required ? "Administrators need two-factor here." : undefined} onClick={() => setOpen("off")}>
+          <Button size="sm" disabled={me.twoFactorRequired} title={me.twoFactorRequired ? "You need two-factor here." : undefined} onClick={() => setOpen("off")}>
             Turn off
           </Button>
         </div>
@@ -169,7 +243,7 @@ export function TwoFactor() {
         <TwoFactorSetup onDone={close} onCancel={close} />
       </Modal>
       {open === "off" && (
-        <WithPassword
+        <Confirming
           title="Turn off two-factor?"
           action="Turn off"
           danger
@@ -183,7 +257,7 @@ export function TwoFactor() {
         />
       )}
       {open === "codes" && (
-        <WithPassword
+        <Confirming
           title="New recovery codes"
           action="Make new codes"
           onClose={close}
@@ -255,12 +329,12 @@ export function Sessions() {
   );
 }
 
-/** For an administrator who has to set up two-factor before going on. */
+/** For someone who has to set up two-factor before going on. */
 export function TwoFactorRequired() {
   const me = useMe().data;
   if (!me?.mustSetUpTwoFactor) return <Navigate to="/" replace />;
   return (
-    <AuthFrame title="Set up two-factor" subtitle="Administrators here need two-factor to sign in.">
+    <AuthFrame title="Set up two-factor" subtitle="You need two-factor to use this panel.">
       <div className="flex flex-col gap-5">
         <TwoFactorSetup onDone={() => window.location.assign("/")} />
         <button

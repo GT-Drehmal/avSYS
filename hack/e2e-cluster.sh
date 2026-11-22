@@ -196,14 +196,17 @@ kubeconfig=$(mktemp)
 docker exec "$NAME" cat /etc/rancher/k3s/k3s.yaml > "$kubeconfig"
 # The offsite copy is a directory on the panel's own volume: nowhere a real
 # one should be, and enough to run it through here. Servers' extra ports
-# get a range of public ports.
+# get a range of public ports. Nobody has to use two-factor, as installed,
+# so that the first account makes its API token straight away: having to is
+# tested by the panel's own tests (internal/api, web/tests).
 HELM= HELM_DOCKER_ARGS="--network container:$NAME -v $kubeconfig:/kubeconfig:ro -e KUBECONFIG=/kubeconfig" \
   ./hack/chart.sh helm install avsys deploy/chart --namespace avsys \
   --set image.tag=e2e --set image.pullPolicy=IfNotPresent \
   --set publicURL="$URL" \
   --set offsite.repository=/data/offsite-e2e \
   --set-string offsite.password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')" \
-  --set extraPorts.range=25600-25609 >/dev/null || fail "helm install failed"
+  --set extraPorts.range=25600-25609 \
+  --set signIn.twoFactor=nobody >/dev/null || fail "helm install failed"
 rm -f "$kubeconfig"
 k -n avsys rollout status deploy/avsys --timeout=180s >/dev/null || fail "the panel did not become ready"
 k uncordon "$AGENT_NODE" >/dev/null
@@ -233,6 +236,8 @@ password=$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')
 curl -fsS -o /dev/null -c "$JAR" -H 'X-Avsys: 1' -d "{\"username\":\"e2e\",\"password\":\"$password\"}" "$URL/api/v1/auth/register"
 admin=$(curl -fsS -b "$JAR" "$URL/api/v1/me" | python3 -c 'import json,sys; print(json.load(sys.stdin)["user"]["isAdmin"])')
 [ "$admin" = True ] || fail "the first account is not an instance administrator"
+level=$(curl -fsS -b "$JAR" "$URL/api/v1/me" | python3 -c 'import json,sys; print(json.load(sys.stdin)["twoFactorLevel"])')
+[ "$level" = nobody ] || fail "installed with signIn.twoFactor=nobody, the panel has $level"
 status=$(curl -sS -o /dev/null -w '%{http_code}' -H 'X-Avsys: 1' -d '{"username":"second","password":"another password"}' "$URL/api/v1/auth/register")
 [ "$status" = 403 ] || fail "a second account was created without an invite (HTTP $status)"
 TOKEN=$(curl -fsS -b "$JAR" -H 'X-Avsys: 1' -d '{"name":"e2e"}' "$URL/api/v1/me/tokens" | python3 -c 'import json,sys; print(json.load(sys.stdin)["secret"])')

@@ -106,6 +106,16 @@ Open `publicURL` and create an account. The first account becomes the
 owner, and use the **Nodes** and **Instance settings** pages. After that, accounts are made from
 invite links, unless `signups` is `true`, which lets anyone make one.
 
+The administrator sets up two-factor first, before anything else (an API
+token included): a new panel asks it of admins and owners, and always of
+its administrator. To install with another level, set `signIn.twoFactor`
+(`nobody`, `admins`, `operators` or `everyone`; `AVSYS_TWO_FACTOR` without
+the chart). It is used until the first account is made; from then on, the
+choice in **Instance settings** is the one that counts, and changing the
+value later does nothing. A script that installs a panel and makes its
+first account and API token at once, as a test cluster does, installs with
+`signIn.twoFactor=nobody`.
+
 With [passwords off](#passwords-off) there is no form to fill in. The
 panel's log has a setup link instead:
 
@@ -187,8 +197,9 @@ with a TCP proxy of their own (Caddy's layer4 module, nginx `stream`, or a
 port forward) and set `sshPublicHost` to match, or leave SSH reachable only
 on the tailnet.
 
-A panel open to the internet should have **Require two-factor for
-administrators** on, in **Instance settings**.
+A panel open to the internet should keep **Require two-factor for** at
+**Admins and owners** (the default) or higher, in **Instance settings**.
+It holds for every way of signing in, providers too.
 
 ### `expose.mode`
 
@@ -349,10 +360,12 @@ passwords: false
 ```
 
 Everyone signs in through a provider, and no password can be used or set.
-With passwords go two-factor codes and reset links: the Account page has no
-two-factor section, the Members page no reset button, and the API refuses
-them with `passwords_off`. Passwords already set are kept, for if it is
-turned back on.
+Two-factor still works: a code after the provider, set up with a recent
+sign-in in place of a password, and **Require two-factor for** in
+**Instance settings** holds as with passwords on. Reset links only turn
+two-factor off; one that would set a password is refused with
+`passwords_off`. Passwords already set are kept, for if it is turned back
+on.
 
 - The chart refuses `passwords: false` with no provider in `signIn`.
 - When the panel starts, it warns in its log about each administrator who
@@ -572,6 +585,7 @@ its values; `extraEnv` passes any other. `avsys --help` lists them.
 | `packs.listener.port` / `.nodePort` / `.hostPort` | `8081` / none / `8081` | That listener's Service, node and host port. |
 | `packs.url` | `publicURL` | Address players' games fetch packs from. |
 | `packs.cacheMiB` | `512` | Most MiB kept packs may take; `0` for no limit. |
+| `signIn.twoFactor` | `admins` | Who has to use two-factor, until the first account is made: `nobody`, `admins`, `operators` or `everyone`. See [First sign-in](#first-sign-in). |
 | `signIn.existingSecret` | none | Secret with the providers' client secrets. |
 | `signIn.github` / `.discord` / `.google` `.clientId`, `.clientSecret` | none | [Sign-in providers](#sign-in-providers). |
 | `signIn.oidc.issuer`, `.clientId`, `.clientSecret` | none | [Your own OpenID Connect provider](#your-own-openid-connect-provider). |
@@ -638,6 +652,7 @@ false` with no provider; an offsite repository with no password; and
 | `--pod-dial` | `AVSYS_POD_DIAL` | `auto` | How to reach pods: `direct`, `forward` (through the API server), or `auto` (direct inside a cluster). |
 | `--allow-signups` | `AVSYS_ALLOW_SIGNUPS` | `false` | `true` lets anyone make an account. |
 | `--passwords` | `AVSYS_PASSWORDS` | `true` | `false` turns password sign-in off. |
+| `--two-factor` | `AVSYS_TWO_FACTOR` | `admins` | Who has to use two-factor, until the first account is made: `nobody`, `admins`, `operators` or `everyone`. |
 | `--install-crds` | `AVSYS_INSTALL_CRDS` | `true` | Install and upgrade the CRD at start. |
 | `--update-check` | `AVSYS_UPDATE_CHECK` | `true` | Ask GitHub for newer releases, and allow fixes to install by themselves. |
 | `--oidc-issuer` | `AVSYS_OIDC_ISSUER` | none | OpenID Connect issuer. |
@@ -728,12 +743,13 @@ proxy is listed in `trustedProxies` (see
 **Someone forgot their password.** The instance administrator makes a
 one-time reset link for them from an organization's **Members** page. It
 works once, for a day, and can also turn their two-factor off. With
-passwords off there are no reset links: people sign in through their
+passwords off there is no password to reset: people sign in through their
 provider.
 
 **Someone lost their two-factor device.** They sign in with one of their
 recovery codes. Without those, the instance administrator makes them a
-reset link that turns two-factor off.
+reset link that turns two-factor off; for an account with no password, or
+with passwords off, that is all the link does.
 
 **A player cannot join.** Check that the server's hostname resolves to the
 router's address and that the player uses the router's port. A player whose

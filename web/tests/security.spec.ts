@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from "@playwright/test";
-import { createHmac, randomUUID } from "node:crypto";
-import { type Api, expect, test } from "./panel";
+import { randomUUID } from "node:crypto";
+import { type Api, expect, test, totp, turnOnTwoFactor } from "./panel";
 
 // Sessions, two-factor and reset links, on accounts made for each test, so
 // that what one test turns on no other sees.
@@ -27,19 +27,6 @@ async function signIn(request: APIRequestContext, username: string, pw = passwor
 }
 
 const signedIn = async (request: APIRequestContext) => (await request.get("/api/v1/me")).ok();
-
-/** The code an authenticator app shows for a base32 secret (RFC 6238: SHA-1, six digits, 30 seconds). */
-function totp(secret: string, at = Date.now()) {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  let bits = "";
-  for (const c of secret.replace(/=+$/, "")) bits += alphabet.indexOf(c).toString(2).padStart(5, "0");
-  const key = Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(Math.floor(at / 1000 / 30)));
-  const mac = createHmac("sha1", key).update(counter).digest();
-  const offset = mac[mac.length - 1] & 0xf;
-  return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, "0");
-}
 
 test("two-factor is set up with a code, then asked for after the password", async ({ page, api, org }) => {
   const { username } = await newPerson(page, api, org);
@@ -210,52 +197,192 @@ test("only the panel's administrator may reset someone's sign-in", async ({ page
   await expect(owner.getByRole("button", { name: "Reset sign-in for owner" })).toHaveCount(0);
 });
 
-test("the administrator can require two-factor of administrators in Instance settings; others cannot", async ({ page, as, pageAs }) => {
+test("the administrator chooses who has to use two-factor in Instance settings; others cannot", async ({ page, as, pageAs }) => {
   await as("owner");
   // Answered here: the setting is the whole panel's, and other tests sign
   // in as the owner with a password.
   let asked: unknown = null;
-  let required = false;
-  await page.route("**/api/v1/settings/admin-two-factor", async (route) => {
+  let level = "nobody";
+  await page.route("**/api/v1/settings/two-factor", async (route) => {
     asked = route.request().postDataJSON();
-    required = (asked as { required: boolean }).required;
+    level = (asked as { level: string }).level;
     await route.fulfill({ status: 204 });
   });
   await page.route("**/api/v1/me", async (route) => {
     const me = await (await route.fetch()).json();
-    await route.fulfill({ json: { ...me, adminTwoFactor: required } });
+    await route.fulfill({ json: { ...me, twoFactorLevel: level } });
   });
   await page.goto("/settings");
-  const toggle = page.getByRole("region", { name: "Sign-in" }).getByRole("switch", { name: "Require two-factor for administrators" });
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await toggle.click();
-  await expect.poll(() => asked).toEqual({ required: true });
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  const signIn = page.getByRole("region", { name: "Sign-in" });
+  const choice = signIn.getByRole("button", { name: "Require two-factor for" });
+  await expect(choice).toHaveText("Nobody");
+  await expect(signIn.getByText("By highest role in any organization. Includes you, unless Nobody.")).toBeVisible();
+  await choice.click();
+  const menu = page.getByRole("menu");
+  const said = {
+    Nobody: "Up to each person.",
+    "Admins and owners": "Of any organization.",
+    "Operators and up": "Operators, admins and owners.",
+    Everyone: "Every account.",
+  };
+  await expect(menu.getByRole("menuitemradio")).toHaveText(Object.entries(said).map(([name, about]) => name + about));
+  for (const [name, about] of Object.entries(said)) {
+    await expect(menu.getByRole("menuitemradio", { name, exact: true })).toHaveAccessibleDescription(about);
+  }
+  await expect(menu.getByRole("menuitemradio", { name: "Nobody", exact: true })).toBeChecked();
+  await menu.getByRole("menuitemradio", { name: "Operators and up" }).click();
+  await expect.poll(() => asked).toEqual({ level: "operators" });
+  await expect(choice).toHaveText("Operators and up");
   // It is the whole panel's, so not on the administrator's own account page.
   await page.goto("/account");
   await expect(page.getByRole("heading", { name: "Two-factor" })).toBeVisible();
-  await expect(page.getByRole("switch", { name: /Require/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Require/ })).toHaveCount(0);
 
   const viewer = await pageAs("viewer");
   await viewer.goto("/account");
   await expect(viewer.getByRole("heading", { name: "Two-factor" })).toBeVisible();
-  await expect(viewer.getByRole("switch", { name: /Require/ })).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: /Require/ })).toHaveCount(0);
+  await viewer.goto("/settings");
+  await expect(viewer.getByText("Admins only")).toBeVisible();
 });
 
-test("an administrator who has to set up two-factor is sent to do that first", async ({ page, as }) => {
+test("someone who has to set up two-factor is sent to do that first", async ({ page, as }) => {
   await as("owner");
   await page.route("**/api/v1/me", async (route) => {
     const me = await (await route.fetch()).json();
-    return route.fulfill({ json: { ...me, mustSetUpTwoFactor: true } });
+    return route.fulfill({ json: { ...me, mustSetUpTwoFactor: true, twoFactorRequired: true } });
   });
   await page.goto("/o/friends");
   await expect(page).toHaveURL(/\/two-factor$/);
   await expect(page.getByRole("heading", { name: "Set up two-factor" })).toBeVisible();
-  await expect(page.getByText("Administrators here need two-factor to sign in.")).toBeVisible();
+  await expect(page.getByText("You need two-factor to use this panel.")).toBeVisible();
   await expect(page.getByLabel("Password")).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   // Nothing else is shown around it.
   await expect(page.getByRole("link", { name: "Servers" })).toHaveCount(0);
+});
+
+test("someone who comes to need two-factor while the panel is open is sent to set it up", async ({ page, as }) => {
+  await as("owner");
+  await page.goto("/o/friends");
+  const members = page.getByRole("link", { name: "Members" }).first();
+  await expect(members).toBeVisible();
+  // Made an admin somewhere, say: from then on the panel answers so.
+  await page.route("**/api/v1/orgs/friends/members", (route) => route.fulfill({ status: 403, json: { code: "two_factor_required", message: "Set up two-factor to continue." } }));
+  await page.route("**/api/v1/me", async (route) => {
+    const me = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...me, mustSetUpTwoFactor: true, twoFactorRequired: true } });
+  });
+  await members.click();
+  await expect(page).toHaveURL(/\/two-factor$/);
+  await expect(page.getByRole("heading", { name: "Set up two-factor" })).toBeVisible();
+});
+
+test("someone with no password sets up two-factor with a recent sign-in, or signs in again first", async ({ page, as }) => {
+  await as("outsider");
+  let recent = false;
+  await page.route("**/api/v1/me", async (route) => {
+    const me = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...me, hasPassword: false, twoFactor: false, recentSignIn: recent } });
+  });
+  // Not really set up: what matters is that no password is asked for.
+  let asked: unknown = null;
+  await page.route("**/api/v1/me/two-factor/setup", async (route) => {
+    asked = route.request().postDataJSON();
+    await route.fulfill({ status: 403, json: { code: "recent_sign_in", message: "Sign in again to do this." } });
+  });
+  await page.goto("/account");
+  const section = page.locator("section").filter({ has: page.getByRole("heading", { name: "Two-factor" }) });
+  await section.getByRole("button", { name: "Set up" }).click();
+  const dialog = page.getByRole("dialog");
+  // Signed in a while ago: again first, through the provider they have, back here.
+  await expect(dialog.getByText("Sign in again to continue.")).toBeVisible();
+  const again = dialog.getByRole("link", { name: "Continue with Test ID" });
+  await expect(again).toHaveAttribute("href", "/api/v1/auth/oidc/start?next=%2Faccount");
+  await expect(dialog.getByLabel("Password")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+
+  // Signed in a moment ago: no password, and on.
+  recent = true;
+  await page.reload();
+  await section.getByRole("button", { name: "Set up" }).click();
+  await expect(dialog.getByText("You need an authenticator app on your phone.")).toBeVisible();
+  await expect(dialog.getByLabel("Password")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect.poll(() => asked).toEqual({ password: "" });
+  // The panel says it was too long ago after all: sign in again.
+  await expect(dialog.getByRole("link", { name: "Continue with Test ID" })).toBeVisible();
+});
+
+test("an admin of an organization who signs in through a provider sets up two-factor, then is asked for a code", async ({ page, browser, freshPanel, pageErrors }) => {
+  // A panel of its own, as just installed: admins and owners have to.
+  const url = await freshPanel();
+  const headers = { "X-Avsys": "1" };
+  const founder = await page.request.post(`${url}/api/v1/auth/register`, { headers, data: { username: "founder", password } });
+  expect(founder.ok(), await founder.text()).toBe(true);
+  await turnOnTwoFactor(page.request, url, password);
+  expect((await page.request.post(`${url}/api/v1/orgs`, { headers, data: { name: "Home", slug: "home" } })).ok()).toBe(true);
+  const invite = await (await page.request.post(`${url}/api/v1/orgs/home/invites`, { headers, data: { role: "admin" } })).json();
+
+  // Someone new joins as an admin through the provider.
+  const theirs = await browser.newContext();
+  const them = await theirs.newPage();
+  them.on("pageerror", (e) => pageErrors.push(e.message));
+  await them.goto(`${url}/invite/${invite.token}`);
+  await them.getByRole("link", { name: "Continue with Test ID" }).click();
+  await expect(them).toHaveTitle("Test ID");
+  await them.getByLabel("Username").fill("ada");
+  await them.getByRole("button", { name: "Continue" }).click();
+
+  // Asked to set up two-factor before anything else, with no password to give.
+  await expect(them).toHaveURL(`${url}/two-factor`);
+  await expect(them.getByRole("heading", { name: "Set up two-factor" })).toBeVisible();
+  await expect(them.getByLabel("Password")).toHaveCount(0);
+  const setup = them.waitForResponse((r) => r.url().endsWith("/api/v1/me/two-factor/setup") && r.ok());
+  await them.getByRole("button", { name: "Continue" }).click();
+  const { secret } = await (await setup).json();
+  await them.getByLabel("Code").fill(totp(secret));
+  await them.getByRole("button", { name: "Turn on" }).click();
+  const codes = them.getByRole("list", { name: "Recovery codes" }).getByRole("listitem");
+  await expect(codes).toHaveCount(10);
+  const recovery = (await codes.first().textContent())!;
+  await them.getByRole("button", { name: "Done" }).click();
+  await expect(them).toHaveURL(`${url}/o/home`);
+
+  // The next sign-in through the provider asks for a code after it.
+  await them.request.post(`${url}/api/v1/auth/logout`, { headers });
+  await them.goto(`${url}/login`);
+  await them.getByRole("link", { name: "Continue with Test ID" }).click();
+  await them.getByLabel("Username").fill("ada");
+  await them.getByRole("button", { name: "Continue" }).click();
+  await expect(them.getByLabel("Code")).toBeVisible();
+  expect((await them.request.get(`${url}/api/v1/me`)).ok()).toBe(false);
+  await them.getByLabel("Code").fill("000000");
+  await them.getByRole("button", { name: "Sign in" }).click();
+  await expect(them.getByText("Wrong code. Try again.")).toBeVisible();
+  // The next code: the one shown was used.
+  await them.getByLabel("Code").fill(totp(secret, Date.now() + 30_000));
+  await them.getByRole("button", { name: "Sign in" }).click();
+  await expect(them).toHaveURL(`${url}/o/home`);
+  const me = await (await them.request.get(`${url}/api/v1/me`)).json();
+  expect(me).toMatchObject({ user: { username: "ada" }, twoFactor: true, twoFactorRequired: true, mustSetUpTwoFactor: false });
+
+  // And again with a recovery code; going back from the code starts over.
+  await them.request.post(`${url}/api/v1/auth/logout`, { headers });
+  await them.goto(`${url}/login`);
+  await them.getByRole("link", { name: "Continue with Test ID" }).click();
+  await them.getByLabel("Username").fill("ada");
+  await them.getByRole("button", { name: "Continue" }).click();
+  await them.getByRole("button", { name: "Back" }).click();
+  await expect(them.getByRole("link", { name: "Continue with Test ID" })).toBeVisible();
+  await expect(them.getByLabel("Code")).toHaveCount(0);
+  await them.getByRole("link", { name: "Continue with Test ID" }).click();
+  await them.getByLabel("Username").fill("ada");
+  await them.getByRole("button", { name: "Continue" }).click();
+  await them.getByLabel("Code").fill(recovery);
+  await them.getByRole("button", { name: "Sign in" }).click();
+  await expect(them).toHaveURL(`${url}/o/home`);
+  await theirs.close();
 });
 
 test("an administrator who need not set it up is not kept on that page", async ({ page, as }) => {

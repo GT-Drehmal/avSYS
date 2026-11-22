@@ -25,6 +25,9 @@ async function send(method: string, path: string, init: { headers?: Record<strin
   }
   if (!res.ok) {
     const err = res.headers.get("Content-Type")?.includes("application/json") ? await res.json() : null;
+    // Someone who has come to need two-factor, as by being made an admin,
+    // sets it up before anything else: the page for that says how.
+    if (err?.code === "two_factor_required" && location.pathname !== "/two-factor") location.assign("/two-factor");
     throw new ApiError(res.status, err?.code ?? "error", err?.message ?? `Request failed (${res.status}).`);
   }
   return res;
@@ -273,6 +276,9 @@ export const serverIcon = (s: Pick<Server, "org" | "name">) => `/api/v1/orgs/${s
 /** The picture among a snapshot's files: what a server made from it will have. */
 export const snapshotIcon = (org: string, id: string) => `/api/v1/orgs/${org}/snapshots/${id}/icon`;
 
+/** Who has to use two-factor, by their highest role in any organization. */
+export type TwoFactorLevel = "nobody" | "admins" | "operators" | "everyone";
+
 export interface Me {
   user: User;
   orgs: Org[];
@@ -286,10 +292,14 @@ export interface Me {
   twoFactor: boolean;
   /** Recovery codes they have left. */
   recoveryCodes: number;
-  /** An administrator who has to set up two-factor before anything else. */
+  /** Whether they have to use two-factor here. */
+  twoFactorRequired: boolean;
+  /** Someone who has to set up two-factor before anything else. */
   mustSetUpTwoFactor: boolean;
-  /** Whether administrators here have to use two-factor. */
-  adminTwoFactor: boolean;
+  /** Who has to use two-factor here. */
+  twoFactorLevel: TwoFactorLevel;
+  /** Whether this browser signed in a moment ago: what someone with no password gives in its place. */
+  recentSignIn: boolean;
   /** How the panel looks to them: the accent "" where they go by the panel's. */
   look: { theme: Theme; accent: Accent | "" };
 }

@@ -2,8 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { AccentPicker } from "../components/Look";
 import { ProviderIcon } from "../components/ProviderIcon";
-import { Button, Chip, Confirm, CopyText, Empty, Field, Input, Loading, Notice, PageHeader, Section, Spinner, Toggle } from "../components/ui";
-import { api, ApiError, type Meta, type PanelInfo, type PanelState, type ReleaseUpdate } from "../lib/api";
+import { Button, Chip, Confirm, CopyText, Empty, Field, Input, Loading, Notice, PageHeader, Section, SelectMenu, Spinner, Toggle, type Choice } from "../components/ui";
+import { api, ApiError, type Meta, type PanelInfo, type PanelState, type ReleaseUpdate, type TwoFactorLevel } from "../lib/api";
 import type { Accent } from "../lib/look";
 import { keys, useAction, useMe, useMeta, usePanel } from "../lib/queries";
 import { toast } from "../lib/toast";
@@ -170,10 +170,17 @@ function Updates({ state }: { state: PanelState }) {
   );
 }
 
-/** How people sign in, as the install has it, and whether administrators need two-factor. */
+const twoFactorChoices: Choice<TwoFactorLevel>[] = [
+  { value: "nobody", label: "Nobody", description: "Up to each person." },
+  { value: "admins", label: "Admins and owners", description: "Of any organization." },
+  { value: "operators", label: "Operators and up", description: "Operators, admins and owners." },
+  { value: "everyone", label: "Everyone", description: "Every account." },
+];
+
+/** How people sign in, as the install has it, and who has to use two-factor. */
 function SignIn({ meta }: { meta: Meta }) {
   const me = useMe().data!;
-  const setRequired = useAction((required: boolean) => api.put("/settings/admin-two-factor", { required }), [keys.me]);
+  const setLevel = useAction((level: TwoFactorLevel) => api.put("/settings/two-factor", { level }), [keys.me]);
   return (
     <Section title="Sign-in" region description="Set when avSYS is installed.">
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-1.5 text-[13px]">
@@ -197,15 +204,18 @@ function SignIn({ meta }: { meta: Meta }) {
         <dt className="text-muted">New accounts</dt>
         <dd>{meta.allowSignups ? "Anyone can sign up" : "By invite"}</dd>
       </dl>
-      {meta.passwords && (
-        <Toggle
-          checked={me.adminTwoFactor}
-          disabled={setRequired.isPending}
-          onChange={(on) => setRequired.mutate(on)}
-          label="Require two-factor for administrators"
-          hint="Administrators who sign in with a password have to use two-factor."
-        />
-      )}
+      <Field label="Require two-factor for" hint="By highest role in any organization. Includes you, unless Nobody.">
+        {(id) => (
+          <SelectMenu
+            id={id}
+            value={setLevel.isPending && setLevel.variables ? setLevel.variables : me.twoFactorLevel}
+            choices={twoFactorChoices}
+            onChange={(level) => setLevel.mutate(level)}
+            className="w-48"
+            aria-label="Require two-factor for"
+          />
+        )}
+      </Field>
     </Section>
   );
 }

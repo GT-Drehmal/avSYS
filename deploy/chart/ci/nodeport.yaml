@@ -308,6 +308,8 @@ spec:
               value: "false"
             - name: AVSYS_PASSWORDS
               value: "true"
+            - name: AVSYS_TWO_FACTOR
+              value: "admins"
             - name: AVSYS_NAMESPACE_PREFIX
               value: "mc-"
             - name: AVSYS_INSTALL_CRDS

@@ -61,6 +61,11 @@ func newEmptyPanel(t *testing.T) *panel {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// Nobody has to use two-factor, as on a panel from before it could be
+	// asked of more than its administrator: tests of who has to say so.
+	if err := db.SetSetting(context.Background(), store.SettingTwoFactorLevel, store.TwoFactorNobody); err != nil {
+		t.Fatal(err)
+	}
 
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {

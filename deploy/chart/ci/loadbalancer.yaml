@@ -288,6 +288,8 @@ spec:
               value: "false"
             - name: AVSYS_PASSWORDS
               value: "false"
+            - name: AVSYS_TWO_FACTOR
+              value: "admins"
             - name: AVSYS_NAMESPACE_PREFIX
               value: "games-"
             - name: AVSYS_INSTALL_CRDS

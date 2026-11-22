@@ -395,20 +395,18 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) error {
 		// The invite went with the account.
 		invite = ""
 	}
-	if invite != "" {
-		if org, err := s.Store.AcceptInvite(r.Context(), invite, user.ID); err != nil {
-			s.Log.Warn("accepting invite at sign-in", "error", err)
-		} else {
-			// Someone who already has an account, and may have a player
-			// linked to it, has just joined.
-			s.syncOpsSoon(org)
+	if current != nil {
+		// Signed in again as who they are, as to do what asks for a recent
+		// sign-in: this sign-in takes the place of the one before, which
+		// ends here, whether or not a code is asked for next.
+		if token := sessionToken(r); token != "" {
+			if err := s.Store.DeleteSession(r.Context(), token); err != nil {
+				return err
+			}
+			s.clearSessionCookie(w)
 		}
 	}
-	if err := s.startSession(w, r, user.ID); err != nil {
-		return err
-	}
-	http.Redirect(w, r, next, http.StatusFound)
-	return nil
+	return s.providerSignedIn(w, r, user, invite, next)
 }
 
 var nonUsernameChars = regexp.MustCompile(`[^a-z0-9_-]+`)
@@ -648,6 +646,13 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request, u *store
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" || len(in.Name) > 64 {
 		return errBadRequest("Give the token a name of up to 64 characters.")
+	}
+	// A token is not asked for a code: someone who has to use two-factor
+	// makes one only once they have it, with a token of before too.
+	if must, err := s.needsTwoFactor(r.Context(), u); err != nil {
+		return err
+	} else if must {
+		return errTwoFactorRequired
 	}
 	token := &store.APIToken{UserID: u.ID, Name: in.Name}
 	secret, err := s.Store.CreateAPIToken(r.Context(), token)

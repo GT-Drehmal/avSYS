@@ -57,63 +57,6 @@ func TestPasswordsOffRefusesPasswords(t *testing.T) {
 	}
 }
 
-// With passwords off, what goes with a password is refused as well:
-// two-factor, which is asked for after one, and reset links, which set one.
-// An administrator held to setting up two-factor is no longer held.
-func TestPasswordsOffRefusesTwoFactorAndResetLinks(t *testing.T) {
-	p := newPanel(t)
-	p.withPasswords()
-	ctx := context.Background()
-	root, viewer := p.tab("root"), p.tab("viewer")
-	root.signIn("root", "")
-	viewer.signIn("viewer", "")
-	viewer.turnOnTwoFactor()
-	viewerID := p.users["viewer"].ID
-	var link struct{ URL string }
-	if got, code := root.call("POST", "/users/"+viewerID+"/reset-link", map[string]any{}, &link); got != 201 {
-		t.Fatalf("with passwords on, making a reset link: %d %s", got, code)
-	}
-	token := strings.TrimPrefix(link.URL, "http://panel.test/reset/")
-	if err := p.srv.Store.SetSetting(ctx, settingAdminTwoFactor, "1"); err != nil {
-		t.Fatal(err)
-	}
-
-	p.srv.Config.NoPasswords = true
-	var me map[string]any
-	if got, _ := root.call("GET", "/me", nil, &me); got != 200 || me["mustSetUpTwoFactor"] != false {
-		t.Errorf("/me with passwords off: %d mustSetUpTwoFactor=%v", got, me["mustSetUpTwoFactor"])
-	}
-	if got, _ := root.call("GET", "/orgs/alpha", nil, nil); got != 200 {
-		t.Errorf("the administrator without two-factor, with passwords off: %d, want 200", got)
-	}
-	for _, c := range []struct {
-		who          *tab
-		method, path string
-		body         any
-	}{
-		{root, "POST", "/me/two-factor/setup", map[string]string{"password": testPassword}},
-		{root, "POST", "/me/two-factor", map[string]string{"code": "123456"}},
-		{viewer, "POST", "/me/two-factor/off", map[string]string{"password": testPassword}},
-		{viewer, "POST", "/me/two-factor/recovery-codes", map[string]string{"password": testPassword}},
-		{root, "PUT", "/settings/admin-two-factor", map[string]bool{"required": false}},
-		{root, "POST", "/users/" + viewerID + "/reset-link", map[string]any{}},
-		{p.tab("x"), "GET", "/reset-links/" + token, nil},
-		{p.tab("x"), "POST", "/reset-links/" + token, map[string]string{"password": "a brand new password"}},
-		{p.tab("x"), "POST", "/auth/login/code", map[string]string{"code": "123456"}},
-	} {
-		if got, code := c.who.call(c.method, c.path, c.body, nil); got != http.StatusForbidden || code != "passwords_off" {
-			t.Errorf("%s %s: %d %q, want 403 passwords_off", c.method, c.path, got, code)
-		}
-	}
-	// Nothing was changed: the viewer's two-factor is on, the link unused.
-	if tf, err := p.srv.Store.TwoFactor(ctx, viewerID); err != nil || tf.Secret == "" {
-		t.Errorf("the viewer's two-factor: %+v %v", tf, err)
-	}
-	if _, err := p.srv.Store.ResetLinkUser(ctx, token); err != nil {
-		t.Errorf("the reset link: %v", err)
-	}
-}
-
 const setupCode = "the-setup-code"
 
 // newPasswordlessPanel is a panel with no account yet and passwords off.

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -95,6 +96,9 @@ type options struct {
 	oidcScopes        string
 	oidcAllowedGroups string
 	oidcGroupsClaim   string
+	// twoFactor is who has to use two-factor on a panel just installed: one
+	// of store.TwoFactorLevels, used until its first account is made.
+	twoFactor string
 	// passwords, when false, has everyone sign in through a provider.
 	passwords bool
 }
@@ -155,6 +159,7 @@ func parseFlags() options {
 	str(&o.oidcAllowedGroups, "oidc-allowed-groups", "", "groups, separated by commas, one of which a person must be in to sign in through the OpenID Connect provider (empty: anyone it signs in)")
 	str(&o.oidcGroupsClaim, "oidc-groups-claim", "groups", "claim of the ID token (or user info) that lists a person's groups")
 	flag.BoolVar(&o.passwords, "passwords", env("passwords", "true") != "false", "let people sign in with a password; false has everyone sign in through a provider, and the panel does not start if no administrator could")
+	str(&o.twoFactor, "two-factor", store.TwoFactorAdmins, "who has to use two-factor on a panel just installed: nobody, admins (admins and owners of any organization), operators (and up) or everyone; the administrator too unless nobody. Used until the first account is made, then changed in Instance settings")
 	flag.Parse()
 	o.publicURL = strings.TrimRight(o.publicURL, "/")
 	o.packURL = strings.TrimRight(o.packURL, "/")
@@ -231,6 +236,9 @@ func run(opts options, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if !slices.Contains(store.TwoFactorLevels, opts.twoFactor) {
+		return fmt.Errorf("--two-factor is %q; it is nobody, admins, operators or everyone", opts.twoFactor)
+	}
 	if err := os.MkdirAll(opts.dataDir, 0o700); err != nil {
 		return err
 	}
@@ -239,6 +247,13 @@ func run(opts options, log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
+	// Who has to use two-factor, as installed, until the first account is
+	// made; from then on, as set in Instance settings.
+	if set, err := st.SetInstallTwoFactorLevel(ctx, opts.twoFactor); err != nil {
+		return err
+	} else if set {
+		log.Info("no account yet: two-factor as installed", "twoFactor", opts.twoFactor)
+	}
 
 	hostKey, err := sshgw.LoadOrCreateKey(ctx, st, "host")
 	if err != nil {

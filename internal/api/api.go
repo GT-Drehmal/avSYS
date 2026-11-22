@@ -338,7 +338,7 @@ func (s *Server) authed(h userHandler) http.Handler {
 		if err != nil {
 			return err
 		}
-		// An administrator who has to set up two-factor does that first.
+		// Someone who has to set up two-factor does that first.
 		if !twoFactorSetupRoutes[r.Pattern] {
 			if must, err := s.mustSetUpTwoFactor(r.Context(), u, session); err != nil {
 				return err
@@ -462,7 +462,7 @@ func (s *Server) Handler() http.Handler {
 	api("POST /me/two-factor", s.authed(s.enableTwoFactor))
 	api("POST /me/two-factor/off", s.authed(s.disableTwoFactor))
 	api("POST /me/two-factor/recovery-codes", s.authed(s.newRecoveryCodes))
-	api("PUT /settings/admin-two-factor", s.authed(s.putAdminTwoFactor))
+	api("PUT /settings/two-factor", s.authed(s.putTwoFactorLevel))
 	api("POST /users/{user}/reset-link", s.authed(s.createResetLink))
 
 	api("GET /me/tokens", s.authed(s.listAPITokens))

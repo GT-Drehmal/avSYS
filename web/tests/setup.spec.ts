@@ -1,4 +1,4 @@
-import { expect, test, watchErrors } from "./panel";
+import { expect, test, totp, watchErrors } from "./panel";
 
 // A panel just installed, with nobody in it: whoever opens it first sets it
 // up, and is its administrator. Nobody after them can make an account
@@ -13,6 +13,19 @@ test("the first account is the administrator, and signups then close", async ({ 
   await page.getByLabel("Username").fill("founder");
   await page.getByLabel("Password").fill("a password long enough");
   await page.getByRole("button", { name: "Create account" }).click();
+
+  // Admins and owners have to use two-factor on a panel just installed,
+  // and the administrator always does: set up first.
+  await expect(page).toHaveURL(`${url}/two-factor`);
+  await expect(page.getByRole("heading", { name: "Set up two-factor" })).toBeVisible();
+  await page.getByLabel("Password").fill("a password long enough");
+  const setup = page.waitForResponse((r) => r.url().endsWith("/api/v1/me/two-factor/setup") && r.ok());
+  await page.getByRole("button", { name: "Continue" }).click();
+  const { secret } = await (await setup).json();
+  await page.getByLabel("Code").fill(totp(secret));
+  await page.getByRole("button", { name: "Turn on" }).click();
+  await expect(page.getByRole("list", { name: "Recovery codes" }).getByRole("listitem")).toHaveCount(10);
+  await page.getByRole("button", { name: "Done" }).click();
 
   // In, as the administrator, with nothing yet but the first organization to make.
   await expect(page.getByText("Create your first organization")).toBeVisible();
@@ -41,9 +54,12 @@ test("the first account is the administrator, and signups then close", async ({ 
   const meta = await (await stranger.request.get(`${url}/api/v1/meta`)).json();
   expect(meta.setupRequired).toBe(false);
 
-  // The administrator signs in again with what they set up.
+  // The administrator signs in again with what they set up: the password,
+  // then a code (the next one: the one shown was used).
   await stranger.getByLabel("Username").fill("founder");
   await stranger.getByLabel("Password").fill("a password long enough");
+  await stranger.getByRole("button", { name: "Sign in" }).click();
+  await stranger.getByLabel("Code").fill(totp(secret, Date.now() + 30_000));
   await stranger.getByRole("button", { name: "Sign in" }).click();
   await expect(stranger).toHaveURL(`${url}/o/home-lab`);
   await other.close();
