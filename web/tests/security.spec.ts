@@ -57,6 +57,9 @@ test("two-factor is set up with a code, then asked for after the password", asyn
   const { secret } = await (await setup).json();
   await expect(dialog.getByRole("img", { name: "QR code" })).toBeVisible();
   await expect(dialog.getByText(secret)).toBeVisible();
+  // Password managers find the code box by its name and autocomplete.
+  await expect(dialog.getByLabel("Code")).toHaveAttribute("name", "totp");
+  await expect(dialog.getByLabel("Code")).toHaveAttribute("autocomplete", "one-time-code");
   // A wrong code, then the right one.
   await dialog.getByLabel("Code").fill("000000");
   await dialog.getByRole("button", { name: "Turn on" }).click();
@@ -77,6 +80,8 @@ test("two-factor is set up with a code, then asked for after the password", asyn
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByLabel("Code")).toBeVisible();
+  await expect(page.getByLabel("Code")).toHaveAttribute("name", "totp");
+  await expect(page.getByLabel("Code")).toHaveAttribute("autocomplete", "one-time-code");
   expect(await signedIn(page.request)).toBe(false);
   await page.getByLabel("Code").fill("123456");
   await page.getByRole("button", { name: "Sign in" }).click();

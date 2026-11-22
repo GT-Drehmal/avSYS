@@ -75,7 +75,7 @@ export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCan
           Or enter this key: <CopyText value={key.secret} className="text-xs" wrap />
         </div>
         <Field label="Code" missing="Enter the code.">
-          {(id) => <Input id={id} required autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} className="w-36 font-mono" />}
+          {(id) => <Input id={id} name="totp" required autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} className="w-36 font-mono" />}
         </Field>
         <div className="flex justify-end gap-2">
           {onCancel && <Button onClick={onCancel}>Cancel</Button>}
