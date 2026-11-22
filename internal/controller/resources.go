@@ -53,8 +53,8 @@ func labelsFor(mc *avsysv1.MinecraftServer) map[string]string {
 	}
 }
 
-// wantsMinecraft reports whether the game container should be running.
-func wantsMinecraft(mc *avsysv1.MinecraftServer) bool {
+// WantsMinecraft reports whether the game container should be running.
+func WantsMinecraft(mc *avsysv1.MinecraftServer) bool {
 	if mc.Spec.State == avsysv1.StateStopped {
 		return false
 	}
@@ -1138,7 +1138,7 @@ func buildPod(mc *avsysv1.MinecraftServer, cfg Config) *corev1.Pod {
 	grace := int64(5)
 
 	containers := []corev1.Container{workspaceContainer(mc, cfg)}
-	if wantsMinecraft(mc) {
+	if WantsMinecraft(mc) {
 		containers = append([]corev1.Container{minecraftContainer(mc, cfg)}, containers...)
 		grace = 90
 	}
@@ -1223,7 +1223,7 @@ var cordoned = corev1.Taint{Key: corev1.TaintNodeUnschedulable, Effect: corev1.T
 //
 // Set after the spec is hashed, so that it asks for no restart.
 func readingForMove(mc *avsysv1.MinecraftServer) []corev1.Toleration {
-	if mc.Annotations[avsysv1.AnnotationMoveWas] == "" || mc.Annotations[avsysv1.AnnotationMoving] != "" || wantsMinecraft(mc) {
+	if mc.Annotations[avsysv1.AnnotationMoveWas] == "" || mc.Annotations[avsysv1.AnnotationMoving] != "" || WantsMinecraft(mc) {
 		return nil
 	}
 	return []corev1.Toleration{{Key: cordoned.Key, Operator: corev1.TolerationOpExists, Effect: cordoned.Effect}}

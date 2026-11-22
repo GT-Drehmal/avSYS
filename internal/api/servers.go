@@ -1084,14 +1084,19 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 		}
 	}
 	orig := mc.DeepCopy()
+	key := a.Namespace + "/" + mc.Name
+	// The game waits, as it stops, for the connections open to it to
+	// close: the panel's are closed before it is told.
 	switch action {
 	case "start":
 		mc.Spec.State = avsysv1.StateRunning
 		delete(mc.Annotations, avsysv1.AnnotationAsleep)
 	case "stop":
+		s.lines.hangUp(key)
 		mc.Spec.State = avsysv1.StateStopped
 		delete(mc.Annotations, avsysv1.AnnotationAsleep)
 	case "restart":
+		s.lines.hangUp(key)
 		// With nothing new to apply, asking the game to stop is enough: its
 		// container restarts in place and open shells and editors survive.
 		// Otherwise the pod is replaced so the new spec takes effect.

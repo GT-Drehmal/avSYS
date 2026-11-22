@@ -82,8 +82,20 @@ func (s *Server) WatchServers(informer ctrlcache.Informer) error {
 		UpdateFunc: func(old, obj any) {
 			publish("server.updated", obj)
 			s.started(old, obj)
+			was, _ := old.(*avsysv1.MinecraftServer)
+			if mc, ok := obj.(*avsysv1.MinecraftServer); ok {
+				s.watchGame(was, mc)
+			}
 		},
-		DeleteFunc: func(obj any) { publish("server.deleted", obj) },
+		DeleteFunc: func(obj any) {
+			publish("server.deleted", obj)
+			if tomb, ok := obj.(toolscache.DeletedFinalStateUnknown); ok {
+				obj = tomb.Obj
+			}
+			if mc, ok := obj.(*avsysv1.MinecraftServer); ok {
+				s.lines.forget(mc.Namespace + "/" + mc.Name)
+			}
+		},
 	})
 	return err
 }

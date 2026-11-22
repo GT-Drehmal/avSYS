@@ -57,10 +57,11 @@ func playerNames(players []listedPlayer) []string {
 func (s *Server) readList(ctx context.Context, mc *avsysv1.MinecraftServer, list roleList) ([]listedPlayer, error) {
 	if mc.Status.Phase == avsysv1.PhaseRunning && list.query != "" {
 		out, err := s.listCommand(ctx, mc, list.query)
-		if err != nil {
+		// A game that is stopping is not asked: its file has the list.
+		if err != nil && !errors.Is(err, errGameStopping) {
 			return nil, err
 		}
-		if names, ok := parseWhitelist(out); ok {
+		if names, ok := parseWhitelist(out); err == nil && ok {
 			players := make([]listedPlayer, 0, len(names))
 			for _, name := range names {
 				players = append(players, listedPlayer{Name: name})

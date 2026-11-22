@@ -411,6 +411,23 @@ type rconGame struct {
 	mu       sync.Mutex
 	made     int
 	conns    []net.Conn
+	// live is the connections the panel has not closed, as the game sees.
+	live int
+}
+
+// alive is how many connections the panel has open to the game, waiting up
+// to within for there to be want.
+func (g *rconGame) alive(want int, within time.Duration) int {
+	end := time.Now().Add(within)
+	for {
+		g.mu.Lock()
+		n := g.live
+		g.mu.Unlock()
+		if n == want || time.Now().After(end) {
+			return n
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (g *rconGame) connections() int {
@@ -447,6 +464,7 @@ func (g *rconGame) DialPod(_ context.Context, _, _ string, _ int) (net.Conn, err
 	panel, game := net.Pipe()
 	g.mu.Lock()
 	g.made++
+	g.live++
 	g.conns = append(g.conns, game)
 	g.mu.Unlock()
 	go g.serve(game)
@@ -454,6 +472,11 @@ func (g *rconGame) DialPod(_ context.Context, _, _ string, _ int) (net.Conn, err
 }
 
 func (g *rconGame) serve(conn net.Conn) {
+	defer func() {
+		g.mu.Lock()
+		g.live--
+		g.mu.Unlock()
+	}()
 	read := func() (id, typ int32, body string, err error) {
 		var head [12]byte
 		if _, err := io.ReadFull(conn, head[:]); err != nil {
