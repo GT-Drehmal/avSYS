@@ -140,6 +140,10 @@ function toPatch(d: Draft, current: ServerSpec, latest: string | undefined): Spe
   };
   for (const [k, v] of Object.entries(typed)) if (v !== "") properties[k] = v;
   Object.assign(properties, parseProperties(d.otherProperties));
+  // Turning the whitelist on puts out whoever is not on it, as the form for
+  // making a server does, unless enforce-whitelist is set by hand below.
+  const wasOn = (current.properties?.["white-list"] ?? "").toLowerCase() === "true";
+  if (d.whitelistOn === "true" && !wasOn && !/^\s*enforce-whitelist\s*=/m.test(d.otherProperties)) properties["enforce-whitelist"] = "true";
   const softwareChanged = d.version !== current.version || d.loader !== current.loader;
   // A build is for one type and version: another of either drops it.
   const build = d.loaderVersion.trim();
