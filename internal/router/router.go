@@ -216,7 +216,12 @@ func (r *Router) handle(ctx context.Context, conn net.Conn) {
 	}
 
 	if mc == nil {
-		answer(entry{title: "Unknown server", detail: "Nothing is hosted at " + host + ".", closed: "Offline"})
+		detail := "Nothing is hosted at " + host + "."
+		if r.Verify != nil && hs.NextState == mcproto.NextLogin {
+			// Someone linking an account who joined as another one, or late.
+			detail += "\nLinking an account? Start it in the panel, then join as that account within 10 minutes."
+		}
+		answer(entry{title: "Unknown server", detail: detail, closed: "Offline"})
 		return
 	}
 	name := mc.Spec.DisplayName

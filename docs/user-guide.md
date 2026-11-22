@@ -82,7 +82,7 @@ The **Account** page, from the menu at the bottom left:
 - **Minecraft accounts.** Link the accounts you play as. Your main one is
   shown beside your name. Servers can let members in by their linked
   accounts (see [Players](#players)). A viewer's account is let in only
-  once it is **verified**: press **Verify**, join the address shown in
+  once it is **verified**: press **Verify**, join the address shown (within 10 minutes) in
   Minecraft as that account, and type the code the game shows you.
 - **SSH keys.** For SSH, SFTP and VS Code. **Add key** to paste one, or
   **Import from GitHub** with your GitHub username.

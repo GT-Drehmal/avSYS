@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -215,11 +217,17 @@ func (s *Server) verifyMinecraftAccount(w http.ResponseWriter, r *http.Request, 
 }
 
 // verifyAddress is the address players join to prove an account is theirs:
-// one under the router's domain that no server has. Without a domain it is
-// left to the page to say.
+// one under the router's domain that no server has, or else the panel's own
+// host, which reaches the router where the game's port is on the same
+// address as the panel (no server has the panel's host).
 func (s *Server) verifyAddress() string {
 	if d := router.NormalizeHostname(s.Config.RouterDomain); d != "" {
 		return "verify." + d
+	}
+	if u, err := url.Parse(s.Config.PublicURL); err == nil {
+		if h := router.NormalizeHostname(u.Hostname()); h != "" && h != "localhost" && net.ParseIP(h) == nil {
+			return h
+		}
 	}
 	return ""
 }
