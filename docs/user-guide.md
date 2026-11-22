@@ -444,6 +444,8 @@ someone linking an account, joining, leaving, or changing role.
 - **Added in game**: players someone added with `/whitelist add` or `/op`.
   **Keep** lists them in the settings; **Remove** takes them off.
 - Someone taken off the whitelist is put out, not only kept out.
+- While the whitelist is off, nobody is taken off it: those who should be
+  come off once it is on again.
 - A member taken off in game with `/whitelist remove` or `/deop` is put
   back within a minute. To keep a member off, untick them under
   **Members**.

@@ -386,6 +386,11 @@ func (s *Server) removeFromGameList(w http.ResponseWriter, r *http.Request, u *s
 	bedrock := st.on[i].Bedrock
 	switch mc.Status.Phase {
 	case avsysv1.PhaseRunning:
+		// As the panel's own: with enforce-whitelist on, vanilla up to
+		// 1.21.8 puts out everyone not on the whitelist for it, even off.
+		if list.key == "whitelist" && !whitelistOn(&mc.Spec) {
+			return &Error{Status: http.StatusConflict, Code: "whitelist_off", Message: "Turn the whitelist on first, or stop the server."}
+		}
 		if bedrock && list.key == "whitelist" {
 			// The game cannot look up a Bedrock player's name: the file it
 			// keeps is changed, and read again.

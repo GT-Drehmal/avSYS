@@ -798,6 +798,15 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 				fileAdd, fileRemove = append(fileAdd, more...), append(fileRemove, gone...)
 			}
 		}
+		// With the whitelist off, nobody is taken off it and its file is not
+		// read again: with enforce-whitelist on, vanilla up to 1.21.8, and
+		// the loaders built on it, put out everyone not on it for either,
+		// the whitelist on or not. Who is to come off is still noted, and
+		// comes off once it is on.
+		hold := list.key == "whitelist" && !whitelistOn(&fresh.Spec)
+		if hold {
+			remove, fileAdd, fileRemove = nil, nil, nil
+		}
 		if len(add) == 0 && len(remove) == 0 && len(fileAdd) == 0 && len(fileRemove) == 0 && sameNames(from, made) {
 			continue
 		}
@@ -817,6 +826,13 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 			var onFile []listedPlayer
 			var added []string
 			onFile, added, missing, soon, err = s.lookAgain(ctx, fresh, list, missing, uuids, isSaved)
+			if hold {
+				// Put on by the file once the whitelist is on.
+				for _, p := range onFile {
+					s.autoOps.leaveOut(listKey, p.Name, missingSoon)
+				}
+				onFile = nil
+			}
 			fileAdd = append(fileAdd, onFile...)
 			for _, name := range added {
 				if !hasName(done, name) {
