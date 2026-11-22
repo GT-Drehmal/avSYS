@@ -15,11 +15,7 @@ import (
 	"sync"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
-	"github.com/GT-Drehmal/avSYS/internal/controller"
-	"github.com/GT-Drehmal/avSYS/internal/rcon"
 )
 
 // The game's own tree has none of the commands a server's mods and plugins
@@ -658,7 +654,9 @@ func (s *Server) readModCommands(m *modCommands, mc *avsysv1.MinecraftServer, va
 		hangUp()
 	}
 	if err != nil {
-		s.Log.Warn("could not read the commands a server has from its help", "server", mc.Name, "error", err)
+		if !errors.Is(err, errGameStopping) {
+			s.Log.Warn("could not read the commands a server has from its help", "server", mc.Name, "error", err)
+		}
 		m.retry = time.Now().Add(modsRetry)
 	}
 	m.root = root
@@ -671,26 +669,13 @@ func (s *Server) gameSession(ctx context.Context, mc *avsysv1.MinecraftServer) (
 	if s.GameCommand != nil {
 		return func(command string) (string, error) { return s.GameCommand(ctx, mc, command) }, func() {}, nil
 	}
-	if s.Kube == nil || s.Dialer == nil {
-		return nil, nil, errors.New("no way to reach the game")
-	}
-	secret, err := s.Kube.CoreV1().Secrets(mc.Namespace).Get(ctx, controller.RCONSecretName(mc.Name), metav1.GetOptions{})
-	if err != nil {
-		return nil, nil, err
-	}
-	conn, err := s.Dialer.DialPod(ctx, mc.Namespace, mc.Name, controller.RCONPort)
+	session, err := s.dialGame(ctx, mc)
 	if err != nil {
 		return nil, nil, err
 	}
 	// Tunnelled connections ignore deadlines: the time allowed is kept to
 	// by closing.
-	stop := context.AfterFunc(ctx, func() { conn.Close() })
-	session, err := rcon.Login(conn, string(secret.Data["password"]))
-	if err != nil {
-		stop()
-		conn.Close()
-		return nil, nil, err
-	}
+	stop := context.AfterFunc(ctx, session.release)
 	run = func(command string) (string, error) {
 		out, err := session.Command(command)
 		if err == nil {
@@ -698,7 +683,7 @@ func (s *Server) gameSession(ctx context.Context, mc *avsysv1.MinecraftServer) (
 		}
 		return out, err
 	}
-	return run, func() { stop(); conn.Close() }, nil
+	return run, func() { stop(); session.release() }, nil
 }
 
 // names are the commands in a tree.

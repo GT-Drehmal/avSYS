@@ -447,14 +447,14 @@ func TestNoGameWhileRestoring(t *testing.T) {
 		mc.Spec.State = avsysv1.StateRunning
 		mc.Annotations = map[string]string{avsysv1.AnnotationRestoring: "aaaa1111"}
 	})
-	if wantsMinecraft(mc) {
+	if WantsMinecraft(mc) {
 		t.Fatal("the game is wanted during a restore")
 	}
 	if pod := buildPod(mc, Config{}); hasContainer(pod, MinecraftContainer) || !hasContainer(pod, WorkspaceContainer) {
 		t.Errorf("pod during a restore has containers %v; want only the workspace", containerNames(pod))
 	}
 	delete(mc.Annotations, avsysv1.AnnotationRestoring)
-	if !wantsMinecraft(mc) {
+	if !WantsMinecraft(mc) {
 		t.Error("the game is still held once the restore has completed")
 	}
 }

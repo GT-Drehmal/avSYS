@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"math"
 	"regexp"
 	"strconv"
@@ -10,12 +9,9 @@ import (
 	"sync"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
-	"github.com/GT-Drehmal/avSYS/internal/controller"
-	"github.com/GT-Drehmal/avSYS/internal/rcon"
 )
 
 // tickWait is how long the sampler waits on running servers to say how fast
@@ -65,8 +61,9 @@ type tickState struct {
 	way  tickWay
 	// session is a console connection held open from one sample to the
 	// next. The game logs each connection made to it, in two lines, which
-	// every 30 seconds would fill its log.
-	session *rcon.Client
+	// every 30 seconds would fill its log. It is closed as the game stops
+	// (see rconlines.go).
+	session *keptLine
 }
 
 // ticker is what the sampler keeps of each server, by namespace/name.
@@ -155,7 +152,7 @@ func (st *tickState) forGame(mc *avsysv1.MinecraftServer) {
 
 func (st *tickState) hangUp() {
 	if st.session != nil {
-		st.session.Close()
+		st.session.release()
 		st.session = nil
 	}
 }
@@ -299,27 +296,13 @@ func (s *Server) tickCommand(ctx context.Context, st *tickState, mc *avsysv1.Min
 	if s.GameCommand != nil {
 		return s.GameCommand(ctx, mc, command)
 	}
-	if s.Kube == nil || s.Dialer == nil {
-		return "", errors.New("no way to reach the game")
+	// Hung up on as the game stopped: made again only once it runs again.
+	if st.session != nil && st.session.hungUp() {
+		st.hangUp()
 	}
 	if st.session == nil {
-		secret, err := s.Kube.CoreV1().Secrets(mc.Namespace).Get(ctx, controller.RCONSecretName(mc.Name), metav1.GetOptions{})
+		session, err := s.dialGame(ctx, mc)
 		if err != nil {
-			return "", err
-		}
-		conn, err := s.Dialer.DialPod(ctx, mc.Namespace, mc.Name, controller.RCONPort)
-		if err != nil {
-			return "", err
-		}
-		// Tunnelled connections ignore deadlines: the time allowed is kept
-		// to by closing.
-		stop := context.AfterFunc(ctx, func() { conn.Close() })
-		session, err := rcon.Login(conn, string(secret.Data["password"]))
-		if !stop() && err == nil {
-			err = ctx.Err()
-		}
-		if err != nil {
-			conn.Close()
 			return "", err
 		}
 		st.session = session

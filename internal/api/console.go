@@ -158,6 +158,11 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, u *store.Use
 	if _, paused := mc.Annotations[avsysv1.AnnotationSavingPaused]; paused && savesCommand(command) {
 		return &Error{Status: http.StatusConflict, Code: "snapshotting", Message: "The world is being copied. Try again when that is done."}
 	}
+	// The game waits, as it stops, for the connections open to it to close:
+	// the panel's are closed before it is told.
+	if stopsCommand(command, paperBased(mc)) {
+		s.lines.hangUp(a.Namespace + "/" + mc.Name)
+	}
 	output := ""
 	typed := false
 	if in.As == "server" {

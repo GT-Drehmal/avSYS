@@ -194,7 +194,7 @@ func (r *Reconciler) leftovers(ctx context.Context, mc *avsysv1.MinecraftServer)
 func (r *Reconciler) waitForLeftovers(ctx context.Context, mc *avsysv1.MinecraftServer, what string) error {
 	orig := mc.DeepCopy()
 	mc.Status.Phase = avsysv1.PhaseStopping
-	if wantsMinecraft(mc) {
+	if WantsMinecraft(mc) {
 		mc.Status.Phase = avsysv1.PhaseStarting
 	}
 	mc.Status.Message = fmt.Sprintf("Waiting for the %s of a deleted server of this name to be removed.", what)
@@ -380,7 +380,7 @@ func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer)
 	}
 
 	finished := existing.Status.Phase == corev1.PodFailed || existing.Status.Phase == corev1.PodSucceeded
-	stateChanged := hasContainer(existing, MinecraftContainer) != wantsMinecraft(mc)
+	stateChanged := hasContainer(existing, MinecraftContainer) != WantsMinecraft(mc)
 	restartAsked := existing.Annotations[avsysv1.AnnotationRestart] != desired.Annotations[avsysv1.AnnotationRestart]
 	// What the pod is noted as running already, as content taken into the
 	// list from its own files, is no change to it.
@@ -481,7 +481,7 @@ func containerReady(pod *corev1.Pod, name string) bool {
 // phaseOf derives the user-facing phase from what is wanted and what the pod is doing.
 func phaseOf(mc *avsysv1.MinecraftServer, pod *corev1.Pod) (avsysv1.Phase, string) {
 	gameInPod := pod != nil && hasContainer(pod, MinecraftContainer)
-	if !wantsMinecraft(mc) {
+	if !WantsMinecraft(mc) {
 		switch {
 		case gameInPod:
 			if loading(pod) {

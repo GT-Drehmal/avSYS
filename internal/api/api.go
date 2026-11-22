@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -199,6 +200,11 @@ type Server struct {
 	usage usage
 	// ticks is how each server's game is asked how fast it ticks.
 	ticks ticker
+	// lines are the RCON connections kept open to games, closed as they stop.
+	lines rconLines
+	// gameLog, where set, follows a game's log in place of the cluster: for
+	// tests.
+	gameLog func(ctx context.Context, namespace, name string) (io.ReadCloser, error)
 	// reach is whether the cluster can be reached.
 	reach reach
 	// presence is which servers members have open.

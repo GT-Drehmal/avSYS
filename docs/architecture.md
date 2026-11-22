@@ -258,6 +258,16 @@ stateDiagram-v2
 - **Restart.** A running server whose settings have not changed is told
   to stop over RCON, and its container starts again in place. Otherwise
   its pod is made again.
+- **RCON.** The panel keeps one RCON connection open to each running game,
+  to ask how fast it ticks and to read its lists: the game logs each
+  connection made to it. A stopping game waits for every RCON connection to
+  close, logging a warning a second, so the panel closes its own first:
+  before it tells the game to stop or restart, when `stop` is typed at its
+  console, when the game logs `Stopping server` (the panel follows its log
+  while the connection is open), and when the server is seen asked to stop,
+  sleep or restart, or no longer running. It makes none again until the
+  server is seen running again, or two minutes later if it never stopped
+  (`internal/api/rconlines.go`).
 - **Health.** The image's own health check decides when the game is
   ready. A game still loading is given time before the pod is replaced.
 - **Players.** Every ten seconds the controller asks each running game, as
