@@ -222,21 +222,38 @@ func TestConsoleStopHangsUpFirst(t *testing.T) {
 	// Anything else leaves the connection be.
 	g := newStoppingGame(t)
 	g.connected(t)
-	for _, command := range []string{"say stop", "list", "restart"} {
+	others := []string{"say stop", "say run stop", "execute run say run stop", "list", "restart"}
+	for _, command := range others {
 		if code, _ := g.p.do("operator", "POST", "/orgs/alpha/servers/world/console", `{"command":"`+command+`"}`); code != http.StatusOK {
 			t.Fatalf("%s: %d", command, code)
 		}
 	}
-	if got, ok := g.sample(); !ok || got.TPS != 20 || g.game.connections() != 1+3 {
+	if got, ok := g.sample(); !ok || got.TPS != 20 || g.game.connections() != 1+len(others) {
 		t.Errorf("after other commands: %+v, %v, %d connections made, want the kept one and one each", got, ok, g.game.connections())
 	}
 }
 
 func TestStopsCommand(t *testing.T) {
 	for command, want := range map[string]bool{
-		"stop": true, "/stop": true, "minecraft:stop": true, "STOP": true, "execute run stop": true,
+		"stop":                                   true,
+		"/stop":                                  true,
+		"minecraft:stop":                         true,
+		"STOP":                                   true,
+		"execute run stop":                       true,
+		"minecraft:execute run /stop":            true,
 		"execute as @a at @s run minecraft:stop": true,
-		"say stop":                               false, "stopsound @a": false, "list": false, "": false, "execute as stop run say hi": false,
+		"execute as @a run execute at @s run stop": true,
+		// A word in what a command is given is not run.
+		"say stop":                   false,
+		"say run stop":               false,
+		"tellraw @a \"run stop\"":    false,
+		"execute run say run stop":   false,
+		"execute as stop run say hi": false,
+		"execute as @a":              false,
+		"stopsound @a":               false,
+		"someplugin:stop":            false,
+		"list":                       false,
+		"":                           false,
 	} {
 		if got := stopsCommand(command, false); got != want {
 			t.Errorf("%q: %v, want %v", command, got, want)
@@ -244,8 +261,16 @@ func TestStopsCommand(t *testing.T) {
 	}
 	// Restart stops the game on Paper and its kind, and is no command of
 	// the game's own.
-	if !stopsCommand("restart", true) || !stopsCommand("bukkit:restart", true) || stopsCommand("restart", false) {
-		t.Error("restart is taken wrongly")
+	for command, want := range map[string]bool{
+		"restart": true, "bukkit:restart": true, "spigot:restart": true, "execute run restart": true,
+		"say restart": false, "say run restart": false,
+	} {
+		if got := stopsCommand(command, true); got != want {
+			t.Errorf("on Paper, %q: %v, want %v", command, got, want)
+		}
+	}
+	if stopsCommand("restart", false) {
+		t.Error("restart is taken for a stop on a game without it")
 	}
 }
 
@@ -258,6 +283,9 @@ func TestLoggedStopHangsUp(t *testing.T) {
 	// A player saying it is not the game stopping.
 	g.log(t, "[12:00:00] [Server thread/INFO]: <Steve> Stopping server")
 	g.log(t, "[12:00:00] [Server thread/INFO]: [Steve] Stopping server")
+	g.log(t, "[12:00:00] [Server thread/INFO]: <Steve> ]: Stopping server")
+	g.log(t, "[12:00:00] [Server thread/INFO]: [Not Secure] <Steve> ]: Stopping server")
+	g.log(t, "[12:00:00 INFO]: <Steve> ]: Stopping server")
 	if n := g.game.alive(0, 200*time.Millisecond); n != 1 {
 		t.Fatalf("a player's words closed the connection: %d open", n)
 	}
@@ -268,14 +296,29 @@ func TestLoggedStopHangsUp(t *testing.T) {
 
 func TestStoppingLine(t *testing.T) {
 	for line, want := range map[string]bool{
-		"[12:00:00] [Server thread/INFO]: Stopping server":                                 true,
-		"[12:00:00 INFO]: Stopping server":                                                 true,
-		"[12:00:00] [Server thread/INFO] [minecraft/MinecraftServer]: Stopping server\r":   true,
+		// Vanilla and Fabric, Forge and NeoForge, Paper and its kind.
+		"[12:00:00] [Server thread/INFO]: Stopping server":                                                       true,
+		"\x1b[0m[12:00:00] [Server thread/INFO]: Stopping server\x1b[m":                                          true,
+		"[12:00:00] [Server thread/INFO] [minecraft/MinecraftServer]: Stopping server\r":                         true,
+		"[21Nov2026 12:00:00.000] [Server thread/INFO] [net.minecraft.server.MinecraftServer/]: Stopping server": true,
+		"[12:00:00 INFO]: Stopping server":                                                                       true,
+		// Not the game's own line.
 		"[12:00:00] [Server thread/INFO]: Stopping the server":                             false,
-		"[12:00:00] [Server thread/INFO]: <Steve> Stopping server":                         false,
+		"[12:00:00] [Server thread/INFO]: System chat: Stopping the server":                false,
 		"[12:00:00] [Server thread/INFO]: [Rcon: Stopping the server]":                     false,
 		"[12:00:00] [Server thread/INFO]: Stopping server soon, says a plugin":             false,
 		"[12:00:00] [Server thread/WARN]: Thread RconClient failed to exit after 1 second": false,
+		"[12:00:00] [Server thread/WARN]: Stopping server":                                 false,
+		"[12:00:00] [Worker-Main-1/INFO]: Stopping server":                                 false,
+		"Stopping server": false,
+		// Players saying so, however they shape it.
+		"[12:00:00] [Server thread/INFO]: <Steve> Stopping server":                       false,
+		"[12:00:00] [Server thread/INFO]: <Steve> ]: Stopping server":                    false,
+		"[12:00:00] [Server thread/INFO]: [Not Secure] <Steve> ]: Stopping server":       false,
+		"[12:00:00] [Server thread/INFO]: [Steve] ]: Stopping server":                    false,
+		"[12:00:00 INFO]: <Steve> ]: Stopping server":                                    false,
+		"[12:00:00 INFO]: [Not Secure] <Steve> [12:00:00 INFO]: Stopping server":         false,
+		"[12:00:00] [Server thread/INFO]: <Steve> [Server thread/INFO]: Stopping server": false,
 	} {
 		if got := stoppingLine(line); got != want {
 			t.Errorf("%q: %v, want %v", line, got, want)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -260,18 +261,24 @@ func (s *Server) watchForStop(ctx context.Context, namespace, name string) {
 	}
 }
 
-var ansiCodes = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
+var (
+	ansiCodes = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
+	// stopping is the whole line a game logs as it starts to stop: its own,
+	// from its server thread, with that message and nothing else. Vanilla
+	// and Fabric; Forge and NeoForge, which name the logger; Paper and its
+	// kind:
+	//
+	//	[12:00:00] [Server thread/INFO]: Stopping server
+	//	[12:00:00] [Server thread/INFO] [minecraft/MinecraftServer]: Stopping server
+	//	[12:00:00 INFO]: Stopping server
+	stopping = regexp.MustCompile(`^(?:\[[^\]]+\] \[Server thread/INFO\](?: \[[^\]]+\])?|\[\d{2}:\d{2}:\d{2} INFO\]): Stopping server$`)
+)
 
 // stoppingLine says whether a line of a game's log is the one it logs as it
-// starts to stop, on every kind of server:
-//
-//	[12:00:00] [Server thread/INFO]: Stopping server
-//	[12:00:00 INFO]: Stopping server
-//
-// A player saying so in chat is not it: their name comes before.
+// starts to stop. What a player says comes after their name, as
+// "<Steve> ..." or "[Not Secure] <Steve> ...", and is never it.
 func stoppingLine(line string) bool {
-	line = strings.TrimSpace(ansiCodes.ReplaceAllString(line, ""))
-	return strings.HasSuffix(line, "]: Stopping server")
+	return stopping.MatchString(strings.TrimSpace(ansiCodes.ReplaceAllString(line, "")))
 }
 
 // gameStopping says whether a server seen changing from old to mc is
@@ -296,20 +303,27 @@ func (s *Server) watchGame(old, mc *avsysv1.MinecraftServer) {
 }
 
 // stopsCommand says whether a console command stops the game: stop, or
-// restart on Paper and its kind, with or without a slash or a namespace,
-// and also when execute runs one.
+// restart on Paper and its kind, with or without a slash or their
+// namespace, and also when execute runs one. Only the command itself
+// counts, never a word in what it is given: "say run stop" says it.
 func stopsCommand(command string, restarts bool) bool {
 	words := strings.Fields(strings.ToLower(command))
-	for i, w := range words {
-		if i > 0 && words[i-1] != "run" {
-			continue
-		}
-		w = strings.TrimPrefix(w, "/")
-		if at := strings.LastIndex(w, ":"); at >= 0 {
-			w = w[at+1:]
-		}
-		if w == "stop" || (restarts && w == "restart") {
+	for len(words) > 0 {
+		switch strings.TrimPrefix(words[0], "/") {
+		case "stop", "minecraft:stop":
 			return true
+		case "restart", "bukkit:restart", "spigot:restart":
+			return restarts
+		case "execute", "minecraft:execute":
+			// Its subcommands end at run: what follows is a command of
+			// its own.
+			at := slices.Index(words, "run")
+			if at < 0 {
+				return false
+			}
+			words = words[at+1:]
+		default:
+			return false
 		}
 	}
 	return false
