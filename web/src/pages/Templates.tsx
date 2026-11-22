@@ -106,7 +106,9 @@ export function Templates() {
               {canAdmin && <RowCheckbox checked={selection.has(t.id)} quiet={selection.count === 0} label={`Select ${t.name}`} onChange={(range) => selection.toggle(t.id, range)} className="mr-1" />}
               <PictureZoom name={t.name} url={t.current ? snapshotIcon(org, t.current.id) : undefined} size={36} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium">{t.name}</p>
+                <p className="line-clamp-2 text-[13px] font-medium break-words" title={t.name}>
+                  {t.name}
+                </p>
                 {t.description && <p className="line-clamp-2 text-xs text-muted">{t.description}</p>}
                 <p className={cx("mt-0.5 text-xs text-faint", !ready(t) && "flex items-center gap-1.5")}>
                   {ready(t) ? (

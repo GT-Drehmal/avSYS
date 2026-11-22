@@ -107,10 +107,10 @@ export function Worlds() {
                   {canDelete && <RowCheckbox checked={selection.has(w.id)} quiet={selection.count === 0} label={`Select ${w.name}`} onChange={(range) => selection.toggle(w.id, range)} className="mr-1" />}
                   <PictureZoom name={w.name} url={worldIcon(org, w.id)} retryKey={w.updatedAt} size={36} path={canAdd ? `/orgs/${org}/worlds/${w.id}/icon` : undefined} />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-medium">
+                    <p className="text-[13px] font-medium">
                       {/* The way into what the world has. */}
-                      <button type="button" onClick={() => setLooking(w)} className="max-w-full truncate rounded-sm text-left hover:text-accent" aria-label={`About ${w.name}`}>
-                        {w.name}
+                      <button type="button" onClick={() => setLooking(w)} className="max-w-full rounded-sm text-left hover:text-accent" aria-label={`About ${w.name}`} title={w.name}>
+                        <span className="line-clamp-2 break-words">{w.name}</span>
                       </button>
                     </p>
                     {w.description && <p className="line-clamp-2 text-xs text-muted">{w.description}</p>}

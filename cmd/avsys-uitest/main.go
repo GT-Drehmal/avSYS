@@ -305,14 +305,26 @@ func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir s
 		// Moved in from elsewhere: its mods and datapacks are files in its
 		// folders, which the panel did not add (see loose.go).
 		{org: "club", name: "bingo", display: "Drehmal Bingo", loader: avsysv1.LoaderFabric, version: "1.20.1", state: avsysv1.StateStopped, phase: avsysv1.PhaseStopped},
+		// Long names, as copies get, for the list to wrap: one with a short
+		// address, one with none.
+		{org: "club", name: "harpy-express-copy", display: "Harpy Express (Oct. 2026) (Copy)", loader: avsysv1.LoaderFabric, version: "1.21.4", state: avsysv1.StateRunning, phase: avsysv1.PhaseRunning, players: players, host: "lobby.2cml.org"},
+		{org: "club", name: "murder-mystery-copy", display: "Murder Mystery Test Server (Copy)", loader: avsysv1.LoaderPaper, version: "1.21.4", state: avsysv1.StateStopped, phase: avsysv1.PhaseStopped, host: "-"},
 	} {
+		host := s.host
+		if host == "" {
+			host = s.name + "." + s.org + ".play.test"
+		}
+		expose := avsysv1.ExposeSpec{Type: avsysv1.ExposeRouter, Hostname: host}
+		if host == "-" {
+			expose = avsysv1.ExposeSpec{Type: avsysv1.ExposeNone}
+		}
 		mc := &avsysv1.MinecraftServer{
 			ObjectMeta: metav1.ObjectMeta{Namespace: srv.Namespace(s.org), Name: s.name, CreationTimestamp: metav1.NewTime(time.Now().Add(-48 * time.Hour))},
 			Spec: avsysv1.MinecraftServerSpec{
 				EULA: true, DisplayName: s.display, Version: s.version, Loader: s.loader, State: s.state, Mods: s.mods,
 				Resources: avsysv1.ResourcesSpec{Memory: resource.MustParse("4Gi")},
 				Storage:   avsysv1.StorageSpec{Size: resource.MustParse("10Gi")},
-				Expose:    avsysv1.ExposeSpec{Type: avsysv1.ExposeRouter, Hostname: s.name + "." + s.org + ".play.test"},
+				Expose:    expose,
 				Sleep:     avsysv1.SleepSpec{Enabled: s.sleep, IdleMinutes: 15},
 			},
 		}
@@ -507,6 +519,9 @@ type seed struct {
 	players            *avsysv1.PlayersStatus
 	mods               []avsysv1.ContentRef
 	sleep              bool
+	// host is the address players join it at: its name under the
+	// organization's if empty, and none for "-".
+	host string
 	// lastBackup is how long ago its scheduled snapshot last ran, if it has.
 	lastBackup time.Duration
 }
