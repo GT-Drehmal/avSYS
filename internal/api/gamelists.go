@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -100,6 +101,39 @@ func (s *Server) listCommand(ctx context.Context, mc *avsysv1.MinecraftServer, c
 	defer st.mu.Unlock()
 	st.forGame(mc)
 	return s.tickCommand(ctx, st, mc, command)
+}
+
+// gameWhitelistOff says whether a server's game runs with its whitelist
+// off, as the server.properties it keeps says: the game writes it as its
+// whitelist is turned on or off at the console, and its settings in the
+// panel reach it only as it starts. Only a file that says so counts: one
+// that cannot be read now, or does not say, is taken to be on, so that
+// nobody stays on a whitelist for want of knowing.
+func (s *Server) gameWhitelistOff(ctx context.Context, mc *avsysv1.MinecraftServer) bool {
+	sc, err := s.workspaces.getNow(ctx, mc.Namespace, mc.Name)
+	if err != nil {
+		return false
+	}
+	f, err := sc.Open(path.Join(dataRoot, "server.properties"))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	value, ok := propertyIn(f, "white-list")
+	return ok && strings.EqualFold(value, "false")
+}
+
+// propertyIn is the value server.properties, read from r, gives key: the
+// last it gives, as the game takes that one.
+func propertyIn(r io.Reader, key string) (value string, ok bool) {
+	scan := bufio.NewScanner(io.LimitReader(r, 1<<20))
+	for scan.Scan() {
+		line := strings.TrimSpace(scan.Text())
+		if k, v, found := strings.Cut(line, "="); found && strings.TrimSpace(k) == key {
+			value, ok = strings.TrimSpace(v), true
+		}
+	}
+	return value, ok
 }
 
 // readListFile reads one of a server's lists from its file. A workspace
@@ -388,7 +422,7 @@ func (s *Server) removeFromGameList(w http.ResponseWriter, r *http.Request, u *s
 	case avsysv1.PhaseRunning:
 		// As the panel's own: with enforce-whitelist on, vanilla up to
 		// 1.21.8 puts out everyone not on the whitelist for it, even off.
-		if list.key == "whitelist" && !whitelistOn(&mc.Spec) {
+		if list.key == "whitelist" && s.gameWhitelistOff(ctx, mc) {
 			return &Error{Status: http.StatusConflict, Code: "whitelist_off", Message: "Turn the whitelist on first, or stop the server."}
 		}
 		if bedrock && list.key == "whitelist" {

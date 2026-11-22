@@ -856,7 +856,8 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		!equality.Semantic.DeepEqual(previous.OpMembers, mc.Spec.OpMembers) || !equality.Semantic.DeepEqual(previous.WhitelistMembers, mc.Spec.WhitelistMembers) ||
 		!slices.Equal(previous.Ops, mc.Spec.Ops) || !slices.Equal(previous.Whitelist, mc.Spec.Whitelist) ||
 		!slices.Equal(previous.OpLists, mc.Spec.OpLists) || !slices.Equal(previous.WhitelistLists, mc.Spec.WhitelistLists) ||
-		// Who was to come off while it was off comes off as it is turned on.
+		// Turned on, as the game may have it already: what was held comes
+		// off if it has. Otherwise it comes off as the game starts with it.
 		whitelistOn(previous) != whitelistOn(&mc.Spec) {
 		s.syncOpsFor(a.Org, mc)
 	}

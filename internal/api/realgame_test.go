@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -23,9 +25,9 @@ import (
 
 // A real game in place of the test's: a server in offline mode with its
 // whitelist off and enforce-whitelist on, reached over RCON at
-// AVSYS_REALGAME_RCON with AVSYS_REALGAME_PASSWORD. Players Bystander and
-// Keeper have joined it once, so that it knows them, and Visitor, on no
-// list, is in it. Not run by go test ./...:
+// AVSYS_REALGAME_RCON with AVSYS_REALGAME_PASSWORD, its folder at /data
+// here. Players Bystander and Keeper have joined it once, so that it knows
+// them, and Visitor, on no list, is in it. Not run by go test ./...:
 //
 //	go test -tags realgame -run RealGame ./internal/api/
 type realGame struct{ addr string }
@@ -34,8 +36,35 @@ func (g realGame) DialPod(ctx context.Context, _, _ string, _ int) (net.Conn, er
 	return (&net.Dialer{}).DialContext(ctx, "tcp", g.addr)
 }
 
-// Taking a member off the whitelist of a server whose whitelist is off puts
-// nobody out; turning the whitelist on takes them off.
+// realFiles gives world the game's own folder, as its workspace would.
+func realFiles(t *testing.T, p *panel) {
+	t.Helper()
+	c, s := net.Pipe()
+	server, err := sftp.NewServer(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve() }()
+	sc, err := sftp.NewClientPipe(c, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sc.Close(); server.Close() })
+	used := &atomic.Int64{}
+	used.Store(time.Now().UnixNano())
+	p.srv.workspaces.mu.Lock()
+	p.srv.workspaces.conns["mc-alpha/world"] = &pooledSFTP{sftp: sc, lastUsed: used}
+	p.srv.workspaces.mu.Unlock()
+	t.Cleanup(func() {
+		p.srv.workspaces.mu.Lock()
+		delete(p.srv.workspaces.conns, "mc-alpha/world")
+		p.srv.workspaces.mu.Unlock()
+	})
+}
+
+// Taking a member off the whitelist puts nobody out while the game has its
+// whitelist off, a change of settings turning it on included, as the game
+// has it off until it restarts. Turned on at its console, they come off.
 func TestRealGameKeepsVisitorsWhileTheWhitelistIsOff(t *testing.T) {
 	addr, password := os.Getenv("AVSYS_REALGAME_RCON"), os.Getenv("AVSYS_REALGAME_PASSWORD")
 	if addr == "" {
@@ -44,6 +73,7 @@ func TestRealGameKeepsVisitorsWhileTheWhitelistIsOff(t *testing.T) {
 	ctx := context.Background()
 	p := newPanel(t)
 	runningWithLists(t, p)
+	realFiles(t, p)
 	p.srv.Kube = kubefake.NewSimpleClientset(&corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "mc-alpha", Name: "world-rcon"},
 		Data:       map[string][]byte{"password": []byte(password)},
@@ -51,7 +81,7 @@ func TestRealGameKeepsVisitorsWhileTheWhitelistIsOff(t *testing.T) {
 	p.srv.Dialer = realGame{addr}
 	// As the panel reads a server again before it changes its lists.
 	p.srv.Reader = p.srv.Client
-	p.srv.Log = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	p.srv.Log = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	game := func(command string) string {
 		t.Helper()
 		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -65,10 +95,24 @@ func TestRealGameKeepsVisitorsWhileTheWhitelistIsOff(t *testing.T) {
 		}
 		return out
 	}
+	properties := func() string {
+		t.Helper()
+		data, err := os.ReadFile("/data/server.properties")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "white-list=") {
+				return strings.TrimSpace(line)
+			}
+		}
+		return ""
+	}
 	in := func() bool { return strings.Contains(game("list"), "Visitor") }
 	if !in() {
 		t.Fatal("Visitor is not in the game to begin with")
 	}
+	t.Logf("the game's file: %s", properties())
 	// Ada (admin) plays as Bystander, Olive (owner) as Keeper.
 	for who, name := range map[string]string{"admin": "Bystander", "owner": "Keeper"} {
 		if err := p.srv.Store.SetMinecraftAccount(ctx, p.users[who].ID, &store.MinecraftAccount{UUID: strings.Repeat(strings.ToLower(name[:1]), 32), Name: name, Main: true}); err != nil {
@@ -98,7 +142,7 @@ func TestRealGameKeepsVisitorsWhileTheWhitelistIsOff(t *testing.T) {
 	}
 	time.Sleep(2 * time.Second)
 	p.srv.syncOrgOps(ctx, org)
-	time.Sleep(2 * time.Second)
+	time.Sleep(time.Second)
 	t.Logf("with the whitelist off, after the member left: list %q, whitelist %q", game("list"), game("whitelist list"))
 	if !in() {
 		t.Fatal("Visitor was put out when a member left, with the whitelist off")
@@ -107,20 +151,34 @@ func TestRealGameKeepsVisitorsWhileTheWhitelistIsOff(t *testing.T) {
 		t.Errorf("taken off with the whitelist off: %s", got)
 	}
 
-	// The whitelist turned on: Bystander comes off at once.
+	// Turned on in the settings: the game has it off until it restarts.
 	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/world", `{"spec":{"properties":{"white-list":"true"}}}`); code != http.StatusOK {
 		t.Fatalf("turning the whitelist on: %d %s", code, msg)
 	}
-	// Waited for by the panel's note of whom it put on, not by asking the
-	// game: two RCON connections asking at once can get each other's output.
-	noted := func() string { return world(t, p).Annotations[avsysv1.AnnotationAutoWhitelist] }
-	for end := time.Now().Add(time.Minute); strings.Contains(noted(), "Bystander") && time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
+	time.Sleep(2 * time.Second)
+	p.srv.syncOrgOps(ctx, org)
+	time.Sleep(time.Second)
+	t.Logf("turned on in the settings, the game not restarted: file %s, list %q, whitelist %q", properties(), game("list"), game("whitelist list"))
+	if !in() {
+		t.Fatal("Visitor was put out by a change of settings the game has not taken yet")
 	}
-	t.Logf("the panel's note once the whitelist is on: %q", noted())
+	if got := game("whitelist list"); !strings.Contains(got, "Bystander") {
+		t.Errorf("taken off before the game had its whitelist on: %s", got)
+	}
+
+	// On at the console: the game says so in its file, and the next look
+	// takes Bystander off.
+	t.Logf("whitelist on: %s", game("whitelist on"))
+	t.Logf("the game's file once on at the console: %s", properties())
+	if got := properties(); got != "white-list=true" {
+		t.Fatalf("the game did not write its whitelist on to its file: %q", got)
+	}
+	p.srv.syncOrgOps(ctx, org)
+	noted := world(t, p).Annotations[avsysv1.AnnotationAutoWhitelist]
 	got := game("whitelist list")
-	t.Logf("with the whitelist on: list %q, whitelist %q", game("list"), got)
+	t.Logf("with the whitelist on in game: note %q, list %q, whitelist %q", noted, game("list"), got)
 	if strings.Contains(got, "Bystander") {
-		t.Errorf("the member who left was not taken off once the whitelist was on: %s", got)
+		t.Errorf("the member who left was not taken off once the game had its whitelist on: %s", got)
 	}
 	if !strings.Contains(got, "Keeper") {
 		t.Errorf("a member still in was taken off: %s", got)

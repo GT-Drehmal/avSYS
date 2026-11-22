@@ -337,8 +337,6 @@ func runningWithLists(t *testing.T, p *panel) *listGame {
 			t.Fatal(err)
 		}
 	}
-	// With its whitelist on: with it off, nobody is taken off it.
-	changeWorld(t, p, func(mc *avsysv1.MinecraftServer) { mc.Spec.Properties = map[string]string{"white-list": "true"} })
 	p.setPhase("alpha", "world", avsysv1.PhaseRunning)
 	return g
 }

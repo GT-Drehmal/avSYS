@@ -798,12 +798,12 @@ func (s *Server) syncOps(ctx context.Context, mc *avsysv1.MinecraftServer, membe
 				fileAdd, fileRemove = append(fileAdd, more...), append(fileRemove, gone...)
 			}
 		}
-		// With the whitelist off, nobody is taken off it and its file is not
-		// read again: with enforce-whitelist on, vanilla up to 1.21.8, and
-		// the loaders built on it, put out everyone not on it for either,
+		// With the game's whitelist off, nobody is taken off it and its file
+		// is not read again: with enforce-whitelist on, vanilla up to 1.21.8,
+		// and the loaders built on it, put out everyone not on it for either,
 		// the whitelist on or not. Who is to come off is still noted, and
-		// comes off once it is on.
-		hold := list.key == "whitelist" && !whitelistOn(&fresh.Spec)
+		// comes off once the game has it on.
+		hold := list.key == "whitelist" && s.gameWhitelistOff(ctx, fresh)
 		if hold {
 			remove, fileAdd, fileRemove = nil, nil, nil
 		}
