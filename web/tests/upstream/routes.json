@@ -1,5 +1,60 @@
 [
  {
+  "url": "https://api.modrinth.com/v2/project/kinswathe/version",
+  "has": "",
+  "file": "versions-kinswathe.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/project/PWATHE01/version",
+  "has": "",
+  "file": "versions-wathe.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/project/PWATHE01",
+  "has": "",
+  "file": "project-wathe.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/project/kinswathe",
+  "has": "",
+  "file": "project-kinswathe.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/version/vKINS001",
+  "has": "",
+  "file": "version-kinswathe.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/version/vKINS002",
+  "has": "",
+  "file": "version-kinswathe-2.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/version/vWATHE01",
+  "has": "",
+  "file": "version-wathe.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/version/V0000101",
+  "has": "",
+  "file": "version-V0000101.json"
+ },
+ {
+  "url": "https://api.modrinth.com/v2/version/V0000102",
+  "has": "",
+  "file": "version-V0000102.json"
+ },
+ {
+  "url": "https://files.invalid/wathe-1.4.1-1.21.4.jar",
+  "has": "",
+  "file": "wathe-1.4.1-1.21.4.jar"
+ },
+ {
+  "url": "https://files.invalid/kinswathe-1.6.5.jar",
+  "has": "",
+  "file": "kinswathe-1.6.5.jar"
+ },
+ {
   "url": "https://api.modrinth.com/v2/search",
   "has": "project_type:resourcepack",
   "file": "search-resourcepacks.json"
@@ -344,5 +399,11 @@
   "url": "https://edge.forgecdn.net/files/5000/",
   "has": "",
   "file": "curseforge-pack.zip"
+ },
+ {
+  "url": "https://files.invalid/",
+  "has": "",
+  "file": "version.json",
+  "status": 404
  }
 ]

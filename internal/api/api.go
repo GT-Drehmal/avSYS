@@ -161,6 +161,10 @@ type Server struct {
 	// Nil is the internet. The browser tests answer from files instead, so
 	// that they neither depend on those services nor load them.
 	Upstream http.RoundTripper
+	// Downloads is how the panel downloads files of content to read them:
+	// what Java a mod needs, and which mods it is. Nil is the internet,
+	// from public addresses only. The browser tests answer from files.
+	Downloads http.RoundTripper
 	// Updates is whether a newer release is out, for the instance
 	// administrator. Nil never says so.
 	Updates *release.Checker

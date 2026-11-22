@@ -139,6 +139,36 @@ func FitModPortsLike(before, after []avsysv1.ContentRef, ports, like []avsysv1.E
 	return out
 }
 
+// DependencyEnv is the image's setting for what Modrinth content needs:
+// one in a server's own environment is the server's choice, which the
+// panel keeps to.
+const DependencyEnv = "MODRINTH_DOWNLOAD_DEPENDENCIES"
+
+// OwnDependencyEnv says a server's own environment sets how the image
+// downloads what Modrinth content needs.
+func OwnDependencyEnv(spec *avsysv1.MinecraftServerSpec) bool {
+	for _, e := range spec.Env {
+		if e.Name == DependencyEnv {
+			return true
+		}
+	}
+	return false
+}
+
+// ListsDependencies says the panel can list what a server's Modrinth
+// content needs in its list, rather than the image downloading it: not
+// for a modpack, whose own mods it does not look into, nor where the
+// server's own environment says how the image is to.
+func ListsDependencies(spec *avsysv1.MinecraftServerSpec) bool {
+	return spec.Modpack == nil && !OwnDependencyEnv(spec)
+}
+
+// DependenciesListed says the panel has listed what a server's Modrinth
+// content needs, so the image is not to download it.
+func DependenciesListed(spec *avsysv1.MinecraftServerSpec) bool {
+	return spec.DependenciesListed && spec.Modpack == nil
+}
+
 // modPortsEnv tells the start script which ports were opened for mods, a
 // line each: the mod, the port it listens on and its protocol, and where
 // players reach it, as the public port and host:port, 0 and - while that

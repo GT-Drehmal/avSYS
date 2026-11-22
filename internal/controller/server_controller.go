@@ -405,6 +405,16 @@ func (r *Reconciler) ensurePod(ctx context.Context, mc *avsysv1.MinecraftServer)
 		existing.DeletionTimestamp = &now
 		return existing, false, 0, nil
 	}
+	// Noted as running what the settings say now, the pod is marked as made
+	// with them: a later change that leaves the pod as it is, as one to
+	// the panel's own notes of what content needs, is then no change to it.
+	if settledPod(existing, mc) && existing.Annotations[annotationSpecHash] != desired.Annotations[annotationSpecHash] {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Annotations[annotationSpecHash] = desired.Annotations[annotationSpecHash]
+		if err := r.Patch(ctx, existing, patch); err != nil {
+			return nil, false, 0, err
+		}
+	}
 	return existing, toApply, 0, nil
 }
 

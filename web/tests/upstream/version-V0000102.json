@@ -1,0 +1,15 @@
+{
+ "id": "V0000102",
+ "project_id": "P0000102",
+ "version_number": "0.92.2+1.20.1",
+ "files": [
+  {
+   "filename": "fabric-api-0.92.2+1.20.1.jar",
+   "primary": true,
+   "hashes": {
+    "sha1": "1d48b9c98041055c08e674365d2e5fd6b885cd26"
+   }
+  }
+ ],
+ "dependencies": []
+}

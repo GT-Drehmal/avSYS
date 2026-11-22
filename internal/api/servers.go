@@ -618,7 +618,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.resolveJava(r.Context(), &in.Spec)
-	if err := s.resolveContent(r.Context(), &in.Spec, nil); err != nil {
+	if err := s.resolveContent(r.Context(), &in.Spec, nil, nil); err != nil {
 		return err
 	}
 	if err := s.nameIsFree(r.Context(), a, in.Name); err != nil {
@@ -938,7 +938,7 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	if err := checkPackFormats(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return nil, err
 	}
-	if err := s.resolveContent(ctx, &spec, previous); err != nil {
+	if err := s.resolveContent(ctx, &spec, previous, s.contentOn(ctx, mc)); err != nil {
 		return nil, err
 	}
 	mc.Spec = spec

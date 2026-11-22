@@ -202,12 +202,25 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 		}
 	}
 	// Each is taken from Modrinth only if all it needs is in the list too,
-	// which one taken out may change for another.
+	// which one taken out may change for another. Where the panel lists
+	// what content needs, something on the server that is what it needs,
+	// by its mod ID, will do as well: the image downloads nothing for it.
+	on := &serverContent{found: found, files: func() ServerFiles { return files }}
+	var onServer *depLister
+	provided := func(need string, kind avsysv1.ContentKind) bool {
+		if !mc.Spec.DependenciesListed || !controller.ListsDependencies(&mc.Spec) || strings.HasPrefix(need, "version:") {
+			return false
+		}
+		if onServer == nil {
+			onServer = s.listerOn(ctx, &mc.Spec, on)
+		}
+		return onServer.provides(need, kind)
+	}
 	for changed := true; changed; {
 		changed = false
 		for project, f := range candidates {
 			for _, need := range f.Requires {
-				if _, ok := candidates[need]; !ok && !listed[need] {
+				if _, ok := candidates[need]; !ok && !listed[need] && !provided(need, f.Kind) {
 					delete(candidates, project)
 					changed = true
 					break
@@ -230,6 +243,7 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 				m.File = f.Filename
 				ref = "datapack:" + ref
 			}
+			m.Provides = foundProvides(files, f)
 			entries = append(entries, m)
 			paths[f.Path] = importedFile{Key: contentKey(m), SHA1: f.SHA1}
 			record = append(record, ref+"\t"+f.Path)
@@ -250,6 +264,7 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 		if f.Folder {
 			sum, _ = contentHash(files, path.Join(dataRoot, f.Path))
 		}
+		m.Provides = foundProvides(files, f)
 		entries = append(entries, m)
 		paths[f.Path] = importedFile{Key: contentKey(m), SHA1: sum}
 	}
@@ -261,7 +276,7 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 			s.Log.Warn("could not note what was taken from Modrinth", "server", key.Name, "error", err)
 		}
 	}
-	if err := s.listImported(ctx, key, entries, paths, left); err != nil {
+	if err := s.listImported(ctx, key, entries, paths, left, on); err != nil {
 		return found, err
 	}
 	return left, nil
@@ -324,12 +339,8 @@ func inPlaceFile(m avsysv1.ContentRef) bool {
 // and notes the files it is in. A server whose game runs, with nothing else
 // waiting for a restart, is noted as running what it lists now: it has the
 // files already.
-func (s *Server) listImported(ctx context.Context, key client.ObjectKey, entries []avsysv1.ContentRef, paths map[string]importedFile, left []FoundFile) error {
-	pod := &corev1.Pod{}
-	podUID := ""
-	if err := s.Client.Get(ctx, key, pod); err == nil && pod.DeletionTimestamp.IsZero() {
-		podUID = string(pod.UID)
-	}
+func (s *Server) listImported(ctx context.Context, key client.ObjectKey, entries []avsysv1.ContentRef, paths map[string]importedFile, left []FoundFile, on *serverContent) error {
+	podUID := s.podUIDOf(ctx, key)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		mc := &avsysv1.MinecraftServer{}
 		if err := s.Client.Get(ctx, key, mc); err != nil {
@@ -353,6 +364,13 @@ func (s *Server) listImported(ctx context.Context, key client.ObjectKey, entries
 		if !added {
 			return nil
 		}
+		// What needs what is noted, as for any change to the list; nothing
+		// is added for it: all a Modrinth entry taken needs is there.
+		if mc.Spec.DependenciesListed {
+			if err := s.listDependencies(ctx, &mc.Spec, depOptions{onServer: &serverContent{found: left, files: on.reach}}); err != nil {
+				s.Log.Debug("could not note what content taken into a server's list needs", "server", key.Name, "error", err)
+			}
+		}
 		imported := importedOf(mc)
 		for p, f := range paths {
 			imported[p] = f
@@ -365,26 +383,49 @@ func (s *Server) listImported(ctx context.Context, key client.ObjectKey, entries
 		} else if raw, err := json.Marshal(left); err == nil {
 			mc.Annotations[avsysv1.AnnotationFoundContent] = string(raw)
 		}
-		// Nothing waited for a restart before: nothing does after. The
-		// change is its next generation.
-		if podUID != "" && (settledOn(mc, podUID) || (!mc.Status.PendingRestart && mc.Status.ObservedGeneration == mc.Generation)) {
-			mc.Annotations[avsysv1.AnnotationSettled] = podUID + "@" + strconv.FormatInt(mc.Generation+1, 10)
-		} else {
-			delete(mc.Annotations, avsysv1.AnnotationSettled)
-		}
+		settleWith(mc, podUID, true)
 		was := mc.Generation
 		if err := s.Client.Update(ctx, mc); err != nil {
 			return err
 		}
-		// Where the generation is not counted as it is in a cluster.
-		if podUID != "" && mc.Annotations[avsysv1.AnnotationSettled] != "" && mc.Generation != was+1 {
-			mc.Annotations[avsysv1.AnnotationSettled] = podUID + "@" + strconv.FormatInt(mc.Generation, 10)
-			if err := s.Client.Update(ctx, mc); err != nil && !apierrors.IsConflict(err) {
-				return err
-			}
-		}
-		return nil
+		return s.settledAfter(ctx, mc, podUID, was)
 	})
+}
+
+// podUIDOf is the UID of a server's pod, "" while it has none that stays.
+func (s *Server) podUIDOf(ctx context.Context, key client.ObjectKey) string {
+	pod := &corev1.Pod{}
+	if err := s.Client.Get(ctx, key, pod); err == nil && pod.DeletionTimestamp.IsZero() {
+		return string(pod.UID)
+	}
+	return ""
+}
+
+// settleWith notes on a server, about to be changed in a way its pod runs
+// already (runs), that the pod runs what it says then: if nothing waited
+// for a restart before, nothing does after. The change is its next
+// generation. A change the pod does not run already is not noted.
+func settleWith(mc *avsysv1.MinecraftServer, podUID string, runs bool) {
+	if mc.Annotations == nil {
+		mc.Annotations = map[string]string{}
+	}
+	if runs && podUID != "" && (settledOn(mc, podUID) || (!mc.Status.PendingRestart && mc.Status.ObservedGeneration == mc.Generation)) {
+		mc.Annotations[avsysv1.AnnotationSettled] = podUID + "@" + strconv.FormatInt(mc.Generation+1, 10)
+	} else {
+		delete(mc.Annotations, avsysv1.AnnotationSettled)
+	}
+}
+
+// settledAfter puts right the note settleWith made, once the change is
+// written, where the generation is not counted as it is in a cluster.
+func (s *Server) settledAfter(ctx context.Context, mc *avsysv1.MinecraftServer, podUID string, was int64) error {
+	if podUID != "" && mc.Annotations[avsysv1.AnnotationSettled] != "" && mc.Generation != was+1 {
+		mc.Annotations[avsysv1.AnnotationSettled] = podUID + "@" + strconv.FormatInt(mc.Generation, 10)
+		if err := s.Client.Update(ctx, mc); err != nil && !apierrors.IsConflict(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // settledOn says a server is noted as running what it lists now, in this pod.

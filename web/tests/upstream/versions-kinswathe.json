@@ -1,0 +1,39 @@
+[
+ {
+  "id": "vKINS001",
+  "project_id": "PKINS001",
+  "name": "1.6.4",
+  "version_number": "1.6.4",
+  "version_type": "release",
+  "game_versions": [
+   "1.21.4"
+  ],
+  "loaders": [
+   "fabric"
+  ],
+  "date_published": "2026-10-01T10:00:00Z",
+  "dependencies": [
+   {
+    "project_id": "PWATHE01",
+    "version_id": null,
+    "dependency_type": "required"
+   },
+   {
+    "project_id": "P0000006",
+    "version_id": null,
+    "dependency_type": "optional"
+   }
+  ],
+  "files": [
+   {
+    "url": "https://files.invalid/kinswathe-1.6.4.jar",
+    "filename": "kinswathe-1.6.4.jar",
+    "primary": true,
+    "hashes": {
+     "sha1": "4b00000000000000000000000000000000000001"
+    },
+    "size": 1000
+   }
+  ]
+ }
+]

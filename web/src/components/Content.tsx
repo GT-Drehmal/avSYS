@@ -1,6 +1,6 @@
 import { ExternalLink, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { api, type CatalogSource, type ContentKind, type ContentRef, type FoundFile, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec, type StackedPack } from "../lib/api";
+import { api, type CatalogSource, type ContentKind, type ContentRef, type FoundFile, type Loader, type ModrinthHit, type ModrinthVersion, type PackFormats, type PackProject, type ResourcePack, type Server, type ServerSpec, type StackedPack, type UnmetDependency } from "../lib/api";
 import { fetchVersions, isCatalog, projectPage, sourceNames, sources, useSearchable } from "../lib/catalog";
 import { ago, bytes, loaderNames } from "../lib/format";
 import { packFormatsOf, useGameFormat, useGameVersions } from "../lib/software";
@@ -535,8 +535,25 @@ export const foundTitle = (f: FoundFile) => f.title || withoutExtension(f.path.s
 export const foundRefs = (found: FoundFile[] | null | undefined): ContentRef[] =>
   (found ?? []).flatMap((f) => (f.project ? [{ source: "modrinth" as const, kind: f.kind, project: f.project, version: f.versionId, title: f.title }] : []));
 
+/** "Needed by Kin's Wathe and Wathe Blood", from what needs an entry, named as the list names them. */
+export function neededByNote(m: ContentRef, all: ContentRef[]) {
+  if (!m.neededBy?.length) return undefined;
+  const names = m.neededBy.map((p) => {
+    const by = all.find((o) => o.project === p);
+    return by ? titleOf(by) : p;
+  });
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `Needed by ${list}`;
+}
+
+/** "Needs wathe >=1.5.0. The server has 1.4.1 in Wathe fork." */
+export const unmetNote = (u: UnmetDependency) =>
+  `Needs ${u.id}${u.wants ? ` ${u.wants}` : ""}.${u.has ? ` The server has ${u.has}${u.by ? ` in ${u.by}` : ""}.` : ""}`;
+
 interface ContentListProps {
   mods: ContentRef[];
+  /** The server's whole list, which names what needs an entry; mods, unless said. */
+  all?: ContentRef[];
   /** The Java the game version ships with. Entries needing more say so. */
   gameJava?: number;
   /** Rendered between an entry's kind and its remove button, e.g. a version picker. */
@@ -555,28 +572,42 @@ interface ContentListProps {
   onRemoveFound?: (f: FoundFile) => void;
 }
 
-export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true, found = [], foundPicture, picture, onRemoveFound }: ContentListProps) {
+export function ContentList({ mods, all, gameJava, extra, note, onRemove, showKind = true, found = [], foundPicture, picture, onRemoveFound }: ContentListProps) {
   const row = "flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0";
   return (
     <ul className="overflow-hidden rounded-lg border border-line bg-surface">
-      {mods.map((m, i) => (
-        <li key={`${m.source}/${m.project}`} className={row}>
-          <ProjectIcon url={m.iconUrl || picture?.(m)} size={32} kind={m.kind ?? "mod"} name={titleOf(m)} />
-          <div className="min-w-0 flex-1">
-            <p className="flex items-center gap-2 truncate text-[13px] font-medium">
-              {titleOf(m)}
-              {isCatalog(m.source) && <ProjectLink source={m.source} project={m.project} />}
-            </p>
-            {(note?.(m, i) ?? sourceLine(m)) && <p className="truncate font-mono text-xs text-faint">{note?.(m, i) ?? sourceLine(m)}</p>}
-          </div>
-          {!!gameJava && !!m.java && m.java > gameJava && (
-            <Chip className="border-warn/40 text-warn" >needs Java {m.java}</Chip>
-          )}
-          {showKind && <Chip>{m.kind ?? "mod"}</Chip>}
-          {extra?.(m, i)}
-          {onRemove && <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${titleOf(m)}`} onClick={() => onRemove(i)} />}
-        </li>
-      ))}
+      {mods.map((m, i) => {
+        const needed = neededByNote(m, all ?? mods);
+        const said = note?.(m, i);
+        return (
+          <li key={`${m.source}/${m.project}`} className={row}>
+            <ProjectIcon url={m.iconUrl || picture?.(m)} size={32} kind={m.kind ?? "mod"} name={titleOf(m)} />
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-2 truncate text-[13px] font-medium">
+                {titleOf(m)}
+                {isCatalog(m.source) && <ProjectLink source={m.source} project={m.project} />}
+              </p>
+              {needed ? (
+                <p className="truncate text-xs text-muted">{[needed, said].filter(Boolean).join(" · ")}</p>
+              ) : (
+                (said ?? sourceLine(m)) && <p className="truncate font-mono text-xs text-faint">{said ?? sourceLine(m)}</p>
+              )}
+              {m.unmet?.map((u) => (
+                <p key={u.id} role="note" className="text-xs text-warn">
+                  {unmetNote(u)}
+                </p>
+              ))}
+            </div>
+            {!!gameJava && !!m.java && m.java > gameJava && (
+              <Chip className="border-warn/40 text-warn">needs Java {m.java}</Chip>
+            )}
+            {showKind && <Chip>{m.kind ?? "mod"}</Chip>}
+            {extra?.(m, i)}
+            {/* One added for what needs it goes with that. */}
+            {onRemove && !(m.dependency && needed) && <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${titleOf(m)}`} onClick={() => onRemove(i)} />}
+          </li>
+        );
+      })}
       {found.map((f) => (
         <li key={`found/${f.path}`} className={row} title={f.path}>
           <ProjectIcon url={f.iconUrl || foundPicture?.(f)} size={32} kind={f.kind} name={foundTitle(f)} />

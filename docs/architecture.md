@@ -352,8 +352,11 @@ Content is settled when it is added, not when the server starts.
    files from an address as `MODS`, `PLUGINS` or `DATAPACKS`. Uploaded files
    are kept in the server's own files under `.avsys/content` and named the
    same way.
-4. At each start the image downloads what is listed and removes what is
-   not. Required dependencies are fetched by the image and are not pinned.
+4. What the Modrinth entries need is listed too, pinned, by the panel (see
+   [What content needs](#what-content-needs)), and the image is told
+   `MODRINTH_DOWNLOAD_DEPENDENCIES=none`.
+5. At each start the image downloads what is listed and removes what is
+   not.
 
 A restart never changes what is installed. Changing the game version or
 loader pins each entry again for the new one. A file of the server's own
@@ -392,11 +395,10 @@ without changing a file:
 
 - A file Modrinth has, under the name Modrinth gives it, becomes that
   project pinned to that version, if every project it requires is listed
-  too. Given it, the image finds the file there (it skips a file that
-  exists and checks its hash), and does not fetch what an explicitly
-  listed project needs again. A mod that needs a project that is not
-  listed would make the image fetch a second copy of it, so it becomes an
-  upload instead.
+  too, or is on the server as another file, by its mod ID (see below).
+  Given it, the image finds the file there (it skips a file that exists
+  and checks its hash). A mod that needs a project that is not there
+  would have it downloaded, so it becomes an upload instead.
 - Anything else becomes an upload kept where it was found: the entry's
   `file` is its place, and the image is not handed it, so nothing is
   copied and no copy can ever be put over it. A file read only part of the
@@ -454,6 +456,75 @@ must be reachable by them.
 `OPS`, from the server's own lists, its saved lists, and its members by
 role. While the game runs, the panel keeps them up with `whitelist` and
 `op` commands over RCON, and reads the game's lists once a minute.
+
+### What content needs
+
+The image, told to download what Modrinth content needs, goes by
+Modrinth's projects alone: a mod the server has as an upload, a fork of
+it, a renamed file or one carried inside another mod, it does not see,
+and it downloads a second copy beside it, which the loader refuses to
+start with. So the panel lists what content needs itself
+(`internal/api/dependencies.go`), each time the list's content changes,
+and the image is told `MODRINTH_DOWNLOAD_DEPENDENCIES=none`
+(`spec.dependenciesListed`):
+
+1. For each Modrinth entry, what its pinned version requires, as Modrinth
+   says (`GET /v2/version/{id}`, kept an hour). Optional, incompatible and
+   embedded projects are not needed.
+2. A project the list has is that entry. For one it does not have, the
+   version Modrinth names, or else the newest that fits the server (as an
+   entry is pinned), is read for the mod ID its file says it is
+   (`fabric.mod.json` or `quilt.mod.json` `id`, the first `modId` of
+   `mods.toml`, a plugin's `name`). Files are read once and kept by
+   address (`internal/api/modmeta.go`).
+3. What the server gives: every entry's file (`provides` on the entry,
+   read when it is added: its own ID, those it says it `provides`, and
+   those of the jars inside it, from `jars` and
+   `META-INF/jarjar/metadata.json`), and the files found in its folders,
+   read where they are.
+4. If anything gives that ID, that is what is needed: it is noted
+   `neededBy`, and nothing is added. Something there in a project's place,
+   as a fork, is taken to need what that project's version needs. Where
+   the dependent's file says which versions of it will do (`depends`,
+   `versionRange`) and the server's is not one, that is noted on the
+   dependent (`unmet`) and shown on the Content page.
+5. Otherwise the project is added, pinned, marked `dependency`, and what
+   it needs is worked out in turn. One the panel added that nothing needs
+   any more, or that something of the server's own is now, is taken off.
+
+A change that leaves the content as it was keeps what was worked out, and
+asks Modrinth nothing; one Modrinth cannot be asked about keeps what was
+listed, taking off only what was noted as needed by entries gone. A
+server whose `spec.env` sets `MODRINTH_DOWNLOAD_DEPENDENCIES`, or runs a
+modpack, is left to the image.
+
+**Servers from before.** A server made before the panel did this had what
+its content needs downloaded by the image, each at whatever version was
+newest then. It is brought over once, by the look at its folders
+(`migrateDependencies`), without a file changing: the image's record
+(`.modrinth-manifest.json`) says which files it installed, each file not a
+listed version's own is looked up on Modrinth by its SHA-1, and what the
+content needs is listed at the very versions the server has; whatever else
+the image installed is listed too (a second copy beside a fork, say), so
+that the next start, with `none`, has every file it has now and gets
+nothing more. Written in one change with `dependenciesListed`, and a
+running game is noted as running it already (`avsys.dev/settled`), so no
+restart is asked for. The added entries go in `.avsys/imported-modrinth`
+too, for a start while Modrinth does not answer, until the image's own
+record has them.
+
+The image can have installed two versions of one project, for two mods
+that each name another (Bingo's Animatica and Dynamic FPS did, for Fabric
+API). It takes a project once in its list, so those cannot both be listed:
+such a server is left to its image, files and all, and not looked at for
+this again until the image's record changes. A server not brought over
+is listed, as any other, once its content is changed through the panel:
+the next start gets what that says, as the image would have downloaded
+what is needed anew. Until then its image downloads it, as before.
+
+The controller marks a pod noted as settled as made with the settings it
+runs (its `avsys.dev/spec-hash`), so that a later change that leaves the
+pod as it is, as one to these notes, is not taken as one to restart for.
 
 ### Asking Mojang
 

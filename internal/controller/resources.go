@@ -222,6 +222,12 @@ const (
 
 var consoleMount = corev1.VolumeMount{Name: "console", MountPath: ConsoleDir}
 
+// MinecraftEnv is the environment a server's game container is given, as
+// far as it follows from the server alone.
+func MinecraftEnv(mc *avsysv1.MinecraftServer) []corev1.EnvVar {
+	return minecraftEnv(mc, Config{})
+}
+
 func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 	env := map[string]string{
 		"EULA":                           strconv.FormatBool(mc.Spec.EULA),
@@ -229,6 +235,13 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		"MODRINTH_DOWNLOAD_DEPENDENCIES": "required",
 		"CREATE_CONSOLE_IN_PIPE":         "true",
 		"CONSOLE_IN_NAMED_PIPE":          ConsolePipe,
+	}
+	// What the content needs is listed with it by the panel, or is in a
+	// file of the server's that provides it: the image is not to download
+	// a second copy. A modpack's mods are the pack's, which the panel does
+	// not look into.
+	if DependenciesListed(&mc.Spec) {
+		env["MODRINTH_DOWNLOAD_DEPENDENCIES"] = "none"
 	}
 	// Set only when asked for, so that a server made before these were
 	// offered keeps the environment, and the pod, it has.

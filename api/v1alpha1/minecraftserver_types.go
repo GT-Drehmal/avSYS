@@ -162,6 +162,34 @@ type ContentRef struct {
 	// Description is what an uploaded datapack says of itself, in its
 	// pack.mcmeta, recorded when the entry was added.
 	Description string `json:"description,omitempty"`
+	// Provides are the mod IDs a mod's file gives the server, or a
+	// plugin's names: its own, those it says it provides besides, and
+	// those of the jars inside it. Read from the file by the panel, which
+	// goes by them to tell whether the server has what other content needs.
+	Provides []string `json:"provides,omitempty"`
+	// Dependency says the panel added the entry because other content
+	// needs it, rather than someone adding it: it is taken off once
+	// nothing needs it. Picking a version of it makes it one's own.
+	Dependency bool `json:"dependency,omitempty"`
+	// NeededBy are the entries that need this one, by their Project, as
+	// the panel works it out from what Modrinth says each version needs.
+	NeededBy []string `json:"neededBy,omitempty"`
+	// Unmet are the mods this one needs another version of than the
+	// server has, as its file says.
+	Unmet []UnmetDependency `json:"unmet,omitempty"`
+}
+
+// UnmetDependency is a mod that content needs, which the server has, but
+// not in a version the content works with. The panel does not install a
+// second copy of it: the loader would refuse to start with two.
+type UnmetDependency struct {
+	// ID is the mod needed, by its mod ID.
+	ID string `json:"id"`
+	// Wants is the versions that will do, as the content says.
+	Wants string `json:"wants,omitempty"`
+	// Has is the version the server has, and By what it is part of.
+	Has string `json:"has,omitempty"`
+	By  string `json:"by,omitempty"`
 }
 
 // MemberPicks are members put on a list, or left off it, whatever their role.
@@ -511,9 +539,16 @@ type MinecraftServerSpec struct {
 	// +kubebuilder:validation:Maximum=99
 	GameJava int32 `json:"gameJava,omitempty"`
 
-	Modpack      *ModpackSpec      `json:"modpack,omitempty"`
-	Mods         []ContentRef      `json:"mods,omitempty"`
-	ResourcePack *ResourcePackSpec `json:"resourcePack,omitempty"`
+	Modpack *ModpackSpec `json:"modpack,omitempty"`
+	Mods    []ContentRef `json:"mods,omitempty"`
+	// DependenciesListed says what the Modrinth entries in Mods need is in
+	// Mods too, as entries of their own put there by the panel, or is
+	// there in another file that provides it, so the server's image is
+	// told not to download what they need itself. Without it, as for a
+	// server made before the panel did this, or outside it, the image
+	// downloads what they need, as before.
+	DependenciesListed bool              `json:"dependenciesListed,omitempty"`
+	ResourcePack       *ResourcePackSpec `json:"resourcePack,omitempty"`
 
 	// Properties are server.properties entries managed by avSYS. Keys not listed
 	// here are left as they are in the file, so hand edits survive.

@@ -1844,6 +1844,7 @@ export function ServerForm({
                   ) : (
                     <ContentList
                       mods={refs}
+                      all={v.mods}
                       showKind={false}
                       note={(_, j) => {
                         const upload = j >= mods.length ? v.uploads[ups[j - mods.length]] : null;
