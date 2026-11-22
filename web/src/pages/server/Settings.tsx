@@ -121,6 +121,20 @@ function toDraft(spec: ServerSpec, notes: string): Draft {
 }
 
 /**
+ * A draft changed while it was saved, with the other properties the panel
+ * set as it saved, as enforce-whitelist is with the whitelist: left out, the
+ * next save would take them out again. They go first, as the cursor is put
+ * at the end of what is being typed.
+ */
+function withAdded(draft: Draft, sent: Draft, saved: Draft): Draft {
+  const known = { ...parseProperties(sent.otherProperties), ...parseProperties(draft.otherProperties) };
+  const added = Object.entries(parseProperties(saved.otherProperties))
+    .filter(([key]) => !(key in known))
+    .map(([key, value]) => `${key}=${value}`);
+  return added.length > 0 ? { ...draft, otherProperties: [...added, draft.otherProperties].filter(Boolean).join("\n") } : draft;
+}
+
+/**
  * The settings to save. The version is sent only when it was changed: one
  * picked as "Latest release" is the newest there is now, given as latest,
  * which the server then keeps.
@@ -140,10 +154,6 @@ function toPatch(d: Draft, current: ServerSpec, latest: string | undefined): Spe
   };
   for (const [k, v] of Object.entries(typed)) if (v !== "") properties[k] = v;
   Object.assign(properties, parseProperties(d.otherProperties));
-  // Turning the whitelist on puts out whoever is not on it, as the form for
-  // making a server does, unless enforce-whitelist is set by hand below.
-  const wasOn = (current.properties?.["white-list"] ?? "").toLowerCase() === "true";
-  if (d.whitelistOn === "true" && !wasOn && !/^\s*enforce-whitelist\s*=/m.test(d.otherProperties)) properties["enforce-whitelist"] = "true";
   const softwareChanged = d.version !== current.version || d.loader !== current.loader;
   // A build is for one type and version: another of either drops it.
   const build = d.loaderVersion.trim();
@@ -264,7 +274,8 @@ export function Settings() {
     update.mutate(notesOnly ? { notes: draft.notes } : { spec, ...notes, ...(goingOlder ? { newerWorld: true as const } : {}) }, {
       onSuccess: (next) => {
         // Changed again while it was saved: that change is kept, to save next.
-        setDraft((d) => (d === sent ? toDraft(next.spec, next.notes ?? "") : d));
+        const now = toDraft(next.spec, next.notes ?? "");
+        setDraft((d) => (d === sent ? now : withAdded(d, sent, now)));
         toast.info("Settings saved");
       },
     });

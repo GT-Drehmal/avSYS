@@ -170,7 +170,8 @@ func (s *Server) checkNode(ctx context.Context, name string, memory resource.Qua
 // createPlaced creates a server, put on the node given if there is one. That
 // node is checked to have room for it again here, one at a time from the
 // check until the server is there and counts on it, with the controller's
-// own placing too: two placed at once do not both get the same room.
+// own placing too: two placed at once do not both get the same room. Every
+// server the panel makes, new or from another, is made here.
 func (s *Server) createPlaced(ctx context.Context, mc *avsysv1.MinecraftServer, node string) error {
 	if node != "" {
 		defer controller.LockPlacement()()
@@ -178,6 +179,7 @@ func (s *Server) createPlaced(ctx context.Context, mc *avsysv1.MinecraftServer, 
 			return err
 		}
 	}
+	enforceWhitelist(&mc.Spec, nil)
 	return s.Client.Create(ctx, mc)
 }
 

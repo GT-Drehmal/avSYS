@@ -952,6 +952,12 @@ At most one of `fromSnapshot`, `fromServer` and `fromTemplate`.
   panel setting one. The modpack, and the source's mods, always come from
   the source. A copy never takes the source's `image`, `env` or JVM flags
   unless `spec` names them.
+- **With the whitelist on** (`spec.properties` has `white-list` `true`, in
+  any case, once the source and the request are put together), a server
+  made by any of these is given `enforce-whitelist` `true` if that is not
+  set (left out, `null` or empty). One set, `false` too, by the request or
+  the source, is kept. The `server.properties` of an archive imported
+  afterwards does not count: to not enforce it, give `false` in `spec`.
 - **A modpack** from Modrinth or CurseForge is
   `spec.modpack: {source, project, version?}`; the panel pins it to a
   version, its game version and loader. For an uploaded `.mrpack`, make
@@ -991,6 +997,11 @@ replaced whole. Most changes to a running server apply at its next restart
 (`status.pendingRestart` says so). Changing the version or loader pins its
 content again for the new one. Returns the server. `stale` (409) if it kept
 changing underneath.
+
+A change that turns `spec.properties`' `white-list` from not `true` to
+`true` also sets `enforce-whitelist` to `true` if that is not set then. With
+the whitelist on already it is never put back, and turning the whitelist
+off leaves it as it is.
 
 `notes`, beside `spec` or alone, sets the server's notes: plain text, up to
 500 characters, `""` for none. Notes are the panel's own, for those who
@@ -1036,7 +1047,7 @@ The `spec` of a server, as in `kubectl get mcs -o yaml`:
 | `modpack` | `{source: modrinth\|curseforge\|upload, project, version, gameVersion, loader, title, versionName, iconUrl}`. |
 | `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; it is the panel's to say: a request's is not taken, and an entry sent back without it keeps it; `description` is what an uploaded datapack says of itself. |
 | `resourcePack` | `{url, sha1, enforce, prompt, uploaded, project, formats, stack}`. |
-| `properties` | `server.properties` entries the panel sets. |
+| `properties` | `server.properties` entries the panel sets. `enforce-whitelist` is set with `white-list` as a server is [made](#post-orgsorgservers) with it on or [changed](#patch-orgsorgserversserver) to it. |
 | `ops`, `whitelist` | Players, by name or UUID, up to 1000 each. |
 | `autoWhitelist` | Members at this role or above are whitelisted: `viewer`, `operator`, `admin`, `owner`, or `off`/empty for none. |
 | `autoOp` | Members at this role or above are operators: empty (operator), `operator`, `admin`, `owner` or `off`. |
@@ -1340,7 +1351,8 @@ Put the server back to one of its own snapshots. **Admin.** A snapshot is
 taken first, so a restore can be undone. The server is stopped, its files
 are put back, and so are its game version, loader, modpack, mods, resource
 pack, ports, game settings, operators and whitelist. Memory, storage,
-address, sleep, image and environment are left as they are. It is started
+address, sleep, image and environment are left as they are. Game settings
+are exactly the snapshot's: `enforce-whitelist` is not added. It is started
 again if it was running. Returns `202` with the operation; with
 `?wait=true`, the snapshot.
 

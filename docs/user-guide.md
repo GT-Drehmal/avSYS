@@ -443,7 +443,10 @@ someone linking an account, joining, leaving, or changing role.
   server. See below.
 - **Added in game**: players someone added with `/whitelist add` or `/op`.
   **Keep** lists them in the settings; **Remove** takes them off.
-- Someone taken off the whitelist is put out, not only kept out.
+- Someone taken off the whitelist is put out, not only kept out: turning
+  the whitelist on turns on `enforce-whitelist` too. To only keep them out,
+  set `enforce-whitelist=false` under **Other properties**. A copy keeps
+  that choice.
 - A member taken off in game with `/whitelist remove` or `/deop` is put
   back within a minute. To keep a member off, untick them under
   **Members**.

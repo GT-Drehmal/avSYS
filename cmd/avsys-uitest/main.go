@@ -50,6 +50,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/api"
@@ -107,6 +108,9 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 		WithScheme(scheme).
 		WithIndex(&avsysv1.MinecraftServer{}, router.HostnameIndex, router.IndexHostname).
 		WithStatusSubresource(&avsysv1.MinecraftServer{}).
+		// Servers named settled are at rest as soon as they are made, as
+		// with a controller: tests copy them.
+		WithInterceptorFuncs(interceptor.Funcs{Create: settle}).
 		Build()
 
 	up, err := loadUpstream(upstreamDir)
@@ -235,6 +239,20 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 		}
 	}
 	return http.Serve(ln, srv.Handler())
+}
+
+// settle creates an object and, for a server named settled, says it is
+// stopped, as the controller would: there is none here.
+func settle(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+	if err := c.Create(ctx, obj, opts...); err != nil {
+		return err
+	}
+	mc, ok := obj.(*avsysv1.MinecraftServer)
+	if !ok || mc.Name != "settled" {
+		return nil
+	}
+	mc.Status.Phase = avsysv1.PhaseStopped
+	return c.Status().Update(ctx, mc)
 }
 
 // populate fills the panel with people, organizations, servers and

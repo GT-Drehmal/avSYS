@@ -355,7 +355,7 @@ interface Values {
 const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((id) => b.includes(id));
 
 /** The server.properties entries the form has a control of its own for. The rest are "other properties". */
-const shown = new Set(["motd", "gamemode", "difficulty", "level-type", "level-seed", "generate-structures", "hardcore", "max-players", "pvp", "white-list", "enforce-whitelist"]);
+const shown = new Set(["motd", "gamemode", "difficulty", "level-type", "level-seed", "generate-structures", "hardcore", "max-players", "pvp", "white-list"]);
 
 const fresh: Values = {
   kind: "game",
@@ -413,6 +413,11 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
   const { spec } = source;
   const p = spec.properties ?? {};
   const byRole = spec.autoWhitelist && spec.autoWhitelist !== "off" ? spec.autoWhitelist : null;
+  const whitelisted = p["white-list"]?.toLowerCase() === "true";
+  // On with the whitelist, it goes with Who can join: not listed, and not
+  // taken along when that is changed to anyone, as up to 1.21.8 it puts out
+  // who is not listed with the whitelist off too. Any other is listed.
+  const impliedByJoin = (key: string, value: string) => whitelisted && key === "enforce-whitelist" && value.toLowerCase() === "true";
   return {
     kind: spec.modpack ? "modpack" : "game",
     loader: spec.loader,
@@ -441,10 +446,10 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
     maxPlayers: p["max-players"] ?? "",
     pvp: p["pvp"] ?? "",
     otherProperties: Object.entries(p)
-      .filter(([k]) => !shown.has(k))
+      .filter(([k, value]) => !shown.has(k) && !impliedByJoin(k, value))
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
-    join: p["white-list"]?.toLowerCase() !== "true" ? "anyone" : (byRole ?? "list"),
+    join: !whitelisted ? "anyone" : (byRole ?? "list"),
     // Not set is the same as "operator".
     autoOp: spec.autoOp || "operator",
     whitelist: (spec.whitelist ?? []).join("\n"),
@@ -509,7 +514,7 @@ function propertiesOf(v: Values): Record<string, string> {
   } else {
     properties["white-list"] = "true";
     // Whoever is taken off the whitelist is put out, not only kept out.
-    properties["enforce-whitelist"] = "true";
+    properties["enforce-whitelist"] ??= "true";
   }
   return properties;
 }

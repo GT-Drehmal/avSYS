@@ -128,6 +128,27 @@ func (s *Server) applyDefaults(org, name string, spec *avsysv1.MinecraftServerSp
 	}
 }
 
+// enforceWhitelist turns enforce-whitelist on with the whitelist, so that
+// whoever is taken off it is put out, not only kept out: as a server is made
+// with the whitelist on (was is nil), and as a change turns it on. One set,
+// false too, is kept. With the whitelist on already it is never put back,
+// as someone may have taken it out, and turning it off leaves it alone.
+func enforceWhitelist(spec, was *avsysv1.MinecraftServerSpec) {
+	if !whitelistOn(spec) || (was != nil && whitelistOn(was)) {
+		return
+	}
+	// Empty is not set: it is also what a null in a new server's spec reads as.
+	if spec.Properties["enforce-whitelist"] == "" {
+		spec.Properties["enforce-whitelist"] = "true"
+	}
+}
+
+// whitelistOn is whether a server's settings have its whitelist on. The game
+// takes TRUE as well as true.
+func whitelistOn(spec *avsysv1.MinecraftServerSpec) bool {
+	return strings.EqualFold(spec.Properties["white-list"], "true")
+}
+
 // collectors picks a garbage collector, which Aikar's flags pick already.
 // Switching G1 off is the same.
 var collectors = regexp.MustCompile(`^-XX:(\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)|-UseG1GC)$`)
@@ -881,6 +902,7 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 		spec.LoaderVersion = ""
 	}
 	s.applyDefaults(a.Org.Slug, mc.Name, &spec)
+	enforceWhitelist(&spec, &mc.Spec)
 	// "Latest" picked is the newest there is now, kept from then on. A
 	// server still on "Latest" from before, whose version and software are
 	// not touched, is left to be settled on the version it runs (see

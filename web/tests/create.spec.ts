@@ -1143,6 +1143,85 @@ test("turning a server's whitelist on in its settings turns enforce-whitelist on
   expect(await properties()).toMatchObject({ "white-list": "true", motd: "Hi" });
 });
 
+test("an edit made while the whitelist is being turned on does not take enforce-whitelist out again", async ({ page, as, org, api }) => {
+  const slug = await org(["gate"]);
+  await as("owner");
+  let answer!: () => void;
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  await page.route(`**/api/v1/orgs/${slug}/servers/gate`, async (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback();
+    const res = await route.fetch();
+    await held;
+    await route.fulfill({ response: res });
+  });
+  const properties = async () => (await api("owner").get(`/orgs/${slug}/servers/gate`)).spec.properties ?? {};
+  await page.goto(`/o/${slug}/s/gate/settings`);
+  await page.getByLabel("Whitelist", { exact: true }).selectOption("true");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(properties).toMatchObject({ "white-list": "true", "enforce-whitelist": "true" });
+  // Typed before the answer is in, among the other properties too.
+  await page.getByLabel("Message of the day").fill("Second");
+  await page.getByLabel("Other properties").fill("view-distance=12");
+  answer();
+  await expect(page.getByText("Settings saved")).toBeVisible();
+  await expect(page.getByLabel("Other properties")).toHaveValue("enforce-whitelist=true\nview-distance=12");
+  await expect(page.getByLabel("Message of the day")).toHaveValue("Second");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(properties).toEqual({ motd: "Second", "view-distance": "12", "white-list": "true", "enforce-whitelist": "true" });
+});
+
+for (const c of [
+  { name: "a whitelisted server without enforce-whitelist enforces it", was: { "white-list": "true" }, enforce: "true", shown: "" },
+  { name: "a whitelisted server that is not enforced says so, and is not either", was: { "white-list": "true", "enforce-whitelist": "false" }, enforce: "false", shown: "enforce-whitelist=false" },
+  { name: "a whitelisted server in capitals without enforce-whitelist enforces it", was: { "white-list": "TRUE" }, enforce: "true", shown: "" },
+  { name: "a whitelisted server changed to not enforce is not", was: { "white-list": "true", "enforce-whitelist": "true" }, enforce: "false", shown: "", typed: "enforce-whitelist=false" },
+  { name: "an open server given a whitelist enforces it", was: { "white-list": "false" }, join: "viewer", enforce: "true", shown: "" },
+  { name: "an open server given a whitelist keeps its choice not to enforce it", was: { "white-list": "false", "enforce-whitelist": "false" }, join: "viewer", enforce: "false", shown: "enforce-whitelist=false" },
+  { name: "a server that is not enforced, opened to anyone, keeps that", was: { "white-list": "true", "enforce-whitelist": "false" }, join: "anyone", enforce: "false", shown: "enforce-whitelist=false" },
+  // Up to 1.21.8 the game puts out who is not listed as a name is taken
+  // off, its whitelist on or not.
+  { name: "a whitelisted server opened to anyone is not enforced", was: { "white-list": "true", "enforce-whitelist": "true" }, join: "anyone", enforce: undefined, shown: "" },
+]) {
+  test(`a copy of ${c.name}`, async ({ page, as, org, api }) => {
+    const slug = await org(["settled"]);
+    const servers = `/orgs/${slug}/servers`;
+    // As servers are that had a whitelist before it was enforced with it.
+    await api("owner").patch(`${servers}/settled`, { spec: { properties: { "white-list": c.was["white-list"] } } });
+    await api("owner").patch(`${servers}/settled`, { spec: { properties: { "enforce-whitelist": c.was["enforce-whitelist"] ?? null } } });
+    expect((await api("owner").get(`${servers}/settled`)).spec.properties).toEqual(c.was);
+
+    await as("owner");
+    await page.goto(`/o/${slug}/new?from=server:settled`);
+    await page.getByRole("button", { name: /Player limit, PvP and more/ }).click();
+    const other = page.getByLabel("Other properties");
+    await expect(other).toHaveValue(c.shown);
+    if (c.typed) await other.fill(c.typed);
+    if (c.join) await page.getByLabel("Who can join").selectOption(c.join);
+    await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+    if (c.join === "anyone") await page.getByRole("dialog").getByRole("button", { name: "Create without a whitelist" }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/settled-copy$`));
+
+    expect((await api("owner").get(`${servers}/settled-copy`)).spec.properties?.["enforce-whitelist"]).toBe(c.enforce);
+    expect((await api("owner").get(`${servers}/settled`)).spec.properties).toEqual(c.was);
+  });
+}
+
+test("a server from a template that does not enforce its whitelist says so, and does not either", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  const template = await api("owner").post(`/orgs/${slug}/templates`, {
+    name: "Loose",
+    spec: { loader: "paper", version: "1.21.4", resources: { memory: "2Gi" }, storage: { size: "2Gi" }, properties: { "white-list": "true", "enforce-whitelist": "false" } },
+  });
+  await as("owner");
+  await page.goto(`/o/${slug}/new?from=template:${template.id}`);
+  await page.getByRole("button", { name: /World options and more/ }).click();
+  await expect(page.getByLabel("Other properties")).toHaveValue("enforce-whitelist=false");
+  await page.getByRole("checkbox", { name: /End User License Agreement/ }).check();
+  await page.getByRole("button", { name: "Create server" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/loose$`));
+  expect((await api("owner").get(`/orgs/${slug}/servers/loose`)).spec.properties).toMatchObject({ "white-list": "true", "enforce-whitelist": "false" });
+});
+
 test("a copy of an open server is warned of but not asked about; one brought back from a snapshot is asked about", async ({ page, as }) => {
   await as("owner");
   const sent: unknown[] = [];
