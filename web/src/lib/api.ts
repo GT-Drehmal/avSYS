@@ -368,6 +368,8 @@ export interface UnmetDependency {
   /** The version the server has, and what it is part of. */
   has?: string;
   by?: string;
+  /** It does not work with these versions, rather than needing them. */
+  breaks?: boolean;
 }
 
 export interface Modpack {

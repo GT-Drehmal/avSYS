@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -618,7 +619,13 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.resolveJava(r.Context(), &in.Spec)
-	if err := s.resolveContent(r.Context(), &in.Spec, nil, nil); err != nil {
+	// A new server has the panel manage what its content needs, unless the
+	// request says otherwise: then it is as one made before the panel did.
+	var asBefore *avsysv1.MinecraftServerSpec
+	if raw, given := named["dependenciesListed"]; given && strings.TrimSpace(string(raw)) == "false" {
+		asBefore = in.Spec.DeepCopy()
+	}
+	if err := s.resolveContent(r.Context(), &in.Spec, asBefore, nil); err != nil {
 		return err
 	}
 	if err := s.nameIsFree(r.Context(), a, in.Name); err != nil {
@@ -774,6 +781,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	// controller saying how the server is doing. Changed again between that
 	// read and the write, it is read and merged into again: a merge patch
 	// only changes what it names.
+	var settledAt int64
 	for attempt := 1; ; attempt++ {
 		if mc, err = s.live(r.Context(), mc); err != nil {
 			return err
@@ -811,6 +819,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		// Files taken into the list from its folders whose entries are taken
 		// off now are noted to go, with the change.
 		noteRemovals(mc, previous)
+		settledAt = mc.Generation
 		update := func() error { return s.Client.Update(r.Context(), mc) }
 		// A hostname it has already is left alone, even under a domain claimed
 		// by another since; only a new one is held to who claims what. It is
@@ -829,6 +838,13 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return &Error{Status: http.StatusConflict, Code: "stale", Message: "This server was changed by someone else just now. Try again."}
 	} else if err != nil {
 		return err
+	}
+	// Noted as running what it lists, as when switched to the panel managing
+	// what its content needs.
+	if pod, at, ok := strings.Cut(mc.Annotations[avsysv1.AnnotationSettled], "@"); ok && at == strconv.FormatInt(settledAt+1, 10) && mc.Generation != settledAt+1 {
+		if err := s.settledAfter(r.Context(), mc, pod, settledAt); err != nil {
+			return err
+		}
 	}
 	s.removeDroppedUploads(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
 	s.removeDroppedPack(r.Context(), a.Namespace, mc.Name, &mc.Spec, previous)
@@ -941,6 +957,32 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	on := s.contentOn(ctx, mc)
 	if err := s.resolveContent(ctx, &spec, previous, on); err != nil {
 		return nil, err
+	}
+	// Switched to the panel managing what the content needs, or back to
+	// the image downloading it. Switched on, a server's list is brought over
+	// with its files as they are; where that is all it changes, a running
+	// game is noted as running it already.
+	if raw, given := named["dependenciesListed"]; given {
+		var want bool
+		_ = json.Unmarshal(raw, &want)
+		switch {
+		case !want:
+			spec.DependenciesListed = false
+		case !mc.Spec.DependenciesListed && controller.ListsDependencies(&spec):
+			files, err := s.contentFiles(ctx, mc.Namespace, mc.Name)
+			if err != nil {
+				return nil, &Error{Status: http.StatusBadGateway, Code: "workspace", Message: "The server's files are not reachable right now, to see what its content has. Try again in a moment."}
+			}
+			runs, err := s.bringOver(ctx, &spec, foundOf(mc), files)
+			if err != nil {
+				return nil, err
+			}
+			if len(named) == 1 {
+				settleWith(mc, s.podUIDOf(ctx, client.ObjectKeyFromObject(mc)), runs)
+			}
+		case !controller.ListsDependencies(&spec):
+			return nil, errBadRequest("The panel cannot manage what this server's content needs: it runs a modpack, or its environment sets MODRINTH_DOWNLOAD_DEPENDENCIES.")
+		}
 	}
 	mc.Spec = spec
 	noteListedWith(mc, on)

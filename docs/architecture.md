@@ -352,7 +352,7 @@ Content is settled when it is added, not when the server starts.
    files from an address as `MODS`, `PLUGINS` or `DATAPACKS`. Uploaded files
    are kept in the server's own files under `.avsys/content` and named the
    same way.
-4. What the Modrinth entries need is listed too, pinned, by the panel (see
+4. For a server made by this panel, what the Modrinth entries need is listed too, pinned, by the panel (see
    [What content needs](#what-content-needs)), and the image is told
    `MODRINTH_DOWNLOAD_DEPENDENCIES=none`.
 5. At each start the image downloads what is listed and removes what is
@@ -459,11 +459,13 @@ role. While the game runs, the panel keeps them up with `whitelist` and
 
 ### What content needs
 
-The image, told to download what Modrinth content needs, goes by
-Modrinth's projects alone: a mod the server has as an upload, a fork of
-it, a renamed file or one carried inside another mod, it does not see,
-and it downloads a second copy beside it, which the loader refuses to
-start with. So the panel lists what content needs itself
+The image, told to download what Modrinth content needs
+(`MODRINTH_DOWNLOAD_DEPENDENCIES=required`), goes by Modrinth's projects
+alone: a mod the server has as an upload, a fork of it, a renamed file or
+one carried inside another mod, it does not see, and it downloads a second
+copy beside it, which the loader refuses to start with; and two mods that
+name two versions of one dependency can get two copies of it.
+So the panel lists what content needs itself
 (`internal/api/dependencies.go`), each time the list's content changes,
 and the image is told `MODRINTH_DOWNLOAD_DEPENDENCIES=none`
 (`spec.dependenciesListed`):
@@ -471,12 +473,11 @@ and the image is told `MODRINTH_DOWNLOAD_DEPENDENCIES=none`
 1. For each Modrinth entry, what its pinned version requires, as Modrinth
    says (`GET /v2/version/{id}`, kept an hour). Optional, incompatible and
    embedded projects are not needed.
-2. A project the list has is that entry. Where a version of it is named,
-   one the panel added is pinned to that version (the first named, where
-   two name two), and worked out again with it; one someone pinned stays,
-   and what names another says so (`unmet`). For one it does not have, the
-   version Modrinth names, or else the newest that fits the server (as an
-   entry is pinned), is read for the mod ID its file says it is
+2. A project the list has is that entry. For one it does not have, the
+   version Modrinth names (the one its mod was made with, which the image
+   takes too) where it fits the server and what every entry that needs it
+   says will do, or else the newest that does (never older than the one
+   named), is read for the mod ID its file says it is
    (`fabric.mod.json` or `quilt.mod.json` `id`, the first `modId` of
    `mods.toml`, a plugin's `name`). Files are read once and kept by
    address (`internal/api/modmeta.go`).
@@ -487,53 +488,67 @@ and the image is told `MODRINTH_DOWNLOAD_DEPENDENCIES=none`
    read where they are.
 4. If anything gives that ID, that is what is needed: it is noted
    `neededBy`, and nothing is added. Something there in a project's place,
-   as a fork, is taken to need what that project's version needs. Where
-   the dependent's file says which versions of it will do (`depends`,
-   `versionRange`) and the server's is not one, that is noted on the
-   dependent (`unmet`) and shown on the Content page.
+   as a fork, is taken to need what that project's version needs.
 5. Otherwise the project is added, pinned, marked `dependency`, as the
    kind its own version is for (a datapack can need a mod), and what it
    needs is worked out in turn. One the panel added that nothing needs any
    more, or that something of the server's own is now, is taken off.
+
+What a mod needs of another is what its own file says will do, as the
+loader goes by it: `depends` in `fabric.mod.json` and `quilt.mod.json`,
+`versionRange` of a required dependency in `mods.toml`. The version a
+Modrinth page names is never held against what the server has. Where
+what the server has will not do, a dependency the panel added is pinned
+again to the newest that will for all that need it; one someone pinned
+stays, and the mod that needs another says so on the Content page
+(`unmet`), as does one whose file says it does not work with what the
+server has (`breaks`). Versions are compared as the loader compares them
+(Fabric's, what follows `+` aside; Maven's ranges for Forge and NeoForge),
+and what cannot be compared is taken as fitting.
 
 A change that leaves the content, and the files found in the server's
 folders, as they were keeps what was worked out, and asks Modrinth
 nothing. Which found files it was worked out with is noted on the server
 (`avsys.dev/dependencies-found`); when they change, a found file taken off
 through the panel or gone from its folder by the next look, it is worked
-out again, and what such a file was is added. One Modrinth cannot be asked
-about keeps what was
-listed, taking off only what was noted as needed by entries gone. A
-server whose `spec.env` sets `MODRINTH_DOWNLOAD_DEPENDENCIES`, or runs a
-modpack, is left to the image.
+out again, and what such a file was is added. Where Modrinth does not
+answer, a change that could leave something needed out (content added, or
+an entry something needs taken off) fails and changes nothing; taking off
+only what nothing needs keeps the rest as listed. A server whose
+`spec.env` sets `MODRINTH_DOWNLOAD_DEPENDENCIES`, or runs a modpack, is
+left to the image.
 
-**Servers from before.** A server made before the panel did this had what
-its content needs downloaded by the image, each at whatever version was
-newest then. It is brought over once, by the look at its folders
-(`migrateDependencies`), without a file changing: the image's record
-(`.modrinth-manifest.json`) says which files it installed, each file not a
-listed version's own is looked up on Modrinth by its SHA-1, and what the
-content needs is listed at the very versions the server has; whatever else
-the image installed is listed too (a second copy beside a fork, say), so
-that the next start, with `none`, has every file it has now and gets
-nothing more. Written in one change with `dependenciesListed`, and a
-running game is noted as running it already (`avsys.dev/settled`), so no
-restart is asked for. The added entries go in `.avsys/imported-modrinth`
-too, for a start while Modrinth does not answer, until the image's own
-record has them.
+**Which servers.** A server made by this panel, new, imported, or made
+from a server or template, has the panel list what its content needs. One
+made from a snapshot does as the server it was taken of did. A server made
+before keeps its image downloading it, and is moved over one at a time,
+when someone switches it (**Let the panel manage dependencies** in its
+settings, `spec.dependenciesListed`). The Content page says which a server
+does.
 
-The image can have installed two versions of one project, for two mods
-that each name another (Bingo's Animatica and Dynamic FPS did, for Fabric
-API). It takes a project once in its list, so those cannot both be listed:
-such a server is left to its image, files and all, and not looked at for
-this again until the image's record changes. A server not brought over
-is listed, as any other, once its content is changed through the panel:
-the next start gets what that says, as the image would have downloaded
-what is needed anew. Until then its image downloads it, as before.
+**Switching a server over.** Its list is brought over without a file
+changing (`bringOver`): the image's record (`.modrinth-manifest.json`) says
+which files it installed, each file not a listed version's own is looked
+up on Modrinth by its SHA-1, and what the content needs is listed at the
+very versions the server has; whatever else the image installed is listed
+too (a second copy beside a fork, say), so that the next start, with
+`none`, has every file it has now and gets nothing more. A running game
+is noted as running it already (`avsys.dev/settled`), so no restart is
+asked for. The added entries go in `.avsys/imported-modrinth` too, for a
+start while Modrinth does not answer, until the image's own record has
+them. Where the image installed two versions of one project, for two mods
+that each named another (Bingo's Animatica and Dynamic FPS did, for
+Fabric API), the list can name the project once: the first is listed, the
+other file goes at the next start, and the server is said to wait for it.
+Switched back, the image downloads what is needed again.
 
 The controller marks a pod noted as settled as made with the settings it
 runs (its `avsys.dev/spec-hash`), so that a later change that leaves the
 pod as it is, as one to these notes, is not taken as one to restart for.
+
+`hack/compare-dependencies.sh` checks this against the image itself: on
+real content sets, what the panel lists with `none` against what the image
+downloads with `required`, both started until the game is up.
 
 ### Asking Mojang
 

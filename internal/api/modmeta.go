@@ -34,6 +34,9 @@ type modMeta struct {
 	// Depends are the versions of other mods it needs, by their IDs: any
 	// one of the ranges given for an ID will do.
 	Depends map[string][]string
+	// Breaks are the versions of other mods it does not work with, as
+	// fabric.mod.json says: any one of the ranges for an ID.
+	Breaks map[string][]string
 	// Forge says its ranges are Maven's, as Forge and NeoForge write them.
 	Forge bool
 }
@@ -132,6 +135,7 @@ func readModMetaAt(zr *zip.Reader, kind avsysv1.ContentKind, depth int) modMeta 
 			Version  string                     `json:"version"`
 			Provides []string                   `json:"provides"`
 			Depends  map[string]json.RawMessage `json:"depends"`
+			Breaks   map[string]json.RawMessage `json:"breaks"`
 			Jars     []struct {
 				File string `json:"file"`
 			} `json:"jars"`
@@ -149,6 +153,12 @@ func readModMetaAt(zr *zip.Reader, kind avsysv1.ContentKind, depth int) modMeta 
 				m.Depends = map[string][]string{}
 			}
 			m.Depends[id] = rangesOf(r)
+		}
+		for id, r := range f.Breaks {
+			if m.Breaks == nil {
+				m.Breaks = map[string][]string{}
+			}
+			m.Breaks[id] = rangesOf(r)
 		}
 		for _, j := range f.Jars {
 			nested = append(nested, j.File)
@@ -393,6 +403,23 @@ func fits(version string, ranges []string, forge bool) bool {
 	for _, r := range ranges {
 		ok, sure := fitsOne(version, r, forge)
 		if ok || !sure {
+			return true
+		}
+	}
+	return false
+}
+
+// breaksWith says a version is surely within one of the ranges a mod says
+// it does not work with. "*" is any version, known or not.
+func breaksWith(version string, known bool, ranges []string, forge bool) bool {
+	for _, r := range ranges {
+		if strings.TrimSpace(r) == "*" {
+			return true
+		}
+		if !known {
+			continue
+		}
+		if ok, sure := fitsOne(version, r, forge); ok && sure {
 			return true
 		}
 	}

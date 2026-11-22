@@ -140,6 +140,8 @@ type fakeVersion struct {
 	file                []byte
 	filename            string
 	deps                []modrinthDependency
+	// date is when it was published, as Modrinth says.
+	date string
 }
 
 func (f fakeVersion) url() string {
@@ -152,7 +154,7 @@ func (f fakeVersion) json() map[string]any {
 		deps = append(deps, map[string]any{"project_id": nullable(d.ProjectID), "version_id": nullable(d.VersionID), "dependency_type": d.Type})
 	}
 	return map[string]any{
-		"id": f.id, "project_id": f.project, "version_number": f.number, "version_type": "release",
+		"id": f.id, "project_id": f.project, "version_number": f.number, "version_type": "release", "date_published": f.date,
 		"game_versions": f.games, "loaders": f.loaders, "dependencies": deps,
 		"files": []map[string]any{{"url": f.url(), "filename": f.filename, "primary": true, "hashes": map[string]string{"sha1": sha1Of(f.file)}}},
 	}
@@ -282,12 +284,12 @@ func fabricJar(t *testing.T, id, version string, more ...string) []byte {
 		switch more[i] {
 		case "provides":
 			manifest["provides"] = strings.Split(more[i+1], ",")
-		case "depends":
+		case "depends", "breaks":
 			var d map[string]any
 			if err := json.Unmarshal([]byte(more[i+1]), &d); err != nil {
 				t.Fatal(err)
 			}
-			manifest["depends"] = d
+			manifest[more[i]] = d
 		case "jar":
 			name := "META-INF/jars/" + fmt.Sprint(i) + ".jar"
 			files[name] = more[i+1]
@@ -345,7 +347,7 @@ func modrinthEntry(project, version string) string {
 
 // A new server's Modrinth content has what it needs listed with it: what
 // its versions require, and what that requires in turn, each once, pinned
-// to the version Modrinth names or the newest that fits; not what is only
+// to the version Modrinth names where it fits, else the newest that does; not what is only
 // optional, does not work with it, or is in its file already. Its image is
 // told to download nothing more itself.
 func TestDependenciesListed(t *testing.T) {
@@ -617,6 +619,36 @@ func TestDependenciesWhileModrinthIsDown(t *testing.T) {
 		t.Fatalf("patch: %d %s", code, msg)
 	}
 	p.expectMods("down", "AAA@a1", "+FAPI@f1 <- AAA")
+
+	// What could leave something needed out fails, saying so, and changes
+	// nothing: taking off what something needs, adding a mod, or making a
+	// server with content pinned already.
+	fapi := ""
+	for _, e := range p.serverOf("down").Spec.Mods {
+		if e.Project == "FAPI" {
+			e.Dependency = false
+			raw, _ := json.Marshal(e)
+			fapi = string(raw)
+		}
+	}
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/down", `{"spec":{"mods":[`+fapi+`]}}`); code != 200 {
+		t.Fatalf("taken as one's own: %d %s", code, msg)
+	}
+	for name, body := range map[string]string{
+		"taking off what is needed": `{"spec":{"mods":[` + modrinthEntry("AAA", "a1") + `]}}`,
+		"adding a mod":              `{"spec":{"mods":[` + fapi + `,` + modrinthEntry("AAA", "a1") + `,` + modrinthEntry("BBB", "b1") + `]}}`,
+	} {
+		before := p.mods("down")
+		if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/down", body); code != http.StatusBadGateway || msg != "upstream" {
+			t.Errorf("%s: %d %s", name, code, msg)
+		}
+		if got := p.mods("down"); !slices.Equal(got, before) {
+			t.Errorf("%s changed it: %v", name, got)
+		}
+	}
+	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"new","spec":{"eula":true,"loader":"fabric","version":"1.21.1","state":"Stopped","mods":[{"source":"modrinth","kind":"mod","project":"AAA","version":"a1","java":21,"title":"A","iconUrl":"x"}]}}`); code != http.StatusBadGateway {
+		t.Errorf("a new server: %d %s", code, msg)
+	}
 }
 
 // Harpy Express, as it came from Crafty: a fork of Wathe that Modrinth
@@ -719,8 +751,8 @@ func TestHarpyExpress(t *testing.T) {
 }
 
 // A server whose image downloaded what its content needs, as every server
-// did before, is brought over to the panel listing it, once, with its
-// files as they are: each dependency at the very version it has, though a
+// did before, keeps that until someone switches it over to the panel
+// listing it. Then it is brought over with its files as they are: each dependency at the very version it has, though a
 // newer one is out, and what the image put there that the panel would not
 // have (a second copy beside a fork) too. The next start has exactly the
 // files it has now, and a game running is not said to wait for a restart.
@@ -804,21 +836,24 @@ func TestDependenciesBroughtOver(t *testing.T) {
 	if err := p.srv.Client.Status().Update(ctx, mc); err != nil {
 		t.Fatal(err)
 	}
-	// A change through the panel before it is brought over lists nothing.
+	// A change through the panel, and a look at its files, leave it to its
+	// image: it is brought over only when someone switches it.
 	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/bingo", `{"spec":{"properties":{"motd":"Bingo"}}}`); code != 200 {
 		t.Fatalf("patch: %d %s", code, msg)
 	}
-	if got := p.serverOf("bingo"); got.Spec.DependenciesListed || len(got.Spec.Mods) != 24 {
-		t.Fatalf("listed before its files were looked at: %d", len(got.Spec.Mods))
+	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/bingo/content/look?wait=true", ""); code != http.StatusOK {
+		t.Fatalf("look: %d", code)
+	}
+	if got := p.serverOf("bingo"); got.Spec.DependenciesListed || len(got.Spec.Mods) != 25 {
+		t.Fatalf("brought over by itself: %v", p.mods("bingo"))
 	}
 	mc = p.serverOf("bingo")
 	mc.Status.ObservedGeneration = mc.Generation
 	if err := p.srv.Client.Status().Update(ctx, mc); err != nil {
 		t.Fatal(err)
 	}
-
-	if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/bingo/content/look?wait=true", ""); code != http.StatusOK {
-		t.Fatalf("look: %d", code)
+	if code, msg := p.do("admin", "PATCH", "/orgs/alpha/servers/bingo", `{"spec":{"dependenciesListed":true}}`); code != 200 {
+		t.Fatalf("switch: %d %s", code, msg)
 	}
 	mc = p.serverOf("bingo")
 	if !mc.Spec.DependenciesListed {
@@ -925,12 +960,11 @@ func TestDependenciesBroughtOver(t *testing.T) {
 
 // The image installs two versions of one project for two mods that each
 // name another, as it did for Bingo's Animatica and Dynamic FPS. It takes
-// a project once in its list, so those cannot both be listed: such a
-// server is left to its image, files and all, and not looked at again for
-// it until its image's record changes. Its content changed through the
-// panel, what that needs is listed, as the image would have downloaded it
-// anew.
-func TestTwoVersionsLeftToTheImage(t *testing.T) {
+// a project once in its list, so those cannot both be listed. Such a
+// server stays with its image, its content changed or not, until switched
+// over: then the first of the two is listed, and the server is not noted
+// as running that, the other file going at its next start.
+func TestTwoVersionsSwitchedOver(t *testing.T) {
 	ctx := context.Background()
 	p := newPanel(t)
 	m := &depModrinth{}
@@ -989,19 +1023,35 @@ func TestTwoVersionsLeftToTheImage(t *testing.T) {
 	if got := p.serverOf("bingo"); got.Spec.DependenciesListed || got.Generation != was || envOf(got)[controller.DependencyEnv] != "required" {
 		t.Fatalf("brought over: %v", p.mods("bingo"))
 	}
-	before := asked()
-	look()
-	if asked() != before {
-		t.Error("its files were looked up again, its image's record as it was")
+	if asked() != 0 {
+		t.Error("its files were looked up, though nobody switched it over")
 	}
-	// Its content changed: listed, with one version of Fabric API.
+	// Its content changed: still its image's.
 	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/bingo", `{"spec":{"mods":[`+modrinthEntry("FPS", "fps")+`,`+modrinthEntry("ANIM", "anim")+`,`+modrinthEntry("LITH", "lith")+`]}}`); code != 200 {
 		t.Fatalf("patch: %d %s", code, msg)
 	}
-	// At the version Animatica names, which Dynamic FPS takes any of.
-	p.expectMods("bingo", "FPS@fps", "ANIM@anim", "LITH@lith", "+FAPI@fapi1 <- ANIM,FPS")
-	if !p.serverOf("bingo").Spec.DependenciesListed {
-		t.Error("not listed once its content changed")
+	p.expectMods("bingo", "FPS@fps", "ANIM@anim", "LITH@lith")
+	if got := p.serverOf("bingo"); got.Spec.DependenciesListed || envOf(got)[controller.DependencyEnv] != "required" {
+		t.Error("switched over by a change of content")
+	}
+	// Switched over: the first of the two the image installed is listed.
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/bingo", `{"spec":{"dependenciesListed":true}}`); code != 200 {
+		t.Fatalf("switch: %d %s", code, msg)
+	}
+	p.expectMods("bingo", "FPS@fps", "ANIM@anim", "LITH@lith", "+FAPI@fapi2 <- ANIM,FPS")
+	got := p.serverOf("bingo")
+	if !got.Spec.DependenciesListed || envOf(got)[controller.DependencyEnv] != "none" {
+		t.Error("not switched over")
+	}
+	if got.Annotations[avsysv1.AnnotationSettled] != "" {
+		t.Error("noted as running what it lists, though a file of it goes")
+	}
+	// And back: its image downloads what is needed again.
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/bingo", `{"spec":{"dependenciesListed":false}}`); code != 200 {
+		t.Fatalf("switch back: %d %s", code, msg)
+	}
+	if got := p.serverOf("bingo"); got.Spec.DependenciesListed || envOf(got)[controller.DependencyEnv] != "required" {
+		t.Error("not switched back")
 	}
 }
 
@@ -1044,6 +1094,10 @@ func TestDependenciesNotBroughtOver(t *testing.T) {
 			}
 			if got := p.serverOf("kept"); got.Spec.DependenciesListed || got.Generation != was {
 				t.Errorf("brought over: %v", p.mods("kept"))
+			}
+			// Nor can it be switched over: it says why.
+			if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/kept", `{"spec":{"dependenciesListed":true}}`); code != http.StatusBadRequest {
+				t.Errorf("switched: %d %s", code, msg)
 			}
 		})
 	}

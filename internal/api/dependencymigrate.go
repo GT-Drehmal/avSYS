@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"path"
@@ -17,13 +16,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
-	"github.com/GT-Drehmal/avSYS/internal/controller"
 )
 
-// A server made before the panel listed what content needs has had it
-// downloaded by its image as it starts, each at whatever version was
-// newest then. Its list is brought over once, with its files as they are,
-// before the image is told to download nothing itself:
+// A server made before the panel listed what content needs has it
+// downloaded by its image as it starts, each at whatever version is newest
+// then, and keeps that. Switched over by someone (spec.dependenciesListed
+// set through the panel), its list is brought over with its files as they
+// are, before the image is told to download nothing itself:
 //
 //   - What the image installed for the list is read from its record,
 //     .modrinth-manifest.json, and each file Modrinth knows by its hash.
@@ -187,17 +186,6 @@ func readServerJar(files ServerFiles, full string) (string, *jarInfo, error) {
 	return sum, &info, nil
 }
 
-// recordKey tells the image's record of what it installed from Modrinth as
-// it is now from as it was: its size and when it was written. "" where
-// there is none.
-func recordKey(files ServerFiles) string {
-	info, err := files.Stat(path.Join(dataRoot, ".modrinth-manifest.json"))
-	if err != nil {
-		return ""
-	}
-	return fmt.Sprintf("%d@%d", info.Size(), info.ModTime().UnixNano())
-}
-
 // kindOfInstalled is the kind of content a file the image installed is, by
 // its place.
 func kindOfInstalled(p string) avsysv1.ContentKind {
@@ -219,60 +207,38 @@ func imageRef(m avsysv1.ContentRef) string {
 	return ref
 }
 
-// migrateDependencies brings a server whose image has downloaded what its
-// content needs over to the panel listing it, keeping its files as they
-// are. It does nothing for one already brought over, one whose own
-// environment says how the image is to, or a modpack, nor while its game
-// starts or stops or its files are being put in place.
-func (s *Server) migrateDependencies(ctx context.Context, key client.ObjectKey, files ServerFiles) error {
-	defer s.lockContent(key)()
-	mc := &avsysv1.MinecraftServer{}
-	if err := s.Client.Get(ctx, key, mc); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	if mc.Spec.DependenciesListed || !controller.ListsDependencies(&mc.Spec) || !importNow(mc) || s.filesInFlux(mc) {
-		return nil
-	}
-	// Looked at already, as its image's record is now, and left as it is.
-	st := s.foundStateOf(key)
-	record := recordKey(files)
-	st.mu.Lock()
-	kept := record != "" && st.depsKept == record
-	st.mu.Unlock()
-	if kept {
-		return nil
-	}
-	podUID := s.podUIDOf(ctx, key)
-	installed, err := s.installedByImage(ctx, files, &mc.Spec)
+// bringOver lists what the content of a server whose image has downloaded
+// it until now needs, in spec, with its files as they are: what needs it
+// listed at the very versions the server has, and whatever else the image
+// installed, so that the next start has every file it has now. runs says
+// it does, all of them: not where the image installed two versions of one
+// project, which a list names once, the first of them being listed. It is
+// asked for, one server at a time (spec.dependenciesListed set through the
+// panel).
+func (s *Server) bringOver(ctx context.Context, spec *avsysv1.MinecraftServerSpec, found []FoundFile, files ServerFiles) (runs bool, err error) {
+	installed, err := s.installedByImage(ctx, files, spec)
 	if err != nil {
-		return err
+		return false, err
 	}
-	// Two versions of one project, as the image installs for two mods that
-	// each name another version of it, cannot both be listed: the image
-	// takes a project once. Such a server is left to its image, as it was,
-	// and listed once its content is changed.
+	runs = true
 	for project, versions := range installed.byProject {
 		if len(versions) > 1 {
-			s.Log.Info("a server has two versions of a project its content needs: left to its image until its content is changed", "server", key.Name, "project", project)
-			st.mu.Lock()
-			st.depsKept = record
-			st.mu.Unlock()
-			return nil
+			s.Log.Info("a server has two versions of a project its content needs: the first is listed", "project", project)
+			runs = false
 		}
 	}
-	spec := mc.Spec.DeepCopy()
+	work := spec.DeepCopy()
 	had := map[string]bool{}
-	for _, m := range spec.Mods {
+	for _, m := range work.Mods {
 		had[contentKey(m)] = true
 	}
-	on := &serverContent{found: foundOf(mc), files: func() ServerFiles { return files }}
-	if err := s.listDependencies(ctx, spec, depOptions{add: true, installed: installed.byProject, onServer: on}); err != nil {
-		return err
+	on := &serverContent{found: found, files: func() ServerFiles { return files }}
+	if err := s.listDependencies(ctx, work, depOptions{add: true, installed: installed.byProject, onServer: on}); err != nil {
+		return false, err
 	}
-	// Whatever else the image installed for the list is the list's too:
-	// the next start has every file it has now.
+	// Whatever else the image installed for the list is the list's too.
 	listed := map[string]bool{}
-	for _, m := range spec.Mods {
+	for _, m := range work.Mods {
 		if m.Source != avsysv1.SourceModrinth || m.Version == "" {
 			continue
 		}
@@ -286,7 +252,7 @@ func (s *Server) migrateDependencies(ctx context.Context, key client.ObjectKey, 
 		projects = append(projects, project)
 	}
 	sort.Strings(projects)
-	t := targetOf(spec)
+	t := targetOf(work)
 	extra := false
 	for _, project := range projects {
 		if listed[project] {
@@ -295,23 +261,22 @@ func (s *Server) migrateDependencies(ctx context.Context, key client.ObjectKey, 
 		v := installed.byProject[project][0]
 		m := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: kindOfInstalled(installed.at[v.ID]), Project: project, Version: v.ID, Dependency: true}
 		if err := s.pin(ctx, &m, t); err != nil {
-			return err
+			return false, err
 		}
-		spec.Mods = append(spec.Mods, m)
+		work.Mods = append(work.Mods, m)
 		extra = true
 	}
 	// What needs those is noted as for the rest.
 	if extra {
-		if err := s.listDependencies(ctx, spec, depOptions{installed: installed.byProject, onServer: on}); err != nil {
-			return err
+		if err := s.listDependencies(ctx, work, depOptions{installed: installed.byProject, onServer: on}); err != nil {
+			return false, err
 		}
 	}
 	// What was added the server has a file of, as the image put it there;
 	// a start while Modrinth does not answer starts with it, until the
 	// image has it in its record as an entry of the list's.
-	runs := true
 	var lines []string
-	for _, m := range spec.Mods {
+	for _, m := range work.Mods {
 		if had[contentKey(m)] || m.Source != avsysv1.SourceModrinth {
 			continue
 		}
@@ -324,18 +289,12 @@ func (s *Server) migrateDependencies(ctx context.Context, key client.ObjectKey, 
 	}
 	if len(lines) > 0 {
 		if err := keepImportedRecord(files, func(was []string) []string { return union(was, lines) }); err != nil {
-			return err
+			return false, err
 		}
 	}
-	mc.Spec = *spec
-	noteListedWith(mc, on)
-	settleWith(mc, podUID, runs)
-	was := mc.Generation
-	if err := s.Client.Update(ctx, mc); err != nil {
-		return err
-	}
-	s.Log.Info("listed what a server's content needs", "server", key.Name, "added", len(lines), "settled", mc.Annotations[avsysv1.AnnotationSettled] != "")
-	return s.settledAfter(ctx, mc, podUID, was)
+	work.DependenciesListed = true
+	*spec = *work
+	return runs, nil
 }
 
 // settleOfflineRecord forgets, of the panel's record of what a start while

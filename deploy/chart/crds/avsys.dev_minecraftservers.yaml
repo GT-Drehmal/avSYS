@@ -513,6 +513,11 @@ spec:
                           not in a version the content works with. The panel does not install a
                           second copy of it: the loader would refuse to start with two.
                         properties:
+                          breaks:
+                            description: |-
+                              Breaks says the content does not work with Wants of it, rather
+                              than needing it ("breaks" in fabric.mod.json).
+                            type: boolean
                           by:
                             type: string
                           has:

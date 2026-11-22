@@ -194,6 +194,13 @@ export function Mods() {
         </div>
       )}
 
+      {/* Who gets what the mods need: the panel, or the server as it starts. */}
+      {!modpack && (
+        <p className="text-xs text-muted">
+          {server.spec.dependenciesListed ? "Dependencies are added by the panel, never twice." : "Dependencies are downloaded by the server as it starts."}
+        </p>
+      )}
+
       {server.java.effective > server.java.game && (
         <Notice tone="info">
           Uses Java {server.java.effective} instead of {server.java.game} because some content needs it.

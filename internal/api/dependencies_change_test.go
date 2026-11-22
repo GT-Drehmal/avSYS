@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,72 +15,6 @@ import (
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
-
-// A dependency the panel added follows the version what needs it names:
-// a mod changed to a version that names another has it pinned to that
-// one, and what it needs worked out with it. Where two name two versions,
-// the first named is kept and the other said; one pinned by someone stays
-// as they pinned it, and what names another says so.
-func TestDependencyFollowsTheVersionNamed(t *testing.T) {
-	p := newPanel(t)
-	m := &depModrinth{}
-	m.add(fakeVersion{id: "f2", project: "FAPI", number: "0.92", file: fabricJar(t, "fabric-api", "0.92"), deps: required("CLOTH")})
-	m.add(fakeVersion{id: "f1", project: "FAPI", number: "0.86", file: fabricJar(t, "fabric-api", "0.86")})
-	m.add(fakeVersion{id: "c1", project: "CLOTH", number: "15", file: fabricJar(t, "cloth-config", "15")})
-	named := func(v string) []modrinthDependency { return []modrinthDependency{{VersionID: v, Type: "required"}} }
-	m.add(fakeVersion{id: "a2", project: "AAA", number: "2", file: fabricJar(t, "aaa", "2"), deps: named("f2")})
-	m.add(fakeVersion{id: "a1", project: "AAA", number: "1", file: fabricJar(t, "aaa", "1"), deps: named("f1")})
-	m.add(fakeVersion{id: "b1", project: "BBB", number: "1", file: fabricJar(t, "bbb", "1"), deps: named("f1")})
-	p.withModrinth(m)
-	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"named","spec":{"eula":true,"loader":"fabric","version":"1.21.1","state":"Stopped","mods":[`+modrinthEntry("AAA", "a1")+`]}}`); code != http.StatusCreated {
-		t.Fatalf("create: %d %s", code, msg)
-	}
-	p.expectMods("named", "AAA@a1", "+FAPI@f1 <- AAA")
-	entry := func(project string) string {
-		t.Helper()
-		for _, e := range p.serverOf("named").Spec.Mods {
-			if e.Project == project {
-				raw, _ := json.Marshal(e)
-				return string(raw)
-			}
-		}
-		t.Fatalf("no %s", project)
-		return ""
-	}
-	patch := func(mods ...string) {
-		t.Helper()
-		if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/named", `{"spec":{"mods":[`+strings.Join(mods, ",")+`]}}`); code != 200 {
-			t.Fatalf("patch: %d %s", code, msg)
-		}
-	}
-	unmetOf := func(project string) string {
-		for _, e := range p.serverOf("named").Spec.Mods {
-			if e.Project == project {
-				return fmt.Sprint(e.Unmet)
-			}
-		}
-		return ""
-	}
-	// Changed to the version that names 0.92: Fabric API follows, and what
-	// that version needs comes with it.
-	patch(modrinthEntry("AAA", "a2"), entry("FAPI"))
-	p.expectMods("named", "AAA@a2", "+FAPI@f2 <- AAA", "+CLOTH@c1 <- FAPI")
-	// Another that names 0.86: the first named stays, and this one says so.
-	patch(entry("AAA"), entry("FAPI"), entry("CLOTH"), modrinthEntry("BBB", "b1"))
-	p.expectMods("named", "AAA@a2", "BBB@b1", "+FAPI@f2 <- AAA,BBB", "+CLOTH@c1 <- FAPI")
-	if got := unmetOf("BBB"); got != "[{fabric-api 0.86 0.92 Title of FAPI}]" {
-		t.Errorf("BBB unmet %s", got)
-	}
-	// Pinned by someone, it stays as they pinned it.
-	patch(entry("AAA"), entry("BBB"), modrinthEntry("FAPI", "f1"))
-	p.expectMods("named", "AAA@a2", "BBB@b1", "FAPI@f1 <- AAA,BBB")
-	if got := unmetOf("AAA"); got != "[{fabric-api 0.92 0.86 Title of FAPI}]" {
-		t.Errorf("AAA unmet %s", got)
-	}
-	if got := unmetOf("BBB"); got != "[]" {
-		t.Errorf("BBB unmet %s", got)
-	}
-}
 
 // What a datapack needs that is a mod is added as a mod, as its own
 // version says, whether named by its project or by one version of it.
@@ -163,6 +96,52 @@ func TestFoundProviderGone(t *testing.T) {
 				t.Fatalf("patch: %d %s", code, msg)
 			}
 			p.expectMods("harpy", "KINS@k1", "+WATHE@w1 <- KINS")
+		})
+	}
+}
+
+// A fork put in the server's folder after the panel added what it is takes
+// its place once it is found: the dependency added goes, and the server is
+// not noted as running that, its file going at the next start. So does a
+// copy of the very file the panel lists, under another name.
+func TestFoundForkTakesThePlace(t *testing.T) {
+	for _, c := range []struct {
+		name, file string
+		fork       bool
+	}{{"a fork", "wathe-fork+wathez.1.jar", true}, {"a renamed copy", "wathe-copy.jar", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			p := newPanel(t)
+			m := &depModrinth{}
+			official := fabricJar(t, "wathe", "1.3.2")
+			m.add(fakeVersion{id: "w1", project: "WATHE", number: "1.3.2", file: official})
+			m.add(fakeVersion{id: "b1", project: "BLOOD", number: "1.1.6", file: fabricJar(t, "wathe_blood", "1.1.6"), deps: []modrinthDependency{{VersionID: "w1", Type: "required"}}})
+			p.withModrinth(m)
+			root := t.TempDir()
+			p.srv.ContentFiles = func(context.Context, string, string) (ServerFiles, error) { return DirFiles(root), nil }
+			if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", `{"name":"harpy","spec":{"eula":true,"loader":"fabric","version":"1.21.1","state":"Stopped","mods":[`+modrinthEntry("BLOOD", "b1")+`]}}`); code != http.StatusCreated {
+				t.Fatalf("create: %d %s", code, msg)
+			}
+			p.expectMods("harpy", "BLOOD@b1", "+WATHE@w1 <- BLOOD")
+			file := official
+			if c.fork {
+				file = fabricJar(t, "wathe", "1.3.2+wathez.1")
+			}
+			lay(t, root, map[string][]byte{"mods/" + c.file: file})
+			// Looked at, twice for the copy: it is found beside what it is a
+			// copy of, which then goes, and is taken in after.
+			for range 2 {
+				st := p.srv.foundStateOf(client.ObjectKey{Namespace: p.srv.Namespace("alpha"), Name: "harpy"})
+				st.mu.Lock()
+				st.last = time.Time{}
+				st.mu.Unlock()
+				if code, _ := p.call("viewer", "POST", "/orgs/alpha/servers/harpy/content/look?wait=true", ""); code != http.StatusOK {
+					t.Fatalf("look: %d", code)
+				}
+			}
+			p.expectMods("harpy", "BLOOD@b1", c.file+" <- BLOOD")
+			if got := p.serverOf("harpy").Annotations[avsysv1.AnnotationSettled]; got != "" {
+				t.Errorf("settled %q", got)
+			}
 		})
 	}
 }

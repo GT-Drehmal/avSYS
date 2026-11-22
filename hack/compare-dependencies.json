@@ -1,0 +1,56 @@
+[
+  {
+    "name": "bingo",
+    "loader": "fabric",
+    "version": "1.20.1",
+    "comment": "Drehmal Bingo's mods from Modrinth (26 of its 27 jars; WI Zoom is an upload), but Fabric API and Sodium, which they need.",
+    "mods": [
+      "PRN43VSY:uNgEPb10", "mHeNceaH:Ue8XQRKN", "VSNURh3q:QZ5cUNXs", "otVJckYQ:8uQeAHwk", "1IjD5062:84Zs6tNo",
+      "GNxdLCoP:3rzOQJrq", "HdwRs3kc:P23QCBEG", "LQ3K71Q1:48hFxWw7", "OVuFYfre:i3v1Skck", "NNAgCjsB:frGGaFrx",
+      "4I1XuqiY:jkLvxFFA", "BVzZfTc1:jXc7eTKi", "YBz7DOs8:cezLH6eB", "uXXizFIs:unerR5MN", "Orvt0mRa:Aouse6P7",
+      "YL57xq9U:KHQ2Hnpt", "fQEb0iXm:jiDwS0W1", "yBW8D80W:mYl4RvKg", "hvFnDODi:4SHylIO9", "gvQqBUqZ:ZSNsJrPI",
+      "NRjRiSSD:5xvCCRjJ", "nmDcB62a:CB2UOpt3", "PtjYWJkn:I7ggF6B5", "H8CaAYZC:XGIsoVGT"
+    ],
+    "steps": [
+      {"do": "add", "project": "rei"},
+      {"do": "update", "project": "PtjYWJkn", "version": ""},
+      {"do": "remove", "project": "rei"},
+      {"do": "addDown", "project": "jade"}
+    ]
+  },
+  {
+    "name": "harpy",
+    "loader": "fabric",
+    "version": "1.21.1",
+    "comment": "Harpy Express's shape: a fork of Wathe (a build of its own of Wathe 1.3.2, under another name), and Wathe Blood, which needs Wathe. Wathe needs Ratatouille without saying so on Modrinth: it is the server's own.",
+    "uploads": [{"version": "3Kw6IUoN", "as": "mods/wathe-fork+wathez.1.jar", "fork": "+wathez.1"}],
+    "mods": ["wathe-blood", "ratatouille"],
+    "steps": [
+      {"do": "removeFile", "path": "mods/wathe-fork+wathez.1.jar"},
+      {"do": "addDown", "project": "kinswathe"}
+    ]
+  },
+  {
+    "name": "paper",
+    "loader": "paper",
+    "version": "1.21.4",
+    "comment": "Plugins that need others: ViaBackwards needs ViaVersion, Chunky Border needs Chunky.",
+    "mods": ["viabackwards", "chunkyborder"],
+    "steps": [
+      {"do": "remove", "project": "viabackwards"},
+      {"do": "addDown", "project": "luckperms"}
+    ]
+  },
+  {
+    "name": "neoforge",
+    "loader": "neoforge",
+    "version": "1.21.1",
+    "comment": "Sophisticated Backpacks needs Sophisticated Core; Sophisticated Storage needs it too.",
+    "mods": ["sophisticated-backpacks"],
+    "steps": [
+      {"do": "add", "project": "sophisticated-storage"},
+      {"do": "remove", "project": "sophisticated-backpacks"},
+      {"do": "addDown", "project": "jei"}
+    ]
+  }
+]

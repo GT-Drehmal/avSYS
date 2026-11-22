@@ -535,6 +535,9 @@ export const foundTitle = (f: FoundFile) => f.title || withoutExtension(f.path.s
 export const foundRefs = (found: FoundFile[] | null | undefined): ContentRef[] =>
   (found ?? []).flatMap((f) => (f.project ? [{ source: "modrinth" as const, kind: f.kind, project: f.project, version: f.versionId, title: f.title }] : []));
 
+/** Whether the panel can manage what a server's mods need: not for a modpack, nor where its environment says how the image is to. */
+export const managesDependencies = (spec: Pick<ServerSpec, "modpack" | "env">) => !spec.modpack && !(spec.env ?? []).some((e) => e.name === "MODRINTH_DOWNLOAD_DEPENDENCIES");
+
 /** "Needed by Kin's Wathe and Wathe Blood", from what needs an entry, named as the list names them. */
 export function neededByNote(m: ContentRef, all: ContentRef[]) {
   if (!m.neededBy?.length) return undefined;
@@ -548,7 +551,7 @@ export function neededByNote(m: ContentRef, all: ContentRef[]) {
 
 /** "Needs wathe >=1.5.0. The server has 1.4.1 in Wathe fork." */
 export const unmetNote = (u: UnmetDependency) =>
-  `Needs ${u.id}${u.wants ? ` ${u.wants}` : ""}.${u.has ? ` The server has ${u.has}${u.by ? ` in ${u.by}` : ""}.` : ""}`;
+  `${u.breaks ? "Does not work with" : "Needs"} ${u.id}${u.wants ? ` ${u.wants}` : ""}.${u.has ? ` The server has ${u.has}${u.by ? ` in ${u.by}` : ""}.` : ""}`;
 
 interface ContentListProps {
   mods: ContentRef[];

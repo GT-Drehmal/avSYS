@@ -195,6 +195,9 @@ type UnmetDependency struct {
 	// Has is the version the server has, and By what it is part of.
 	Has string `json:"has,omitempty"`
 	By  string `json:"by,omitempty"`
+	// Breaks says the content does not work with Wants of it, rather
+	// than needing it ("breaks" in fabric.mod.json).
+	Breaks bool `json:"breaks,omitempty"`
 }
 
 // MemberPicks are members put on a list, or left off it, whatever their role.

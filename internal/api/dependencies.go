@@ -304,8 +304,6 @@ func (l *depLister) resolve() error {
 		}
 	}
 	chained := map[string]bool{}
-	// The version of each project named by what needs it, the first one.
-	namedFor := map[string]string{}
 	for len(queue) > 0 {
 		n := queue[0]
 		queue = queue[1:]
@@ -335,28 +333,29 @@ func (l *depLister) resolve() error {
 			}
 			if j, ok := listed[project]; ok {
 				neededBy[j] = appendOnce(neededBy[j], n.by)
-				// A version of it named: what the panel added is pinned to
-				// it, unless another named another first; someone's own
-				// stays as they pinned it. Either way, a version that is
-				// not the one named is said.
-				if have := (*mods)[j]; named != nil && have.Version != named.ID && len(l.opts.installed[project]) == 0 {
-					if l.opts.add && have.Dependency && (namedFor[project] == "" || namedFor[project] == named.ID) {
-						m := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: kindOf(have), Project: have.Project, Version: named.ID, Dependency: true}
-						if err := l.s.pin(l.ctx, &m, l.t); err != nil {
-							return err
+				// The version the list has is held to what the file of the
+				// one that needs it says will do, not to the version its
+				// Modrinth page names, which is only the one it was made
+				// with. One the panel added that will not do is pinned to
+				// the newest that will for all that need it; someone's own
+				// stays as they pinned it, and is said.
+				if n.i >= 0 && len(l.opts.installed[project]) == 0 {
+					if u, ok := l.unmet(n.i, "", &provider{index: j}); ok {
+						if have := (*mods)[j]; l.opts.add && have.Dependency {
+							k := kindOf(have)
+							if v, err := l.newestFitting(project, &k, u.ID); err != nil {
+								return err
+							} else if v != nil && v.ID != have.Version && l.willDo(project, v, k, u.ID) {
+								m := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: kindOf(have), Project: have.Project, Version: v.ID, Dependency: true}
+								if err := l.s.pin(l.ctx, &m, l.t); err != nil {
+									return err
+								}
+								(*mods)[j] = m
+								return errListAgain
+							}
 						}
-						(*mods)[j] = m
-						return errListAgain
+						unmet[n.i] = append(unmet[n.i], u)
 					}
-					if n.i >= 0 {
-						id := have.Project
-						if len(have.Provides) > 0 {
-							id = have.Provides[0]
-						}
-						unmet[n.i] = append(unmet[n.i], avsysv1.UnmetDependency{ID: id, Wants: named.VersionNumber, Has: have.VersionName, By: entryName(have)})
-					}
-				} else if named != nil {
-					namedFor[project] = named.ID
 				}
 				if !reached[j] {
 					visit(j)
@@ -426,6 +425,7 @@ func (l *depLister) resolve() error {
 		}
 	}
 
+	l.breaks(unmet)
 	out := (*mods)[:0:0]
 	for i, m := range *mods {
 		// What the panel added that nothing needs any more goes with what
@@ -478,8 +478,10 @@ func (l *depLister) nameOf(project string) string {
 }
 
 // versionOf is the version of a project that a server would have: the one
-// it has a file of (the one Modrinth names, of two), the one Modrinth names,
-// or the one the panel pins, the newest that fits. For a datapack, which
+// it has a file of (the one Modrinth names, of two); or the one Modrinth
+// names, which its mod was made with and the image takes, where it fits
+// the server and what every entry that needs it says will do; or else the
+// newest that does; the one named where nothing fits. For a datapack, which
 // can need a mod, the kind it is found as is said in kind. nil where none
 // fits.
 func (l *depLister) versionOf(project string, named *modrinthVersion, kind *avsysv1.ContentKind) (*modrinthVersion, error) {
@@ -495,8 +497,36 @@ func (l *depLister) versionOf(project string, named *modrinthVersion, kind *avsy
 	}
 	if named != nil {
 		*kind = l.kindOfVersion(named, *kind)
+		// The one its mod was made with, as the image takes it, where it
+		// fits this server and what all that need it say will do.
+		if l.fitsServer(named, *kind) && l.willDo(project, named, *kind, "") {
+			return named, nil
+		}
+	}
+	pick, err := l.newestFitting(project, kind, "")
+	if err != nil {
+		return nil, err
+	}
+	// None fits: the one named, as the image would take it.
+	if pick == nil && named != nil {
 		return named, nil
 	}
+	return pick, nil
+}
+
+// fitsServer says a version is for the server's game version and loader.
+func (l *depLister) fitsServer(v *modrinthVersion, kind avsysv1.ContentKind) bool {
+	if l.t.gameVersion != "" && !slices.Contains(v.GameVersions, l.t.gameVersion) {
+		return false
+	}
+	return slices.ContainsFunc(v.Loaders, func(loader string) bool { return slices.Contains(l.t.loadersFor(kind), loader) })
+}
+
+// newestFitting is the newest version of a project that fits the server
+// and what every entry that needs it says will do of it (id, or the ID its
+// file says); the newest that fits the server where none will do. nil
+// where none fits the server.
+func (l *depLister) newestFitting(project string, kind *avsysv1.ContentKind, id string) (*modrinthVersion, error) {
 	kinds := []avsysv1.ContentKind{*kind}
 	if *kind == avsysv1.KindDatapack {
 		if takes := l.t.loader; takes == "paper" || takes == "purpur" || takes == "folia" {
@@ -513,12 +543,87 @@ func (l *depLister) versionOf(project string, named *modrinthVersion, kind *avsy
 		if err != nil {
 			return nil, err
 		}
-		if versions = preferReleases(versions); len(versions) > 0 {
-			*kind = k
-			return &versions[0], nil
+		if versions = preferReleases(versions); len(versions) == 0 {
+			continue
 		}
+		*kind = k
+		for i := range min(len(versions), candidatesToInspect*2) {
+			if l.willDo(project, &versions[i], k, id) {
+				return &versions[i], nil
+			}
+		}
+		return &versions[0], nil
 	}
 	return nil, nil
+}
+
+// willDo says a version of a project is one every entry that needs it says
+// will do, by the ranges in their files. One whose file cannot be read
+// will do: the panel only says what it is sure of.
+func (l *depLister) willDo(project string, v *modrinthVersion, kind avsysv1.ContentKind, id string) bool {
+	info, err := l.inspect(v)
+	if err != nil || kind == avsysv1.KindDatapack {
+		return true
+	}
+	meta := info.of(kind)
+	if id == "" {
+		id = meta.primary()
+	}
+	version, known := meta.versionOf(id)
+	if id == "" || !known {
+		return true
+	}
+	for _, need := range l.declared(project, id) {
+		if !fits(version, need.ranges, need.forge) {
+			return false
+		}
+	}
+	return true
+}
+
+// declaredRange is what one entry's file says will do of a mod.
+type declaredRange struct {
+	ranges []string
+	forge  bool
+}
+
+// declared are the ranges the files of the list's entries that need a
+// project say will do of its mod ID.
+func (l *depLister) declared(project, id string) []declaredRange {
+	var out []declaredRange
+	for i, m := range l.spec.Mods {
+		info := l.infos[i]
+		if m.Source != avsysv1.SourceModrinth || info == nil || !l.needsProject(info, project) {
+			continue
+		}
+		file, err := l.inspect(info)
+		if err != nil {
+			continue
+		}
+		meta := file.of(kindOf(m))
+		if ranges := meta.Depends[id]; len(ranges) > 0 {
+			out = append(out, declaredRange{ranges, meta.Forge})
+		}
+	}
+	return out
+}
+
+// needsProject says a version requires a project, by it or one version of it.
+func (l *depLister) needsProject(v *modrinthVersion, project string) bool {
+	for _, d := range v.Dependencies {
+		if d.Type != "required" {
+			continue
+		}
+		if d.ProjectID == project {
+			return true
+		}
+		if d.ProjectID == "" && d.VersionID != "" {
+			if dv, err := l.s.modrinthVersion(l.ctx, d.VersionID); err == nil && dv.ProjectID == project {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // kindOfVersion is the kind of content a version is on this server, by the
@@ -719,31 +824,74 @@ func (l *depLister) unmet(i int, id string, p *provider) (avsysv1.UnmetDependenc
 	if err != nil {
 		return avsysv1.UnmetDependency{}, false
 	}
-	need := needs.of(kindOf(l.spec.Mods[i]))
-	ranges, ok := need.Depends[id]
-	if !ok || len(ranges) == 0 {
-		return avsysv1.UnmetDependency{}, false
-	}
-	has, known := "", false
-	by := ""
-	if meta := l.metaOf(p); meta != nil {
-		has, known = meta.versionOf(id)
-	}
-	if p.found != nil {
-		by = foundName(*p.found)
-	} else {
-		m := l.spec.Mods[p.index]
-		by = entryName(m)
-		// An upload is its own version, as it says; what is inside it is
-		// not known without its file.
-		if !known && m.Source == avsysv1.SourceUpload && len(m.Provides) > 0 && m.Provides[0] == id && m.VersionName != "" {
-			has, known = m.VersionName, true
+	// Without an ID, the one the provider is itself.
+	if id == "" {
+		if meta := l.metaOf(p); meta != nil {
+			id = meta.primary()
+		}
+		if id == "" && p.found == nil && len(l.spec.Mods[p.index].Provides) > 0 {
+			id = l.spec.Mods[p.index].Provides[0]
 		}
 	}
+	need := needs.of(kindOf(l.spec.Mods[i]))
+	ranges, ok := need.Depends[id]
+	if id == "" || !ok || len(ranges) == 0 {
+		return avsysv1.UnmetDependency{}, false
+	}
+	has, by, known := l.hasVersion(p, id)
 	if !known || has == "" || fits(has, ranges, need.Forge) {
 		return avsysv1.UnmetDependency{}, false
 	}
 	return avsysv1.UnmetDependency{ID: id, Wants: strings.Join(ranges, " or "), Has: has, By: by}, true
+}
+
+// hasVersion is the version of a mod ID a provider gives the server, and
+// what it is called; known says whether its file says.
+func (l *depLister) hasVersion(p *provider, id string) (has, by string, known bool) {
+	if meta := l.metaOf(p); meta != nil {
+		has, known = meta.versionOf(id)
+	}
+	if p.found != nil {
+		return has, foundName(*p.found), known
+	}
+	m := l.spec.Mods[p.index]
+	// An upload is its own version, as it says; what is inside it is not
+	// known without its file.
+	if !known && m.Source == avsysv1.SourceUpload && len(m.Provides) > 0 && m.Provides[0] == id && m.VersionName != "" {
+		has, known = m.VersionName, true
+	}
+	return has, entryName(m), known
+}
+
+// breaks notes, of each Modrinth entry the list has, what on the server its
+// file says it does not work with ("breaks"), as the loader would refuse.
+func (l *depLister) breaks(unmet map[int][]avsysv1.UnmetDependency) {
+	for i, m := range l.spec.Mods {
+		if m.Source != avsysv1.SourceModrinth || l.infos[i] == nil || !l.reached[i] || kindOf(m) == avsysv1.KindDatapack {
+			continue
+		}
+		info, err := l.inspect(l.infos[i])
+		if err != nil {
+			continue
+		}
+		meta := info.of(kindOf(m))
+		ids := make([]string, 0, len(meta.Breaks))
+		for id := range meta.Breaks {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			p := l.providerOf(id, kindOf(m), i)
+			if p == nil {
+				continue
+			}
+			has, by, known := l.hasVersion(p, id)
+			if !breaksWith(has, known, meta.Breaks[id], meta.Forge) {
+				continue
+			}
+			unmet[i] = append(unmet[i], avsysv1.UnmetDependency{ID: id, Wants: strings.Join(meta.Breaks[id], " or "), Has: has, By: by, Breaks: true})
+		}
+	}
 }
 
 // metaOf is what a provider's file says it is, read once it is asked for.
@@ -800,19 +948,19 @@ func foundName(f FoundFile) string {
 
 // dependenciesFor lists what a server's content needs, as its list is
 // changed from previous (nil for a new server) to spec. A list whose
-// content is as it was keeps what was worked out for it, without asking
-// Modrinth. One the panel has not listed dependencies for yet is left to
-// its image as long as its content is as it was: it is listed with the
-// server's files, as the image has them (migrateDependencies). Its content
-// changed, it is listed as any other, and the next start gets what that
-// says, as the image would have downloaded what it needs anew.
+// content, and the files found beside it, are as they were keeps what was
+// worked out for it, without asking Modrinth. A server whose image
+// downloads what its content needs, as every server made before the panel
+// listed it does, stays so, until someone switches it over (bringOver).
+//
+// Where Modrinth does not answer, a change that could leave something
+// needed out fails, saying so, rather than the server starting without it.
 func (s *Server) dependenciesFor(ctx context.Context, spec, previous *avsysv1.MinecraftServerSpec, on *serverContent) error {
 	if !controller.ListsDependencies(spec) {
 		spec.DependenciesListed = false
 		return nil
 	}
-	legacy := previous != nil && controller.ListsDependencies(previous) && !previous.DependenciesListed
-	if legacy && sameContent(spec, previous) {
+	if previous != nil && controller.ListsDependencies(previous) && !previous.DependenciesListed {
 		spec.DependenciesListed = false
 		return nil
 	}
@@ -832,25 +980,37 @@ func (s *Server) dependenciesFor(ctx context.Context, spec, previous *avsysv1.Mi
 	// Modrinth is not answering, or not about everything.
 	switch {
 	case previous == nil && spec.DependenciesListed:
-		// A copy of a server, listed as the other is: what it was noted to
+		// A copy of a server listed as this one is: what it was noted to
 		// need stays, but what nothing needs any more.
 		pruneByNotes(spec)
-	case previous == nil || legacy:
-		// A new server, or one not listed before: its image downloads what
-		// its content needs, as before the panel listed it, until it is
-		// listed.
-		spec.DependenciesListed = false
-	case newModrinth(spec, previous):
-		// Content that is new needs Modrinth to be pinned anyway.
-		return err
+	case previous == nil || newModrinth(spec, previous) || removedNeeded(spec, previous):
+		s.Log.Warn("could not work out what a server's content needs", "error", err)
+		return errDependenciesUnknown
 	default:
-		// What was listed stays, but what nothing needs any more, as was
-		// noted when it was.
+		// Only what nothing needed went: what was listed stays, but what
+		// was noted as needed by it alone.
 		spec.DependenciesListed = true
 		pruneByNotes(spec)
 	}
 	s.Log.Warn("could not work out what a server's content needs; keeping what was listed", "error", err)
 	return nil
+}
+
+var errDependenciesUnknown = &Error{Status: http.StatusBadGateway, Code: "upstream", Message: "Modrinth is not answering, so what the content needs cannot be worked out. Nothing was changed. Try again in a moment."}
+
+// removedNeeded says an entry something was noted to need is not in the
+// list any more.
+func removedNeeded(spec, previous *avsysv1.MinecraftServerSpec) bool {
+	now := map[string]bool{}
+	for _, m := range spec.Mods {
+		now[contentKey(m)] = true
+	}
+	for _, m := range previous.Mods {
+		if len(m.NeededBy) > 0 && !now[contentKey(m)] {
+			return true
+		}
+	}
+	return false
 }
 
 // keepDependencyNotes carries what the panel noted of each entry, from the

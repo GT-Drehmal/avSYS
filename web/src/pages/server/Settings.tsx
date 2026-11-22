@@ -11,7 +11,7 @@ import { softwareWords } from "../../lib/format";
 import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
-import { foundRefs, PackFit } from "../../components/Content";
+import { foundRefs, managesDependencies, PackFit } from "../../components/Content";
 import { autoOpOptions, exposeOptions, GameplayFields, imageDocs, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, playersExample, propertiesDocs, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
@@ -494,6 +494,21 @@ export function Settings() {
         <Field label="Image" hint="Leave empty for the default.">
           {(id) => <Input id={id} {...text("image")} placeholder="itzg/minecraft-server:java21" className="font-mono" spellCheck={false} />}
         </Field>
+        <Toggle
+          checked={!!server.spec.dependenciesListed}
+          disabled={!managesDependencies(server.spec) || update.isPending}
+          onChange={(on) => update.mutate({ dependenciesListed: on })}
+          label="Let the panel manage dependencies"
+          hint={
+            !managesDependencies(server.spec)
+              ? server.spec.modpack
+                ? "Not for a modpack."
+                : "Not while the environment sets MODRINTH_DOWNLOAD_DEPENDENCIES."
+              : server.spec.dependenciesListed
+                ? "The panel adds what mods need, and never a second copy of one the server has."
+                : "The server downloads what mods need each time it starts."
+          }
+        />
       </Section>
 
       <Section title="World" description="Download, replace or delete the world.">

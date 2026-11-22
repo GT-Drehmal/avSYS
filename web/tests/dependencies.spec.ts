@@ -26,6 +26,8 @@ test("a mod added from Modrinth brings what it needs, which goes with it", async
     await route.fulfill({ response, json: body });
   });
   await page.goto(`/o/${slug}/s/harpy/content`);
+  // A new server has the panel manage them.
+  await expect(page.getByText("Dependencies are added by the panel, never twice.")).toBeVisible();
   await page.getByRole("button", { name: "Add mods" }).click();
   await page.getByRole("dialog").getByRole("button", { name: /^Kin's Wathe by/ }).click();
   await page.keyboard.press("Escape");
@@ -67,4 +69,20 @@ test("what the server has already is what is needed, and a version that will not
   // No second Wathe beside it.
   await expect(mods(page).getByRole("listitem")).toHaveCount(2);
   await expect(mods(page).getByRole("heading")).toHaveText("Mods2");
+});
+
+test("a server made before keeps its server downloading them, until switched in its settings", async ({ page, org, api }) => {
+  const slug = await org([]);
+  // As one from before this panel, with the files of a server moved in (cmd/avsys-uitest/loose.go).
+  await api("owner").post(`/orgs/${slug}/servers`, { name: "bingo", spec: { ...fabric, dependenciesListed: false } });
+  await page.goto(`/o/${slug}/s/bingo/content`);
+  await expect(page.getByText("Dependencies are downloaded by the server as it starts.")).toBeVisible();
+  await page.goto(`/o/${slug}/s/bingo/settings`);
+  const toggle = page.getByRole("switch", { name: "Let the panel manage dependencies" });
+  await expect(toggle).not.toBeChecked();
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await expect.poll(async () => (await api("owner").get(`/orgs/${slug}/servers/bingo`)).spec.dependenciesListed).toBe(true);
+  await page.goto(`/o/${slug}/s/bingo/content`);
+  await expect(page.getByText("Dependencies are added by the panel, never twice.")).toBeVisible();
 });

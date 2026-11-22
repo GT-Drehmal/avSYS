@@ -364,12 +364,18 @@ func (s *Server) listImported(ctx context.Context, key client.ObjectKey, entries
 		if !added {
 			return nil
 		}
-		// What needs what is noted, as for any change to the list; nothing
-		// is added for it: all a Modrinth entry taken needs is there.
+		// What needs what is worked out again, as for any change to the
+		// list. All a Modrinth entry taken needs is there; but what was
+		// taken may be what the panel had added a dependency for, as a fork
+		// of it put in the folder: that one goes, at the next start, which
+		// the pod does not run yet.
+		runs := true
 		if mc.Spec.DependenciesListed {
-			if err := s.listDependencies(ctx, &mc.Spec, depOptions{onServer: &serverContent{found: left, files: on.reach}}); err != nil {
-				s.Log.Debug("could not note what content taken into a server's list needs", "server", key.Name, "error", err)
+			before := modrinthRefs(&mc.Spec)
+			if err := s.listDependencies(ctx, &mc.Spec, depOptions{add: true, onServer: &serverContent{found: left, files: on.reach}}); err != nil {
+				s.Log.Debug("could not work out what content taken into a server's list needs", "server", key.Name, "error", err)
 			}
+			runs = slices.Equal(before, modrinthRefs(&mc.Spec))
 		}
 		imported := importedOf(mc)
 		for p, f := range paths {
@@ -384,7 +390,7 @@ func (s *Server) listImported(ctx context.Context, key client.ObjectKey, entries
 			mc.Annotations[avsysv1.AnnotationFoundContent] = string(raw)
 		}
 		noteListedWith(mc, &serverContent{found: left})
-		settleWith(mc, podUID, true)
+		settleWith(mc, podUID, runs)
 		was := mc.Generation
 		if err := s.Client.Update(ctx, mc); err != nil {
 			return err
@@ -739,4 +745,17 @@ func uploadKey(m avsysv1.ContentRef) string {
 		kind = avsysv1.KindMod
 	}
 	return string(kind) + "/" + m.Project
+}
+
+// modrinthRefs are the Modrinth entries of a list as the image is given
+// them, sorted.
+func modrinthRefs(spec *avsysv1.MinecraftServerSpec) []string {
+	var out []string
+	for _, m := range spec.Mods {
+		if m.Source == avsysv1.SourceModrinth {
+			out = append(out, imageRef(m))
+		}
+	}
+	sort.Strings(out)
+	return out
 }

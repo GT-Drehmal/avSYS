@@ -169,11 +169,6 @@ type foundState struct {
 	// removed is when each file was removed through the panel, so that a
 	// look that read the folder before then does not list it again.
 	removed map[string]time.Time
-	// depsKept is the image's record of what it installed from Modrinth,
-	// as it was when the server was left to its image to download what its
-	// content needs (see migrateDependencies): not looked at again until
-	// it changes.
-	depsKept string
 }
 
 func (s *Server) foundStateOf(key client.ObjectKey) *foundState {
@@ -309,11 +304,6 @@ func (s *Server) lookAtContent(ctx context.Context, mc *avsysv1.MinecraftServer)
 	// needs is worked out again, and added.
 	if err := s.relistDependencies(ctx, key, files); err != nil {
 		s.Log.Warn("could not work out again what a server's content needs", "server", key.Name, "error", err)
-	}
-	// A server whose image downloaded what its content needs has it listed
-	// instead, once, with its files as they are.
-	if err := s.migrateDependencies(ctx, key, files); err != nil {
-		s.Log.Warn("could not list what a server's content needs; trying again later", "server", key.Name, "error", err)
 	}
 	// Pages open on it are told, as where the cluster's own events are not
 	// heard. Twice is no harm.
@@ -482,7 +472,9 @@ folders:
 	}
 	s.recognise(ctx, out)
 	// The panel's own, where the image has not said so yet: a file of
-	// exactly the version of a project the server lists.
+	// exactly the version of a project the server lists, under the name the
+	// image saves it under. Under another name, it is a second copy beside
+	// the one the image puts there.
 	pinned := map[string]bool{}
 	uploads := map[string]bool{}
 	for _, m := range spec.Mods {
@@ -495,7 +487,7 @@ folders:
 	}
 	kept := out[:0]
 	for _, f := range out {
-		if (f.VersionID != "" && pinned[f.VersionID]) || (f.Kind != avsysv1.KindDatapack && uploads[string(f.Kind)+"/"+path.Base(f.Path)]) {
+		if (f.VersionID != "" && pinned[f.VersionID] && (f.Filename == "" || f.Filename == path.Base(f.Path))) || (f.Kind != avsysv1.KindDatapack && uploads[string(f.Kind)+"/"+path.Base(f.Path)]) {
 			continue
 		}
 		kept = append(kept, f)
