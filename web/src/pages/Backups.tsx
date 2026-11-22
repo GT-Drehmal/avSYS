@@ -213,7 +213,9 @@ export function Backups() {
                   lead={(s) => (
                     <span className="flex w-36 shrink-0 items-center gap-2 max-sm:w-24">
                       <ServerPicture org={org} name={s.server} server={byName.get(s.server)} known={!!servers.data} newest={groups.get(s.server)?.[0]?.id} size={24} />
-                      <span className="truncate text-[13px] font-medium">{s.server}</span>
+                      <span className="truncate text-[13px] font-medium" title={s.server}>
+                        {s.server}
+                      </span>
                     </span>
                   )}
                 />
@@ -303,7 +305,9 @@ function ServerGroup({ org, name, server, known, items, concern, open, onToggle,
       <ServerPicture org={org} name={name} server={server} known={known} newest={newest?.id} size={32} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
-          <span className="truncate text-[13px] font-medium">{server ? displayName(server) : name}</span>
+          <span className="line-clamp-2 min-w-0 text-[13px] font-medium break-words" title={server ? displayName(server) : name}>
+            {server ? displayName(server) : name}
+          </span>
           {!server && known && <Chip>deleted server</Chip>}
         </span>
         <span className="block truncate text-xs text-muted">

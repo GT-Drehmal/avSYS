@@ -58,7 +58,12 @@ const serverList: ListOptions<Server> = {
   ],
 };
 
-const columns = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_72px_minmax(0,1.3fr)_112px] items-center gap-4 px-4";
+// One grid for the whole list, which the heading and each row share: the
+// server's name takes what room is left, and the rest are as wide as what
+// they say, up to a point. On a phone a row is its name and its buttons.
+const table = "md:grid md:grid-cols-[minmax(min(18rem,45%),1fr)_fit-content(11rem)_auto_fit-content(18rem)_auto] md:gap-x-4";
+const shared = "md:col-span-full md:grid md:grid-cols-subgrid";
+const columns = `${shared} items-center gap-4 px-4`;
 
 type Act = "start" | "stop" | "restart" | "snapshot" | "delete";
 
@@ -208,22 +213,22 @@ export function Servers() {
         {shown.length === 0 ? (
           <p className="rounded-lg border border-line bg-surface px-4 py-8 text-center text-[13px] text-muted">No servers match.</p>
         ) : (
-        <div className="overflow-hidden rounded-lg border border-line bg-surface">
-          <div className={`${columns} label-mono relative hidden h-9 border-b border-line md:grid ${canOperate ? "pl-10" : ""}`}>
+        <div className={`overflow-hidden rounded-lg border border-line bg-surface ${table}`}>
+          <div className={`${columns} label-mono relative hidden h-9 border-b border-line ${canOperate ? "pl-10" : ""}`}>
             {canOperate && (
               <label className="absolute inset-y-0 left-0 flex w-10 cursor-pointer items-center justify-center">
                 <RowCheckbox checked={selection.all} partial={selection.some} quiet={selection.count === 0} label="Select every server" onChange={selection.toggleAll} />
               </label>
             )}
-            <span>Server</span>
-            <span>Software</span>
-            <span>Players</span>
-            <span>Address</span>
-            <span />
+            <span data-col="server" className="truncate">Server</span>
+            <span data-col="software" className="truncate">Software</span>
+            <span data-col="players" className="truncate">Players</span>
+            <span data-col="address" className="truncate">Address</span>
+            <span data-col="actions" />
           </div>
-          <ul>
+          <ul className={shared}>
             {shown.map((s) => (
-              <li key={s.name} className={`group relative border-b border-line last:border-b-0 ${selection.has(s.name) ? "bg-accent-wash" : ""}`}>
+              <li key={s.name} className={`${shared} group relative border-b border-line last:border-b-0 ${selection.has(s.name) ? "bg-accent-wash" : ""}`}>
                 {canOperate && (
                   <label className="absolute inset-y-0 left-0 z-10 flex w-10 cursor-pointer items-center justify-center">
                     <RowCheckbox checked={selection.has(s.name)} quiet={selection.count === 0} label={`Select ${s.name}`} onChange={(range) => selection.toggle(s.name, range)} />
@@ -231,14 +236,17 @@ export function Servers() {
                 )}
                 <Link
                   to={`s/${s.name}`}
-                  className={`${columns} min-h-14 py-2.5 text-[13px] transition-colors hover:bg-raised max-md:grid-cols-[minmax(0,1fr)_auto] ${canOperate ? "pl-10" : ""}`}
+                  className={`${columns} grid min-h-14 py-2.5 text-[13px] transition-colors hover:bg-raised max-md:grid-cols-[minmax(0,1fr)_auto] ${canOperate ? "pl-10" : ""}`}
                 >
-                  <span className="flex min-w-0 items-center gap-3">
+                  <span data-col="server" className="flex min-w-0 items-center gap-3">
                     <LinkStatusDot phase={s.status.phase} />
                     <Picture name={displayName(s)} url={serverIcon(s)} size={32} retryKey={`${s.status.phase}|${s.status.message ?? ""}`} />
                     <span className="min-w-0">
                       <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate font-medium">{displayName(s)}</span>
+                        {/* A long one goes onto a second line before it is cut short. */}
+                        <span className="line-clamp-2 min-w-0 font-medium break-words" title={displayName(s)}>
+                          {displayName(s)}
+                        </span>
                         <Faces people={others(people, me, s.name)} label="On this server now" size={18} ring="ring-surface" />
                       </span>
                       <span className="block truncate text-xs text-muted">
@@ -253,12 +261,18 @@ export function Servers() {
                       )}
                     </span>
                   </span>
-                  <span className="truncate text-muted max-md:hidden">{describeSoftware(s)}</span>
-                  <span className="max-md:hidden">
+                  <span data-col="software" className="truncate text-muted max-md:hidden" title={describeSoftware(s)}>
+                    {describeSoftware(s)}
+                  </span>
+                  <span data-col="players" className="whitespace-nowrap max-md:hidden">
                     <Players server={s} />
                   </span>
-                  <span className="min-w-0 max-md:hidden">{s.status.address ? <CopyText value={s.status.address} className="text-muted" /> : <span className="text-faint">No address</span>}</span>
-                  <span className="flex justify-end">{canOperate && <ServerActions server={s} compact />}</span>
+                  <span data-col="address" className="min-w-0 max-md:hidden">
+                    {s.status.address ? <CopyText value={s.status.address} className="text-muted" whole /> : <span className="whitespace-nowrap text-faint">No address</span>}
+                  </span>
+                  <span data-col="actions" className="flex justify-end">
+                    {canOperate && <ServerActions server={s} compact />}
+                  </span>
                 </Link>
               </li>
             ))}

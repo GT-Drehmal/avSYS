@@ -410,7 +410,7 @@ export function Tip({
           ref={bubble}
           id={id}
           role="tooltip"
-          hidden={!open}
+          hidden={!open || !text}
           style={at ? { left: at.left, top: at.top } : { left: 0, top: 0, visibility: "hidden" }}
           className="pointer-events-none fixed z-[70] w-max max-w-60 rounded-md border border-line-strong bg-surface px-2 py-1 text-xs leading-snug font-normal text-fg shadow-lg shadow-shade/50"
         >
@@ -503,13 +503,22 @@ async function copyToClipboard(value: string, near: HTMLElement) {
   if (!ok) throw new Error("copy was refused");
 }
 
-/** Text that copies itself when clicked: addresses, commands, tokens. */
-export function CopyText({ value, display, className, wrap }: { value: string; display?: ReactNode; className?: string; wrap?: boolean }) {
+/**
+ * Text that copies itself when clicked: addresses, commands, tokens. With
+ * whole, text cut short to fit is shown whole while pointed at or focused.
+ */
+export function CopyText({ value, display, className, wrap, whole }: { value: string; display?: ReactNode; className?: string; wrap?: boolean; whole?: boolean }) {
   const [copied, setCopied] = useState(false);
-  return (
+  const [cut, setCut] = useState(false);
+  const shown = useRef<HTMLSpanElement>(null);
+  const measure = () => setCut(!!shown.current && shown.current.scrollWidth > shown.current.clientWidth);
+  const button = (target?: TipTarget) => (
     <button
       type="button"
-      title="Copy"
+      title={whole && cut ? undefined : "Copy"}
+      {...target}
+      onPointerEnter={whole ? measure : undefined}
+      onFocus={whole ? measure : undefined}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -523,9 +532,17 @@ export function CopyText({ value, display, className, wrap }: { value: string; d
       }}
       className={cx("group inline-flex max-w-full items-center gap-1.5 rounded-sm text-left font-mono text-[13px] text-fg hover:text-accent", className)}
     >
-      <span className={wrap ? "break-all" : "truncate"}>{display ?? value}</span>
+      <span ref={shown} className={wrap ? "break-all" : "truncate"}>
+        {display ?? value}
+      </span>
       {copied ? <Check className="size-3.5 shrink-0 text-accent" /> : <Copy className="size-3.5 shrink-0 text-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />}
     </button>
+  );
+  if (!whole) return button();
+  return (
+    <Tip text={cut ? value : ""} className="max-w-full min-w-0">
+      {button}
+    </Tip>
   );
 }
 
