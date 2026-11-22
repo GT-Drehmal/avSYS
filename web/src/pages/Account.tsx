@@ -145,7 +145,7 @@ function Minecraft() {
         >
           <p className="text-[13px]">
             In Minecraft, sign in as <span className="font-mono">{check.name}</span> and join{" "}
-            {check.address ? <span className="font-mono">{check.address}</span> : "this panel's address"}. Enter the code the game shows.
+            {check.address ? <span className="font-mono">{check.address}</span> : "this panel's address"} within 10 minutes. Enter the code the game shows.
           </p>
           <div className="flex items-start gap-2">
             <Checked missing="Enter the code.">
