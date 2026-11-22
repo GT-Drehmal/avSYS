@@ -305,6 +305,11 @@ func (s *Server) lookAtContent(ctx context.Context, mc *avsysv1.MinecraftServer)
 	if err := s.keepFound(ctx, key, func([]FoundFile) []FoundFile { return st.without(found, started) }); err != nil {
 		return err
 	}
+	// A file found that was what some content needs may be gone: what it
+	// needs is worked out again, and added.
+	if err := s.relistDependencies(ctx, key, files); err != nil {
+		s.Log.Warn("could not work out again what a server's content needs", "server", key.Name, "error", err)
+	}
 	// A server whose image downloaded what its content needs has it listed
 	// instead, once, with its files as they are.
 	if err := s.migrateDependencies(ctx, key, files); err != nil {
@@ -1222,6 +1227,10 @@ func (s *Server) removeFound(w http.ResponseWriter, r *http.Request, u *store.Us
 		return slices.DeleteFunc(was, func(x FoundFile) bool { return x.Path == f.Path })
 	}); err != nil {
 		return err
+	}
+	// It may have been what other content needs, which is then added.
+	if err := s.relistLocked(r.Context(), key, files); err != nil {
+		s.Log.Warn("could not work out again what a server's content needs", "server", mc.Name, "error", err)
 	}
 	if err := s.Client.Get(r.Context(), key, mc); err != nil {
 		return err

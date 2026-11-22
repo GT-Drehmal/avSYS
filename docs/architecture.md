@@ -471,7 +471,10 @@ and the image is told `MODRINTH_DOWNLOAD_DEPENDENCIES=none`
 1. For each Modrinth entry, what its pinned version requires, as Modrinth
    says (`GET /v2/version/{id}`, kept an hour). Optional, incompatible and
    embedded projects are not needed.
-2. A project the list has is that entry. For one it does not have, the
+2. A project the list has is that entry. Where a version of it is named,
+   one the panel added is pinned to that version (the first named, where
+   two name two), and worked out again with it; one someone pinned stays,
+   and what names another says so (`unmet`). For one it does not have, the
    version Modrinth names, or else the newest that fits the server (as an
    entry is pinned), is read for the mod ID its file says it is
    (`fabric.mod.json` or `quilt.mod.json` `id`, the first `modId` of
@@ -488,12 +491,18 @@ and the image is told `MODRINTH_DOWNLOAD_DEPENDENCIES=none`
    the dependent's file says which versions of it will do (`depends`,
    `versionRange`) and the server's is not one, that is noted on the
    dependent (`unmet`) and shown on the Content page.
-5. Otherwise the project is added, pinned, marked `dependency`, and what
-   it needs is worked out in turn. One the panel added that nothing needs
-   any more, or that something of the server's own is now, is taken off.
+5. Otherwise the project is added, pinned, marked `dependency`, as the
+   kind its own version is for (a datapack can need a mod), and what it
+   needs is worked out in turn. One the panel added that nothing needs any
+   more, or that something of the server's own is now, is taken off.
 
-A change that leaves the content as it was keeps what was worked out, and
-asks Modrinth nothing; one Modrinth cannot be asked about keeps what was
+A change that leaves the content, and the files found in the server's
+folders, as they were keeps what was worked out, and asks Modrinth
+nothing. Which found files it was worked out with is noted on the server
+(`avsys.dev/dependencies-found`); when they change, a found file taken off
+through the panel or gone from its folder by the next look, it is worked
+out again, and what such a file was is added. One Modrinth cannot be asked
+about keeps what was
 listed, taking off only what was noted as needed by entries gone. A
 server whose `spec.env` sets `MODRINTH_DOWNLOAD_DEPENDENCIES`, or runs a
 modpack, is left to the image.

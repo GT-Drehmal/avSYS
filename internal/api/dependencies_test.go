@@ -994,11 +994,12 @@ func TestTwoVersionsLeftToTheImage(t *testing.T) {
 	if asked() != before {
 		t.Error("its files were looked up again, its image's record as it was")
 	}
-	// Its content changed: listed, one version of Fabric API.
+	// Its content changed: listed, with one version of Fabric API.
 	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/bingo", `{"spec":{"mods":[`+modrinthEntry("FPS", "fps")+`,`+modrinthEntry("ANIM", "anim")+`,`+modrinthEntry("LITH", "lith")+`]}}`); code != 200 {
 		t.Fatalf("patch: %d %s", code, msg)
 	}
-	p.expectMods("bingo", "FPS@fps", "ANIM@anim", "LITH@lith", "+FAPI@fapi2 <- ANIM,FPS")
+	// At the version Animatica names, which Dynamic FPS takes any of.
+	p.expectMods("bingo", "FPS@fps", "ANIM@anim", "LITH@lith", "+FAPI@fapi1 <- ANIM,FPS")
 	if !p.serverOf("bingo").Spec.DependenciesListed {
 		t.Error("not listed once its content changed")
 	}

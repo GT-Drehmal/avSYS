@@ -383,6 +383,7 @@ func (s *Server) listImported(ctx context.Context, key client.ObjectKey, entries
 		} else if raw, err := json.Marshal(left); err == nil {
 			mc.Annotations[avsysv1.AnnotationFoundContent] = string(raw)
 		}
+		noteListedWith(mc, &serverContent{found: left})
 		settleWith(mc, podUID, true)
 		was := mc.Generation
 		if err := s.Client.Update(ctx, mc); err != nil {

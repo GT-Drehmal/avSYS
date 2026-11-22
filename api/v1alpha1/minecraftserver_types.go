@@ -73,6 +73,11 @@ const (
 	// server's list from its folders, by path under /data, to the entry
 	// each is, as JSON, until the image has installed them as its own.
 	AnnotationImported = "avsys.dev/imported"
+	// AnnotationDependenciesFound tells the files found in a server's
+	// folders (a SHA-1 of their paths and SHA-1s) that what its content
+	// needs was last worked out with, as some may be what it needs: when
+	// they change, it is worked out again.
+	AnnotationDependenciesFound = "avsys.dev/dependencies-found"
 	// AnnotationContentRemoved notes files taken into a server's list from
 	// its folders whose entries someone took off it through the panel: each
 	// is deleted while it still has the SHA-1 noted, as JSON.

@@ -328,6 +328,7 @@ func (s *Server) migrateDependencies(ctx context.Context, key client.ObjectKey, 
 		}
 	}
 	mc.Spec = *spec
+	noteListedWith(mc, on)
 	settleWith(mc, podUID, runs)
 	was := mc.Generation
 	if err := s.Client.Update(ctx, mc); err != nil {

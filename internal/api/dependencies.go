@@ -3,6 +3,8 @@ package api
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +13,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/controller"
@@ -60,6 +65,48 @@ type serverContent struct {
 	files func() ServerFiles
 	once  sync.Once
 	got   ServerFiles
+	// listedWith is the found files the list was last worked out with, as
+	// AnnotationDependenciesFound tells them.
+	listedWith string
+}
+
+// foundKey tells the found files that can be what content needs from
+// others: the mods and plugins, by place and SHA-1.
+func (c *serverContent) foundKey() string {
+	if c == nil {
+		return ""
+	}
+	var lines []string
+	for _, f := range c.found {
+		if f.Kind != avsysv1.KindDatapack && !f.Folder {
+			lines = append(lines, f.Path+"\t"+f.SHA1)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	sort.Strings(lines)
+	sum := sha1.Sum([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// sameFound says the found files are those the list was worked out with.
+func (c *serverContent) sameFound() bool {
+	return c == nil || c.foundKey() == c.listedWith
+}
+
+// noteListedWith notes on a server the found files its list was worked
+// out with.
+func noteListedWith(mc *avsysv1.MinecraftServer, on *serverContent) {
+	key := on.foundKey()
+	if !mc.Spec.DependenciesListed || key == "" {
+		delete(mc.Annotations, avsysv1.AnnotationDependenciesFound)
+		return
+	}
+	if mc.Annotations == nil {
+		mc.Annotations = map[string]string{}
+	}
+	mc.Annotations[avsysv1.AnnotationDependenciesFound] = key
 }
 
 func (c *serverContent) reach() ServerFiles {
@@ -124,16 +171,28 @@ func (s *Server) listDependencies(ctx context.Context, spec *avsysv1.MinecraftSe
 	}
 	// Worked out on a copy: the list is changed only once it all is.
 	work := spec.DeepCopy()
-	l := &depLister{s: s, ctx: ctx, spec: work, t: targetOf(spec), opts: opts}
-	if err := l.pinnedVersions(); err != nil {
-		return err
+	for tries := 0; ; tries++ {
+		l := &depLister{s: s, ctx: ctx, spec: work, t: targetOf(spec), opts: opts}
+		if err := l.pinnedVersions(); err != nil {
+			return err
+		}
+		err := l.resolve()
+		// A dependency pinned to another version needs what that needs:
+		// worked out again, with it.
+		if errors.Is(err, errListAgain) && tries < 10 {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		*spec = *work
+		return nil
 	}
-	if err := l.resolve(); err != nil {
-		return err
-	}
-	*spec = *work
-	return nil
 }
+
+// errListAgain is a list to work out again, a dependency having been
+// pinned to another version.
+var errListAgain = errors.New("a dependency was pinned to another version")
 
 // pinnedVersions looks up the version each Modrinth entry is pinned to,
 // a few at a time.
@@ -245,6 +304,8 @@ func (l *depLister) resolve() error {
 		}
 	}
 	chained := map[string]bool{}
+	// The version of each project named by what needs it, the first one.
+	namedFor := map[string]string{}
 	for len(queue) > 0 {
 		n := queue[0]
 		queue = queue[1:]
@@ -274,6 +335,29 @@ func (l *depLister) resolve() error {
 			}
 			if j, ok := listed[project]; ok {
 				neededBy[j] = appendOnce(neededBy[j], n.by)
+				// A version of it named: what the panel added is pinned to
+				// it, unless another named another first; someone's own
+				// stays as they pinned it. Either way, a version that is
+				// not the one named is said.
+				if have := (*mods)[j]; named != nil && have.Version != named.ID && len(l.opts.installed[project]) == 0 {
+					if l.opts.add && have.Dependency && (namedFor[project] == "" || namedFor[project] == named.ID) {
+						m := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: kindOf(have), Project: have.Project, Version: named.ID, Dependency: true}
+						if err := l.s.pin(l.ctx, &m, l.t); err != nil {
+							return err
+						}
+						(*mods)[j] = m
+						return errListAgain
+					}
+					if n.i >= 0 {
+						id := have.Project
+						if len(have.Provides) > 0 {
+							id = have.Provides[0]
+						}
+						unmet[n.i] = append(unmet[n.i], avsysv1.UnmetDependency{ID: id, Wants: named.VersionNumber, Has: have.VersionName, By: entryName(have)})
+					}
+				} else if named != nil {
+					namedFor[project] = named.ID
+				}
 				if !reached[j] {
 					visit(j)
 				}
@@ -402,12 +486,15 @@ func (l *depLister) versionOf(project string, named *modrinthVersion, kind *avsy
 	if has := l.opts.installed[project]; len(has) > 0 {
 		for _, v := range has {
 			if named != nil && v.ID == named.ID {
+				*kind = l.kindOfVersion(v, *kind)
 				return v, nil
 			}
 		}
+		*kind = l.kindOfVersion(has[0], *kind)
 		return has[0], nil
 	}
 	if named != nil {
+		*kind = l.kindOfVersion(named, *kind)
 		return named, nil
 	}
 	kinds := []avsysv1.ContentKind{*kind}
@@ -432,6 +519,22 @@ func (l *depLister) versionOf(project string, named *modrinthVersion, kind *avsy
 		}
 	}
 	return nil, nil
+}
+
+// kindOfVersion is the kind of content a version is on this server, by the
+// loaders it is for: a mod or a plugin, as the server takes, before a
+// datapack. One that is for nothing the server takes is as was thought.
+func (l *depLister) kindOfVersion(v *modrinthVersion, was avsysv1.ContentKind) avsysv1.ContentKind {
+	plugins := slices.Contains([]string{"paper", "purpur", "folia"}, l.t.loader)
+	for _, k := range []avsysv1.ContentKind{avsysv1.KindMod, avsysv1.KindPlugin, avsysv1.KindDatapack} {
+		if (k == avsysv1.KindPlugin && !plugins) || (k == avsysv1.KindMod && (plugins || l.t.loader == "vanilla")) {
+			continue
+		}
+		if slices.ContainsFunc(v.Loaders, func(loader string) bool { return slices.Contains(l.t.loadersFor(k), loader) }) {
+			return k
+		}
+	}
+	return was
 }
 
 // inspect reads a version's file, once.
@@ -713,7 +816,7 @@ func (s *Server) dependenciesFor(ctx context.Context, spec, previous *avsysv1.Mi
 		spec.DependenciesListed = false
 		return nil
 	}
-	if previous != nil && previous.DependenciesListed && sameContent(spec, previous) {
+	if previous != nil && previous.DependenciesListed && sameContent(spec, previous) && on.sameFound() {
 		spec.DependenciesListed = true
 		return nil
 	}
@@ -833,13 +936,41 @@ func pruneByNotes(spec *avsysv1.MinecraftServerSpec) {
 // found there, and its files, if they can be reached without waiting.
 func (s *Server) contentOn(ctx context.Context, mc *avsysv1.MinecraftServer) *serverContent {
 	namespace, name := mc.Namespace, mc.Name
-	return &serverContent{found: foundOf(mc), files: func() ServerFiles {
+	return &serverContent{found: foundOf(mc), listedWith: mc.Annotations[avsysv1.AnnotationDependenciesFound], files: func() ServerFiles {
 		files, err := s.contentFiles(ctx, namespace, name)
 		if err != nil {
 			return nil
 		}
 		return files
 	}}
+}
+
+// relistDependencies works out again what a server's content needs, if
+// the files found in its folders are not those it was worked out with: one
+// that was what something needs may be gone, and that is then added.
+func (s *Server) relistDependencies(ctx context.Context, key client.ObjectKey, files ServerFiles) error {
+	defer s.lockContent(key)()
+	return s.relistLocked(ctx, key, files)
+}
+
+// relistLocked is relistDependencies for a caller holding the server's
+// content still.
+func (s *Server) relistLocked(ctx context.Context, key client.ObjectKey, files ServerFiles) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		mc := &avsysv1.MinecraftServer{}
+		if err := s.Client.Get(ctx, key, mc); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		on := &serverContent{found: foundOf(mc), files: func() ServerFiles { return files }, listedWith: mc.Annotations[avsysv1.AnnotationDependenciesFound]}
+		if !mc.Spec.DependenciesListed || !controller.ListsDependencies(&mc.Spec) || on.sameFound() {
+			return nil
+		}
+		if err := s.listDependencies(ctx, &mc.Spec, depOptions{add: true, onServer: on}); err != nil {
+			return err
+		}
+		noteListedWith(mc, on)
+		return s.Client.Update(ctx, mc)
+	})
 }
 
 // listerOn is a lister for a server's content as it is, to ask what it

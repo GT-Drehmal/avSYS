@@ -938,10 +938,12 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	if err := checkPackFormats(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return nil, err
 	}
-	if err := s.resolveContent(ctx, &spec, previous, s.contentOn(ctx, mc)); err != nil {
+	on := s.contentOn(ctx, mc)
+	if err := s.resolveContent(ctx, &spec, previous, on); err != nil {
 		return nil, err
 	}
 	mc.Spec = spec
+	noteListedWith(mc, on)
 	return previous, nil
 }
 

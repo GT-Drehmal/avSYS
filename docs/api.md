@@ -1101,9 +1101,11 @@ What the Modrinth entries need is added to `spec.mods` in the same change,
 each pinned and marked `dependency: true`, unless a file on the server is
 that mod by its mod ID (an upload, a fork, a renamed file, a jar inside
 another): then that entry is marked `neededBy` instead, and nothing is
-added. One the panel added goes once nothing needs it. An upload is
-checked the same way when it is uploaded. A version that will not do is
-noted in the entry's `unmet`; a dependency Modrinth has no version of for
+added. One the panel added goes once nothing needs it, and follows the
+version of it an entry names. An upload is checked the same way when it
+is uploaded, and the list again when a found file goes. A version that
+will not do, by the file's range or another named, is noted in the
+entry's `unmet`; a dependency Modrinth has no version of for
 the server is a `400`. With `MODRINTH_DOWNLOAD_DEPENDENCIES` in `spec.env`,
 or a modpack, nothing is added, and the image downloads what is needed.
 

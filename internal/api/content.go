@@ -759,8 +759,11 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 		// What it is may be what other content needs, which the panel added
 		// another file of: that one goes.
 		if mc.Spec.DependenciesListed {
-			if err := s.listDependencies(r.Context(), &mc.Spec, depOptions{add: true, onServer: s.contentOn(r.Context(), mc)}); err != nil {
+			on := s.contentOn(r.Context(), mc)
+			if err := s.listDependencies(r.Context(), &mc.Spec, depOptions{add: true, onServer: on}); err != nil {
 				s.Log.Warn("could not work out what a server's content needs", "server", mc.Name, "error", err)
+			} else {
+				noteListedWith(mc, on)
 			}
 		}
 		err := s.Client.Update(r.Context(), mc)
