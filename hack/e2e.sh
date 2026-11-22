@@ -498,6 +498,8 @@ if [ -z "$PLAYER" ]; then
   linked_here=1
 fi
 whitelisted() { call -d '{"command":"whitelist list"}' "$SRV/console" | field "d['output']"; }
+# Its whitelist on in game: with it off there, the panel takes nobody off it.
+call -d '{"command":"whitelist on"}' "$SRV/console" >/dev/null
 set_spec '{"spec":{"autoWhitelist":"off","whitelistMembers":{"also":["'"$ME"'"]}}}'
 for _ in $(seq 1 20); do whitelisted | grep -q "$PLAYER" && break; sleep 1; done
 expect "a member picked is put on the whitelist, though no role is" "$(whitelisted)" "$PLAYER"
@@ -611,6 +613,8 @@ expect "and the Java players stay on still" "$(whitelisted)" "Grumm"
 set_spec '{"spec":{"whitelist":["00000000-0000-0000-0009-01f64f65c7c3",".Tim203"],"ops":["00000000-0000-0000-0009-01f64f65c7c3"]}}'
 set_spec '{"spec":{"whitelistLists":null}}'
 call -X DELETE "$LISTS/$EVENT" >/dev/null
+# Its whitelist off again, as it was.
+call -d '{"command":"whitelist off"}' "$SRV/console" >/dev/null
 
 step "files"
 echo "written by e2e" | call -X PUT --data-binary @- "$SRV/files/content?path=/e2e.txt" >/dev/null

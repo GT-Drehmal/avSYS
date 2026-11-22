@@ -1319,7 +1319,17 @@ not by the panel. **Admin.** Returns
 
 Take a player added in game off `ops` or `whitelist`. **Admin.** Returns
 `204`. A player the panel put there is refused: `member`, `saved_list` or
-`listed` (409).
+`listed` (409). So is one taken off the whitelist of a running server whose
+game has its whitelist off: `whitelist_off` (409).
+
+While a server's game runs with its whitelist off (the `server.properties`
+in its files says `white-list=false`), the panel only puts players on it.
+Who is to come off is taken off once the game has it on: as it starts with
+it on, or within a minute of `/whitelist on` at its console. A file that
+cannot be read, or does not say, counts as on. With
+`enforce-whitelist` on, vanilla up to 1.21.8, and the loaders built on it,
+put out everyone not on the whitelist when someone is taken off it, even
+with it off. Paper, and 1.21.9 and newer, do not.
 
 ## A server's snapshots and operations
 

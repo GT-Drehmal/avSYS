@@ -128,6 +128,12 @@ func (s *Server) applyDefaults(org, name string, spec *avsysv1.MinecraftServerSp
 	}
 }
 
+// whitelistOn is whether a server's settings have its whitelist on. The game
+// takes TRUE as well as true.
+func whitelistOn(spec *avsysv1.MinecraftServerSpec) bool {
+	return strings.EqualFold(spec.Properties["white-list"], "true")
+}
+
 // collectors picks a garbage collector, which Aikar's flags pick already.
 // Switching G1 off is the same.
 var collectors = regexp.MustCompile(`^-XX:(\+Use(ZGC|ShenandoahGC|ParallelGC|ParallelOldGC|ParNewGC|SerialGC|EpsilonGC|ConcMarkSweepGC)|-UseG1GC)$`)
@@ -849,7 +855,10 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request, u *store.U
 	if previous.AutoOp != mc.Spec.AutoOp || previous.AutoWhitelist != mc.Spec.AutoWhitelist ||
 		!equality.Semantic.DeepEqual(previous.OpMembers, mc.Spec.OpMembers) || !equality.Semantic.DeepEqual(previous.WhitelistMembers, mc.Spec.WhitelistMembers) ||
 		!slices.Equal(previous.Ops, mc.Spec.Ops) || !slices.Equal(previous.Whitelist, mc.Spec.Whitelist) ||
-		!slices.Equal(previous.OpLists, mc.Spec.OpLists) || !slices.Equal(previous.WhitelistLists, mc.Spec.WhitelistLists) {
+		!slices.Equal(previous.OpLists, mc.Spec.OpLists) || !slices.Equal(previous.WhitelistLists, mc.Spec.WhitelistLists) ||
+		// Turned on, as the game may have it already: what was held comes
+		// off if it has. Otherwise it comes off as the game starts with it.
+		whitelistOn(previous) != whitelistOn(&mc.Spec) {
 		s.syncOpsFor(a.Org, mc)
 	}
 	writeJSON(w, http.StatusOK, s.view(a.Role, mc))
