@@ -1097,6 +1097,52 @@ test("a server's whitelist is turned off only once that is confirmed", async ({ 
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("turning a server's whitelist on in its settings turns enforce-whitelist on too, unless it is set by hand", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  await api("owner").post(`/orgs/${slug}/servers`, {
+    name: "gate",
+    spec: { eula: true, loader: "paper", version: "1.21.4", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" }, properties: { motd: "Hi" } },
+  });
+  const properties = async () => (await api("owner").get(`/orgs/${slug}/servers/gate`)).spec.properties ?? {};
+  const whitelist = page.getByLabel("Whitelist", { exact: true });
+  const other = page.getByLabel("Other properties");
+  const save = async () => {
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByText("Settings saved")).toBeVisible();
+  };
+  await as("owner");
+  await page.goto(`/o/${slug}/s/gate/settings`);
+
+  // Off to on: both, as the form for making a server does.
+  await expect(whitelist).toHaveValue("");
+  await whitelist.selectOption("true");
+  await save();
+  await expect.poll(properties).toMatchObject({ "white-list": "true", "enforce-whitelist": "true" });
+  await page.reload();
+  await expect(other).toHaveValue(/^enforce-whitelist=true$/m);
+
+  // Turning it off leaves enforce-whitelist as it is.
+  await whitelist.selectOption("false");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Save without a whitelist" }).click();
+  await expect.poll(properties).toMatchObject({ "white-list": "false", "enforce-whitelist": "true" });
+  await page.reload();
+
+  // Set by hand, it is kept when the whitelist goes on.
+  await other.fill((await other.inputValue()).replace("enforce-whitelist=true", "enforce-whitelist=false"));
+  await whitelist.selectOption("true");
+  await save();
+  await expect.poll(properties).toMatchObject({ "white-list": "true", "enforce-whitelist": "false" });
+  await page.reload();
+
+  // Taken out with the whitelist on already, it is not put back.
+  await expect(whitelist).toHaveValue("true");
+  await other.fill((await other.inputValue()).replace(/^enforce-whitelist=false\n?/m, ""));
+  await save();
+  await expect.poll(async () => Object.keys(await properties())).not.toContain("enforce-whitelist");
+  expect(await properties()).toMatchObject({ "white-list": "true", motd: "Hi" });
+});
+
 test("a copy of an open server is warned of but not asked about; one brought back from a snapshot is asked about", async ({ page, as }) => {
   await as("owner");
   const sent: unknown[] = [];
