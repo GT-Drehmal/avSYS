@@ -415,8 +415,9 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
   const byRole = spec.autoWhitelist && spec.autoWhitelist !== "off" ? spec.autoWhitelist : null;
   const whitelisted = p["white-list"]?.toLowerCase() === "true";
   // On with the whitelist, it goes with Who can join: not listed, and not
-  // taken along when that is changed to anyone, as up to 1.21.8 it puts out
-  // who is not listed with the whitelist off too. Any other is listed.
+  // taken along when that is changed to anyone, as vanilla up to 1.21.8,
+  // and the loaders built on it, put out who is not listed as someone is
+  // taken off the whitelist, with it off too. Any other is listed.
   const impliedByJoin = (key: string, value: string) => whitelisted && key === "enforce-whitelist" && value.toLowerCase() === "true";
   return {
     kind: spec.modpack ? "modpack" : "game",

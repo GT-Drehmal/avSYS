@@ -1178,8 +1178,8 @@ for (const c of [
   { name: "an open server given a whitelist enforces it", was: { "white-list": "false" }, join: "viewer", enforce: "true", shown: "" },
   { name: "an open server given a whitelist keeps its choice not to enforce it", was: { "white-list": "false", "enforce-whitelist": "false" }, join: "viewer", enforce: "false", shown: "enforce-whitelist=false" },
   { name: "a server that is not enforced, opened to anyone, keeps that", was: { "white-list": "true", "enforce-whitelist": "false" }, join: "anyone", enforce: "false", shown: "enforce-whitelist=false" },
-  // Up to 1.21.8 the game puts out who is not listed as a name is taken
-  // off, its whitelist on or not.
+  // Vanilla up to 1.21.8 puts out who is not listed as a name is taken
+  // off, its whitelist on or not (not Paper, nor 1.21.9 on).
   { name: "a whitelisted server opened to anyone is not enforced", was: { "white-list": "true", "enforce-whitelist": "true" }, join: "anyone", enforce: undefined, shown: "" },
 ]) {
   test(`a copy of ${c.name}`, async ({ page, as, org, api }) => {
