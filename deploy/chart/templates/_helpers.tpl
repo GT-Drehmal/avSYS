@@ -111,6 +111,9 @@ IfNotPresent
 {{- fail (printf "signIn.%s needs a clientSecret, or signIn.existingSecret" $id) -}}
 {{- end -}}
 {{- end -}}
+{{- if not (has .Values.signIn.twoFactor (list "nobody" "admins" "operators" "everyone")) -}}
+{{- fail (printf "signIn.twoFactor is %q; it is nobody, admins, operators or everyone" .Values.signIn.twoFactor) -}}
+{{- end -}}
 {{- $oidc := .Values.signIn.oidc -}}
 {{- if and $oidc.clientId (not $oidc.issuer) -}}
 {{- fail "signIn.oidc needs an issuer" -}}

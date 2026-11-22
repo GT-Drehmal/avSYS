@@ -120,6 +120,8 @@ spec:
               value: {{ .Values.signups | toString | quote }}
             - name: AVSYS_PASSWORDS
               value: {{ .Values.passwords | toString | quote }}
+            - name: AVSYS_TWO_FACTOR
+              value: {{ .Values.signIn.twoFactor | quote }}
             - name: AVSYS_NAMESPACE_PREFIX
               value: {{ .Values.namespacePrefix | quote }}
             - name: AVSYS_INSTALL_CRDS

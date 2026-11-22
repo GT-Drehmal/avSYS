@@ -447,6 +447,24 @@ func migrateTwoFactorLevel(db *sql.DB) error {
 	return tx.Commit()
 }
 
+// TwoFactorLevels are the values SettingTwoFactorLevel may have.
+var TwoFactorLevels = []string{TwoFactorNobody, TwoFactorAdmins, TwoFactorOperators, TwoFactorEveryone}
+
+// SetInstallTwoFactorLevel sets who has to use two-factor as the panel was
+// installed with, on a panel with no account yet: from the first account
+// on, it is the panel's own setting, changed only in the panel. It reports
+// whether it was set.
+func (s *Store) SetInstallTwoFactorLevel(ctx context.Context, level string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO settings (key, value) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, SettingTwoFactorLevel, level)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // HighestRole is the highest role a user has in any organization, or ""
 // for someone in none.
 func (s *Store) HighestRole(ctx context.Context, userID string) (Role, error) {

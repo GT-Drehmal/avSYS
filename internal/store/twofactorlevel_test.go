@@ -82,6 +82,38 @@ func TestTwoFactorLevelMigration(t *testing.T) {
 	}
 }
 
+// The level a panel is installed with counts until its first account is
+// made, on every start; from then on, only what is set in the panel.
+func TestInstallTwoFactorLevel(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "install.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range []string{TwoFactorNobody, TwoFactorEveryone} {
+		if set, err := s.SetInstallTwoFactorLevel(ctx, level); err != nil || !set {
+			t.Fatalf("installing with %s: %v %v", level, set, err)
+		}
+		if got, _ := s.Setting(ctx, SettingTwoFactorLevel); got != level {
+			t.Errorf("installed with %s, the level is %q", level, got)
+		}
+	}
+	user(t, s, "first")
+	if set, err := s.SetInstallTwoFactorLevel(ctx, TwoFactorAdmins); err != nil || set {
+		t.Errorf("installing again after the first account: %v %v", set, err)
+	}
+	s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if got, _ := s.Setting(ctx, SettingTwoFactorLevel); got != TwoFactorEveryone {
+		t.Errorf("after the first account and a restart: %q, want everyone", got)
+	}
+}
+
 func TestHighestRole(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)

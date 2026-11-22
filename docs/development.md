@@ -50,12 +50,14 @@ make generate        # after changing api/
   page. Fetch the browsers once with `cd web && bunx playwright install`.
   A change to the web UI should come with a test here.
 - **`make e2e`** needs `AVSYS_URL` and `AVSYS_TOKEN` (an instance
-  administrator's API token). It makes a throwaway organization and a Paper
+  administrator's API token, made once two-factor is set up where the
+  panel asks for it). It makes a throwaway organization and a Paper
   server with plugins, checks the console, files, snapshots and restore,
   SSH and the router against it, and deletes both.
 - **`make e2e-cluster`** needs only Docker. It starts an empty single-node
-  k3s in a container, builds both images, installs the chart, creates the
-  first account and then runs the same check.
+  k3s in a container, builds both images, installs the chart (with
+  `signIn.twoFactor=nobody`, so that the first account makes its token at
+  once), creates the first account and then runs the same check.
 
 ## Documentation
 
