@@ -45,13 +45,24 @@ export function bytes(n: number): string {
   return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 }
 
-/** Kubernetes quantity ("4Gi", "512Mi") to a friendly label. */
+/**
+ * Kubernetes quantity ("4Gi", "512Mi") to a friendly label, in the largest
+ * unit it fills: "3584Mi" is "3.5 GB", "512Mi" stays "512 MB".
+ */
 export function quantity(q: string | undefined): string {
   if (!q) return "";
   const m = /^(\d+(?:\.\d+)?)(Mi|Gi|Ti|M|G|T)?$/.exec(q);
   if (!m) return q;
-  const unit = { Mi: "MB", Gi: "GB", Ti: "TB", M: "MB", G: "GB", T: "TB" }[m[2] ?? ""] ?? "";
-  return `${m[1]} ${unit}`.trim();
+  if (!m[2]) return m[1];
+  const step = m[2].endsWith("i") ? 1024 : 1000;
+  const units = ["MB", "GB", "TB"];
+  let n = Number(m[1]);
+  let i = { M: 0, G: 1, T: 2 }[m[2][0] as "M" | "G" | "T"];
+  while (n >= step && i < units.length - 1) {
+    n /= step;
+    i++;
+  }
+  return `${Math.round(n * 100) / 100} ${units[i]}`;
 }
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
