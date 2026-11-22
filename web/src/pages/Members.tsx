@@ -97,10 +97,13 @@ function InviteDialog({ org, myRole, onClose }: { org: string; myRole: Role; onC
 
 /**
  * A link for a member to set a new password with, as when they forgot
- * theirs: for the panel's administrator to make and hand to them.
+ * theirs, or to turn their two-factor off, as when they lost their phone:
+ * for the panel's administrator to make and hand to them. With passwords
+ * off, it can only turn two-factor off.
  */
-function ResetDialog({ member, onClose }: { member: Member; onClose: () => void }) {
-  const [twoFactorOff, setTwoFactorOff] = useState(false);
+function ResetDialog({ member, passwords, onClose }: { member: Member; passwords: boolean; onClose: () => void }) {
+  const [chosen, setTwoFactorOff] = useState(false);
+  const twoFactorOff = chosen || !passwords;
   const [made, setMade] = useState<{ url: string } | null>(null);
   const make = useAction(() => api.post<{ url: string }>(`/users/${member.userId}/reset-link`, { twoFactorOff }));
   const name = member.displayName || member.username;
@@ -122,7 +125,12 @@ function ResetDialog({ member, onClose }: { member: Member; onClose: () => void 
     );
   }
   return (
-    <Modal open onOpenChange={onClose} title={`Reset sign-in for ${name}?`} description="Makes a link to set a new password. Using it signs them out everywhere.">
+    <Modal
+      open
+      onOpenChange={onClose}
+      title={passwords ? `Reset sign-in for ${name}?` : `Reset two-factor for ${name}?`}
+      description={passwords ? "Makes a link to set a new password. Using it signs them out everywhere." : "Makes a link that turns their two-factor off. Using it signs them out everywhere."}
+    >
       <form
         className="flex flex-col gap-4"
         onSubmit={(e) => {
@@ -130,7 +138,7 @@ function ResetDialog({ member, onClose }: { member: Member; onClose: () => void 
           make.mutate(undefined, { onSuccess: setMade });
         }}
       >
-        <Toggle checked={twoFactorOff} onChange={setTwoFactorOff} label="Turn off two-factor" hint="For a lost phone. Off when the link is used." />
+        {passwords && <Toggle checked={twoFactorOff} onChange={setTwoFactorOff} label="Turn off two-factor" hint="For a lost phone. Off when the link is used." />}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" loading={make.isPending}>
@@ -146,7 +154,7 @@ export function Members() {
   const { org = "" } = useParams();
   const membership = useOrg();
   const me = useMe().data!;
-  // A reset link sets a password: with passwords off, there is none to set.
+  // A reset link sets a password; with passwords off, it only turns two-factor off.
   const passwords = useMeta().data?.passwords !== false;
   const canManage = atLeast(membership?.role, "admin");
   const isOwner = membership?.role === "owner";
@@ -230,7 +238,7 @@ export function Members() {
               ) : (
                 <Chip>{m.role}</Chip>
               )}
-              {passwords && me.user.isAdmin && m.userId !== me.user.id && (
+              {me.user.isAdmin && m.userId !== me.user.id && (
                 <Button size="sm" variant="ghost" icon={<KeyRound className="size-3.5" />} aria-label={`Reset sign-in for ${m.username}`} title="Reset sign-in" onClick={() => setResetting(m)} />
               )}
               {(editable || m.userId === me.user.id) && (
@@ -269,7 +277,7 @@ export function Members() {
       )}
 
       {inviting && membership && <InviteDialog org={org} myRole={membership.role} onClose={() => setInviting(false)} />}
-      {resetting && <ResetDialog member={resetting} onClose={() => setResetting(null)} />}
+      {resetting && <ResetDialog member={resetting} passwords={passwords} onClose={() => setResetting(null)} />}
       <Confirm
         open={!!removing}
         onOpenChange={() => setRemoving(null)}

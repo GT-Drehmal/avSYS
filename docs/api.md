@@ -69,10 +69,12 @@ Each route says who may call it:
   `403 {"code":"forbidden"}`.
 
 A route that needs a sign-in answers `401 {"code":"unauthorized"}` without
-one. An instance administrator signed in with a password, when two-factor
-is required of administrators and they have not set it up, gets
-`403 {"code":"two_factor_required"}` from everything but `GET /me` and the
-two routes that set it up.
+one. A browser session of someone who has to use two-factor (see
+[`PUT /settings/two-factor`](#put-settingstwo-factor)) and has not set it
+up, however they signed in, gets `403 {"code":"two_factor_required"}` from
+everything but `GET /me` and the two routes that set it up. API tokens are
+not asked for a code and are not held to this: a token acts as its owner,
+who can make one only once they have two-factor, where they have to.
 
 ### Requests and answers
 
@@ -173,35 +175,46 @@ when passwords are off and there is no account yet). An unknown provider is
 Where the provider sends the browser back. **Public.** Register
 `<publicURL>/api/v1/auth/<provider>/callback` with the provider.
 
-- An account already linked to this provider account is signed in.
+- An account already linked to this provider account is signed in. One
+  signed in already, as themselves, is signed in again: the session they
+  had ends, and the new one counts as a recent sign-in (see
+  [`POST /me/two-factor/setup`](#post-metwo-factorsetup)).
 - Someone signed in already has the provider account linked to theirs.
 - Otherwise a new account is made, under the same rules as
   `POST /auth/register`.
 
-It redirects to `next`, or to `/login?error=...` on failure. Accounts are
-matched by the provider's own ID for the person, never by email.
+It redirects to `next`, or to `/login?error=...` on failure. For an
+account with two-factor, it redirects instead to
+`/login?step=code&next=...` with a short-lived challenge cookie, and the
+sign-in finishes at [`POST /auth/login/code`](#post-authlogincode); an
+invite it came with is accepted then. Accounts are matched by the
+provider's own ID for the person, never by email.
 
 ### `POST /auth/login/code`
 
-The second step of a sign-in with two-factor. **Public**, with the challenge
-cookie from `POST /auth/login`.
+The second step of a sign-in with two-factor, with a password or through a
+provider. **Public**, with the challenge cookie from `POST /auth/login` or
+the provider's callback.
 
 Body: `{code}`, a code from the authenticator app or a recovery code.
 Returns `200` with the user and sets the session cookie. Errors:
 `wrong_code` (400), `sign_in_again` (401: the challenge ran out after five
-minutes or five wrong codes), `rate_limited` (429), `passwords_off` (403).
+minutes or five wrong codes), `rate_limited` (429).
 
 ### `GET /reset-links/{token}`
 
-Whose a reset link is. **Public.** Returns `{username, displayName}`, or
-`404` for a link that was used or ran out. `passwords_off` (403) with
-passwords off.
+What a reset link is. **Public.** Returns
+`{username, displayName, newPassword, twoFactorOff}`: whether it sets a
+new password, and whether it turns two-factor off. A link that turns
+two-factor off sets no password for an account without one, or with
+passwords off. `404` for a link that was used or ran out; `passwords_off`
+(403) for one that would set a password with passwords off.
 
 ### `POST /reset-links/{token}`
 
-Set a new password with a reset link. **Public.** Body: `{password}`.
-Signs the account out everywhere and, if the link says so, turns its
-two-factor off. Returns `{username}`.
+Use a reset link. **Public.** Body: `{password}`, the new one, where the
+link sets one. Signs the account out everywhere and, if the link says so,
+turns its two-factor off. Returns `{username}`.
 
 ### `GET /invites/{token}`
 
@@ -218,11 +231,16 @@ All of these are **signed in**, and act on the caller's own account.
 
 ### `GET /me`
 
-Who you are. Returns `{user, orgs, identities, hasPassword, look, twoFactor, recoveryCodes, mustSetUpTwoFactor, adminTwoFactor, minecraftAccounts, minecraft?}`.
+Who you are. Returns `{user, orgs, identities, hasPassword, look, twoFactor, recoveryCodes, twoFactorRequired, mustSetUpTwoFactor, twoFactorLevel, recentSignIn, minecraftAccounts, minecraft?}`.
 `orgs` is `[{id, slug, name, createdAt, hasIcon, role}]` (every
 organization, as owner, for the instance administrator); `identities` the
 linked providers `[{provider, login}]`; `look` is `{theme, accent}` (see
 [`PATCH /me/look`](#patch-melook)); `recoveryCodes` how many are left;
+`twoFactorRequired` whether you have to use two-factor, and
+`mustSetUpTwoFactor` whether this session is held until you set it up;
+`twoFactorLevel` who has to (see
+[`PUT /settings/two-factor`](#put-settingstwo-factor)); `recentSignIn`
+whether this session was signed in within the last ten minutes;
 `minecraftAccounts` `[{uuid, name, linkedAt, main, verified}]`.
 
 ### `PATCH /me`
@@ -321,8 +339,15 @@ Sign one session out. Returns `204`.
 ### `POST /me/two-factor/setup`
 
 Begin setting up two-factor. Body: `{password}`. Returns
-`{secret, url, qr}` for the authenticator app. Errors: `no_password`,
-`wrong_password` (400), `conflict` (409, already on), `passwords_off`.
+`{secret, url, qr}` for the authenticator app. Errors: `wrong_password`
+(400), `conflict` (409, already on), `recent_sign_in` (403).
+
+An account with no password (one that signs in only through a provider,
+or any account while passwords are off) gives none: instead, the session
+must have been signed in within the last ten minutes, which an API token
+never is. Otherwise it is `recent_sign_in`, and signing in again through
+the provider, from the same browser, makes it recent. The same goes for
+turning two-factor off and for new recovery codes.
 
 ### `POST /me/two-factor`
 
@@ -332,12 +357,13 @@ Finish setting it up. Body: `{code}` from the app. Returns
 
 ### `POST /me/two-factor/off`
 
-Turn it off. Body: `{password}`. Returns `204`. `required` (409) for an
-administrator while two-factor is required of administrators.
+Turn it off. Body: `{password}`, or a recent sign-in as for setting it up.
+Returns `204`. `required` (409) for someone who has to use two-factor.
 
 ### `POST /me/two-factor/recovery-codes`
 
-Replace your recovery codes. Body: `{password}`. Returns `{recoveryCodes}`.
+Replace your recovery codes. Body: `{password}`, or a recent sign-in as for
+setting it up. Returns `{recoveryCodes}`.
 
 ### `GET /me/tokens`
 
@@ -347,7 +373,8 @@ Your API tokens: `[{id, name, createdAt, lastUsedAt}]`.
 
 Make one. Body: `{name}` (1–64 characters). Returns `201`
 `{token: {id, name, createdAt, lastUsedAt}, secret}`. The secret is shown
-only here.
+only here. Someone who has to use two-factor and has not set it up gets
+`two_factor_required` (403), with an older token too.
 
 ### `DELETE /me/tokens/{id}`
 
@@ -355,18 +382,31 @@ Revoke one. Returns `204`.
 
 ## The instance
 
-### `PUT /settings/admin-two-factor`
+### `PUT /settings/two-factor`
 
-Require two-factor of administrators who sign in with a password.
-**Instance admin.** Body: `{required}`. Returns `204`. `passwords_off`
-with passwords off.
+Who has to use two-factor. **Instance admin.** Body: `{level}`, one of:
+
+| `level` | Who has to |
+| --- | --- |
+| `nobody` | Nobody. |
+| `admins` | Admins and owners of any organization. |
+| `operators` | Operators, admins and owners of any organization. |
+| `everyone` | Every account. |
+
+A person's highest role in any organization counts, and the instance
+administrator has to whenever the level is not `nobody`. It holds for
+every way of signing in: a password, GitHub, Discord, Google and OIDC.
+Returns `204`; `400` for another level. A panel just installed has
+`admins`. `GET /me` says it as `twoFactorLevel`.
 
 ### `POST /users/{user}/reset-link`
 
 Make a one-time link for someone to set a new password with.
 **Instance admin.** Body: `{twoFactorOff}`, true to also turn their
 two-factor off. Returns `201 {url, expiresAt}`. The link works once, for a
-day, and replaces any earlier one. `passwords_off` with passwords off.
+day, and replaces any earlier one. For an account with no password, a link
+that turns two-factor off does only that. With passwords off, only such a
+link can be made: `passwords_off` without `twoFactorOff`.
 
 ### `GET /nodes`
 

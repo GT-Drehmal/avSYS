@@ -65,7 +65,7 @@ const features = [
   },
   {
     title: "Sign in your way",
-    details: "A password with two-factor, GitHub, Discord, Google, or your own sign-in. People join by invite link.",
+    details: "A password, GitHub, Discord, Google, or your own sign-in, with two-factor by role. People join by invite link.",
     image: signIn,
     link: "/user-guide#signing-in",
   },

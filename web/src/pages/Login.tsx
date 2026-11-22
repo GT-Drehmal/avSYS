@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { Navigate, useSearchParams } from "react-router";
+import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { ProviderIcon } from "../components/ProviderIcon";
 import { Wordmark } from "../components/Shell";
 import { SignInCode } from "../components/SignInCode";
@@ -129,10 +129,20 @@ export function Login() {
   const [params] = useSearchParams();
   const next = safeNext(params.get("next"));
   const [registering, setRegistering] = useState(false);
+  const navigate = useNavigate();
 
   if (meta.isPending || me.isPending) return <div className="flex h-dvh items-center justify-center"><Spinner /></div>;
   if (me.data) return <Navigate to={next} replace />;
   if (!meta.data) return <AuthFrame title="Panel unreachable" subtitle="The avSYS server did not answer. Reload to try again."><span /></AuthFrame>;
+
+  // Signed in through a provider, to an account with two-factor: the code next.
+  if (params.get("step") === "code") {
+    return (
+      <AuthFrame title="Sign in">
+        <SignInCode next={next} onRestart={(why) => navigate(`/login?${qs({ next: next === "/" ? undefined : next, error: why })}`, { replace: true })} />
+      </AuthFrame>
+    );
+  }
 
   const error = params.get("error") && <Notice tone="danger">{params.get("error")}</Notice>;
   if (meta.data.setupRequired && !meta.data.passwords) {

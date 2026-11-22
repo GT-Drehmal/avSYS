@@ -600,10 +600,23 @@ the one beside the local repository.
   as its owner.
 - **Passwords** are hashed with argon2id. A sign-in for an account that
   does not exist takes as long as a wrong password.
-- **Two-factor.** A password sign-in for an account with two-factor gives a
-  five-minute challenge; the code (from an authenticator app, or a
-  one-time recovery code) finishes it. The instance administrator can
-  require it of administrators who sign in with a password.
+- **Two-factor.** A sign-in for an account with two-factor, by password
+  or through a provider, gives a five-minute challenge, held in memory
+  under a cookie; the code (from an authenticator app, or a one-time
+  recovery code) finishes it, and only then is a session made (and an
+  invite it came with taken). The setting `signin.two-factor` says who
+  has to have it: `nobody`, `admins`, `operators` or `everyone`, by each
+  person's highest role in any organization, and always the instance
+  administrator unless `nobody`. It is checked on every request: a
+  browser session of someone who has to and has not set it up answers
+  `two_factor_required` to all but setting it up, so someone made an admin
+  is held at their next request. API tokens are not asked for a code; a
+  token is made only by someone who has two-factor where they have to.
+  Setting it up, turning it off and new recovery codes take the password,
+  or, for an account with none, a session signed in within ten minutes.
+  A panel just installed has `admins`; one from before took its old
+  switch, `signin.admin-two-factor`, as `admins` where on and `nobody`
+  where off.
 - **Providers.** GitHub, Discord, Google and OpenID Connect sign-in use the
   authorization code flow with state and PKCE. An account is linked by the
   provider's ID for the person, never by email. With passwords off, the

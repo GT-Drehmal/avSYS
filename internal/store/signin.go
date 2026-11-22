@@ -45,8 +45,8 @@ const (
 	// SignedInWithPassword is a password, and a code if the account has
 	// two-factor on.
 	SignedInWithPassword = "password"
-	// SignedInWithProvider is an identity provider, which looks after any
-	// second factor itself.
+	// SignedInWithProvider is an identity provider, and a code if the
+	// account has two-factor on.
 	SignedInWithProvider = "provider"
 )
 
@@ -192,6 +192,13 @@ func (s *Store) TwoFactor(ctx context.Context, userID string) (*TwoFactor, error
 		return nil, err
 	}
 	return &t, nil
+}
+
+// HasTwoFactor reports whether a user has two-factor on.
+func (s *Store) HasTwoFactor(ctx context.Context, userID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM two_factor WHERE user_id = ? AND secret != ''`, userID).Scan(&n)
+	return n > 0, err
 }
 
 // SetPendingTwoFactor keeps a secret being set up, until it is confirmed with
@@ -342,15 +349,33 @@ func (s *Store) CreateResetLink(ctx context.Context, l *ResetLink, ttl time.Dura
 // ResetLinkUser is the user a reset link that has not expired is for, or
 // ErrNotFound.
 func (s *Store) ResetLinkUser(ctx context.Context, token string) (*User, error) {
-	return scanUser(s.db.QueryRowContext(ctx,
-		`SELECT `+userColumns+` FROM users WHERE id = (SELECT user_id FROM reset_links WHERE token_hash = ? AND expires_at > ?)`,
-		hashToken(token), now()))
+	u, _, err := s.ResetLinkOf(ctx, token)
+	return u, err
+}
+
+// ResetLinkOf is a reset link that has not expired, and the user it is for,
+// or ErrNotFound.
+func (s *Store) ResetLinkOf(ctx context.Context, token string) (*User, *ResetLink, error) {
+	var l ResetLink
+	var expires int64
+	err := s.db.QueryRowContext(ctx, `SELECT user_id, created_by, expires_at, two_factor_off FROM reset_links WHERE token_hash = ? AND expires_at > ?`,
+		hashToken(token), now()).Scan(&l.UserID, &l.CreatedBy, &expires, &l.TwoFactorOff)
+	if err != nil {
+		return nil, nil, mapErr(err)
+	}
+	l.ExpiresAt = unix(expires)
+	u, err := s.User(ctx, l.UserID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return u, &l, nil
 }
 
 // UseResetLink sets a new password with a reset link that has not expired,
 // once: the link is gone after, and so are all the user's sessions, and their
-// second factor if the link said so. It is ErrNotFound for a link that is not
-// there, or no longer: of two uses at once, one is.
+// second factor if the link said so. With passwordHash "", the password is
+// left as it is: for a link that only turns two-factor off. It is ErrNotFound
+// for a link that is not there, or no longer: of two uses at once, one is.
 func (s *Store) UseResetLink(ctx context.Context, token, passwordHash string) (*User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -363,8 +388,10 @@ func (s *Store) UseResetLink(ctx context.Context, token, passwordHash string) (*
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, l.UserID); err != nil {
-		return nil, err
+	if passwordHash != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, l.UserID); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, l.UserID); err != nil {
 		return nil, err
@@ -379,4 +406,64 @@ func (s *Store) UseResetLink(ctx context.Context, token, passwordHash string) (*
 		return nil, err
 	}
 	return u, tx.Commit()
+}
+
+// Who has to use two-factor: the setting SettingTwoFactorLevel, by the
+// highest role people have in any organization. The panel's administrator
+// has to whenever it is not TwoFactorNobody.
+const (
+	SettingTwoFactorLevel = "signin.two-factor"
+	TwoFactorNobody       = "nobody"
+	TwoFactorAdmins       = "admins"
+	TwoFactorOperators    = "operators"
+	TwoFactorEveryone     = "everyone"
+)
+
+// settingAdminTwoFactor was, as "1", the one switch there was before:
+// two-factor for the panel's administrator.
+const settingAdminTwoFactor = "signin.admin-two-factor"
+
+// migrateTwoFactorLevel sets who has to use two-factor, once. A panel just
+// installed, with nobody in it yet, has admins and owners. One from before
+// keeps what it had: admins and owners (and its administrator, as before)
+// where the old switch was on, and nobody where it was off.
+func migrateTwoFactorLevel(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO settings (key, value) SELECT ?,
+		CASE WHEN EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = '1') THEN ?
+		     WHEN EXISTS (SELECT 1 FROM users) THEN ?
+		     ELSE ? END
+		WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)`,
+		SettingTwoFactorLevel, settingAdminTwoFactor, TwoFactorAdmins, TwoFactorNobody, TwoFactorAdmins, SettingTwoFactorLevel); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM settings WHERE key = ?`, settingAdminTwoFactor); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// HighestRole is the highest role a user has in any organization, or ""
+// for someone in none.
+func (s *Store) HighestRole(ctx context.Context, userID string) (Role, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT role FROM memberships WHERE user_id = ?`, userID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var highest Role
+	for rows.Next() {
+		var r Role
+		if err := rows.Scan(&r); err != nil {
+			return "", err
+		}
+		if roleRank[r] > roleRank[highest] {
+			highest = r
+		}
+	}
+	return highest, rows.Err()
 }

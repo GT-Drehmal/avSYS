@@ -73,28 +73,51 @@ test("the first run with passwords on still makes the first account with a passw
   await expect(page.getByRole("button", { name: "Create account" })).toBeVisible();
 });
 
-test("with passwords off, there is no two-factor and no reset link", async ({ page, as }) => {
+test("with passwords off, two-factor stays, and a reset link only turns it off", async ({ page, as }) => {
   await as("owner");
-  await page.goto("/account");
-  await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Two-factor" })).toBeVisible();
-  await page.goto("/o/friends/members");
-  await expect(page.getByRole("button", { name: "Reset sign-in for viewer" })).toBeVisible();
-
   await passwordsOff(page);
   await page.goto("/account");
   await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Two-factor" })).toHaveCount(0);
-  await expect(page.getByRole("switch", { name: /Require for administrators/ })).toHaveCount(0);
-  await page.goto("/o/friends/members");
-  await expect(page.getByLabel("Role of viewer")).toBeVisible();
-  await expect(page.getByRole("button", { name: /Reset sign-in/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Two-factor" })).toBeVisible();
+  // No password to give for it, though the account has one from before.
+  await page.locator("section").filter({ has: page.getByRole("heading", { name: "Two-factor" }) }).getByRole("button", { name: "Set up" }).click();
+  await expect(page.getByRole("dialog").getByLabel("Password")).toHaveCount(0);
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
 
-  // A link made before passwords were turned off says why it does not work.
-  await page.route("**/api/v1/reset-links/*", (route) =>
+  // The reset link is for two-factor alone.
+  let asked: unknown = null;
+  await page.route("**/api/v1/users/*/reset-link", async (route) => {
+    asked = route.request().postDataJSON();
+    await route.fulfill({ status: 201, json: { url: "http://127.0.0.1/reset/made-up", expiresAt: new Date().toISOString() } });
+  });
+  await page.goto("/o/friends/members");
+  await page.getByRole("button", { name: "Reset sign-in for viewer" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("Reset two-factor for Viewer?")).toBeVisible();
+  await expect(dialog.getByText("Makes a link that turns their two-factor off.")).toBeVisible();
+  await expect(dialog.getByRole("switch")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Make link" }).click();
+  await expect.poll(() => asked).toEqual({ twoFactorOff: true });
+  await expect(dialog.getByText("It works once, for 24 hours.")).toBeVisible();
+
+  // The link's page turns it off, with no password to set.
+  await page.route("**/api/v1/reset-links/two-factor-only", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({ json: { username: "viewer", displayName: "Viewer", newPassword: false, twoFactorOff: true } })
+      : route.fulfill({ json: { username: "viewer" } }),
+  );
+  await page.goto("/reset/two-factor-only");
+  await expect(page.getByRole("heading", { name: "Turn off two-factor" })).toBeVisible();
+  await expect(page.getByLabel("New password")).toHaveCount(0);
+  await page.getByRole("button", { name: "Turn off two-factor" }).click();
+  await expect(page.getByRole("heading", { name: "Two-factor is off" })).toBeVisible();
+
+  // A link made before passwords were turned off, to set one, says why it does not work.
+  await page.route("**/api/v1/reset-links/some-old-link", (route) =>
     route.fulfill({ status: 403, json: { code: "passwords_off", message: "Passwords are turned off here." } }),
   );
   await page.goto("/reset/some-old-link");
   await expect(page.getByRole("heading", { name: "Passwords are turned off here" })).toBeVisible();
   await expect(page.getByLabel("New password")).toHaveCount(0);
 });
+

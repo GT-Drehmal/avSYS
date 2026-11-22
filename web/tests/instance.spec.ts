@@ -20,12 +20,13 @@ test("the administrator opens Instance settings from the menu, with updates, sig
   const signIn = page.getByRole("region", { name: "Sign-in" });
   await expect(signIn).toContainText("Set when avSYS is installed.");
   await expect(signIn.getByRole("definition")).toHaveText(["On", "Test ID", "By invite"]);
-  await expect(signIn.getByRole("switch", { name: "Require two-factor for administrators" })).toBeVisible();
+  // The test panel has nobody having to use two-factor.
+  await expect(signIn.getByRole("button", { name: "Require two-factor for" })).toHaveText("Nobody");
 
   await expect(page.getByRole("region", { name: "CurseForge" }).getByLabel("API key")).toBeVisible();
 });
 
-test("with passwords off, there is no two-factor to require", async ({ page, as }) => {
+test("with passwords off, who has to use two-factor is still chosen", async ({ page, as }) => {
   await as("owner");
   await page.route("**/api/v1/meta", async (route) => {
     const meta = await (await route.fetch()).json();
@@ -34,7 +35,7 @@ test("with passwords off, there is no two-factor to require", async ({ page, as 
   await page.goto("/settings");
   const signIn = page.getByRole("region", { name: "Sign-in" });
   await expect(signIn.getByRole("definition")).toHaveText(["Off", "Test ID", "Anyone can sign up"]);
-  await expect(page.getByRole("switch", { name: /two-factor/ })).toHaveCount(0);
+  await expect(signIn.getByRole("button", { name: "Require two-factor for" })).toBeVisible();
 });
 
 test("nobody else is offered Instance settings, and the page is for admins only", async ({ page, as }) => {

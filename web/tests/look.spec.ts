@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from "@playwright/test";
-import { expect, test } from "./panel";
+import { expect, noTwoFactor, test } from "./panel";
 
 // How the panel looks: light, dark, or as the system is (Auto), and an
 // accent picked from a few. Each person's is kept by their account; before
@@ -58,6 +58,7 @@ const password = "a password long enough";
 async function founder(page: Page, url: string) {
   const res = await page.request.post(`${url}/api/v1/auth/register`, { headers: { "X-Avsys": "1" }, data: { username: "founder", password } });
   expect(res.ok(), await res.text()).toBe(true);
+  await noTwoFactor(page.request, url, password);
 }
 
 /** Signs a browser in with a password. */

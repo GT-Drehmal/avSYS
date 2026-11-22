@@ -3,7 +3,7 @@ import { api, ApiError } from "../lib/api";
 import { Button, Field, Input, Notice } from "./ui";
 
 /**
- * The second step of signing in with a password, for an account with
+ * The second step of signing in, with a password or through a provider, for an account with
  * two-factor: a code from the app, or a recovery code. onRestart goes back
  * to the password, with why, when the sign-in has to start again.
  */

@@ -125,16 +125,6 @@ func (b *tab) signedIn() bool {
 	return got == 200
 }
 
-// fromProvider is a request on the callback of a sign-in through a
-// provider, as startSession is given there.
-func fromProvider() *http.Request {
-	// See TestProviderCallbackIsTheRouteServed: this is the one the panel
-	// serves.
-	r := httptest.NewRequest("GET", "/api/v1/auth/github/callback", nil)
-	r.Pattern = providerCallback
-	return r
-}
-
 // forgetGuesses forgets the wrong guesses under a key of the limiter.
 func forgetGuesses(key string) {
 	logins.mu.Lock()
@@ -465,27 +455,6 @@ func TestTwoFactorCodesAsAStepTurns(t *testing.T) {
 	}
 }
 
-// Signing in through a provider is not asked for a code: the provider sees
-// to a second factor.
-func TestTwoFactorIsForPasswordSignIns(t *testing.T) {
-	p := newPanel(t)
-	p.withPasswords()
-	b := p.tab("b")
-	b.signIn("viewer", "")
-	b.turnOnTwoFactor()
-	rec := httptest.NewRecorder()
-	if err := p.srv.startSession(rec, fromProvider(), p.users["viewer"].ID); err != nil {
-		t.Fatal(err)
-	}
-	via := p.tab("provider")
-	for _, c := range rec.Result().Cookies() {
-		via.cookies[c.Name] = c.Value
-	}
-	if !via.signedIn() {
-		t.Error("a sign-in through a provider was held up for a code")
-	}
-}
-
 func TestASignInWaitingForItsCodeEnds(t *testing.T) {
 	p := newPanel(t)
 	p.withPasswords()
@@ -576,77 +545,6 @@ func TestCodeGuessesAreLimited(t *testing.T) {
 	}
 }
 
-func TestAdministratorsCanBeMadeToUseTwoFactor(t *testing.T) {
-	p := newPanel(t)
-	p.withPasswords()
-	root, viewer := p.tab("root"), p.tab("viewer")
-	root.signIn("root", "")
-	viewer.signIn("viewer", "")
-
-	// Only an instance administrator may say so.
-	if got, _ := viewer.call("PUT", "/settings/admin-two-factor", map[string]bool{"required": true}, nil); got != 403 {
-		t.Errorf("a member requiring two-factor: %d, want 403", got)
-	}
-	if got, _ := root.call("PUT", "/settings/admin-two-factor", map[string]bool{"required": true}, nil); got != 204 {
-		t.Fatalf("requiring two-factor: %d", got)
-	}
-
-	// The administrator, signed in with a password and without it, is held
-	// to setting it up: /me says so, and nothing else answers.
-	var me map[string]any
-	if got, _ := root.call("GET", "/me", nil, &me); got != 200 || me["mustSetUpTwoFactor"] != true || me["adminTwoFactor"] != true {
-		t.Errorf("/me: %d %v", got, me)
-	}
-	for _, route := range [][2]string{{"GET", "/orgs/alpha"}, {"POST", "/orgs"}, {"GET", "/me/sessions"}, {"POST", "/me/password"}, {"PUT", "/settings/admin-two-factor"}} {
-		if got, code := root.call(route[0], route[1], map[string]any{}, nil); got != 403 || code != "two_factor_required" {
-			t.Errorf("%s %s before setting up two-factor: %d %s", route[0], route[1], got, code)
-		}
-	}
-	// Members are not held up, nor the administrator's API token.
-	if !viewer.signedIn() || viewer.sessions() == nil {
-		t.Error("a member was held up")
-	}
-	if got, _ := p.do("root", "GET", "/orgs/alpha", ""); got != 200 {
-		t.Errorf("the administrator's API token: %d, want 200", got)
-	}
-	// Nor is the administrator signed in through a provider.
-	rec := httptest.NewRecorder()
-	if err := p.srv.startSession(rec, fromProvider(), p.users["root"].ID); err != nil {
-		t.Fatal(err)
-	}
-	via := p.tab("provider")
-	for _, c := range rec.Result().Cookies() {
-		via.cookies[c.Name] = c.Value
-	}
-	if got, _ := via.call("GET", "/orgs/alpha", nil, nil); got != 200 {
-		t.Errorf("the administrator signed in through a provider: %d, want 200", got)
-	}
-
-	// Once set up, it goes on.
-	secret, _ := root.turnOnTwoFactor()
-	if got, _ := root.call("GET", "/orgs/alpha", nil, nil); got != 200 {
-		t.Errorf("after setting up two-factor: %d, want 200", got)
-	}
-	root.call("GET", "/me", nil, &me)
-	if me["mustSetUpTwoFactor"] != false {
-		t.Error("/me still says to set up two-factor")
-	}
-	// And it cannot be turned off while it is required.
-	if got, code := root.call("POST", "/me/two-factor/off", map[string]string{"password": testPassword}, nil); got != 409 || code != "required" {
-		t.Errorf("turning it off while required: %d %s", got, code)
-	}
-	// Not required, it can.
-	if got, _ := root.call("PUT", "/settings/admin-two-factor", map[string]bool{"required": false}, nil); got != 204 {
-		t.Fatal(got)
-	}
-	if got, _ := root.call("POST", "/me/two-factor/off", map[string]string{"password": testPassword}, nil); got != 204 {
-		t.Errorf("turning it off once not required: %d", got)
-	}
-	// Signing in again then takes no code.
-	_ = secret
-	p.tab("again").signIn("root", "")
-}
-
 func TestResetLinks(t *testing.T) {
 	p := newPanel(t)
 	p.withPasswords()
@@ -694,7 +592,7 @@ func TestResetLinks(t *testing.T) {
 
 	// Opened, it says whose it is.
 	user := p.tab("user")
-	var whose map[string]string
+	var whose map[string]any
 	if got, _ := user.call("GET", "/reset-links/"+token, nil, &whose); got != 200 || whose["username"] != "viewer" {
 		t.Errorf("opening the link: %d %v", got, whose)
 	}

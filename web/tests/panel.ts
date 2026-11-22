@@ -1,6 +1,6 @@
 import { test as base, expect, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 /** What the test panel says about itself once it is listening. */
@@ -200,6 +200,48 @@ export const test = base.extend<Fixtures>({
 });
 
 export { expect };
+
+/** The code an authenticator app shows for a base32 secret (RFC 6238: SHA-1, six digits, 30 seconds). */
+export function totp(secret: string, at = Date.now()) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const c of secret.replace(/=+$/, "")) bits += alphabet.indexOf(c).toString(2).padStart(5, "0");
+  const key = Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 1000 / 30)));
+  const mac = createHmac("sha1", key).update(counter).digest();
+  const offset = mac[mac.length - 1] & 0xf;
+  return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, "0");
+}
+
+/**
+ * Sets two-factor up for whoever request is signed in as, with their
+ * password ("" for one with none, just signed in), and gives its secret.
+ */
+export async function turnOnTwoFactor(request: APIRequestContext, url: string, password: string) {
+  const headers = { "X-Avsys": "1" };
+  const setup = await request.post(`${url}/api/v1/me/two-factor/setup`, { headers, data: { password } });
+  expect(setup.ok(), await setup.text()).toBe(true);
+  const { secret } = (await setup.json()) as { secret: string };
+  const done = await request.post(`${url}/api/v1/me/two-factor`, { headers, data: { code: totp(secret) } });
+  expect(done.ok(), await done.text()).toBe(true);
+  return secret;
+}
+
+/**
+ * On a panel just installed, where admins and owners have to use
+ * two-factor, has nobody have to, for a test of something else: its
+ * administrator, signed in with request, sets it up, says nobody has to,
+ * and turns it off.
+ */
+export async function noTwoFactor(request: APIRequestContext, url: string, password: string) {
+  const headers = { "X-Avsys": "1" };
+  await turnOnTwoFactor(request, url, password);
+  const level = await request.put(`${url}/api/v1/settings/two-factor`, { headers, data: { level: "nobody" } });
+  expect(level.ok(), await level.text()).toBe(true);
+  const off = await request.post(`${url}/api/v1/me/two-factor/off`, { headers, data: { password } });
+  expect(off.ok(), await off.text()).toBe(true);
+}
 
 /** The main part of the page, without the navigation beside it. */
 export const content = (page: Page) => page.locator("main");

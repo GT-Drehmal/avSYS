@@ -200,6 +200,13 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 		if tokens, err = populate(ctx, srv, cluster, dir, withOffsite, provider.ID, idp.URL); err != nil {
 			return err
 		}
+		// Nobody has to use two-factor here, where tests side by side sign
+		// in as the seeded owner and admin with a password: having to is
+		// tested on a panel of its own (security.spec.ts, setup.spec.ts),
+		// which has admins and owners, as a panel just installed does.
+		if err := srv.Store.SetSetting(ctx, store.SettingTwoFactorLevel, store.TwoFactorNobody); err != nil {
+			return err
+		}
 		if withMetrics {
 			if err := seedNodes(ctx, cluster); err != nil {
 				return err

@@ -41,18 +41,33 @@ sign-in page says **Set up avSYS**.
 **Two-factor.** Under **Account → Two-factor**, press **Set up**, enter
 your password, scan the code with an authenticator app, and type the code
 it shows. You get ten **recovery codes**: keep them somewhere safe. Each
-works once, in place of a code from the app. After that, signing in with a
-password asks for a code too. The panel's administrator can require
-two-factor of administrators in **Instance settings**; then they are asked
-to set it up before anything else.
+works once, in place of a code from the app. After that, every sign-in
+asks for a code too: after your password, and after GitHub, Discord,
+Google or your club's sign-in.
+
+If you have no password (you sign in only through a provider), there is
+none to enter: setting up, turning two-factor off and making new recovery
+codes work within ten minutes of signing in. Later than that, the panel
+asks you to sign in again first, with a button for it.
+
+**Required two-factor.** The panel's administrator chooses who has to use
+two-factor (see [Instance settings](#instance-settings)): by default,
+admins and owners of any organization, and always the administrator. If
+that is you, the panel asks you to set it up before anything else, the
+first time you sign in or as soon as you become one, and you cannot turn
+it off. API tokens are not asked for a code; you can make new ones only
+once two-factor is set up.
 
 **Forgot your password?** Ask the panel's administrator for a reset link.
 It works once, for a day. Setting a new password with it signs you out
-everywhere. If you lost your phone, the link can also turn two-factor off.
+everywhere. If you lost your phone, the link can also turn two-factor off;
+if you have no password, that is all it does. Then sign in and, if you
+have to use two-factor, set it up again.
 
 **Panels without passwords.** Some panels have passwords turned off: you
-sign in only through a provider, and there is no two-factor or reset link
-in the panel. Your provider's own sign-in protects your account.
+sign in only through a provider, and there is no password to set or reset.
+Two-factor works as above, with no password, and a reset link from the
+administrator only turns it off.
 
 ## Your account
 
@@ -114,7 +129,10 @@ names they play as.
 - **Remove** someone with the trash button; on your own row it is
   **Leave**. Their account is kept.
 - The panel's administrator sees a key button on each row, to make a
-  **reset sign-in** link for someone who forgot their password.
+  **reset sign-in** link for someone who forgot their password or lost
+  their phone. With passwords off, the link only turns two-factor off.
+- Making someone an admin or owner, where those have to use two-factor,
+  has them set it up before they go on.
 
 ### Organization settings
 
@@ -684,9 +702,15 @@ Instance settings**, under **Nodes**.
 
 - **Updates**: a newer avSYS, what is new and an **Update** button, and
   **Install fixes by itself**. See [Updating the panel](#updating-the-panel).
-- **Sign-in**: **Require two-factor for administrators** (when passwords
-  are on), and how people sign in and make accounts. Those are set when
-  avSYS is installed; see [Install and operate](install.md#sign-in-providers).
+- **Sign-in**: how people sign in and make accounts, which are set when
+  avSYS is installed (see [Install and operate](install.md#sign-in-providers)),
+  and **Require two-factor for**: **Nobody**, **Admins and owners** (the
+  default), **Operators and up** or **Everyone**. It goes by each person's
+  highest role in any organization, holds however they sign in, and always
+  includes you unless it is **Nobody**. People it covers are asked to set
+  two-factor up at their next sign-in or page; a panel from before this
+  setting has **Admins and owners** where its old switch, **Require
+  two-factor for administrators**, was on, and **Nobody** where it was off.
 - **CurseForge**: the API key that lets people add content and modpacks
   from CurseForge. It is never shown again once saved; **Replace** or
   **Remove** it.
