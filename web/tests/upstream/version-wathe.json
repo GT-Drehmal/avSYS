@@ -1,0 +1,26 @@
+{
+ "id": "vWATHE01",
+ "project_id": "PWATHE01",
+ "name": "1.4.1-1.21.4",
+ "version_number": "1.4.1-1.21.4",
+ "version_type": "release",
+ "game_versions": [
+  "1.21.4"
+ ],
+ "loaders": [
+  "fabric"
+ ],
+ "date_published": "2026-09-01T10:00:00Z",
+ "dependencies": [],
+ "files": [
+  {
+   "url": "https://files.invalid/wathe-1.4.1-1.21.4.jar",
+   "filename": "wathe-1.4.1-1.21.4.jar",
+   "primary": true,
+   "hashes": {
+    "sha1": "3a00000000000000000000000000000000000001"
+   },
+   "size": 1000
+  }
+ ]
+}

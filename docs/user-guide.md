@@ -320,7 +320,7 @@ The tabs:
 Most settings apply at the next restart. **Settings** has: **General**
 (picture, name, message of the day, notes), **Software** (type, version, loader
 build), **Gameplay**, **Players**, **Resources**, **Node**, **Network**,
-**Sleep**, **Advanced** (the image's environment and image), **World**, and
+**Sleep**, **Advanced** (the image's environment and image, and who adds what mods need), **World**, and
 **Delete server**. **Other properties** (under **Gameplay**) and
 **Environment** (under **Advanced**) link to the docs for what they take.
 
@@ -385,6 +385,25 @@ and NeoForge; plugins for Paper, Purpur and Folia; datapacks for all.
 - Some CurseForge authors allow downloads only on CurseForge. Those are
   marked: download the file there, then add it with **Upload**.
 
+**What content needs.** A Modrinth mod that needs others brings them: they
+are added with it, each on one version that fits, and say **Needed by**
+the mod. They go when the last mod that needs them goes. Pick a
+version of one to keep it yourself.
+
+- Nothing is added that the server has already, under any file name: an
+  upload of the mod or of a fork of it, or a mod that carries it inside.
+  That file says **Needed by** instead, so a second copy is never
+  downloaded.
+- If the server has a version a mod's file says will not do, the mod says
+  so, such as "Needs wathe >=1.5.0. The server has 1.4.1 in Wathe fork."
+  Replace one of them; nothing is downloaded beside it.
+- The Content page says who adds them. Servers made before this version
+  of the panel keep downloading them as they start. To move one over, turn
+  on **Let the panel manage dependencies** in **Settings**, under
+  **Advanced**: its files stay as they are.
+- A server whose settings set `MODRINTH_DOWNLOAD_DEPENDENCIES` (under
+  environment), or that runs a modpack, keeps downloading them.
+
 **Content already on the server.** Mods, plugins and datapacks that are in
 the server's folders but were not added here join the list by themselves,
 like anything added here: files put in `mods`, `plugins` or the world's
@@ -400,8 +419,9 @@ minutes, and at once when the page is opened or an import finishes.
   picture, and stays where it is. Upload a new file to replace it.
 - Nothing is downloaded and no file changes, and a running server does not
   need a restart for it.
-- A mod that needs another that Modrinth does not have is listed as an
-  upload, so that a second copy of what it needs is never downloaded.
+- A mod is listed from Modrinth when everything it needs is on the server
+  too, from Modrinth or not. Otherwise it is listed as an upload, so that
+  nothing is downloaded for it.
 - A long list has a search box above it.
 
 **Modpacks.** A modpack server shows its pack, with its version button, and

@@ -38,6 +38,8 @@ test("content in a server's folders is taken into its list, as Modrinth or the f
     await expect(row(page, title).getByRole("button", { name: version })).toBeVisible();
   }
   await expect(row(page, "Yet Another Bingo").getByRole("link", { name: "Open on Modrinth" })).toHaveAttribute("href", "https://modrinth.com/project/P0000101");
+  // What needs what, as Modrinth says.
+  await expect(row(page, "Fabric API").getByText("Needed by Yet Another Bingo")).toBeVisible();
   // These are uploads, named as they say; WI Zoom with its own picture.
   await expect(row(page, "WI Zoom").getByText("1.5-MC1.20.1", { exact: true })).toBeVisible();
   await expect(row(page, "WI Zoom").locator("img")).toHaveAttribute("src", /\/content\/icon\?kind=mod&name=WI-Zoom-1\.5-MC1\.20\.1\.jar/);

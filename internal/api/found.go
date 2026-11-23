@@ -280,6 +280,7 @@ func (s *Server) lookAtContent(ctx context.Context, mc *avsysv1.MinecraftServer)
 	// off it any other way is forgotten, and found again.
 	s.finishRemovals(ctx, files, key)
 	s.settleImported(ctx, files, key)
+	s.settleOfflineRecord(ctx, files, key)
 	if err := s.Client.Get(ctx, key, mc); err != nil {
 		return err
 	}
@@ -298,6 +299,11 @@ func (s *Server) lookAtContent(ctx context.Context, mc *avsysv1.MinecraftServer)
 	}
 	if err := s.keepFound(ctx, key, func([]FoundFile) []FoundFile { return st.without(found, started) }); err != nil {
 		return err
+	}
+	// A file found that was what some content needs may be gone: what it
+	// needs is worked out again, and added.
+	if err := s.relistDependencies(ctx, key, files); err != nil {
+		s.Log.Warn("could not work out again what a server's content needs", "server", key.Name, "error", err)
 	}
 	// Pages open on it are told, as where the cluster's own events are not
 	// heard. Twice is no harm.
@@ -466,7 +472,9 @@ folders:
 	}
 	s.recognise(ctx, out)
 	// The panel's own, where the image has not said so yet: a file of
-	// exactly the version of a project the server lists.
+	// exactly the version of a project the server lists, under the name the
+	// image saves it under. Under another name, it is a second copy beside
+	// the one the image puts there.
 	pinned := map[string]bool{}
 	uploads := map[string]bool{}
 	for _, m := range spec.Mods {
@@ -479,7 +487,7 @@ folders:
 	}
 	kept := out[:0]
 	for _, f := range out {
-		if (f.VersionID != "" && pinned[f.VersionID]) || (f.Kind != avsysv1.KindDatapack && uploads[string(f.Kind)+"/"+path.Base(f.Path)]) {
+		if (f.VersionID != "" && pinned[f.VersionID] && (f.Filename == "" || f.Filename == path.Base(f.Path))) || (f.Kind != avsysv1.KindDatapack && uploads[string(f.Kind)+"/"+path.Base(f.Path)]) {
 			continue
 		}
 		kept = append(kept, f)
@@ -642,8 +650,10 @@ func (s *Server) readFound(owner string, files ServerFiles, f *FoundFile) {
 		return
 	}
 	if f.Kind != avsysv1.KindDatapack {
-		if java, err := javaOfJar(tmp, size); err == nil {
-			f.Java = int32(java)
+		if info, err := inspectJar(tmp, size); err == nil {
+			f.Java = int32(info.java)
+			// What it is, as a mod or plugin, for what needs it.
+			inspected.keep("sha1:"+f.SHA1, info)
 		}
 	}
 	meta := contentMeta(zr, f.Kind)
@@ -1209,6 +1219,10 @@ func (s *Server) removeFound(w http.ResponseWriter, r *http.Request, u *store.Us
 		return slices.DeleteFunc(was, func(x FoundFile) bool { return x.Path == f.Path })
 	}); err != nil {
 		return err
+	}
+	// It may have been what other content needs, which is then added.
+	if err := s.relistLocked(r.Context(), key, files); err != nil {
+		s.Log.Warn("could not work out again what a server's content needs", "server", mc.Name, "error", err)
 	}
 	if err := s.Client.Get(r.Context(), key, mc); err != nil {
 		return err

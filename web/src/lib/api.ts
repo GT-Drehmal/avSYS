@@ -349,6 +349,27 @@ export interface ContentRef {
   description?: string;
   /** For a datapack from a URL, the name it is saved under; for an upload found in the server's files, where it is kept. */
   file?: string;
+  /** The mod IDs its file gives the server (a plugin's names), as the panel read them. */
+  provides?: string[];
+  /** Added by the panel because other content needs it; it goes once nothing does. */
+  dependency?: boolean;
+  /** The entries that need it, by their project. */
+  neededBy?: string[];
+  /** Mods it needs another version of than the server has. */
+  unmet?: UnmetDependency[];
+}
+
+/** A mod that content needs, which the server has, but not in a version that will do. */
+export interface UnmetDependency {
+  /** Its mod ID. */
+  id: string;
+  /** The versions that will do, as the content says. */
+  wants?: string;
+  /** The version the server has, and what it is part of. */
+  has?: string;
+  by?: string;
+  /** It does not work with these versions, rather than needing them. */
+  breaks?: boolean;
 }
 
 export interface Modpack {
@@ -420,6 +441,8 @@ export interface ServerSpec {
   loaderVersion?: string;
   modpack?: Modpack | null;
   mods?: ContentRef[];
+  /** What the Modrinth content needs is in mods too, listed by the panel, so the image downloads nothing more. */
+  dependenciesListed?: boolean;
   resourcePack?: ResourcePack | null;
   properties?: Record<string, string>;
   ops?: string[];

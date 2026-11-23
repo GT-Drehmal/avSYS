@@ -480,7 +480,7 @@ function ProjectDetail({ source, hit, loader, gameVersion, fits, tags, picked, h
         {needed.length + unnamed > 0 && (
           <section className="flex flex-col gap-1.5">
             <h3 className="text-[13px] font-medium">Needs</h3>
-            <p className="text-xs text-muted">What the newest version{fits ? ` for ${fits}` : ""} needs to work. These are not added for you.</p>
+            <p className="text-xs text-muted">What the newest version{fits ? ` for ${fits}` : ""} needs to work. Added with it, unless the server has them.</p>
             <ul className="flex flex-col gap-1.5">
               {needs.data?.map((p) => (
                 <li key={p.id} className="flex items-center gap-2 text-[13px]">

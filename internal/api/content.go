@@ -38,19 +38,31 @@ import (
 // with; without this it would download fine and then fail to load.
 
 type modrinthFile struct {
-	URL      string `json:"url"`
-	Filename string `json:"filename"`
-	Primary  bool   `json:"primary"`
+	URL      string            `json:"url"`
+	Filename string            `json:"filename"`
+	Primary  bool              `json:"primary"`
+	Hashes   map[string]string `json:"hashes"`
 }
 
 type modrinthVersion struct {
-	ID            string         `json:"id"`
-	ProjectID     string         `json:"project_id"`
-	VersionNumber string         `json:"version_number"`
-	VersionType   string         `json:"version_type"`
-	GameVersions  []string       `json:"game_versions"`
-	Loaders       []string       `json:"loaders"`
-	Files         []modrinthFile `json:"files"`
+	ID            string               `json:"id"`
+	ProjectID     string               `json:"project_id"`
+	VersionNumber string               `json:"version_number"`
+	VersionType   string               `json:"version_type"`
+	GameVersions  []string             `json:"game_versions"`
+	Loaders       []string             `json:"loaders"`
+	Files         []modrinthFile       `json:"files"`
+	Dependencies  []modrinthDependency `json:"dependencies"`
+}
+
+// modrinthDependency is another project a version says it needs, works
+// with, or does not work with: by its project, or one version of it.
+type modrinthDependency struct {
+	VersionID string `json:"version_id"`
+	ProjectID string `json:"project_id"`
+	// Type is "required", "optional", "incompatible" or "embedded" (in the
+	// file already).
+	Type string `json:"dependency_type"`
 }
 
 // fileName is the name the primary file is saved under.
@@ -180,47 +192,116 @@ func spool(r io.Reader, limit int64) (*os.File, int64, error) {
 	return tmp, n, nil
 }
 
-type javaCache struct {
-	mu   sync.Mutex
-	byID map[string]int
+// jarInfo is what the panel reads of a mod or plugin file: the Java it
+// needs, and what it says it is as a mod and as a plugin.
+type jarInfo struct {
+	java   int
+	mod    modMeta
+	plugin modMeta
 }
 
-var inspected = javaCache{byID: map[string]int{}}
+// of is what it says it is as content of a kind.
+func (j jarInfo) of(kind avsysv1.ContentKind) modMeta {
+	if kind == avsysv1.KindPlugin {
+		return j.plugin
+	}
+	return j.mod
+}
+
+type jarCache struct {
+	mu    sync.Mutex
+	byURL map[string]jarInfo
+}
+
+// inspected is what was read of published files, by their address, and
+// of files on servers, by their SHA-1 ("sha1:..."): neither changes.
+var inspected = jarCache{byURL: map[string]jarInfo{}}
+
+// maxInspected bounds how many files' answers are kept; each is small.
+const maxInspected = 20000
+
+func (c *jarCache) get(key string) (jarInfo, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	j, ok := c.byURL[key]
+	return j, ok
+}
+
+func (c *jarCache) keep(key string, j jarInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.byURL) >= maxInspected {
+		clear(c.byURL)
+	}
+	c.byURL[key] = j
+}
+
+// inspectJar reads a jar: the Java it needs, and what it says it is.
+func inspectJar(file io.ReaderAt, size int64) (jarInfo, error) {
+	java, err := javaOfJar(file, size)
+	if err != nil {
+		return jarInfo{}, err
+	}
+	zr, err := zip.NewReader(file, size)
+	if err != nil {
+		return jarInfo{}, err
+	}
+	return jarInfo{java: java, mod: readModMeta(zr, avsysv1.KindMod), plugin: readModMeta(zr, avsysv1.KindPlugin)}, nil
+}
 
 // javaOfURL downloads a mod file and reports the Java it needs. Published
 // files do not change, so answers are remembered.
-func javaOfURL(ctx context.Context, fileURL string) (int, error) {
-	inspected.mu.Lock()
-	java, ok := inspected.byID[fileURL]
-	inspected.mu.Unlock()
-	if ok {
-		return java, nil
+func (s *Server) javaOfURL(ctx context.Context, fileURL string) (int, error) {
+	info, err := s.inspectURL(ctx, fileURL)
+	return info.java, err
+}
+
+// downloads is how files of content are downloaded to be read.
+func (s *Server) downloads() *http.Client {
+	if s.Downloads != nil {
+		return &http.Client{Timeout: publicHTTP.Timeout, Transport: s.Downloads}
+	}
+	return publicHTTP
+}
+
+// inspectURL downloads a mod or plugin file and reads it, once: the answer
+// is remembered.
+func (s *Server) inspectURL(ctx context.Context, fileURL string) (jarInfo, error) {
+	if info, ok := inspected.get(fileURL); ok {
+		return info, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
-		return 0, err
+		return jarInfo{}, err
 	}
-	resp, err := publicHTTP.Do(req)
+	resp, err := s.downloads().Do(req)
 	if err != nil {
-		return 0, err
+		return jarInfo{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("downloading %s: %s", fileURL, resp.Status)
+		return jarInfo{}, fmt.Errorf("downloading %s: %s", fileURL, resp.Status)
 	}
 	tmp, size, err := spool(resp.Body, maxJar)
 	if err != nil {
-		return 0, err
+		return jarInfo{}, err
 	}
 	defer tmp.Close()
-	java, err = javaOfJar(tmp, size)
+	info, err := inspectJar(tmp, size)
 	if err != nil {
-		return 0, err
+		return jarInfo{}, err
 	}
-	inspected.mu.Lock()
-	inspected.byID[fileURL] = java
-	inspected.mu.Unlock()
-	return java, nil
+	inspected.keep(fileURL, info)
+	return info, nil
+}
+
+// providesOfURL is what a file read before gives the server, as content of
+// a kind; nothing if it was not read.
+func providesOfURL(fileURL string, kind avsysv1.ContentKind) []string {
+	if info, ok := inspected.get(fileURL); ok && kind != avsysv1.KindDatapack {
+		return info.of(kind).all()
+	}
+	return nil
 }
 
 // target is what content has to fit: the loader and game version the server
@@ -305,7 +386,7 @@ func (s *Server) pin(ctx context.Context, m *avsysv1.ContentRef, t target) error
 		if m.Kind == avsysv1.KindDatapack || v.file() == "" {
 			return 0
 		}
-		java, err := javaOfURL(ctx, v.file())
+		java, err := s.javaOfURL(ctx, v.file())
 		if err != nil {
 			// Not knowing is not a reason to refuse the mod.
 			s.Log.Warn("could not inspect mod file", "project", m.Project, "version", v.VersionNumber, "error", err)
@@ -323,6 +404,7 @@ func (s *Server) pin(ctx context.Context, m *avsysv1.ContentRef, t target) error
 			return err
 		}
 		m.VersionName, m.Java = v.VersionNumber, int32(inspect(v))
+		m.Provides = providesOfURL(v.file(), m.Kind)
 		if m.Kind == avsysv1.KindDatapack {
 			m.File = v.fileName()
 		}
@@ -355,6 +437,7 @@ func (s *Server) pin(ctx context.Context, m *avsysv1.ContentRef, t target) error
 		}
 	}
 	m.Version, m.VersionName, m.Java = chosen.ID, chosen.VersionNumber, int32(java)
+	m.Provides = providesOfURL(chosen.file(), m.Kind)
 	if m.Kind == avsysv1.KindDatapack {
 		m.File = chosen.fileName()
 	}
@@ -404,11 +487,15 @@ func (s *Server) pinModpack(ctx context.Context, pack *avsysv1.ModpackSpec) erro
 	return nil
 }
 
-// resolveContent pins whatever in spec is not pinned yet. previous is the spec
-// being replaced, or nil for a new server.
-func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.MinecraftServerSpec) error {
+// resolveContent pins whatever in spec is not pinned yet, and lists what it
+// needs (see dependenciesFor). previous is the spec being replaced, or nil
+// for a new server; on is what the server has in its folders besides, where
+// that is known.
+func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.MinecraftServerSpec, on *serverContent) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	// What was noted of each entry stays with it, before any is pinned again.
+	keepDependencyNotes(spec, previous)
 
 	if pack := spec.Modpack; pack != nil && (pack.Source == avsysv1.SourceModrinth || pack.Source == avsysv1.SourceCurseForge) {
 		unchanged := previous != nil && previous.Modpack != nil && previous.Modpack.Source == pack.Source && previous.Modpack.Project == pack.Project && previous.Modpack.Version == pack.Version
@@ -513,8 +600,9 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 			} else if m.Source == avsysv1.SourceURL {
 				// Best effort: a URL that cannot be read now may still work
 				// from inside the cluster.
-				if java, ierr := javaOfURL(ctx, m.Project); ierr == nil {
+				if java, ierr := s.javaOfURL(ctx, m.Project); ierr == nil {
 					m.Java = int32(java)
+					m.Provides = providesOfURL(m.Project, m.Kind)
 				}
 			} else if m.Source == avsysv1.SourceCurseForge {
 				err = s.pinCurseForge(ctx, m, t)
@@ -531,7 +619,10 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		}()
 	}
 	wg.Wait()
-	return first
+	if first != nil {
+		return first
+	}
+	return s.dependenciesFor(ctx, spec, previous, on)
 }
 
 // savedName is the name the image's downloader saves a file from fileURL
@@ -610,10 +701,11 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 		return errBadRequest("The upload did not complete: %v.", err)
 	}
 	defer tmp.Close()
-	java, err := javaOfJar(tmp, size)
+	info, err := inspectJar(tmp, size)
 	if err != nil {
 		return errBadRequest("%s is not a valid %s file.", name, path.Ext(name))
 	}
+	java := info.java
 
 	sc, done, err := s.filesOf(r.Context(), mc, wait)
 	if err != nil {
@@ -640,6 +732,9 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 	}
 
 	entry := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: kind, Project: name, Title: name, Java: int32(java)}
+	if kind != avsysv1.KindDatapack {
+		entry.Provides = info.of(kind).all()
+	}
 	// Named as the file says of itself, as one found in the server's folders is.
 	if zr, err := zip.NewReader(tmp, size); err == nil {
 		meta := contentMeta(zr, kind)
@@ -661,6 +756,16 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 			}
 		}
 		mc.Spec.Mods = append(mods, entry)
+		// What it is may be what other content needs, which the panel added
+		// another file of: that one goes.
+		if mc.Spec.DependenciesListed {
+			on := s.contentOn(r.Context(), mc)
+			if err := s.listDependencies(r.Context(), &mc.Spec, depOptions{add: true, onServer: on}); err != nil {
+				s.Log.Warn("could not work out what a server's content needs", "server", mc.Name, "error", err)
+			} else {
+				noteListedWith(mc, on)
+			}
+		}
 		err := s.Client.Update(r.Context(), mc)
 		if err == nil {
 			break

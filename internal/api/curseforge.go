@@ -861,7 +861,7 @@ func (s *Server) pinCurseForge(ctx context.Context, m *avsysv1.ContentRef, t tar
 		if m.Kind == avsysv1.KindDatapack || f.DownloadURL == "" {
 			return 0
 		}
-		java, err := javaOfURL(ctx, f.DownloadURL)
+		java, err := s.javaOfURL(ctx, f.DownloadURL)
 		if err != nil {
 			s.Log.Warn("could not inspect mod file", "project", m.Project, "file", f.ID, "error", err)
 		}
@@ -916,6 +916,7 @@ func (s *Server) pinCurseForge(ctx context.Context, m *avsysv1.ContentRef, t tar
 		java = max(java, 0)
 	}
 	m.Version, m.VersionName, m.Java = strconv.Itoa(chosen.ID), chosen.DisplayName, int32(java)
+	m.Provides = providesOfURL(chosen.DownloadURL, m.Kind)
 	if m.Kind == avsysv1.KindDatapack {
 		m.File = chosen.FileName
 	}

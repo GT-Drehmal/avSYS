@@ -1,0 +1,20 @@
+{
+ "id": "V0000101",
+ "project_id": "P0000101",
+ "version_number": "2.9.6+mc1.20.1",
+ "files": [
+  {
+   "filename": "bingo-2.9.6+mc1.20.1.jar",
+   "primary": true,
+   "hashes": {
+    "sha1": "8347af629753d9ecb76b80bb078bb7a22be84ccc"
+   }
+  }
+ ],
+ "dependencies": [
+  {
+   "project_id": "P0000102",
+   "dependency_type": "required"
+  }
+ ]
+}

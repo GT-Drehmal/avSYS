@@ -127,6 +127,15 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
+              dependenciesListed:
+                description: |-
+                  DependenciesListed says what the Modrinth entries in Mods need is in
+                  Mods too, as entries of their own put there by the panel, or is
+                  there in another file that provides it, so the server's image is
+                  told not to download what they need itself. Without it, as for a
+                  server made before the panel did this, or outside it, the image
+                  downloads what they need, as before.
+                type: boolean
               displayName:
                 type: string
               env:
@@ -425,6 +434,12 @@ spec:
                 items:
                   description: ContentRef is one installed mod, plugin or datapack.
                   properties:
+                    dependency:
+                      description: |-
+                        Dependency says the panel added the entry because other content
+                        needs it, rather than someone adding it: it is taken off once
+                        nothing needs it. Picking a version of it makes it one's own.
+                      type: boolean
                     description:
                       description: |-
                         Description is what an uploaded datapack says of itself, in its
@@ -454,11 +469,27 @@ spec:
                       - plugin
                       - datapack
                       type: string
+                    neededBy:
+                      description: |-
+                        NeededBy are the entries that need this one, by their Project, as
+                        the panel works it out from what Modrinth says each version needs.
+                      items:
+                        type: string
+                      type: array
                     project:
                       description: |-
                         Project is the Modrinth/CurseForge slug or ID, the download URL for
                         source "url", or the file name for source "upload".
                       type: string
+                    provides:
+                      description: |-
+                        Provides are the mod IDs a mod's file gives the server, or a
+                        plugin's names: its own, those it says it provides besides, and
+                        those of the jars inside it. Read from the file by the panel, which
+                        goes by them to tell whether the server has what other content needs.
+                      items:
+                        type: string
+                      type: array
                     source:
                       description: ContentSource is where a mod, modpack or resource
                         pack comes from.
@@ -472,6 +503,38 @@ spec:
                       description: Title and VersionName are display metadata recorded
                         when the entry was added.
                       type: string
+                    unmet:
+                      description: |-
+                        Unmet are the mods this one needs another version of than the
+                        server has, as its file says.
+                      items:
+                        description: |-
+                          UnmetDependency is a mod that content needs, which the server has, but
+                          not in a version the content works with. The panel does not install a
+                          second copy of it: the loader would refuse to start with two.
+                        properties:
+                          breaks:
+                            description: |-
+                              Breaks says the content does not work with Wants of it, rather
+                              than needing it ("breaks" in fabric.mod.json).
+                            type: boolean
+                          by:
+                            type: string
+                          has:
+                            description: Has is the version the server has, and By
+                              what it is part of.
+                            type: string
+                          id:
+                            description: ID is the mod needed, by its mod ID.
+                            type: string
+                          wants:
+                            description: Wants is the versions that will do, as the
+                              content says.
+                            type: string
+                        required:
+                        - id
+                        type: object
+                      type: array
                     version:
                       description: |-
                         Version pins a Modrinth version ID or CurseForge file ID. The panel

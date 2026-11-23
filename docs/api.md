@@ -1034,7 +1034,8 @@ The `spec` of a server, as in `kubectl get mcs -o yaml`:
 | `loaderVersion` | A loader build to stay on; empty for the newest. |
 | `gameJava` | The Java the game version ships with. Set by the panel. |
 | `modpack` | `{source: modrinth\|curseforge\|upload, project, version, gameVersion, loader, title, versionName, iconUrl}`. |
-| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; it is the panel's to say: a request's is not taken, and an entry sent back without it keeps it; `description` is what an uploaded datapack says of itself. |
+| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description, provides, dependency, neededBy, unmet}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; it is the panel's to say: a request's is not taken, and an entry sent back without it keeps it; `description` is what an uploaded datapack says of itself. The rest are the panel's notes on what content needs, kept from the list before for an entry that was in it: `provides`, the mod IDs (a plugin's names) the entry's file gives the server, its own, those it says it provides and those of jars inside it; `dependency`, true for one the panel added because others need it, which it takes off when nothing does (a version picked for it makes it your own); `neededBy`, the `project` of each entry that needs it; `unmet`, `[{id, wants, has, by}]`, a mod it needs that the server has, but not in a version it says will do. |
+| `dependenciesListed` | What the Modrinth entries need is in `mods`, or is there in another file, and the image is told not to download it (`MODRINTH_DOWNLOAD_DEPENDENCIES=none`). Set for a new server unless it says `false`; one from a snapshot is as the server it was taken of. Off, the image downloads what they need, as for servers made before the panel did this. Set it `true` with `PATCH` to switch a server over: its list is brought over with its files as they are (`502` while its files cannot be reached); `false` switches it back. A server with a modpack, or whose `env` sets `MODRINTH_DOWNLOAD_DEPENDENCIES`, cannot be switched (`400`). Every change to the content in `mods` works it out again. |
 | `resourcePack` | `{url, sha1, enforce, prompt, uploaded, project, formats, stack}`. |
 | `properties` | `server.properties` entries the panel sets. |
 | `ops`, `whitelist` | Players, by name or UUID, up to 1000 each. |
@@ -1096,6 +1097,18 @@ Content from Modrinth, CurseForge or an address is added by changing
 `spec.mods` with `PATCH`; the panel pins each entry to a version that fits
 the server's loader, game version and Java.
 
+What the Modrinth entries need is added to `spec.mods` in the same change,
+each pinned and marked `dependency: true`, unless a file on the server is
+that mod by its mod ID (an upload, a fork, a renamed file, a jar inside
+another): then that entry is marked `neededBy` instead, and nothing is
+added. One the panel added goes once nothing needs it, and follows the
+version of it an entry names. An upload is checked the same way when it
+is uploaded, and the list again when a found file goes. A version that
+will not do, by the file's range or another named, is noted in the
+entry's `unmet`; a dependency Modrinth has no version of for
+the server is a `400`. With `MODRINTH_DOWNLOAD_DEPENDENCIES` in `spec.env`,
+or a modpack, nothing is added, and the image downloads what is needed.
+
 **Content found in the server's folders.** Mods, plugins and datapacks in
 the server's folders that the panel did not add (put there by hand, over
 SFTP or the terminal, or brought in with its files) are taken into
@@ -1103,8 +1116,9 @@ SFTP or the terminal, or brought in with its files) are taken into
 
 - A file Modrinth has by its SHA-1, under the name Modrinth gives it,
   becomes that project pinned to that version (`source: modrinth`), if
-  every project that version requires is in `spec.mods` too. The image
-  finds the file in place, with the right hash, and keeps it.
+  every project that version requires is in `spec.mods` too, or, with
+  `dependenciesListed`, is on the server as another file by its mod ID.
+  The image finds the file in place, with the right hash, and keeps it.
 - Anything else becomes an upload (`source: upload`), named and versioned
   as the file says of itself (`fabric.mod.json`, `quilt.mod.json`,
   `mods.toml`, `neoforge.mods.toml`, `plugin.yml`, `paper-plugin.yml`),
