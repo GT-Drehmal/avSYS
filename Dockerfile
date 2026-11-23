@@ -6,14 +6,14 @@
 # Images are named by digest as well as tag, so that a commit builds from
 # the same images each time. Dependabot moves the digests.
 
-FROM --platform=$BUILDPLATFORM oven/bun:1@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS web
+FROM --platform=$BUILDPLATFORM oven/bun:1@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3ac9b6b0c7f145615f62b2ee18 AS web
 WORKDIR /src/web
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY web/ ./
 RUN bun run build
 
-FROM --platform=$BUILDPLATFORM golang:1.27@sha256:ec47ea3725fea0cc88f6de94919aef19f40f12fc1ec0e2d1b3426dbf15ecca04 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags embedweb -tri
 
 # The panel keeps each organization's snapshot repository and prunes it.
 # restic is built from source with the Go above, see images/restic/build.sh.
-FROM --platform=$BUILDPLATFORM golang:1.27@sha256:ec47ea3725fea0cc88f6de94919aef19f40f12fc1ec0e2d1b3426dbf15ecca04 AS restic
+FROM --platform=$BUILDPLATFORM golang:1.27@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf AS restic
 COPY images/restic/build.sh /build-restic.sh
 ARG TARGETOS TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
