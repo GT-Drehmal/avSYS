@@ -164,7 +164,9 @@ export function ServerPage() {
             size={36}
             retryKey={`${status.phase}|${status.message ?? ""}`}
             path={atLeast(role, "admin") ? `${serverPath(org, name)}/icon` : undefined}
-            hint="Shown in the server list after a restart."
+            hint="Shown in the server list."
+            // The game reads it as it starts.
+            changed={status.phase === "Running" ? "Players see it after a restart." : undefined}
           />
           {/* What was last done to it, under its name. */}
           <div className="flex min-w-0 flex-col">

@@ -82,6 +82,11 @@ const (
 	// earlier ones, as when content it has in its files was taken into its
 	// list. Such a change is not one to restart it for.
 	AnnotationSettled = "avsys.dev/settled"
+	// AnnotationPictureChanged is "<pod UID>/<restart count>": the game that
+	// was up, in that pod, when the server's picture was last changed. The
+	// game reads its picture only as it starts, so until that game stops,
+	// the new one waits for a restart (see PendingPicture).
+	AnnotationPictureChanged = "avsys.dev/picture-changed"
 	// AnnotationPublicPorts records the public ports given out to the extra
 	// ports of a server that shares the router's address, as name=port,...
 	// They are the server's for as long as it has those ports.
@@ -642,6 +647,10 @@ type MinecraftServerStatus struct {
 	// PendingRestart is true when the running server was started from an older
 	// spec; the changes apply on the next restart.
 	PendingRestart bool `json:"pendingRestart,omitempty"`
+	// PendingPicture is true when the server's picture changed while its
+	// game was up: players see the new one once the game starts again,
+	// which restarting it in place is enough for.
+	PendingPicture bool `json:"pendingPicture,omitempty"`
 	// Snapshots is written by the panel after each snapshot or restore.
 	Snapshots          *SnapshotStatus `json:"snapshots,omitempty"`
 	ObservedGeneration int64           `json:"observedGeneration,omitempty"`

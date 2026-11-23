@@ -927,6 +927,12 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              pendingPicture:
+                description: |-
+                  PendingPicture is true when the server's picture changed while its
+                  game was up: players see the new one once the game starts again,
+                  which restarting it in place is enough for.
+                type: boolean
               pendingRestart:
                 description: |-
                   PendingRestart is true when the running server was started from an older

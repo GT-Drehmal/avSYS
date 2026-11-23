@@ -380,7 +380,7 @@ test("a server's picture opens larger when clicked, for an admin to change or re
   await page.goto("/o/friends/s/survival");
   await page.getByRole("button", { name: "Picture of Survival" }).click();
   const dialog = page.getByRole("dialog", { name: "Survival" });
-  await expect(dialog.getByText("Shown in the server list after a restart.")).toBeVisible();
+  await expect(dialog.getByText("Shown in the server list.")).toBeVisible();
   await dialog.getByLabel("Picture for Survival").setInputFiles({ name: "new.png", mimeType: "image/png", buffer: png });
   await expect.poll(() => asked).toEqual(["PUT"]);
   await dialog.getByRole("button", { name: "Remove" }).click();

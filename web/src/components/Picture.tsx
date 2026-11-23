@@ -115,6 +115,8 @@ interface PickerProps extends Pick<PictureProps, "name" | "shape"> {
   /** Called once it has been set or removed. */
   onChange?: () => void;
   hint?: string;
+  /** Said in place of hint once it has been set or removed here. */
+  changed?: string;
   /** Shown large, over its buttons, rather than small beside them. */
   large?: boolean;
 }
@@ -122,10 +124,11 @@ interface PickerProps extends Pick<PictureProps, "name" | "shape"> {
 type Change = { kind: "upload"; file: File } | { kind: "remove" };
 
 /** Shows a picture with the means to replace or remove it. */
-export function PicturePicker({ name, shape, path, has, url, onChange, hint, large }: PickerProps) {
+export function PicturePicker({ name, shape, path, has, url, onChange, hint, changed, large }: PickerProps) {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const [found, setFound] = useState(false);
+  const [done, setDone] = useState(false);
   const exists = has ?? found;
   // One change at a time for each picture, whichever of its pickers it was
   // started from: the one on the page and the one in its dialog share it.
@@ -140,6 +143,7 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
       qc.setQueryData(versionKey, Date.now());
       if (c.kind === "remove") setFound(false);
       onChange?.();
+      setDone(true);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not change the picture.");
     }
@@ -151,7 +155,7 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
         <Picture name={name} url={url ?? (has === false ? undefined : `/api/v1${path}`)} size={192} shape={shape} onFound={setFound} pixelated />
       ) : (
         // Opens larger, with these same buttons under it.
-        <PictureZoom name={name} url={url} size={56} shape={shape} onFound={setFound} path={path} has={has} hint={hint} onChange={onChange} />
+        <PictureZoom name={name} url={url} size={56} shape={shape} onFound={setFound} path={path} has={has} hint={hint} changed={changed} onChange={onChange} />
       )}
       <div className={cx("flex flex-col gap-1.5", large && "items-center text-center")}>
         <div className="flex gap-2">
@@ -165,7 +169,7 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
             </Button>
           )}
         </div>
-        {hint && <p className="text-xs leading-relaxed text-muted">{hint}</p>}
+        {((done && changed) || hint) && <p className="text-xs leading-relaxed text-muted">{(done && changed) || hint}</p>}
       </div>
       <input
         ref={input}
@@ -184,7 +188,7 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
   );
 }
 
-interface ZoomProps extends Pick<PictureProps, "name" | "url" | "shape" | "retryKey" | "onFound">, Partial<Pick<PickerProps, "path" | "has" | "hint" | "onChange">> {
+interface ZoomProps extends Pick<PictureProps, "name" | "url" | "shape" | "retryKey" | "onFound">, Partial<Pick<PickerProps, "path" | "has" | "hint" | "changed" | "onChange">> {
   size: number;
 }
 
@@ -193,7 +197,7 @@ interface ZoomProps extends Pick<PictureProps, "name" | "url" | "shape" | "retry
  * may change it, it can be replaced or removed there as PicturePicker does,
  * and hovering it says so. Without, it is only shown larger.
  */
-export function PictureZoom({ name, url, size, shape, retryKey, onFound, path, has, hint, onChange }: ZoomProps) {
+export function PictureZoom({ name, url, size, shape, retryKey, onFound, path, has, hint, changed, onChange }: ZoomProps) {
   const [open, setOpen] = useState(false);
   const radius = shape === "round" ? "rounded-full" : "rounded-lg";
   return (
@@ -209,7 +213,7 @@ export function PictureZoom({ name, url, size, shape, retryKey, onFound, path, h
       </button>
       <Modal open={open} onOpenChange={setOpen} title={name}>
         {path ? (
-          <PicturePicker name={name} shape={shape} path={path} has={has} url={url} hint={hint} onChange={onChange} large />
+          <PicturePicker name={name} shape={shape} path={path} has={has} url={url} hint={hint} changed={changed} onChange={onChange} large />
         ) : (
           <div className="flex justify-center">
             <Picture name={name} url={url} size={192} shape={shape} pixelated />

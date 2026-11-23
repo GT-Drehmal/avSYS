@@ -276,7 +276,8 @@ export function Settings() {
         <PicturePicker
           name={server.spec.displayName || server.name}
           path={`${serverPath(server.org, server.name)}/icon`}
-          hint="Shown in the server list after a restart."
+          hint="Shown in the server list."
+          changed={server.status.phase === "Running" ? "Players see it after a restart." : undefined}
         />
         <Field label="Display name">{(id) => <Input id={id} {...text("displayName")} placeholder={server.name} />}</Field>
         <Field label="Message of the day">{(id) => <Input id={id} {...text("motd")} placeholder="A Minecraft Server" />}</Field>
