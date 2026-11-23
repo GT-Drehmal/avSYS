@@ -243,6 +243,16 @@ Easier: set `router.domain` to a domain with a wildcard record pointing at
 the router, such as `*.mc.example.org`. New servers then default to
 `<server>.<org>.mc.example.org` and need no DNS of their own.
 
+These records must not be proxied: a web proxy does not carry Minecraft.
+On Cloudflare, set them to **DNS only**.
+
+Linking a Minecraft account has the player join an address that no server
+has: `verify.<router.domain>`. Without `router.domain` it is the panel's
+own host, from `publicURL`, so the router's game port has to be reachable
+there too: forward it on the same address as the panel, or set
+`router.domain`. A panel at `localhost` or an IP address has no address to
+give.
+
 Where several organizations share an install, the instance administrator
 can give an organization domains of its own on its settings page. A
 hostname equal to or under one of them can then only be used by that
