@@ -337,7 +337,9 @@ deletes them.
 **Pictures.** A server's picture is the icon players see in their server
 list. Upload any picture and it is cropped square; players see a new one
 after the next restart. Organizations and people have pictures too. Phone
-photos come out the right way up.
+photos come out the right way up. PNG, JPEG, GIF, WebP and AVIF all work.
+Instead of **Upload**, you can drag a picture file onto where a picture is
+chosen, or paste one there with Ctrl/Cmd+V.
 
 ### Notes
 

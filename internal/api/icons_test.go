@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/pkg/sftp"
 
 	"github.com/GT-Drehmal/avSYS/internal/sshgw"
 	"github.com/GT-Drehmal/avSYS/internal/store"
@@ -685,5 +688,110 @@ func TestServerIconWhenFilesUnreachable(t *testing.T) {
 		if rec.Code != http.StatusBadGateway || e.Code != "workspace" {
 			t.Errorf("%s: %d %s, want 502 workspace", c.method, rec.Code, rec.Body)
 		}
+	}
+}
+
+// memWorkspace gives server "world" of alpha files kept in memory, with a
+// /data folder, in place of its workspace.
+func memWorkspace(t *testing.T, p *panel) *sftp.Client {
+	t.Helper()
+	sc := memFiles(t)
+	if err := sc.Mkdir(dataRoot); err != nil {
+		t.Fatal(err)
+	}
+	used := &atomic.Int64{}
+	used.Store(time.Now().UnixNano())
+	p.srv.workspaces.mu.Lock()
+	p.srv.workspaces.conns[p.srv.Namespace("alpha")+"/world"] = &pooledSFTP{sftp: sc, lastUsed: used}
+	p.srv.workspaces.mu.Unlock()
+	return sc
+}
+
+// A WebP, lossy or lossless, is taken wherever a picture is: for a person,
+// an organization, a server, a library world, and a server made from
+// another. Each is the picture as the others are: red on its left half and
+// blue on its right.
+func TestWebPPictures(t *testing.T) {
+	for _, kind := range []string{"lossy", "lossless"} {
+		t.Run(kind, func(t *testing.T) {
+			webp, err := os.ReadFile(filepath.Join("testdata", "pictures", kind+".webp"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// What is kept is a PNG of the middle of it, at the size asked.
+			check := func(t *testing.T, what string, data []byte, side int) {
+				t.Helper()
+				img, format, err := image.Decode(bytes.NewReader(data))
+				if err != nil || format != "png" {
+					t.Fatalf("%s: %s, %v; want a PNG", what, format, err)
+				}
+				if b := img.Bounds(); b.Dx() != side || b.Dy() != side {
+					t.Fatalf("%s: %v, want %d a side", what, b, side)
+				}
+				left := color.NRGBAModel.Convert(img.At(side/8, side/2)).(color.NRGBA)
+				right := color.NRGBAModel.Convert(img.At(side-1-side/8, side/2)).(color.NRGBA)
+				if left.R < 200 || left.B > 60 || right.B < 200 || right.R > 60 || left.A != 255 || right.A != 255 {
+					t.Errorf("%s: left %v right %v, want red and blue", what, left, right)
+				}
+			}
+			p := newPanel(t)
+			ctx := t.Context()
+
+			if rec := p.send("operator", "PUT", "/me/avatar", webp); rec.Code != http.StatusNoContent {
+				t.Fatalf("your picture: %d %s", rec.Code, rec.Body)
+			}
+			data, _, err := p.srv.Store.Image(ctx, store.UserImage(p.users["operator"].ID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, "your picture", data, avatarSide)
+
+			if rec := p.send("owner", "PUT", "/orgs/alpha/icon", webp); rec.Code != http.StatusNoContent {
+				t.Fatalf("the organization's: %d %s", rec.Code, rec.Body)
+			}
+			alpha, err := p.srv.Store.OrgBySlug(ctx, "alpha")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if data, _, err = p.srv.Store.Image(ctx, store.OrgImage(alpha.ID)); err != nil {
+				t.Fatal(err)
+			}
+			check(t, "the organization's", data, avatarSide)
+
+			files := memWorkspace(t, p)
+			if rec := p.send("admin", "PUT", "/orgs/alpha/servers/world/icon", webp); rec.Code != http.StatusNoContent {
+				t.Fatalf("a server's: %d %s", rec.Code, rec.Body)
+			}
+			f, err := files.Open(serverIconPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			written, err := io.ReadAll(f)
+			f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, "the server's server-icon.png", written, serverIconSide)
+
+			world := &store.World{OrgID: alpha.ID, Name: "Island", CreatedBy: "alex", Source: "upload"}
+			if err := p.srv.Store.CreateWorld(ctx, world); err != nil {
+				t.Fatal(err)
+			}
+			if rec := p.send("operator", "PUT", "/orgs/alpha/worlds/"+world.ID+"/icon", webp); rec.Code != http.StatusNoContent {
+				t.Fatalf("a library world's: %d %s", rec.Code, rec.Body)
+			}
+			if data, _, err = p.srv.Store.Image(ctx, store.WorldImage(world.ID)); err != nil {
+				t.Fatal(err)
+			}
+			check(t, "the library world's", data, serverIconSide)
+
+			// A server made from another, with a picture of its own.
+			encoded, _ := json.Marshal(base64.StdEncoding.EncodeToString(webp))
+			got, err := pictureOf(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, "a new server's", got.data, serverIconSide)
+		})
 	}
 }

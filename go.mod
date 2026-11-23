@@ -11,6 +11,7 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/restic/rest-server v0.14.0
 	golang.org/x/crypto v0.59.0
+	golang.org/x/image v0.48.0
 	golang.org/x/mod v0.43.0
 	golang.org/x/oauth2 v0.38.0
 	gopkg.in/evanphx/json-patch.v4 v4.13.0

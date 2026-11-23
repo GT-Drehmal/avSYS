@@ -293,7 +293,7 @@ Prove a linked account is yours. With no body, opens a check and returns
 
 ### `PUT /me/avatar`
 
-Set your picture. Body: a PNG, JPEG or GIF of up to 4 MB. Returns `204`.
+Set your picture. Body: a PNG, JPEG, GIF or WebP of up to 4 MB. Returns `204`.
 `too_large` (413).
 
 ### `DELETE /me/avatar`
@@ -528,7 +528,7 @@ The organization's picture, as a 128-pixel PNG. **Viewer.** `404` if none.
 
 ### `PUT /orgs/{org}/icon`
 
-Set it. **Owner.** Body: a PNG, JPEG or GIF of up to 4 MB. Returns `204`.
+Set it. **Owner.** Body: a PNG, JPEG, GIF or WebP of up to 4 MB. Returns `204`.
 
 ### `DELETE /orgs/{org}/icon`
 
@@ -875,7 +875,7 @@ was uploaded.
 
 ### `PUT /orgs/{org}/worlds/{world}/icon`
 
-**Operator.** Body: a PNG, JPEG or GIF of up to 4 MB. Returns `204`.
+**Operator.** Body: a PNG, JPEG, GIF or WebP of up to 4 MB. Returns `204`.
 
 ### `DELETE /orgs/{org}/worlds/{world}/icon`
 
@@ -930,7 +930,7 @@ Make a server. **Admin.** Body:
 | `fromTemplate` | From a template's current version. |
 | `world` | With one of the three above: `new` for a new world in place of the source's, `kept` to keep a template's world even where it gives its servers new ones. |
 | `node` | A node to put it on, in place of the panel's choice. |
-| `picture` | With one of the three above: a PNG as base64, or `null` for none. |
+| `picture` | With one of the three above: a PNG, JPEG, GIF or WebP as base64, or `null` for none. |
 | `notes` | Notes for the panel, up to 500 characters. Left out, a server made from a snapshot or server has its original's notes, and one made from a template the template's `description`. |
 
 At most one of `fromSnapshot`, `fromServer` and `fromTemplate`.
@@ -1390,7 +1390,7 @@ it has none.
 
 ### `PUT /orgs/{org}/servers/{server}/icon`
 
-Set it. **Admin.** Body: a PNG, JPEG or GIF of up to 4 MB, at most 4096
+Set it. **Admin.** Body: a PNG, JPEG, GIF or WebP of up to 4 MB, at most 4096
 pixels a side. The panel crops it square, scales it to 64 pixels and writes
 `server-icon.png`. Query: `wait=true` waits for a server made a moment ago
 to have its files; with it, `start=true` starts the server afterwards.

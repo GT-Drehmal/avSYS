@@ -10,7 +10,7 @@ import { PackStack, SectionHead, VersionDialog } from "../components/ContentPart
 import { PackDrop, PackFiles, PackIcon } from "../components/Modpack";
 import { CurseForgeOff, ModrinthSearch } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
-import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
+import { Picture, PictureChange, pictureForRequest, squarePicture } from "../components/Picture";
 import { SavedListsField } from "../components/PlayerLists";
 import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, playersExample, propertiesDocs, type Join } from "../components/ServerFields";
 import { BottomBar, Button, Checked, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
@@ -114,8 +114,7 @@ async function pictureAt(url: string): Promise<File | null> {
     // Not had in a while, it is none: the server is not made until then.
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
-    const png = await pictureForRequest(new File([await res.blob()], "icon"));
-    return new File([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], "icon.png", { type: "image/png" });
+    return await squarePicture(await res.blob());
   } catch {
     return null;
   }

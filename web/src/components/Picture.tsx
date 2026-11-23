@@ -119,7 +119,107 @@ interface PickerProps extends Pick<PictureProps, "name" | "shape"> {
   large?: boolean;
 }
 
-type Change = { kind: "upload"; file: File } | { kind: "remove" };
+/** Files chosen, dropped or pasted, the picture among them still to be read; or none. */
+type Change = { kind: "upload"; files: File[] } | { kind: "remove" };
+
+/**
+ * The pictures being changed, by path: taken before anything is waited for,
+ * a picture being read included, and given back once it is sent. What the
+ * page shows as busy is drawn a moment later, and does not stop a second
+ * change made in between.
+ */
+const changing = new Set<string>();
+
+/**
+ * What the file dialog offers. Whatever is chosen is drawn anew as a PNG
+ * here, so any picture the browser can show will do.
+ */
+const pictureTypes = "image/png,image/jpeg,image/gif,image/webp,image/avif";
+
+/** The largest file read as a picture. What is sent is far smaller. */
+const maxPictureFile = 20 << 20;
+
+/** Whether a file is one to try as a picture. */
+const isPicture = (f: File) => f.type.startsWith("image/") || (!f.type && /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(f.name));
+
+/**
+ * The picture among files chosen, dropped or pasted: the first of them that
+ * is one, checked and drawn anew as the PNG to send. null, having said why,
+ * when there is none to use.
+ */
+async function readPicture(files: ArrayLike<File> | null | undefined): Promise<File | null> {
+  const list = Array.from(files ?? []);
+  if (list.length === 0) return null;
+  const file = list.find(isPicture);
+  if (!file) {
+    toast.error("Not a picture.");
+    return null;
+  }
+  if (file.size > maxPictureFile) {
+    toast.error("Pictures are up to 20 MB.");
+    return null;
+  }
+  try {
+    return await squarePicture(file);
+  } catch {
+    toast.error("Could not read the picture.");
+    return null;
+  }
+}
+
+/**
+ * Lets a picture be dropped on what handlers are spread on, or pasted while
+ * something in it has focus. over is while files are dragged over it.
+ * Neither goes further: a picker in a dialog sits, as React sees it, inside
+ * the one on the page that opened it.
+ */
+function usePictureDrop(onFiles: (files: File[]) => void, disabled = false) {
+  const [over, setOver] = useState(false);
+  const carriesFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+  const dragging = (e: React.DragEvent) => {
+    if (!carriesFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = disabled ? "none" : "copy";
+    if (!disabled) setOver(true);
+  };
+  return {
+    over,
+    handlers: {
+      onDragEnter: dragging,
+      onDragOver: dragging,
+      onDragLeave: (e: React.DragEvent) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false);
+      },
+      onDrop: (e: React.DragEvent) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setOver(false);
+        if (!disabled) onFiles(Array.from(e.dataTransfer.files));
+      },
+      onPaste: (e: React.ClipboardEvent) => {
+        const files = Array.from(e.clipboardData.files);
+        if (files.length === 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!disabled) onFiles(files);
+      },
+    },
+  };
+}
+
+/** Over a picker while a file is dragged over it. */
+function DropHere() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute -inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-accent-wash/90 text-[13px] font-medium text-accent"
+    >
+      Drop to use
+    </div>
+  );
+}
 
 /** Shows a picture with the means to replace or remove it. */
 export function PicturePicker({ name, shape, path, has, url, onChange, hint, large }: PickerProps) {
@@ -129,24 +229,45 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
   const exists = has ?? found;
   // One change at a time for each picture, whichever of its pickers it was
   // started from: the one on the page and the one in its dialog share it.
+  // A picture being read counts: read, it would land after a change made
+  // meanwhile, and undo it.
   const mutationKey = ["picture", path];
-  const change = useMutation({ mutationKey, mutationFn: (c: Change) => (c.kind === "upload" ? api.putRaw(path, c.file) : api.del(path)) });
+  const change = useMutation({
+    mutationKey,
+    mutationFn: async (c: Change) => {
+      if (c.kind === "remove") return api.del(path).then(() => true);
+      const file = await readPicture(c.files);
+      if (!file) return false;
+      await api.putRaw(path, file);
+      return true;
+    },
+  });
   const busy = useMutationState({ filters: { mutationKey, status: "pending" }, select: (m) => (m.state.variables as Change).kind })[0] ?? null;
 
   const run = async (c: Change) => {
-    if (busy) return;
+    if (changing.has(path)) return;
+    changing.add(path);
     try {
-      await change.mutateAsync(c);
+      if (!(await change.mutateAsync(c))) return;
       qc.setQueryData(versionKey, Date.now());
       if (c.kind === "remove") setFound(false);
       onChange?.();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not change the picture.");
+    } finally {
+      changing.delete(path);
     }
   };
+  // Chosen, dropped or pasted, it is the same picture.
+  const take = (files: ArrayLike<File> | null | undefined) => {
+    const list = Array.from(files ?? []);
+    if (list.length > 0) run({ kind: "upload", files: list });
+  };
+  const drop = usePictureDrop(take, busy !== null);
 
   return (
-    <div className={cx("flex items-center gap-4", large && "flex-col")}>
+    <div {...drop.handlers} className={cx("relative flex items-center gap-4", large && "flex-col")}>
+      {drop.over && <DropHere />}
       {large ? (
         <Picture name={name} url={url ?? (has === false ? undefined : `/api/v1${path}`)} size={192} shape={shape} onFound={setFound} pixelated />
       ) : (
@@ -170,14 +291,14 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
       <input
         ref={input}
         type="file"
-        accept="image/png,image/jpeg,image/gif"
+        accept={pictureTypes}
         className="hidden"
         aria-label={`Picture for ${name}`}
         onChange={(e) => {
-          const file = e.target.files?.[0];
+          const files = Array.from(e.target.files ?? []);
           // The same file can be picked again after a failure.
           e.target.value = "";
-          if (file) run({ kind: "upload", file });
+          take(files);
         }}
       />
     </div>
@@ -253,8 +374,22 @@ export function PictureChange({ name, current, value, onChange, optional = "Opti
             ? "Could not show the picture."
             : optional
           : kept;
+  // Each choice counts up, so that a picture still being read when another
+  // is chosen, or this one is taken away, is not used when it is read.
+  const latest = useRef(0);
+  const set = (change: PictureChange) => {
+    latest.current++;
+    onChange(change);
+  };
+  const take = async (files: ArrayLike<File> | null | undefined) => {
+    const asked = ++latest.current;
+    const chosen = await readPicture(files);
+    if (chosen && asked === latest.current) onChange({ kind: "file", file: chosen });
+  };
+  const drop = usePictureDrop(take);
   return (
-    <div className="flex items-center gap-4">
+    <div {...drop.handlers} className="relative flex items-center gap-4">
+      {drop.over && <DropHere />}
       <Picture name={name || "?"} url={url} size={56} onFound={value.kind === "keep" ? setBrought : undefined} />
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap gap-2">
@@ -263,12 +398,12 @@ export function PictureChange({ name, current, value, onChange, optional = "Opti
           </Button>
           {/* Asking for none is safe whatever the files bring; that one could not be shown is not proof that there is none. */}
           {(value.kind === "file" || (value.kind === "keep" && current)) && (
-            <Button size="sm" variant="ghost" onClick={() => onChange({ kind: "none" })}>
+            <Button size="sm" variant="ghost" onClick={() => set({ kind: "none" })}>
               Remove
             </Button>
           )}
           {value.kind !== "keep" && current && (
-            <Button size="sm" variant="ghost" onClick={() => onChange({ kind: "keep" })}>
+            <Button size="sm" variant="ghost" onClick={() => set({ kind: "keep" })}>
               Keep the one it has
             </Button>
           )}
@@ -278,13 +413,13 @@ export function PictureChange({ name, current, value, onChange, optional = "Opti
       <input
         ref={input}
         type="file"
-        accept="image/png,image/jpeg,image/gif"
+        accept={pictureTypes}
         className="hidden"
         aria-label={`Picture for ${name || "the new server"}`}
         onChange={(e) => {
-          const chosen = e.target.files?.[0];
+          const files = Array.from(e.target.files ?? []);
           e.target.value = "";
-          if (chosen) onChange({ kind: "file", file: chosen });
+          take(files);
         }}
       />
     </div>
@@ -292,21 +427,58 @@ export function PictureChange({ name, current, value, onChange, optional = "Opti
 }
 
 /**
- * A picture as base64, at most side pixels on its longer side. The panel
- * redraws it at the size the game uses; this only keeps a large photo from
- * making a request too large to send.
+ * A picture as the browser shows it, the right way up: as an ImageBitmap
+ * where it can be made one, and otherwise, as for an SVG, as an image.
  */
-export async function pictureForRequest(file: File, side = 256): Promise<string> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("Could not read the picture.");
-  const bytes = new Uint8Array(await blob.arrayBuffer());
+async function decodePicture(file: Blob): Promise<{ source: CanvasImageSource; width: number; height: number; done: () => void }> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    return { source: bitmap, width: bitmap.width, height: bitmap.height, done: () => bitmap.close() };
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      if (!img.naturalWidth || !img.naturalHeight) throw new Error("Could not read the picture.");
+      return { source: img, width: img.naturalWidth, height: img.naturalHeight, done: () => URL.revokeObjectURL(url) };
+    } catch (err) {
+      URL.revokeObjectURL(url);
+      throw err;
+    }
+  }
+}
+
+/**
+ * The middle of a picture, square, at most side pixels a side, as a PNG:
+ * what the panel keeps of any it is given, drawn here first, so that any
+ * picture the browser can show will do, whatever the panel itself reads,
+ * and a large photo is not sent whole. The panel redraws it at the size it
+ * keeps.
+ */
+export async function squarePicture(file: Blob, side = 256): Promise<File> {
+  const { source, width, height, done } = await decodePicture(file);
+  try {
+    const crop = Math.min(width, height);
+    const out = Math.max(1, Math.min(side, crop));
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = out;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not read the picture.");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(source, Math.floor((width - crop) / 2), Math.floor((height - crop) / 2), crop, crop, 0, 0, out, out);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("Could not read the picture.");
+    return new File([blob], "picture.png", { type: "image/png" });
+  } finally {
+    done();
+  }
+}
+
+/** A picture as base64, as squarePicture draws it, for a request that carries it in JSON. */
+export async function pictureForRequest(file: Blob, side = 256): Promise<string> {
+  const png = await squarePicture(file, side);
+  const bytes = new Uint8Array(await png.arrayBuffer());
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(binary);
