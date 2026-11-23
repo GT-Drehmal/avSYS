@@ -11,7 +11,7 @@
 # Snapshots are taken from in here, where the server's files are. restic is
 # built from source, see images/restic/build.sh, on the machine doing the
 # build and cross-compiled for the target, as the panel's programs are.
-FROM --platform=$BUILDPLATFORM golang:1.27@sha256:ec47ea3725fea0cc88f6de94919aef19f40f12fc1ec0e2d1b3426dbf15ecca04 AS restic
+FROM --platform=$BUILDPLATFORM golang:1.27@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf AS restic
 COPY images/restic/build.sh /build-restic.sh
 ARG TARGETOS TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
