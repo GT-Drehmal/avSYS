@@ -38,12 +38,15 @@ make an account: then the sign-in page has **Create an account**.
 **The very first account** on a new panel becomes its administrator. The
 sign-in page says **Set up avSYS**.
 
-**Two-factor.** Under **Account → Two-factor**, press **Set up**, enter
-your password, scan the code with an authenticator app, and type the code
-it shows. You get ten **recovery codes**: keep them somewhere safe. Each
+**Two-factor.** Under **Account → Two-factor**, press **Set up**, scan
+the code with an authenticator app, and type the code it shows. If you
+signed in more than ten minutes ago, enter your password first. You get ten **recovery codes**: keep them somewhere safe. Each
 works once, in place of a code from the app. After that, every sign-in
 asks for a code too: after your password, and after GitHub, Discord,
 Google or your club's sign-in.
+
+Making new recovery codes works the same way. Turning two-factor off
+always asks for your password.
 
 If you have no password (you sign in only through a provider), there is
 none to enter: setting up, turning two-factor off and making new recovery

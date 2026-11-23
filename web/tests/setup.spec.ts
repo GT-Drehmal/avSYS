@@ -15,10 +15,12 @@ test("the first account is the administrator, and signups then close", async ({ 
   await page.getByRole("button", { name: "Create account" }).click();
 
   // Admins and owners have to use two-factor on a panel just installed,
-  // and the administrator always does: set up first.
+  // and the administrator always does: set up first, with no password
+  // again, as it was just given.
   await expect(page).toHaveURL(`${url}/two-factor`);
   await expect(page.getByRole("heading", { name: "Set up two-factor" })).toBeVisible();
-  await page.getByLabel("Password").fill("a password long enough");
+  await expect(page.getByText("You need an authenticator app on your phone.")).toBeVisible();
+  await expect(page.getByLabel("Password")).toHaveCount(0);
   const setup = page.waitForResponse((r) => r.url().endsWith("/api/v1/me/two-factor/setup") && r.ok());
   await page.getByRole("button", { name: "Continue" }).click();
   const { secret } = await (await setup).json();

@@ -405,11 +405,88 @@ func TestTwoFactorWithoutAPassword(t *testing.T) {
 		t.Errorf("turning it off: %d %s", got, code)
 	}
 
-	// Someone with a password gives it, however they signed in.
+	// Someone with a password gives it after signing in through the
+	// provider: only signing in with the password will do in its place.
 	p.withPasswords()
 	b.viaProvider(idp, "vee", "")
-	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{}, nil); got != 400 || code != "wrong_password" {
+	if b.me()["recentSignIn"] != false {
+		t.Error("/me says a sign-in through the provider will do for someone with a password")
+	}
+	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{}, nil); got != 400 || code != "password_needed" {
 		t.Errorf("with a password, setting up without it: %d %s", got, code)
+	}
+	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{"password": testPassword}, nil); got != 200 {
+		t.Errorf("with a password, setting up with it: %d %s", got, code)
+	}
+}
+
+// Someone with a password who signed up or signed in with it a moment ago
+// sets two-factor up, and makes new recovery codes, without giving it
+// again; later it is asked for. Turning two-factor off always asks for it.
+func TestTwoFactorJustAfterSigningInWithAPassword(t *testing.T) {
+	p := newPanel(t)
+	was := recentSignIn
+	ctx := context.Background()
+	p.setTwoFactorLevel(store.TwoFactorEveryone)
+	alpha, err := p.srv.Store.OrgBySlug(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := &store.Invite{OrgID: alpha.ID, Role: store.RoleViewer, CreatedBy: "test"}
+	if err := p.srv.Store.CreateInvite(ctx, inv); err != nil {
+		t.Fatal(err)
+	}
+
+	// A sign-up with an invite, held to setting it up.
+	b := p.tab("newcomer")
+	if got, code := b.call("POST", "/auth/register", map[string]string{"username": "newcomer", "password": testPassword, "invite": inv.Token}, nil); got != 201 {
+		t.Fatalf("signing up: %d %s", got, code)
+	}
+	me := b.me()
+	if me["mustSetUpTwoFactor"] != true || me["hasPassword"] != true || me["recentSignIn"] != true {
+		t.Errorf("/me after signing up: %v", me)
+	}
+	secret, _ := b.turnOnTwoFactorWithout()
+	if b.held() {
+		t.Error("held after setting two-factor up")
+	}
+
+	// Signed in again with the password and the code, new recovery codes
+	// take neither, but turning it off takes the password.
+	p.setTwoFactorLevel(store.TwoFactorNobody)
+	c := p.tab("again")
+	c.signIn("newcomer", secret)
+	if c.me()["recentSignIn"] != true {
+		t.Error("/me says a sign-in with the password and code is not recent")
+	}
+	if got, code := c.call("POST", "/me/two-factor/recovery-codes", map[string]string{}, nil); got != 200 {
+		t.Errorf("new recovery codes just after signing in: %d %s", got, code)
+	}
+	if got, code := c.call("POST", "/me/two-factor/off", map[string]string{}, nil); got != 400 || code != "password_needed" {
+		t.Errorf("turning off with no password just after signing in: %d %s", got, code)
+	}
+
+	// Later, each takes the password.
+	signedInLongAgo(t)
+	if c.me()["recentSignIn"] != false {
+		t.Error("/me says the sign-in is recent")
+	}
+	if got, code := c.call("POST", "/me/two-factor/recovery-codes", map[string]string{}, nil); got != 400 || code != "password_needed" {
+		t.Errorf("new recovery codes with no password, later: %d %s", got, code)
+	}
+	if got, code := c.call("POST", "/me/two-factor/off", map[string]string{"password": testPassword}, nil); got != 204 {
+		t.Fatalf("turning off with the password: %d %s", got, code)
+	}
+	if got, code := c.call("POST", "/me/two-factor/setup", map[string]string{}, nil); got != 400 || code != "password_needed" {
+		t.Errorf("setting up with no password, later: %d %s", got, code)
+	}
+
+	// A fresh sign-in with the password alone will do again.
+	recentSignIn = was
+	d := p.tab("fresh")
+	d.signIn("newcomer", "")
+	if got, code := d.call("POST", "/me/two-factor/setup", map[string]string{}, nil); got != 200 {
+		t.Errorf("setting up just after a fresh sign-in: %d %s", got, code)
 	}
 }
 

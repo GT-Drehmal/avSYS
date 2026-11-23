@@ -72,8 +72,9 @@ func main() {
 	offsite := flag.Bool("offsite", false, "copy snapshots offsite, with the older ones of the first organization there already")
 	fresh := flag.Bool("fresh", false, "seed nothing: a panel just installed, waiting for its first account")
 	curseForge := flag.String("curseforge-key", "", "a CurseForge API key the panel is installed with: CurseForge is offered, and answered from --upstream")
+	recentSignIn := flag.Duration("recent-sign-in", 0, "how long a sign-in will do in place of the password, for two-factor (0: as installed, ten minutes)")
 	flag.Parse()
-	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *offsite, *fresh, *curseForge); err != nil {
+	if err := run(*listen, *webDir, *upstreamDir, *readyFile, *metrics, *offsite, *fresh, *curseForge, *recentSignIn); err != nil {
 		fmt.Fprintln(os.Stderr, "avsys-uitest:", err)
 		os.Exit(1)
 	}
@@ -82,7 +83,7 @@ func main() {
 // password is the one every seeded person signs in with.
 const password = "correct horse battery staple"
 
-func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite, fresh bool, curseForgeKey string) error {
+func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite, fresh bool, curseForgeKey string, recentSignIn time.Duration) error {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	dir, err := os.MkdirTemp("", "avsys-uitest-")
@@ -152,6 +153,7 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 	gateway.Authz = srv
 	// Servers named bingo have files with content the panel did not add.
 	srv.ContentFiles = looseFiles(dir)
+	srv.RecentSignIn = recentSignIn
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		return err

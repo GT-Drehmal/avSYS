@@ -31,11 +31,16 @@ var (
 	// errSignInFirst is for someone with no password to give, who proves it
 	// is them by having signed in a moment ago: see confirmIdentity.
 	errSignInFirst = &Error{Status: http.StatusForbidden, Code: "recent_sign_in", Message: "Sign in again to do this."}
+	// errPasswordNeeded is for someone with a password who gave none, when
+	// signing in a moment ago will not do in its place.
+	errPasswordNeeded = &Error{Status: http.StatusBadRequest, Code: "password_needed", Message: "Enter your password."}
 )
 
-// recentSignIn is how long after signing in someone with no password may
-// set up two-factor, turn it off or make new recovery codes: in place of
-// the password, the sign-in itself, just done.
+// recentSignIn is how long, unless Server.RecentSignIn says otherwise,
+// after signing in someone may set up two-factor
+// or make new recovery codes with no password, and someone with no
+// password may turn two-factor off: in place of the password, the sign-in
+// itself, just done.
 var recentSignIn = 10 * time.Minute
 
 // twoFactorSetupRoutes are those someone who has to set up two-factor may
@@ -103,28 +108,57 @@ func (s *Server) mustSetUpTwoFactor(ctx context.Context, u *store.User, session 
 	return s.needsTwoFactor(ctx, u)
 }
 
-// confirmIdentity is what someone signed in gives to change their
-// two-factor: their password, or, for someone with none (who signs in only
-// through a provider, or where passwords are off), a sign-in of this
-// session in the last few minutes, through the provider and with a code if
-// two-factor is on. A session taken over later, as from a browser left
-// open, cannot do it; signing in again can.
-func (s *Server) confirmIdentity(r *http.Request, u *store.User, password string) error {
-	if u.PasswordHash != "" && !s.Config.NoPasswords {
-		return s.checkCurrentPassword(r, u, password)
-	}
-	_, session, err := s.currentSession(r)
-	if err != nil {
-		return err
-	}
-	if !recentlySignedIn(session) {
-		return errSignInFirst
-	}
-	return nil
+// usesPassword reports whether someone signs in with a password: they have
+// one, and passwords are on.
+func (s *Server) usesPassword(u *store.User) bool {
+	return u.PasswordHash != "" && !s.Config.NoPasswords
 }
 
-func recentlySignedIn(session *store.Session) bool {
-	return session != nil && time.Since(session.CreatedAt) < recentSignIn
+// confirmIdentity is what someone signed in gives to change their
+// two-factor. A sign-in of this session in the last few minutes will do:
+// with the password (or the account made, with it, just now) for someone
+// who has one, and through the provider for someone with none (who signs
+// in only through one, or where passwords are off), with a code if
+// two-factor is on. After that, someone with a password gives it, and
+// someone with none signs in again. With always, as for turning two-factor
+// off, someone with a password gives it whenever. A session taken over
+// later, as from a browser left open, cannot do it.
+func (s *Server) confirmIdentity(r *http.Request, u *store.User, password string, always bool) error {
+	if !always || !s.usesPassword(u) {
+		_, session, err := s.currentSession(r)
+		if err != nil {
+			return err
+		}
+		if s.signInWillDo(u, session) {
+			return nil
+		}
+	}
+	if !s.usesPassword(u) {
+		return errSignInFirst
+	}
+	if password == "" {
+		return errPasswordNeeded
+	}
+	return s.checkCurrentPassword(r, u, password)
+}
+
+// signInWillDo reports whether a session's own sign-in, a moment ago,
+// shows it is them in place of the password: see confirmIdentity. For
+// someone with a password, only one with the password does, not one
+// through a provider.
+func (s *Server) signInWillDo(u *store.User, session *store.Session) bool {
+	if !s.recentlySignedIn(session) {
+		return false
+	}
+	return !s.usesPassword(u) || session.Method == store.SignedInWithPassword
+}
+
+func (s *Server) recentlySignedIn(session *store.Session) bool {
+	window := recentSignIn
+	if s.RecentSignIn > 0 {
+		window = s.RecentSignIn
+	}
+	return session != nil && time.Since(session.CreatedAt) < window
 }
 
 // A sign-in waiting for its code: the password was right, or the provider
@@ -371,14 +405,14 @@ func (s *Server) signInCode(w http.ResponseWriter, r *http.Request) error {
 }
 
 // setUpTwoFactor starts turning two-factor on: a new secret, shown as a QR
-// code and as text, kept until a code from it confirms it. It takes the
-// password, or for someone with none a recent sign-in: see confirmIdentity.
+// code and as text, kept until a code from it confirms it. It takes a
+// recent sign-in, or the password: see confirmIdentity.
 func (s *Server) setUpTwoFactor(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	var in struct{ Password string }
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	if err := s.confirmIdentity(r, u, in.Password); err != nil {
+	if err := s.confirmIdentity(r, u, in.Password, false); err != nil {
 		return err
 	}
 	tf, err := s.Store.TwoFactor(r.Context(), u.ID)
@@ -436,14 +470,15 @@ func (s *Server) enableTwoFactor(w http.ResponseWriter, r *http.Request, u *stor
 	return nil
 }
 
-// disableTwoFactor turns two-factor off, with the password or a recent
-// sign-in, for someone who need not have it.
+// disableTwoFactor turns two-factor off, for someone who need not have it:
+// always with the password, for someone with one, and with a recent
+// sign-in for someone with none.
 func (s *Server) disableTwoFactor(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	var in struct{ Password string }
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	if err := s.confirmIdentity(r, u, in.Password); err != nil {
+	if err := s.confirmIdentity(r, u, in.Password, true); err != nil {
 		return err
 	}
 	if required, err := s.twoFactorRequired(r.Context(), u); err != nil {
@@ -459,14 +494,14 @@ func (s *Server) disableTwoFactor(w http.ResponseWriter, r *http.Request, u *sto
 	return nil
 }
 
-// newRecoveryCodes replaces the recovery codes, with the password or a
-// recent sign-in.
+// newRecoveryCodes replaces the recovery codes, with a recent sign-in or
+// the password.
 func (s *Server) newRecoveryCodes(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	var in struct{ Password string }
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	if err := s.confirmIdentity(r, u, in.Password); err != nil {
+	if err := s.confirmIdentity(r, u, in.Password, false); err != nil {
 		return err
 	}
 	tf, err := s.Store.TwoFactor(r.Context(), u.ID)
@@ -508,7 +543,8 @@ func (s *Server) putTwoFactorLevel(w http.ResponseWriter, r *http.Request, u *st
 // twoFactorOfMe adds to what /me says of someone their two-factor: whether
 // it is on, how many recovery codes are left, whether they have to have
 // it, and set it up before going on, who has to here, and whether this
-// session was signed in a moment ago (see confirmIdentity).
+// session's sign-in, a moment ago, will do in place of the password (see
+// confirmIdentity).
 func (s *Server) twoFactorOfMe(r *http.Request, u *store.User, me map[string]any) error {
 	tf, err := s.Store.TwoFactor(r.Context(), u.ID)
 	if err != nil {
@@ -531,6 +567,6 @@ func (s *Server) twoFactorOfMe(r *http.Request, u *store.User, me map[string]any
 	me["twoFactorRequired"] = required
 	me["mustSetUpTwoFactor"] = session != nil && required && tf.Secret == ""
 	me["twoFactorLevel"] = level
-	me["recentSignIn"] = recentlySignedIn(session)
+	me["recentSignIn"] = s.signInWillDo(u, session)
 	return nil
 }
