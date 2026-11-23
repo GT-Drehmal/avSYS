@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { type Api, expect, test, totp, turnOnTwoFactor } from "./panel";
+import { type Api, expect, test, totp, turnOnTwoFactor, watchErrors } from "./panel";
 
 // Sessions, two-factor and reset links, on accounts made for each test, so
 // that what one test turns on no other sees.
@@ -34,11 +34,9 @@ test("two-factor is set up with a code, then asked for after the password", asyn
   const section = page.locator("section").filter({ has: page.getByRole("heading", { name: "Two-factor" }) });
   await section.getByRole("button", { name: "Set up" }).click();
   const dialog = page.getByRole("dialog");
-  // The password first; a wrong one is said so.
-  await dialog.getByLabel("Password").fill("not it");
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByText("The current password is wrong.")).toBeVisible();
-  await dialog.getByLabel("Password").fill(password);
+  // Just signed up: no password again.
+  await expect(dialog.getByText("You need an authenticator app on your phone.")).toBeVisible();
+  await expect(dialog.getByLabel("Password")).toHaveCount(0);
   const setup = page.waitForResponse((r) => r.url().endsWith("/api/v1/me/two-factor/setup") && r.ok());
   await dialog.getByRole("button", { name: "Continue" }).click();
   const { secret } = await (await setup).json();
@@ -79,11 +77,90 @@ test("two-factor is set up with a code, then asked for after the password", asyn
   await expect(page).toHaveURL(/\/account$/);
   await expect(section.getByText("9 recovery codes left")).toBeVisible();
 
-  // Turning it off takes the password.
+  // Just signed in with the password: new recovery codes take no password.
+  await section.getByRole("button", { name: "New recovery codes" }).click();
+  await expect(page.getByRole("dialog").getByLabel("Password")).toHaveCount(0);
+  await page.getByRole("dialog").getByRole("button", { name: "Make new codes" }).click();
+  await expect(page.getByRole("dialog").getByRole("list", { name: "Recovery codes" }).getByRole("listitem")).toHaveCount(10);
+  await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
+  await expect(section.getByText("10 recovery codes left")).toBeVisible();
+
+  // Turning it off takes the password, even just after signing in.
   await section.getByRole("button", { name: "Turn off" }).click();
   await page.getByRole("dialog").getByLabel("Password").fill(password);
   await page.getByRole("dialog").getByRole("button", { name: "Turn off" }).click();
   await expect(section.getByRole("button", { name: "Set up" })).toBeVisible();
+});
+
+/**
+ * On a panel just installed, with url, where admins and owners have to use
+ * two-factor: someone new makes an account from an invite as an admin, in
+ * a browser of their own, and is sent to set it up.
+ */
+async function joinAsAdmin(page: Page, url: string, pageErrors: string[]) {
+  const headers = { "X-Avsys": "1" };
+  const founder = await page.request.post(`${url}/api/v1/auth/register`, { headers, data: { username: "founder", password } });
+  expect(founder.ok(), await founder.text()).toBe(true);
+  await turnOnTwoFactor(page.request, url, password);
+  expect((await page.request.post(`${url}/api/v1/orgs`, { headers, data: { name: "Home", slug: "home" } })).ok()).toBe(true);
+  const invite = await (await page.request.post(`${url}/api/v1/orgs/home/invites`, { headers, data: { role: "admin" } })).json();
+  const them = await (await page.context().browser()!.newContext()).newPage();
+  watchErrors(them, pageErrors);
+  await them.goto(`${url}/invite/${invite.token}`);
+  await them.getByLabel("Username").fill("ada");
+  await them.getByLabel("Password").fill(password);
+  await them.getByRole("button", { name: "Create account" }).click();
+  await expect(them).toHaveURL(`${url}/two-factor`);
+  await expect(them.getByRole("heading", { name: "Set up two-factor" })).toBeVisible();
+  return them;
+}
+
+test("someone who makes an account with an invite that needs two-factor sets it up without the password again", async ({ page, freshPanel, pageErrors }) => {
+  const them = await joinAsAdmin(page, await freshPanel(), pageErrors);
+  await expect(them.getByText("You need an authenticator app on your phone.")).toBeVisible();
+  await expect(them.getByLabel("Password")).toHaveCount(0);
+  const setup = them.waitForResponse((r) => r.url().endsWith("/api/v1/me/two-factor/setup") && r.ok());
+  await them.getByRole("button", { name: "Continue" }).click();
+  const { secret } = await (await setup).json();
+  await expect(them.getByRole("img", { name: "QR code" })).toBeVisible();
+  await them.getByLabel("Code").fill(totp(secret));
+  await them.getByRole("button", { name: "Turn on" }).click();
+  await expect(them.getByRole("list", { name: "Recovery codes" }).getByRole("listitem")).toHaveCount(10);
+  await them.getByRole("button", { name: "Done" }).click();
+  await expect(them).toHaveURL(/\/o\/home$/);
+  await them.context().close();
+});
+
+test("a while after signing in, setting up two-factor asks for the password", async ({ page, freshPanel, pageErrors }) => {
+  // A panel where a sign-in will do in place of the password for no time at all.
+  const them = await joinAsAdmin(page, await freshPanel("--recent-sign-in", "1ns"), pageErrors);
+  await expect(them.getByLabel("Password")).toBeVisible();
+  // A wrong one is said so.
+  await them.getByLabel("Password").fill("not it");
+  await them.getByRole("button", { name: "Continue" }).click();
+  await expect(them.getByText("The current password is wrong.")).toBeVisible();
+  await them.getByLabel("Password").fill(password);
+  await them.getByRole("button", { name: "Continue" }).click();
+  await expect(them.getByRole("img", { name: "QR code" })).toBeVisible();
+  await them.context().close();
+});
+
+test("a sign-in that turns out too old asks for the password then", async ({ page, api, org }) => {
+  await newPerson(page, api, org);
+  // The page was opened just after signing in; the panel then says it is too late.
+  await page.route("**/api/v1/me/two-factor/setup", async (route) => {
+    if (!route.request().postDataJSON().password) return route.fulfill({ status: 400, json: { code: "password_needed", message: "Enter your password." } });
+    return route.fallback();
+  });
+  await page.goto("/account");
+  const section = page.locator("section").filter({ has: page.getByRole("heading", { name: "Two-factor" }) });
+  await section.getByRole("button", { name: "Set up" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Password")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByLabel("Password").fill(password);
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog.getByRole("img", { name: "QR code" })).toBeVisible();
 });
 
 test("going back from the code starts the sign-in again", async ({ page, api, org }) => {

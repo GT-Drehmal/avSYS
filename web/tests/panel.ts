@@ -60,9 +60,10 @@ interface Fixtures {
   pageAs: (who: Role | "outsider") => Promise<Page>;
   /**
    * Starts a panel of its own, with nobody in it yet, as one just installed,
-   * and gives its address. It is stopped when the test ends.
+   * and gives its address. It is stopped when the test ends. flags are
+   * more of cmd/avsys-uitest's.
    */
-  freshPanel: () => Promise<string>;
+  freshPanel: (...flags: string[]) => Promise<string>;
   /** Errors a page threw. A test fails on any, unless it empties this itself. */
   pageErrors: string[];
   password: string;
@@ -156,10 +157,10 @@ export const test = base.extend<Fixtures>({
     // It needs no other fixture: Playwright reads that from the empty pattern.
     async ({}, use) => {
       const started: ChildProcess[] = [];
-      await use(async () => {
+      await use(async (...flags) => {
         // As playwright.config.ts starts the other panels.
         const [command, ...args] = (process.env.AVSYS_UITEST ?? "go run ../cmd/avsys-uitest").split(" ");
-        const panel = spawn(command, [...args, "--fresh", "--listen", "127.0.0.1:0", "--web-dir", "dist", "--upstream", "tests/upstream"], {
+        const panel = spawn(command, [...args, "--fresh", "--listen", "127.0.0.1:0", "--web-dir", "dist", "--upstream", "tests/upstream", ...flags], {
           // A process group of its own, so that stopping it stops what `go run` started too.
           detached: true,
           stdio: ["ignore", "pipe", "inherit"],

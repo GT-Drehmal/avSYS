@@ -177,7 +177,8 @@ Where the provider sends the browser back. **Public.** Register
 
 - An account already linked to this provider account is signed in. One
   signed in already, as themselves, is signed in again: the session they
-  had ends, and the new one counts as a recent sign-in (see
+  had ends, and the new one counts as a recent sign-in for an account
+  with no password (see
   [`POST /me/two-factor/setup`](#post-metwo-factorsetup)).
 - Someone signed in already has the provider account linked to theirs.
 - Otherwise a new account is made, under the same rules as
@@ -240,7 +241,8 @@ linked providers `[{provider, login}]`; `look` is `{theme, accent}` (see
 `mustSetUpTwoFactor` whether this session is held until you set it up;
 `twoFactorLevel` who has to (see
 [`PUT /settings/two-factor`](#put-settingstwo-factor)); `recentSignIn`
-whether this session was signed in within the last ten minutes;
+whether this session's sign-in will do in place of the password (see
+[`POST /me/two-factor/setup`](#post-metwo-factorsetup));
 `minecraftAccounts` `[{uuid, name, linkedAt, main, verified}]`.
 
 ### `PATCH /me`
@@ -339,15 +341,18 @@ Sign one session out. Returns `204`.
 ### `POST /me/two-factor/setup`
 
 Begin setting up two-factor. Body: `{password}`. Returns
-`{secret, url, qr}` for the authenticator app. Errors: `wrong_password`
-(400), `conflict` (409, already on), `recent_sign_in` (403).
+`{secret, url, qr}` for the authenticator app. Errors: `password_needed`
+(400), `wrong_password` (400), `conflict` (409, already on),
+`recent_sign_in` (403).
 
-An account with no password (one that signs in only through a provider,
-or any account while passwords are off) gives none: instead, the session
-must have been signed in within the last ten minutes, which an API token
-never is. Otherwise it is `recent_sign_in`, and signing in again through
-the provider, from the same browser, makes it recent. The same goes for
-turning two-factor off and for new recovery codes.
+The password can be left out within ten minutes of this session signing
+in: with the password, or making the account, for an account with one;
+through the provider for an account with none (one that signs in only
+through a provider, or any account while passwords are off). An API token
+never has. After that, an account with a password gives it
+(`password_needed` without it), and one with none gets `recent_sign_in`:
+signing in again through the provider, from the same browser, makes it
+recent. The same goes for new recovery codes.
 
 ### `POST /me/two-factor`
 
@@ -357,8 +362,8 @@ Finish setting it up. Body: `{code}` from the app. Returns
 
 ### `POST /me/two-factor/off`
 
-Turn it off. Body: `{password}`, or a recent sign-in as for setting it up.
-Returns `204`. `required` (409) for someone who has to use two-factor.
+Turn it off. Body: `{password}`, always, for an account with one; for one
+with none, a recent sign-in as for setting it up. Returns `204`. `required` (409) for someone who has to use two-factor.
 
 ### `POST /me/two-factor/recovery-codes`
 

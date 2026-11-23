@@ -268,9 +268,19 @@ func TestCurrentPasswordGuessesAreLimited(t *testing.T) {
 	if got, code := b.call("POST", "/me/password", map[string]string{"current": testPassword, "new": "a new password"}, nil); got != 429 || code != "rate_limited" {
 		t.Errorf("after %d guesses: %d %s, want 429", loginMaxFailures, got, code)
 	}
+	// Long after signing in, setting up two-factor takes the password.
+	signedInLongAgo(t)
 	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{"password": testPassword}, nil); got != 429 {
 		t.Errorf("setting up two-factor after the guesses: %d %s, want 429", got, code)
 	}
+}
+
+// signedInLongAgo makes every session, until the test ends, older than
+// recentSignIn.
+func signedInLongAgo(t *testing.T) {
+	was := recentSignIn
+	recentSignIn = 0
+	t.Cleanup(func() { recentSignIn = was })
 }
 
 func TestTwoFactorSignIn(t *testing.T) {
@@ -279,12 +289,25 @@ func TestTwoFactorSignIn(t *testing.T) {
 	b := p.tab("setter")
 	b.signIn("viewer", "")
 
-	// Setting it up takes the password.
+	// Setting it up takes the password, long after signing in.
+	was := recentSignIn
+	recentSignIn = 0
+	if b.me()["recentSignIn"] != false {
+		t.Error("/me says the sign-in is recent")
+	}
+	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{}, nil); got != 400 || code != "password_needed" {
+		t.Errorf("setting up with no password, long after signing in: %d %s", got, code)
+	}
 	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{"password": "wrong"}, nil); got != 400 || code != "wrong_password" {
 		t.Errorf("setting up with a wrong password: %d %s", got, code)
 	}
+	recentSignIn = was
+	// Just after signing in with it, it takes none.
+	if b.me()["recentSignIn"] != true {
+		t.Error("/me says the sign-in is not recent")
+	}
 	var setup struct{ Secret, URL, QR string }
-	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{"password": testPassword}, &setup); got != 200 {
+	if got, code := b.call("POST", "/me/two-factor/setup", map[string]string{}, &setup); got != 200 {
 		t.Fatalf("setting up: %d %s", got, code)
 	}
 	if setup.Secret == "" || !strings.HasPrefix(setup.URL, "otpauth://totp/avSYS:viewer@panel.test?") || !strings.HasPrefix(setup.QR, "data:image/png;base64,") {
@@ -376,10 +399,19 @@ func TestTwoFactorSignIn(t *testing.T) {
 		t.Errorf("recovery codes left: %v, want 9", me["recoveryCodes"])
 	}
 
-	// New recovery codes take the place of the old.
+	// New recovery codes take the place of the old: with the password,
+	// long after signing in, and with none just after.
+	recentSignIn = 0
+	if got, code := b.call("POST", "/me/two-factor/recovery-codes", map[string]string{}, nil); got != 400 || code != "password_needed" {
+		t.Errorf("new recovery codes with no password, long after signing in: %d %s", got, code)
+	}
 	var fresh struct{ RecoveryCodes []string }
 	if got, _ := b.call("POST", "/me/two-factor/recovery-codes", map[string]string{"password": testPassword}, &fresh); got != 200 || len(fresh.RecoveryCodes) != 10 {
 		t.Fatalf("new recovery codes: %d %v", got, fresh.RecoveryCodes)
+	}
+	recentSignIn = was
+	if got, _ := b.call("POST", "/me/two-factor/recovery-codes", map[string]string{}, &fresh); got != 200 || len(fresh.RecoveryCodes) != 10 {
+		t.Fatalf("new recovery codes just after signing in: %d %v", got, fresh.RecoveryCodes)
 	}
 	if got, _ := e.call("POST", "/auth/login/code", map[string]string{"code": done.RecoveryCodes[1]}, nil); got != 400 {
 		t.Errorf("an old recovery code after new ones were made: %d, want 400", got)
@@ -388,7 +420,11 @@ func TestTwoFactorSignIn(t *testing.T) {
 		t.Errorf("a new recovery code: %d %s", got, code)
 	}
 
-	// Turning it off takes the password, and then a password alone signs in.
+	// Turning it off takes the password, even just after signing in, and
+	// then a password alone signs in.
+	if got, code := b.call("POST", "/me/two-factor/off", map[string]string{}, nil); got != 400 || code != "password_needed" {
+		t.Errorf("turning off with no password: %d %s", got, code)
+	}
 	if got, code := b.call("POST", "/me/two-factor/off", map[string]string{"password": "wrong"}, nil); got != 400 || code != "wrong_password" {
 		t.Errorf("turning off with a wrong password: %d %s", got, code)
 	}

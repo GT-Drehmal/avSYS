@@ -155,6 +155,10 @@ type Server struct {
 	// the real time. Tests set it, so that which 30-second step a code is
 	// of is theirs to say, not the clock's.
 	TwoFactorClock func() time.Time
+	// RecentSignIn is how long a session's own sign-in will do in place
+	// of the password: see confirmIdentity. Zero is ten minutes. The
+	// browser tests make it shorter, to see what comes after.
+	RecentSignIn time.Duration
 	// Static is the built web UI. Nil serves the API only.
 	Static fs.FS
 	// Upstream is how the panel reaches the services it looks things up in:

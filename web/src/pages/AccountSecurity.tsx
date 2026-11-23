@@ -31,22 +31,26 @@ function RecoveryCodes({ codes }: { codes: string[] }) {
 }
 
 /**
- * How someone shows it is them before changing their two-factor: their
- * password, or, with none to give, having signed in a moment ago. stale is
- * set once the panel said that was too long ago.
+ * How someone shows it is them before changing their two-factor: having
+ * signed in a moment ago, or after that their password, or, with none to
+ * give, signing in again. With always, as for turning two-factor off, the
+ * password is asked for whenever there is one. stale is set once the panel
+ * said the sign-in was too long ago.
  */
-function useProof() {
+function useProof(always = false) {
   const me = useMe().data!;
   const meta = useMeta().data;
   const [stale, setStale] = useState(false);
-  const password = me.hasPassword && meta?.passwords !== false;
+  const hasPassword = me.hasPassword && meta?.passwords !== false;
+  const recent = me.recentSignIn && !stale;
   return {
-    password,
+    /** Whether to ask for the password. */
+    password: hasPassword && (always || !recent),
     /** Whether they have to sign in again first. */
-    again: !password && (!me.recentSignIn || stale),
-    /** Notes an error that says to sign in again. */
+    again: !hasPassword && !recent,
+    /** Notes an error that says the sign-in was too long ago. */
     failed: (err: unknown) => {
-      if (err instanceof ApiError && err.code === "recent_sign_in") setStale(true);
+      if (err instanceof ApiError && (err.code === "recent_sign_in" || err.code === "password_needed")) setStale(true);
     },
   };
 }
@@ -77,8 +81,7 @@ function SignInAgain() {
 }
 
 /**
- * Turning two-factor on: the password (or a recent sign-in, for someone
- * with none), then the QR code and a code from the app, then the recovery
+ * Turning two-factor on: a recent sign-in or the password, then the QR code and a code from the app, then the recovery
  * codes. onDone is called once those are put away.
  */
 export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCancel?: () => void }) {
@@ -173,8 +176,8 @@ export function TwoFactorSetup({ onDone, onCancel }: { onDone: () => void; onCan
 }
 
 /** Asks for the password, or a recent sign-in, before doing something to two-factor. */
-function Confirming({ title, action, danger, run, onClose }: { title: string; action: string; danger?: boolean; run: (password: string) => Promise<unknown>; onClose: () => void }) {
-  const proof = useProof();
+function Confirming({ title, action, danger, passwordAlways, run, onClose }: { title: string; action: string; danger?: boolean; passwordAlways?: boolean; run: (password: string) => Promise<unknown>; onClose: () => void }) {
+  const proof = useProof(passwordAlways);
   const [password, setPassword] = useState("");
   const go = useAction(() => run(password));
   return (
@@ -247,6 +250,7 @@ export function TwoFactor() {
           title="Turn off two-factor?"
           action="Turn off"
           danger
+          passwordAlways
           onClose={close}
           run={async (password) => {
             await api.post("/me/two-factor/off", { password });
