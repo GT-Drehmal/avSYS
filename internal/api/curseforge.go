@@ -916,6 +916,7 @@ func (s *Server) pinCurseForge(ctx context.Context, m *avsysv1.ContentRef, t tar
 		java = max(java, 0)
 	}
 	m.Version, m.VersionName, m.Java = strconv.Itoa(chosen.ID), chosen.DisplayName, int32(java)
+	m.Provides = idsOfURL(chosen.DownloadURL)
 	if m.Kind == avsysv1.KindDatapack {
 		m.File = chosen.FileName
 	}

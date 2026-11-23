@@ -232,6 +232,7 @@ export function Mods() {
             ) : (
               <ContentList
                 mods={at.map((i) => mods[i])}
+                all={mods}
                 gameJava={server.java.game}
                 showKind={false}
                 note={(m) => modPortsNote(m, server.spec.ports)}

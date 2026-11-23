@@ -390,3 +390,29 @@ func TestModConfigLeavesWhatItCannotRead(t *testing.T) {
 		t.Errorf("changed: %q", got)
 	}
 }
+
+// The image downloads what Modrinth content needs, but on a server whose
+// list has it, where it is told to download none. A modpack's mods are the
+// pack's, and a server's own env says how for it.
+func TestDependencyEnv(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		set  func(*avsysv1.MinecraftServer)
+		want string
+	}{
+		{"older server", nil, "required"},
+		{"listed", func(mc *avsysv1.MinecraftServer) { mc.Spec.DependenciesListed = true }, "none"},
+		{"modpack", func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.DependenciesListed = true
+			mc.Spec.Modpack = &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack"}
+		}, "required"},
+		{"own env", func(mc *avsysv1.MinecraftServer) {
+			mc.Spec.DependenciesListed = true
+			mc.Spec.Env = []corev1.EnvVar{{Name: DependencyEnv, Value: "optional"}}
+		}, "optional"},
+	} {
+		if got := envOf(server(c.set))[DependencyEnv]; got != c.want {
+			t.Errorf("%s: %s=%q, want %q", c.name, DependencyEnv, got, c.want)
+		}
+	}
+}

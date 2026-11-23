@@ -51,6 +51,11 @@ type modrinthVersion struct {
 	GameVersions  []string       `json:"game_versions"`
 	Loaders       []string       `json:"loaders"`
 	Files         []modrinthFile `json:"files"`
+	Dependencies  []struct {
+		ProjectID string `json:"project_id"`
+		VersionID string `json:"version_id"`
+		Type      string `json:"dependency_type"`
+	} `json:"dependencies"`
 }
 
 // fileName is the name the primary file is saved under.
@@ -180,47 +185,80 @@ func spool(r io.Reader, limit int64) (*os.File, int64, error) {
 	return tmp, n, nil
 }
 
-type javaCache struct {
-	mu   sync.Mutex
-	byID map[string]int
+// jarInfo is what the panel reads of a mod or plugin file: the Java it
+// needs, and the mod IDs it gives a server.
+type jarInfo struct {
+	java int
+	ids  []string
 }
 
-var inspected = javaCache{byID: map[string]int{}}
+type jarCache struct {
+	mu    sync.Mutex
+	byURL map[string]jarInfo
+}
+
+var inspected = jarCache{byURL: map[string]jarInfo{}}
 
 // javaOfURL downloads a mod file and reports the Java it needs. Published
 // files do not change, so answers are remembered.
 func javaOfURL(ctx context.Context, fileURL string) (int, error) {
+	info, err := inspectURL(ctx, publicHTTP, fileURL)
+	return info.java, err
+}
+
+// inspectURL downloads a mod or plugin file with c and reads it, once.
+func inspectURL(ctx context.Context, c *http.Client, fileURL string) (jarInfo, error) {
 	inspected.mu.Lock()
-	java, ok := inspected.byID[fileURL]
+	info, ok := inspected.byURL[fileURL]
 	inspected.mu.Unlock()
 	if ok {
-		return java, nil
+		return info, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
-		return 0, err
+		return info, err
 	}
-	resp, err := publicHTTP.Do(req)
+	resp, err := c.Do(req)
 	if err != nil {
-		return 0, err
+		return info, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("downloading %s: %s", fileURL, resp.Status)
+		return info, fmt.Errorf("downloading %s: %s", fileURL, resp.Status)
 	}
 	tmp, size, err := spool(resp.Body, maxJar)
 	if err != nil {
-		return 0, err
+		return info, err
 	}
 	defer tmp.Close()
-	java, err = javaOfJar(tmp, size)
-	if err != nil {
-		return 0, err
+	if info.java, err = javaOfJar(tmp, size); err != nil {
+		return info, err
+	}
+	if zr, err := zip.NewReader(tmp, size); err == nil {
+		info.ids = modIDs(zr)
 	}
 	inspected.mu.Lock()
-	inspected.byID[fileURL] = java
+	if len(inspected.byURL) >= 20000 {
+		clear(inspected.byURL)
+	}
+	inspected.byURL[fileURL] = info
 	inspected.mu.Unlock()
-	return java, nil
+	return info, nil
+}
+
+// idsOfURL are the mod IDs of a file read before, or none.
+func idsOfURL(fileURL string) []string {
+	inspected.mu.Lock()
+	defer inspected.mu.Unlock()
+	return inspected.byURL[fileURL].ids
+}
+
+// downloads is how the panel downloads files of content to read them.
+func (s *Server) downloads() *http.Client {
+	if s.Downloads != nil {
+		return &http.Client{Timeout: publicHTTP.Timeout, Transport: s.Downloads}
+	}
+	return publicHTTP
 }
 
 // target is what content has to fit: the loader and game version the server
@@ -305,12 +343,12 @@ func (s *Server) pin(ctx context.Context, m *avsysv1.ContentRef, t target) error
 		if m.Kind == avsysv1.KindDatapack || v.file() == "" {
 			return 0
 		}
-		java, err := javaOfURL(ctx, v.file())
+		info, err := inspectURL(ctx, s.downloads(), v.file())
 		if err != nil {
 			// Not knowing is not a reason to refuse the mod.
 			s.Log.Warn("could not inspect mod file", "project", m.Project, "version", v.VersionNumber, "error", err)
 		}
-		return java
+		return info.java
 	}
 
 	if m.Version != "" {
@@ -323,6 +361,7 @@ func (s *Server) pin(ctx context.Context, m *avsysv1.ContentRef, t target) error
 			return err
 		}
 		m.VersionName, m.Java = v.VersionNumber, int32(inspect(v))
+		m.Provides = idsOfURL(v.file())
 		if m.Kind == avsysv1.KindDatapack {
 			m.File = v.fileName()
 		}
@@ -355,6 +394,7 @@ func (s *Server) pin(ctx context.Context, m *avsysv1.ContentRef, t target) error
 		}
 	}
 	m.Version, m.VersionName, m.Java = chosen.ID, chosen.VersionNumber, int32(java)
+	m.Provides = idsOfURL(chosen.file())
 	if m.Kind == avsysv1.KindDatapack {
 		m.File = chosen.fileName()
 	}
@@ -404,11 +444,14 @@ func (s *Server) pinModpack(ctx context.Context, pack *avsysv1.ModpackSpec) erro
 	return nil
 }
 
-// resolveContent pins whatever in spec is not pinned yet. previous is the spec
-// being replaced, or nil for a new server.
-func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.MinecraftServerSpec) error {
+// resolveContent pins whatever in spec is not pinned yet, and lists what
+// Modrinth content added needs (listDependencies). previous is the spec
+// being replaced, or nil for a new server; found is what was found in the
+// server's folders.
+func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.MinecraftServerSpec, found []FoundFile) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	keepPanelNotes(spec, previous)
 
 	if pack := spec.Modpack; pack != nil && (pack.Source == avsysv1.SourceModrinth || pack.Source == avsysv1.SourceCurseForge) {
 		unchanged := previous != nil && previous.Modpack != nil && previous.Modpack.Source == pack.Source && previous.Modpack.Project == pack.Project && previous.Modpack.Version == pack.Version
@@ -460,11 +503,16 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		return ""
 	}
 	saved := map[string]string{}
+	// What was pinned before, at that version: only that is known already.
+	// One whose version a request changed is read again, for what it needs
+	// and gives.
+	was := map[string]bool{}
 	if previous != nil {
 		for i := range previous.Mods {
 			if key := savedKey(&previous.Mods[i]); key != "" {
 				saved[key] = previous.Mods[i].File
 			}
+			was[givesKey(&previous.Mods[i])] = true
 		}
 	}
 	for i := range spec.Mods {
@@ -482,7 +530,7 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 			if retarget {
 				m.Version, m.VersionName, m.Java, m.File = "", "", 0, ""
 			}
-			if m.Version != "" && (m.Java != 0 || (m.Kind == avsysv1.KindDatapack && m.File != "")) && m.Title != "" && m.IconURL != "" {
+			if m.Version != "" && was[givesKey(m)] && (m.Java != 0 || (m.Kind == avsysv1.KindDatapack && m.File != "")) && m.Title != "" && m.IconURL != "" {
 				continue
 			}
 			// Pinned already, it is left as it is while the panel has no
@@ -514,7 +562,7 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 				// Best effort: a URL that cannot be read now may still work
 				// from inside the cluster.
 				if java, ierr := javaOfURL(ctx, m.Project); ierr == nil {
-					m.Java = int32(java)
+					m.Java, m.Provides = int32(java), idsOfURL(m.Project)
 				}
 			} else if m.Source == avsysv1.SourceCurseForge {
 				err = s.pinCurseForge(ctx, m, t)
@@ -531,7 +579,10 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		}()
 	}
 	wg.Wait()
-	return first
+	if first != nil {
+		return first
+	}
+	return s.listDependencies(ctx, spec, previous, found)
 }
 
 // savedName is the name the image's downloader saves a file from fileURL
@@ -649,6 +700,8 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 		entry.VersionName = meta.version
 		if kind == avsysv1.KindDatapack {
 			entry.Description = meta.about
+		} else {
+			entry.Provides = modIDs(zr)
 		}
 	}
 	// The file is in place; now list it. Someone may be editing the server at
@@ -661,6 +714,10 @@ func (s *Server) uploadContent(w http.ResponseWriter, r *http.Request, u *store.
 			}
 		}
 		mc.Spec.Mods = append(mods, entry)
+		// It takes the place of a dependency the panel added that it is.
+		if controller.ListsDependencies(&mc.Spec) {
+			replaceProvided(&mc.Spec, func(m *avsysv1.ContentRef) bool { return m.Source == avsysv1.SourceUpload && m.Project == name })
+		}
 		err := s.Client.Update(r.Context(), mc)
 		if err == nil {
 			break

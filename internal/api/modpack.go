@@ -304,7 +304,7 @@ func (s *Server) putModpack(w http.ResponseWriter, r *http.Request, u *store.Use
 		}
 		if err == nil {
 			// Content on top of it fits what it is built for.
-			err = s.resolveContent(r.Context(), &mc.Spec, previous)
+			err = s.resolveContent(r.Context(), &mc.Spec, previous, nil)
 		}
 		if err == nil {
 			err = s.Client.Update(r.Context(), mc)

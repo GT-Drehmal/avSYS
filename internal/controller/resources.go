@@ -230,6 +230,11 @@ func minecraftEnv(mc *avsysv1.MinecraftServer, cfg Config) []corev1.EnvVar {
 		"CREATE_CONSOLE_IN_PIPE":         "true",
 		"CONSOLE_IN_NAMED_PIPE":          ConsolePipe,
 	}
+	// What its Modrinth content needs is on its list, added by the panel:
+	// the image is not to download another copy beside one the server has.
+	if ListsDependencies(&mc.Spec) {
+		env[DependencyEnv] = "none"
+	}
 	// Set only when asked for, so that a server made before these were
 	// offered keeps the environment, and the pod, it has.
 	if on := mc.Spec.JVM.AikarFlags; on != nil && *on {

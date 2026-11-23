@@ -992,6 +992,17 @@ replaced whole. Most changes to a running server apply at its next restart
 content again for the new one. Returns the server. `stale` (409) if it kept
 changing underneath.
 
+On a server with `dependenciesListed`, a Modrinth entry added (or given
+another version) brings what it needs into `mods`, and an entry taken off
+takes what the panel added for it alone; an entry other content needs
+(its `neededBy`), whoever added it, cannot be taken off while that stays
+(400). A change that has the image stop downloading dependencies (taking
+off a `MODRINTH_DOWNLOAD_DEPENDENCIES` override, or a modpack while its
+extra mods stay) works out what every Modrinth entry needs. When Modrinth
+does not answer, nothing is changed: `upstream` (502). The same holds for a
+new server made with content, and an upload (`PUT .../content`) that is the
+same mod as one the panel added takes its place.
+
 `notes`, beside `spec` or alone, sets the server's notes: plain text, up to
 500 characters, `""` for none. Notes are the panel's own, for those who
 look after the server; they are not in `spec`, its files or anything the
@@ -1034,7 +1045,8 @@ The `spec` of a server, as in `kubectl get mcs -o yaml`:
 | `loaderVersion` | A loader build to stay on; empty for the newest. |
 | `gameJava` | The Java the game version ships with. Set by the panel. |
 | `modpack` | `{source: modrinth\|curseforge\|upload, project, version, gameVersion, loader, title, versionName, iconUrl}`. |
-| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; it is the panel's to say: a request's is not taken, and an entry sent back without it keeps it; `description` is what an uploaded datapack says of itself. |
+| `mods` | Mods, plugins and datapacks: `[{source: modrinth\|curseforge\|url\|upload, kind: mod\|plugin\|datapack, project, version, java, file, title, versionName, iconUrl, description, provides, dependency, neededBy}]`. `file`, for an upload, is where one found in the server's files is kept, which the image is not handed; it is the panel's to say: a request's is not taken, and an entry sent back without it keeps it; `description` is what an uploaded datapack says of itself. `provides`, `dependency` and `neededBy` are the panel's too, kept as they were whatever a request says: the mod IDs the entry's file gives the server; whether the panel added it because other Modrinth content needs it; and what on the list needs it (by `project`), whoever added it. |
+| `dependenciesListed` | Set by the panel on the servers it makes, copies following their original: what Modrinth entries need is added to `mods` as they are added, and the image downloads none (`MODRINTH_DOWNLOAD_DEPENDENCIES=none`). Not set on a server made before, or with a modpack, the image downloads it at each start. A request does not change it; `MODRINTH_DOWNLOAD_DEPENDENCIES` in `env` overrides both. |
 | `resourcePack` | `{url, sha1, enforce, prompt, uploaded, project, formats, stack}`. |
 | `properties` | `server.properties` entries the panel sets. |
 | `ops`, `whitelist` | Players, by name or UUID, up to 1000 each. |
@@ -1123,7 +1135,7 @@ Until then, and for a file that cannot be listed (a name the list cannot
 hold, another copy of a project already listed), it is in the server's
 `found`: `{path, kind, size, modified, sha1?, title?, version?, about?,
 project?, slug?, versionId?, iconUrl?, picture?, folder?, looked?, java?,
-filename?, requires?}`, with `path` under the server's folder
+filename?, requires?, provides?}`, with `path` under the server's folder
 (`mods/x.jar`, `plugins/x.jar`, `world/datapacks/x.zip`). Files the panel
 or the server's image installed are never in it. The panel looks every
 few minutes, sooner once the server starts or stops, its files are changed

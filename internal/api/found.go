@@ -77,6 +77,8 @@ type FoundFile struct {
 	// needs, which the image installs with it.
 	Filename string   `json:"filename,omitempty"`
 	Requires []string `json:"requires,omitempty"`
+	// Provides are the mod IDs a mod's or plugin's file gives the server.
+	Provides []string `json:"provides,omitempty"`
 }
 
 // ServerFiles are a server's files, as the panel reads the content in them.
@@ -645,6 +647,7 @@ func (s *Server) readFound(owner string, files ServerFiles, f *FoundFile) {
 		if java, err := javaOfJar(tmp, size); err == nil {
 			f.Java = int32(java)
 		}
+		f.Provides = modIDs(zr)
 	}
 	meta := contentMeta(zr, f.Kind)
 	if meta.title != "" {

@@ -11,6 +11,26 @@ import (
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 )
 
+// DependencyEnv is the image's setting for downloading what Modrinth
+// content needs.
+const DependencyEnv = "MODRINTH_DOWNLOAD_DEPENDENCIES"
+
+// ListsDependencies says the panel lists what a server's Modrinth content
+// needs, and the image is to download none of it: on a server the panel
+// made since it does, without a modpack (whose mods are the pack's), and
+// without its own env saying how.
+func ListsDependencies(spec *avsysv1.MinecraftServerSpec) bool {
+	if !spec.DependenciesListed || spec.Modpack != nil {
+		return false
+	}
+	for _, e := range spec.Env {
+		if e.Name == DependencyEnv {
+			return false
+		}
+	}
+	return true
+}
+
 // KnownMod is a mod or plugin that listens on ports of its own. The panel
 // opens them when the mod is added and closes them when the mod is taken
 // off (see FitModPorts), and each start sets the mod up to listen on them
