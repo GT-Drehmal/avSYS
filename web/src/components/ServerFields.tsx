@@ -142,6 +142,22 @@ export const openWarning = "Anyone who finds the server's address can join, with
 export const joinHint = (join: Join) =>
   join === "anyone" ? "No whitelist." : join === "list" ? undefined : "Members need a linked Minecraft account. Whitelisted players can join too.";
 
+/** Whether the game puts out players taken off the whitelist: its enforce-whitelist. */
+export const enforcesWhitelist = (properties: Record<string, string> | undefined) => properties?.["enforce-whitelist"]?.toLowerCase() === "true";
+
+/** The box under the whitelist control for enforce-whitelist. */
+export function KickOffWhitelist({ checked, onChange }: { checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <label className="flex items-center gap-2.5 text-[13px] font-medium text-fg">
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="size-3.5 accent-(--color-accent)" />
+        Kick players taken off the whitelist
+      </label>
+      <p className="pl-6 text-xs leading-relaxed text-muted">Otherwise they stay until they leave.</p>
+    </div>
+  );
+}
+
 /** The choices for who can join. */
 export const joinOptions = (
   <>
