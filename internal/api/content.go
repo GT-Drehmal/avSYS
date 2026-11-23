@@ -503,11 +503,16 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 		return ""
 	}
 	saved := map[string]string{}
+	// What was pinned before, at that version: only that is known already.
+	// One whose version a request changed is read again, for what it needs
+	// and gives.
+	was := map[string]bool{}
 	if previous != nil {
 		for i := range previous.Mods {
 			if key := savedKey(&previous.Mods[i]); key != "" {
 				saved[key] = previous.Mods[i].File
 			}
+			was[givesKey(&previous.Mods[i])] = true
 		}
 	}
 	for i := range spec.Mods {
@@ -525,7 +530,7 @@ func (s *Server) resolveContent(ctx context.Context, spec, previous *avsysv1.Min
 			if retarget {
 				m.Version, m.VersionName, m.Java, m.File = "", "", 0, ""
 			}
-			if m.Version != "" && (m.Java != 0 || (m.Kind == avsysv1.KindDatapack && m.File != "")) && m.Title != "" && m.IconURL != "" {
+			if m.Version != "" && was[givesKey(m)] && (m.Java != 0 || (m.Kind == avsysv1.KindDatapack && m.File != "")) && m.Title != "" && m.IconURL != "" {
 				continue
 			}
 			// Pinned already, it is left as it is while the panel has no

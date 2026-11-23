@@ -390,8 +390,9 @@ needs to run, and what that needs, unless the server has it already:
 
 - Already there means that project, or any file on the server that is
   the same mod: a fork, a renamed file, or a mod with it inside.
-- Each one added says **Needed by** and what needs it. It can't be
-  removed while that is on the server, and goes with it.
+- Anything another mod needs says **Needed by** and what needs it, and
+  can't be removed while that is on the server. One the panel added goes
+  with it.
 - Uploading a file that is the same mod replaces the one that was added.
 - Only mods, plugins and datapacks are added, never a modpack or a
   resource pack.

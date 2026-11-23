@@ -559,9 +559,9 @@ interface ContentListProps {
 
 export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true, found = [], foundPicture, picture, onRemoveFound, all = mods }: ContentListProps) {
   const row = "flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0";
-  // Added for what needs it, it stays while that does.
+  // What other content needs stays while that does.
   const neededBy = (m: ContentRef) => {
-    const by = m.dependency ? (m.neededBy ?? []).map((p) => all.find((o) => o.project === p)).filter((o) => !!o) : [];
+    const by = (m.neededBy ?? []).map((p) => all.find((o) => o.project === p)).filter((o) => !!o);
     return by.length > 0 ? `Needed by ${by.map(titleOf).join(", ")}` : undefined;
   };
   return (

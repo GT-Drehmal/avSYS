@@ -46,7 +46,7 @@ type depModrinth struct {
 }
 
 func (m *depModrinth) project(id, slug, title, kind string) {
-	m.projects[id] = modrinthProjectInfo{ID: id, Slug: slug, Title: title, ProjectType: kind}
+	m.projects[id] = modrinthProjectInfo{ID: id, Slug: slug, Title: title, ProjectType: kind, IconURL: "https://cdn.test/" + id + ".png"}
 }
 
 // version adds a version of a project, for one game and loader, whose file
@@ -55,7 +55,7 @@ func (m *depModrinth) project(id, slug, title, kind string) {
 func (m *depModrinth) version(t *testing.T, project, id, game, loader, modID string, needs ...string) {
 	file := "https://cdn.test/" + t.Name() + "/" + id + ".jar"
 	if modID != "" {
-		m.files[file] = jarOf(t, map[string]string{"fabric.mod.json": `{"id":"` + modID + `","version":"` + id + `"}`})
+		m.files[file] = jarOf(t, map[string]string{"fabric.mod.json": `{"id":"` + modID + `","version":"` + id + `"}`, "a/A.class": string(class(65))})
 	}
 	v := depVersion{ID: id, ProjectID: project, VersionNumber: id, VersionType: "release", GameVersions: []string{game}, Loaders: []string{loader},
 		Files: []map[string]any{{"url": file, "filename": id + ".jar", "primary": true}}, Dependencies: []map[string]any{}}
@@ -159,8 +159,9 @@ func harpyModrinth(t *testing.T, p *panel) *depModrinth {
 	return m
 }
 
-// listing is a server's content as "project@version", with what needs each
-// the panel added: "PWATHE@vWATHE1 <- PKINS".
+// listing is a server's content as "project@version", with what needs each:
+// "PWATHE@vWATHE1 <- PKINS" for one the panel added, "wathe@v1 <= PKINS"
+// for one someone added.
 func listing(spec *avsysv1.MinecraftServerSpec) []string {
 	var out []string
 	for _, m := range spec.Mods {
@@ -170,6 +171,8 @@ func listing(spec *avsysv1.MinecraftServerSpec) []string {
 		}
 		if m.Dependency {
 			entry += " <- " + strings.Join(m.NeededBy, ",")
+		} else if len(m.NeededBy) > 0 {
+			entry += " <= " + strings.Join(m.NeededBy, ",")
 		}
 		out = append(out, entry)
 	}
@@ -245,7 +248,12 @@ func TestDependenciesListedWhenAdded(t *testing.T) {
 
 	// A project the list has, by its slug, is not added again, nor marked.
 	makeHarpyNamed(t, p, "both", `{"source":"modrinth","kind":"mod","project":"kinswathe"},{"source":"modrinth","kind":"mod","project":"wathe","version":"vWATHE1"}`)
-	wantListing(t, "both", &p.serverOf("both").Spec, "kinswathe@vKINS", "wathe@vWATHE1", "PRATA@vRATA <- wathe")
+	wantListing(t, "both", &p.serverOf("both").Spec, "kinswathe@vKINS", "wathe@vWATHE1 <= kinswathe", "PRATA@vRATA <- wathe")
+	// Added by hand, it is needed all the same.
+	if code, body := p.call("owner", "PATCH", "/orgs/alpha/servers/both", `{"spec":{"mods":[{"source":"modrinth","kind":"mod","project":"kinswathe","version":"vKINS"}]}}`); code != 400 || body["message"] != "Wathe is needed by Kinswathe. Remove that first." {
+		t.Errorf("Wathe added by hand taken off while needed: %d %v", code, body)
+	}
+	wantListing(t, "both, after", &p.serverOf("both").Spec, "kinswathe@vKINS", "wathe@vWATHE1 <= kinswathe", "PRATA@vRATA <- wathe")
 }
 
 func makeHarpyNamed(t *testing.T, p *panel, name, mods string) {
@@ -284,7 +292,7 @@ func TestDependencyProvidedByID(t *testing.T) {
 			if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/harpy", `{"spec":{"mods":`+modsJSON(p, "harpy", `{"source":"modrinth","kind":"mod","project":"kinswathe"}`)+`}}`); code != 200 {
 				t.Fatalf("Kinswathe added: %d %s", code, msg)
 			}
-			wantListing(t, "uploaded first", &p.serverOf("harpy").Spec, "wathe-1.4.1-1.21.1+wathez.1.jar", "kinswathe@vKINS")
+			wantListing(t, "uploaded first", &p.serverOf("harpy").Spec, "wathe-1.4.1-1.21.1+wathez.1.jar <= kinswathe", "kinswathe@vKINS")
 
 			// A file in the server's folders under another name, found there.
 			root := t.TempDir()
@@ -333,7 +341,7 @@ func TestUploadTakesPlaceOfDependency(t *testing.T) {
 	if rec := p.send("owner", "PUT", "/orgs/alpha/servers/harpy/content?kind=mod&name=wathe-fork.jar", fork); rec.Code != 200 {
 		t.Fatalf("upload: %d %s", rec.Code, rec.Body)
 	}
-	wantListing(t, "fork uploaded", &p.serverOf("harpy").Spec, "PKINS@vKINS", "PRATA@vRATA <- wathe-fork.jar", "noellesroles.jar", "wathe-fork.jar")
+	wantListing(t, "fork uploaded", &p.serverOf("harpy").Spec, "PKINS@vKINS", "PRATA@vRATA <- wathe-fork.jar", "noellesroles.jar", "wathe-fork.jar <= PKINS")
 }
 
 // Only a mod, plugin or datapack is added: Shooter Punishments says it
@@ -374,6 +382,76 @@ func TestDependenciesWhileModrinthIsDown(t *testing.T) {
 		t.Fatalf("back: %d %s", code, msg)
 	}
 	wantListing(t, "back", &p.serverOf("harpy").Spec, "kinswathe@vKINS", "PWATHE@vWATHE1 <- kinswathe", "PRATA@vRATA <- PWATHE")
+}
+
+// A server whose image downloaded what its content needs until a change,
+// by its own env or as a modpack's, has what all its entries need listed in
+// that change, as the image downloads none from then on. Not reaching
+// Modrinth refuses the change.
+func TestSwitchingToListedDependencies(t *testing.T) {
+	p := newPanel(t)
+	m := harpyModrinth(t, p)
+	own := `{"name":"own","spec":{"eula":true,"loader":"fabric","version":"1.21.1","state":"Stopped","env":[{"name":"MODRINTH_DOWNLOAD_DEPENDENCIES","value":"required"}],"mods":[{"source":"modrinth","kind":"mod","project":"kinswathe"}]}}`
+	if code, msg := p.do("owner", "POST", "/orgs/alpha/servers", own); code != 201 {
+		t.Fatalf("create: %d %s", code, msg)
+	}
+	wantListing(t, "with its own env", &p.serverOf("own").Spec, "kinswathe@vKINS")
+	m.down = []string{"/v2/project/PWATHE"}
+	if code, _ := p.do("owner", "PATCH", "/orgs/alpha/servers/own", `{"spec":{"env":null}}`); code != http.StatusBadGateway {
+		t.Errorf("env taken off while Modrinth is down: %d", code)
+	}
+	if after := p.serverOf("own").Spec; len(after.Env) != 1 {
+		t.Errorf("the env went anyway: %+v", after.Env)
+	}
+	m.down = nil
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/own", `{"spec":{"env":null}}`); code != 200 {
+		t.Fatalf("env taken off: %d %s", code, msg)
+	}
+	wantListing(t, "env taken off", &p.serverOf("own").Spec, "kinswathe@vKINS", "PWATHE@vWATHE1 <- kinswathe", "PRATA@vRATA <- PWATHE")
+
+	// A modpack taken off, with a mod added on top of it kept.
+	spec := avsysv1.MinecraftServerSpec{EULA: true, Loader: avsysv1.LoaderFabric, Version: "1.21.1", State: avsysv1.StateStopped, DependenciesListed: true,
+		Modpack: &avsysv1.ModpackSpec{Source: avsysv1.SourceModrinth, Project: "pack", Version: "vPACK", GameVersion: "1.21.1", Loader: "fabric"},
+		Mods:    []avsysv1.ContentRef{{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindMod, Project: "kinswathe", Version: "vKINS", Java: 21, Title: "Kinswathe", IconURL: "https://cdn.test/PKINS.png"}}}
+	mc := &avsysv1.MinecraftServer{ObjectMeta: metav1.ObjectMeta{Namespace: p.srv.Namespace("alpha"), Name: "packed"}, Spec: spec}
+	p.srv.applyDefaults("alpha", "packed", &mc.Spec)
+	if err := p.srv.Client.Create(context.Background(), mc); err != nil {
+		t.Fatal(err)
+	}
+	p.setPhase("alpha", "packed", avsysv1.PhaseStopped)
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/packed", `{"spec":{"modpack":null}}`); code != 200 {
+		t.Fatalf("modpack taken off: %d %s", code, msg)
+	}
+	wantListing(t, "modpack taken off", &p.serverOf("packed").Spec, "kinswathe@vKINS", "PWATHE@vWATHE1 <- kinswathe", "PRATA@vRATA <- PWATHE")
+}
+
+// Another version picked for an entry, as the version picker sends it (its
+// Java, title and picture kept), is read again: a newer build of a bundle
+// that has Wathe in it gives Wathe, so Kinswathe added after needs nothing.
+func TestChangedVersionIsReadAgain(t *testing.T) {
+	p := newPanel(t)
+	m := harpyModrinth(t, p)
+	m.project("PBUNDLE", "harpy-bundle", "Harpy Bundle", "mod")
+	m.version(t, "PBUNDLE", "vB1", "1.21.1", "fabric", "harpy-bundle")
+	m.version(t, "PBUNDLE", "vB2", "1.21.1", "fabric", "harpy-bundle")
+	m.files["https://cdn.test/"+t.Name()+"/vB2.jar"] = jarOf(t, map[string]string{"fabric.mod.json": `{"id":"harpy-bundle","provides":["wathe"]}`, "a/A.class": string(class(65))})
+	makeHarpy(t, p, `{"source":"modrinth","kind":"mod","project":"harpy-bundle","version":"vB1"}`)
+	picked := p.serverOf("harpy").Spec.Mods
+	if b := picked[0]; b.Java == 0 || b.Title == "" || b.IconURL == "" || !slices.Equal(b.Provides, []string{"harpy-bundle"}) {
+		t.Fatalf("as made: %+v", b)
+	}
+	picked[0].Version, picked[0].VersionName = "vB2", "vB2"
+	raw, _ := json.Marshal(picked)
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/harpy", `{"spec":{"mods":`+string(raw)+`}}`); code != 200 {
+		t.Fatalf("version picked: %d %s", code, msg)
+	}
+	if got := p.serverOf("harpy").Spec.Mods[0].Provides; !slices.Equal(got, []string{"harpy-bundle", "wathe"}) {
+		t.Errorf("gives %q after the version was picked", got)
+	}
+	if code, msg := p.do("owner", "PATCH", "/orgs/alpha/servers/harpy", `{"spec":{"mods":`+modsJSON(p, "harpy", `{"source":"modrinth","kind":"mod","project":"kinswathe"}`)+`}}`); code != 200 {
+		t.Fatalf("Kinswathe added: %d %s", code, msg)
+	}
+	wantListing(t, "Kinswathe added", &p.serverOf("harpy").Spec, "harpy-bundle@vB2 <= kinswathe", "kinswathe@vKINS")
 }
 
 // A server made before the panel listed what content needs, or one whose

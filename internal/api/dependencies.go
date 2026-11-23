@@ -86,9 +86,7 @@ func keepPanelNotes(spec, previous *avsysv1.MinecraftServerSpec) {
 		for i := range previous.Mods {
 			p := &previous.Mods[i]
 			gives[givesKey(p)] = p.Provides
-			if p.Dependency {
-				added[string(p.Source)+"|"+p.Project] = p
-			}
+			added[string(p.Source)+"|"+p.Project] = p
 		}
 	}
 	for i := range spec.Mods {
@@ -96,7 +94,7 @@ func keepPanelNotes(spec, previous *avsysv1.MinecraftServerSpec) {
 		m.Provides = slices.Clone(gives[givesKey(m)])
 		m.Dependency, m.NeededBy = false, nil
 		if p := added[string(m.Source)+"|"+m.Project]; p != nil {
-			m.Dependency, m.NeededBy = true, slices.Clone(p.NeededBy)
+			m.Dependency, m.NeededBy = p.Dependency, slices.Clone(p.NeededBy)
 		}
 	}
 }
@@ -122,9 +120,13 @@ func (s *Server) listDependencies(ctx context.Context, spec, previous *avsysv1.M
 		return !slices.ContainsFunc(previous.Mods, func(p avsysv1.ContentRef) bool { return givesKey(&p) == givesKey(m) })
 	}
 	replaceProvided(spec, isNew)
+	// A server the image downloaded dependencies for until this change (its
+	// own env said so, or it ran a modpack) has what all its entries need
+	// worked out now: from here the image downloads none.
+	all := previous != nil && !controller.ListsDependencies(previous)
 	var added []int
 	for i := range spec.Mods {
-		if m := &spec.Mods[i]; m.Source == avsysv1.SourceModrinth && m.Version != "" && isNew(m) {
+		if m := &spec.Mods[i]; m.Source == avsysv1.SourceModrinth && m.Version != "" && (all || isNew(m)) {
 			added = append(added, i)
 		}
 	}
@@ -135,8 +137,8 @@ func (s *Server) listDependencies(ctx context.Context, spec, previous *avsysv1.M
 	return nil
 }
 
-// stillNeeded refuses taking off a dependency the panel added while what
-// needs it stays.
+// stillNeeded refuses taking off an entry other content on the list needs,
+// whoever added it, while that stays.
 func stillNeeded(spec, previous *avsysv1.MinecraftServerSpec) error {
 	if previous == nil {
 		return nil
@@ -146,7 +148,7 @@ func stillNeeded(spec, previous *avsysv1.MinecraftServerSpec) error {
 		on[m.Project] = cmpOr(m.Title, m.Project)
 	}
 	for _, p := range previous.Mods {
-		if _, kept := on[p.Project]; kept || !p.Dependency {
+		if _, kept := on[p.Project]; kept {
 			continue
 		}
 		for _, by := range p.NeededBy {
@@ -184,8 +186,8 @@ func pruneDependencies(spec *avsysv1.MinecraftServerSpec) {
 
 // replaceProvided takes off each dependency the panel added whose mod ID
 // content someone just added gives (isNew): a fork, say, uploaded where the
-// panel had added the original. What that dependency needed is then needed
-// by what took its place.
+// panel had added the original. What needed that dependency, and what it
+// needed, are then needed by and needed by what took its place.
 func replaceProvided(spec *avsysv1.MinecraftServerSpec, isNew func(*avsysv1.ContentRef) bool) {
 	gives := map[string]string{}
 	for i := range spec.Mods {
@@ -195,23 +197,28 @@ func replaceProvided(spec *avsysv1.MinecraftServerSpec, isNew func(*avsysv1.Cont
 			}
 		}
 	}
-	instead := map[string]string{}
+	instead, needs := map[string]string{}, map[string][]string{}
 	spec.Mods = slices.DeleteFunc(spec.Mods, func(m avsysv1.ContentRef) bool {
 		if !m.Dependency || len(m.Provides) == 0 || gives[m.Provides[0]] == "" {
 			return false
 		}
-		instead[m.Project] = gives[m.Provides[0]]
+		p := gives[m.Provides[0]]
+		instead[m.Project], needs[p] = p, append(needs[p], m.NeededBy...)
 		return true
 	})
 	for i := range spec.Mods {
-		by := spec.Mods[i].NeededBy
+		m := &spec.Mods[i]
+		by := append(m.NeededBy, needs[m.Project]...)
 		for j := range by {
 			if p, ok := instead[by[j]]; ok {
 				by[j] = p
 			}
 		}
 		slices.Sort(by)
-		spec.Mods[i].NeededBy = slices.Compact(by)
+		m.NeededBy = slices.DeleteFunc(slices.Compact(by), func(b string) bool { return b == m.Project })
+		if len(m.NeededBy) == 0 {
+			m.NeededBy = nil
+		}
 	}
 }
 
@@ -241,9 +248,9 @@ func (s *Server) addNeeded(ctx context.Context, spec *avsysv1.MinecraftServerSpe
 			}
 		}
 	}
-	// What needs it, noted on a dependency the panel added.
+	// What needs it, noted on the entry that gives it, whoever added that.
 	need := func(at int, by string) {
-		if d := &spec.Mods[at]; d.Dependency && d.Project != by && !slices.Contains(d.NeededBy, by) {
+		if d := &spec.Mods[at]; d.Project != by && !slices.Contains(d.NeededBy, by) {
 			d.NeededBy = append(d.NeededBy, by)
 		}
 	}

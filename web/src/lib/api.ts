@@ -351,7 +351,7 @@ export interface ContentRef {
   file?: string;
   /** The mod IDs its file gives the server, as the panel read them. */
   provides?: string[];
-  /** Added by the panel because the entries in neededBy (by project) need it. */
+  /** Added by the panel for what needs it; neededBy is what on the list needs it (by project), whoever added it. */
   dependency?: boolean;
   neededBy?: string[];
 }

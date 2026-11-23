@@ -394,7 +394,12 @@ otherwise or it runs a modpack:
 - An entry the panel added goes when nothing that someone added needs it
   any more, and when a file someone adds gives its mod ID (an import's
   fork, uploaded after the server is made with its Modrinth entries).
-  It cannot be taken off on its own while it is needed.
+- What gives a needed mod ID, added by the panel or by someone, notes what
+  needs it (`neededBy`) and cannot be taken off while that stays.
+- A version picked for an entry is read again, for what its file gives.
+- A change that has the image stop downloading dependencies (its env's
+  override taken off, or its modpack with extra mods kept) works out what
+  every Modrinth entry on the list needs, in that change.
 
 A restart never changes what is installed. Changing the game version or
 loader pins each entry again for the new one. A file of the server's own

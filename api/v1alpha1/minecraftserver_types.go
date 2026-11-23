@@ -167,8 +167,9 @@ type ContentRef struct {
 	// name, read by the panel when the entry was added.
 	Provides []string `json:"provides,omitempty"`
 	// Dependency says the panel added the entry because other Modrinth
-	// content needs it, and NeededBy (by their Project) what needs it. It
-	// goes once nothing on the list does.
+	// content needs it; it goes once nothing on the list does. NeededBy is
+	// what on the list needs the entry, by Project, whoever added it: it is
+	// not taken off while that stays.
 	Dependency bool     `json:"dependency,omitempty"`
 	NeededBy   []string `json:"neededBy,omitempty"`
 }
