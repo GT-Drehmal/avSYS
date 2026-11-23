@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { type Api, expect, test, totp, turnOnTwoFactor } from "./panel";
+import { type Api, expect, test, totp, turnOnTwoFactor, watchErrors } from "./panel";
 
 // Sessions, two-factor and reset links, on accounts made for each test, so
 // that what one test turns on no other sees.
@@ -327,7 +327,7 @@ test("an admin of an organization who signs in through a provider sets up two-fa
   // Someone new joins as an admin through the provider.
   const theirs = await browser.newContext();
   const them = await theirs.newPage();
-  them.on("pageerror", (e) => pageErrors.push(e.message));
+  watchErrors(them, pageErrors);
   await them.goto(`${url}/invite/${invite.token}`);
   await them.getByRole("link", { name: "Continue with Test ID" }).click();
   await expect(them).toHaveTitle("Test ID");
