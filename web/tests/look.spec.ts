@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from "@playwright/test";
-import { expect, noTwoFactor, test } from "./panel";
+import { expect, noTwoFactor, test, watchErrors } from "./panel";
 
 // How the panel looks: light, dark, or as the system is (Auto), and an
 // accent picked from a few. Each person's is kept by their account; before
@@ -144,7 +144,7 @@ test("a theme picked is kept by the account, and shown in another browser", asyn
   // Another browser, on a light system, that has never been here: the account's.
   const other = await browser.newContext({ colorScheme: "light" });
   const elsewhere = await other.newPage();
-  elsewhere.on("pageerror", (e) => pageErrors.push(e.message));
+  watchErrors(elsewhere, pageErrors);
   await signIn(other, url, "founder");
   await elsewhere.goto(`${url}/account`);
   await expect(elsewhere.getByRole("radiogroup", { name: "Theme" }).getByRole("radio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
@@ -229,7 +229,7 @@ test("the panel's accent is that of everyone who has not picked one", async ({ p
   const invite = await (await page.request.post(`${url}/api/v1/orgs/home/invites`, { headers, data: { role: "viewer" } })).json();
   const theirs = await browser.newContext();
   const them = await theirs.newPage();
-  them.on("pageerror", (e) => pageErrors.push(e.message));
+  watchErrors(them, pageErrors);
   const joined = await theirs.request.post(`${url}/api/v1/auth/register`, { headers, data: { username: "guest", password, invite: invite.token } });
   expect(joined.ok(), await joined.text()).toBe(true);
   await them.goto(`${url}/account`);
