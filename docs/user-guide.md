@@ -209,6 +209,10 @@ build**, newest unless you choose.
 - **Resources.** **Memory** and **Storage**. Storage can grow later, not
   shrink. **Node** picks where it runs, automatic unless you choose. Under
   **Launch flags**, Aikar's flags are on by default.
+
+  Memory is the server's whole limit. Java needs some of it for itself,
+  so the game gets 768 MB and a tenth less, but never less than half. A
+  12 GB server gets about 10 GB for the game.
 - **Network.** The **Hostname** players type. Under **Connection, ports
   and sleep**: how it is reached (the shared address is usual), **Sleep
   when empty**, and **Extra ports**.
@@ -287,6 +291,14 @@ Its buttons:
   a new world from them, with the seed, world type and the rest set there.
 
 Replacing, putting back and deleting the world need the server stopped.
+
+**Servers with several worlds.** Some servers keep more than one world:
+maps for Multiverse, or folders a mod switches between. All of them are
+kept, copied, imported and backed up with the server. But **Settings →
+World** shows and changes only the main one (the one `level-name` in
+`server.properties` names, with its Nether and End), and saving a server's
+world to the library takes only that one. Use **Files**, SFTP or the
+terminal for the others.
 
 ## A server's page
 
@@ -403,6 +415,14 @@ minutes, and at once when the page is opened or an import finishes.
 - A mod that needs another that Modrinth does not have is listed as an
   upload, so that a second copy of what it needs is never downloaded.
 - A long list has a search box above it.
+
+**Two copies of a mod.** A mod from Modrinth brings the mods it needs,
+even when the server already has one of them as an upload, a renamed file
+or a build of its own. Then the server has two copies. Until the panel
+checks for this ([#337](https://github.com/GT-Drehmal/avSYS/issues/337)),
+add `MODRINTH_DOWNLOAD_DEPENDENCIES=none` under **Settings → Advanced →
+Environment**. From then on, nothing is added by itself: add each mod
+the others need yourself.
 
 **Modpacks.** A modpack server shows its pack, with its version button, and
 the mods in it (**Mods in this pack**). Files only players need are marked

@@ -288,7 +288,9 @@ Make one your main account. Returns your accounts.
 
 Prove a linked account is yours. With no body, opens a check and returns
 `{name, until, address}`: join `address` in the game as that account before
-`until` to get a code. Then send `{code}` to finish; returns
+`until` to get a code. `address` is `verify.<router domain>`, or with no
+router domain the panel's own host; empty where that is `localhost` or an
+IP address. Then send `{code}` to finish; returns
 `{name, verified: true}`. Errors: `no_check` (409), `wrong_code` (400).
 
 ### `PUT /me/avatar`
