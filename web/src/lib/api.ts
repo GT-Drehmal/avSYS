@@ -232,6 +232,8 @@ export interface Meta {
   ssh: { host: string; port: number };
   /** Whether this panel can take snapshots at all. */
   snapshots: boolean;
+  /** How many days a deleted snapshot is kept in Recently deleted; 0 for not at all. */
+  binDays?: number;
   /** Whether it has a CurseForge API key, which anything from CurseForge needs. */
   curseforge?: boolean;
   /** The accent of anyone who has not picked their own. */
@@ -725,6 +727,24 @@ export interface SnapshotList {
   usage?: { bytes: number; snapshots: number };
 }
 
+/** A deleted snapshot, kept a while before it is removed for good. */
+export interface BinnedSnapshot extends Snapshot {
+  deletedAt: string;
+  deletedBy?: string;
+  /** When it is removed for good. */
+  until: string;
+}
+
+/** An organization's recently deleted snapshots. */
+export interface BinList {
+  available: boolean;
+  /** How many days a deleted snapshot is kept; 0 for not at all. */
+  days: number;
+  /** Whether the one asking may remove them early: the panel's administrator. */
+  canEmpty: boolean;
+  snapshots: BinnedSnapshot[];
+}
+
 /**
  * A player on a saved list: of Java, by their account, or of Bedrock, by
  * their Xbox account, with their gamertag as the name.
@@ -1012,6 +1032,8 @@ export interface PanelInfo {
   curseforge?: "panel" | "install" | "";
   /** The accent of anyone who has not picked their own. */
   accent: Accent;
+  /** How many days a deleted snapshot is kept; 0 removes it at once. */
+  binDays: number;
 }
 
 export interface ReleaseUpdate {

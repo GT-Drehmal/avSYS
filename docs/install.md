@@ -412,6 +412,21 @@ in the user guide.
 
 The backups volume is the only copy until you give the panel a second place.
 
+### Recently deleted
+
+A snapshot someone deletes is kept, hidden, in **Recently deleted** for 7
+days before it is removed for good, so that a mistaken or malicious delete
+can be put back. Set how long in **Instance settings → Deleted snapshots**
+(1 to 90 days, or **Not kept** to remove them at once, as before). A change
+applies to what is there already, counted from when each was deleted. Only
+the panel's administrator can remove them sooner, so keep two-factor on for
+that account. Retention does not go through it: what the schedule lets go
+of is removed at once.
+
+Which snapshots are in it is noted in `/backups/<org>.bin`, beside the
+repository. They are still in the repository, so plain restic lists them
+as any other, and they use their storage until they are gone.
+
 ### Offsite copy
 
 Any [restic repository location](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html)
@@ -448,7 +463,8 @@ offsite:
   not start with a repository and no password.
 - **What is copied**: everything, a couple of minutes after it changes and
   once after each start. A snapshot removed here, by retention or by
-  someone, is removed there with the next copy. Nothing is removed there
+  someone once it has left [Recently deleted](#recently-deleted), is
+  removed there with the next copy. Nothing is removed there
   merely because it is missing here, so a cluster that loses its storage,
   or a fresh install, leaves the copy whole. A failed copy is tried again
   every hour and whenever there is something new.

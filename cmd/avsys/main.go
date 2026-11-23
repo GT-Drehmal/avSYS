@@ -505,6 +505,12 @@ func run(opts options, log *slog.Logger) error {
 		return err
 	}
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		server.RunBin(ctx)
+		return nil
+	})); err != nil {
+		return err
+	}
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		server.RunOffsite(ctx)
 		return nil
 	})); err != nil {

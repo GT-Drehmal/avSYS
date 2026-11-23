@@ -479,7 +479,7 @@ func (m *Manager) syncOffsite(ctx context.Context, org string) (OffsiteResult, e
 	if len(gone) > 0 {
 		// A note is made before its removal, which may then not have gone
 		// through. What is still here keeps its copy.
-		here, err := m.list(ctx, org)
+		here, err := m.present(ctx, org)
 		if err != nil {
 			return res, err
 		}
@@ -562,7 +562,7 @@ func (m *Manager) FetchOffsite(ctx context.Context, org string) (int, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	if m.exists(org) {
-		here, err := m.list(ctx, org)
+		here, err := m.present(ctx, org)
 		if err != nil {
 			return 0, err
 		}

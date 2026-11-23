@@ -128,6 +128,8 @@ type Manager struct {
 	// rejectedMu holds the files of rejected snapshots to one change at a
 	// time; see reject.
 	rejectedMu sync.Mutex
+	// binMu holds the files of the bin to one change at a time; see bin.go.
+	binMu sync.Mutex
 	// changed is when an organization's snapshots last changed, as far as
 	// this process has seen.
 	changed map[string]time.Time
@@ -324,9 +326,14 @@ func (m *Manager) lock(org string) *sync.RWMutex {
 // the panel cannot read, a repository it has no restic for, or one that has
 // lost its configuration. Callers deciding whether it is safe to delete must
 // treat that as "some".
+//
+// Snapshots in the bin count: they are still there, and can be put back.
 func (m *Manager) Holds(ctx context.Context, org string) (count int, known bool) {
 	if m.exists(org) {
-		list, err := m.List(ctx, org)
+		lock := m.lock(org)
+		lock.RLock()
+		defer lock.RUnlock()
+		list, err := m.present(ctx, org)
 		return len(list), err == nil
 	}
 	// No usable repository. That is only "none" if nothing is there at all.
@@ -514,8 +521,32 @@ func (m *Manager) List(ctx context.Context, org string) ([]Snapshot, error) {
 
 // list is List for callers that already hold the repository's lock. Taking a
 // read lock twice deadlocks as soon as a writer is waiting in between.
-// Rejected snapshots are left out, and those with a copy offsite say so.
+// Rejected snapshots and those in the bin are left out, and those with a
+// copy offsite say so.
 func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
+	present, err := m.present(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	binned, err := m.binned(org)
+	if err != nil {
+		return nil, err
+	}
+	if len(binned) == 0 {
+		return present, nil
+	}
+	out := present[:0:0]
+	for _, s := range present {
+		if _, in := binned[s.ID]; !in {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// present is list with the snapshots in the bin too: everything the
+// repository holds and will go on holding for now.
+func (m *Manager) present(ctx context.Context, org string) ([]Snapshot, error) {
 	all, err := m.listAll(ctx, org)
 	if err != nil {
 		return nil, err
@@ -535,7 +566,7 @@ func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
 	return out, nil
 }
 
-// listAll is list with the rejected snapshots too.
+// listAll is present with the rejected snapshots too.
 func (m *Manager) listAll(ctx context.Context, org string) ([]Snapshot, error) {
 	if !m.exists(org) {
 		return []Snapshot{}, nil
@@ -654,7 +685,7 @@ func (m *Manager) copyAs(ctx context.Context, org, id, host, by string, only []s
 	// What is there already, so that the one made is told apart from them:
 	// src itself may be under host, and so may a copy of it left by one
 	// that was cut short.
-	before, err := m.list(ctx, org)
+	before, err := m.present(ctx, org)
 	if err != nil {
 		return nil, err
 	}
@@ -1198,6 +1229,12 @@ func (m *Manager) DeleteMany(ctx context.Context, org string, ids []string) erro
 	lock := m.lock(org)
 	lock.Lock()
 	defer lock.Unlock()
+	return m.deleteMany(ctx, org, ids)
+}
+
+// deleteMany is DeleteMany with the lock held alone. Snapshots in the bin
+// are removed as any other.
+func (m *Manager) deleteMany(ctx context.Context, org string, ids []string) error {
 	// Rejected ones too, which are only ever removed.
 	list, err := m.listAll(ctx, org)
 	if err != nil {
@@ -1277,6 +1314,20 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spa
 	if spare != nil && len(found) > 0 {
 		if spared, err = spare(); err != nil {
 			return 0, err
+		}
+	}
+	// Someone deleted those in the bin: they wait out their time there, and
+	// are not the schedule's to remove sooner.
+	if len(found) > 0 {
+		binned, err := m.binned(org)
+		if err != nil {
+			return 0, err
+		}
+		if spared == nil {
+			spared = map[string]bool{}
+		}
+		for id := range binned {
+			spared[id] = true
 		}
 	}
 	// Then removed by ID, those spared left out.
@@ -1437,7 +1488,7 @@ func (m *Manager) Destroy(org string) error {
 		return err
 	}
 	// The offsite copy is left as it is: nothing here says to remove it.
-	for _, file := range []string{m.removedFile(org), m.statusFile(org), m.copiesFile(org)} {
+	for _, file := range []string{m.removedFile(org), m.statusFile(org), m.copiesFile(org), m.binFile(org), m.rejectedFile(org)} {
 		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -1670,7 +1721,16 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 		args = append(args, "--exclude", dataDir+path)
 	}
 	if meta.SkipUnchanged {
-		args = append(args, "--skip-if-unchanged")
+		parent, skip, err := m.unchangedFrom(ctx, org, meta.Server)
+		if err != nil {
+			return nil, nil, err
+		}
+		if skip {
+			args = append(args, "--skip-if-unchanged")
+		}
+		if parent != "" {
+			args = append(args, "--parent", parent)
+		}
 	}
 	f := &follow{progress: progress}
 	stderr, err := runCtx(ctx, ws, resticIn(socket, args...), strings.NewReader(secret+"\n"), f.line)

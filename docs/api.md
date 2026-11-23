@@ -11,6 +11,7 @@ heading here.
 - [The instance](#the-instance)
 - [Organizations](#organizations)
 - [Snapshots and backups](#snapshots-and-backups)
+- [Recently deleted](#recently-deleted)
 - [Templates](#templates)
 - [Uploads](#uploads)
 - [Saved player lists](#saved-player-lists)
@@ -126,11 +127,12 @@ not read.
 
 What the sign-in page needs. **Public.**
 
-Returns `{version, setupRequired, allowSignups, providers: [{id, name}], passwords, ssh: {host, port}, snapshots, curseforge, accent}`.
+Returns `{version, setupRequired, allowSignups, providers: [{id, name}], passwords, ssh: {host, port}, snapshots, binDays, curseforge, accent}`.
 `setupRequired` is true while there is no account; `passwords` false when
-password sign-in is off; `snapshots` whether restic is there; `curseforge`
-whether a CurseForge key is set; `accent` the panel's accent, for anyone
-who has not picked one.
+password sign-in is off; `snapshots` whether restic is there; `binDays` how
+many days a deleted snapshot is kept in [Recently deleted](#recently-deleted)
+(0: removed at once); `curseforge` whether a CurseForge key is set; `accent`
+the panel's accent, for anyone who has not picked one.
 
 ### `POST /auth/register`
 
@@ -424,7 +426,7 @@ administrator, each node also has `players` and
 ### `GET /panel`
 
 The panel itself, for Instance settings. **Instance admin.** Returns
-`{panel: {version, canUpdate, autoUpdate, updating?, curseforge, accent}, update?}`,
+`{panel: {version, canUpdate, autoUpdate, updating?, curseforge, accent, binDays}, update?}`,
 where `update` is a newer release: `{version, notes, command?, manifest?}`.
 
 ### `GET /nodes/usage`
@@ -447,12 +449,14 @@ while a measurement runs.
 
 The panel's own settings. **Instance admin.**
 
-Body: any of `{autoUpdate, curseforgeKey, accent}`. `autoUpdate` has the
+Body: any of `{autoUpdate, curseforgeKey, accent, binDays}`. `autoUpdate` has the
 panel install fix releases by itself. `curseforgeKey` sets the CurseForge
 API key (checked with CurseForge first), and `""` removes the one entered
 in the panel. `accent` is the accent of everyone who has not picked their
-own: `amethyst` (the default), `gold`, `teal`, `blue` or `rose`. Returns
-`{version, canUpdate, autoUpdate, updating?, curseforge, accent}`, where
+own: `amethyst` (the default), `gold`, `teal`, `blue` or `rose`. `binDays`
+is how many days a deleted snapshot is kept before it is removed for good,
+0 to 90 (default 7); 0 removes deleted snapshots at once. Returns
+`{version, canUpdate, autoUpdate, updating?, curseforge, accent, binDays}`, where
 `curseforge` is `panel`, `install` or `""` for where the key comes from.
 The key itself is never returned. An empty body is a `400`.
 
@@ -489,7 +493,12 @@ organization.
 Delete it, with its namespace and its snapshots. **Owner.** It must have no
 servers left (`409 not_empty`). If it has snapshots, add
 `?snapshots=delete` to say they go too (`409 has_snapshots` without it).
-An offsite copy is left alone. Returns `204`.
+While deleted snapshots are kept (`binDays` above 0), anyone but the
+instance admin is refused while its servers have snapshots listed
+(`409 has_snapshots`) or in [Recently deleted](#recently-deleted)
+(`409 snapshots_kept`): they are deleted first and wait out their days.
+Templates and library worlds go with it. An offsite copy is left alone.
+Returns `204`.
 
 ### `GET /orgs/{org}/members`
 
@@ -612,7 +621,9 @@ newest snapshot of that name.
 Every snapshot of the organization's servers, including deleted ones.
 **Viewer.** Returns `{available, snapshots, operations, usage?: {bytes, snapshots}}`;
 `operations` are those running now. Template and world library snapshots
-are not listed.
+are not listed, nor are those in [Recently deleted](#recently-deleted).
+`usage` is the whole repository: those in Recently deleted, templates and
+library worlds included.
 
 ### `GET /orgs/{org}/snapshots/{id}`
 
@@ -630,7 +641,9 @@ The server's icon in that snapshot. **Viewer.**
 ### `DELETE /orgs/{org}/snapshots`
 
 Delete several. **Admin.** Body: `{ids: [...]}` (1–500). All of them, or
-none if any is unknown or in use. Returns `{deleted}`. `in_use` (409) for
+none if any is unknown or in use. They go to
+[Recently deleted](#recently-deleted) for `keptDays`, or with 0 are removed
+for good at once. Returns `{deleted, keptDays}`. `in_use` (409) for
 one being restored or still needed by a server being made; `template`
 (409) for one belonging to a template or the world library.
 
@@ -651,7 +664,40 @@ curl -H "Authorization: Bearer $TOKEN" -X PATCH -d '{"name":"Before 1.22","color
 
 ### `DELETE /orgs/{org}/snapshots/{id}`
 
-Delete one. **Admin.** Returns `204`.
+Delete one. **Admin.** It goes to [Recently deleted](#recently-deleted), or
+with `binDays` 0 is removed for good at once. Returns `204`.
+
+## Recently deleted
+
+A deleted snapshot is kept, hidden, for the panel's `binDays` (see
+[`PATCH /panel`](#patch-panel)), then removed for good. Until then no list,
+lookup, restore or copy finds it, and a deleted server's name stays its
+own. Retention does not go through here: what the schedule lets go of is
+removed at once, and it leaves alone what is here.
+
+A snapshot here is a snapshot (with `name` and `color`) plus
+`{deletedAt, deletedBy?, until}`: when and by whom it was deleted, and
+when it is removed for good.
+
+### `GET /orgs/{org}/bin`
+
+**Viewer.** Returns `{available, days, canEmpty, snapshots}`, the most
+recently deleted first. `canEmpty` is whether you may remove them early.
+
+### `POST /orgs/{org}/bin/{id}/put-back`
+
+Put one back in the list, as it was. **Admin.** Returns the snapshot.
+`not_found` (404) for one not here.
+
+### `DELETE /orgs/{org}/bin/{id}`
+
+Remove one for good now. **Instance admin**: an organization's owners and
+admins get `403`. Returns `{removed}`.
+
+### `DELETE /orgs/{org}/bin`
+
+Remove every one here for good now. **Instance admin.** Returns
+`{removed}`.
 
 ## Templates
 

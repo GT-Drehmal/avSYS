@@ -4,14 +4,16 @@ import { expect, test } from "./panel";
 // panel. What each part does is tested where it is (release.spec.ts,
 // security.spec.ts, curseforge.spec.ts); here, the page itself.
 
-test("the administrator opens Instance settings from the menu, with updates, sign-in, CurseForge and the accent", async ({ page, as }) => {
+test("the administrator opens Instance settings from the menu, with updates, sign-in, deleted snapshots, CurseForge and the accent", async ({ page, as }) => {
   await as("owner");
   await page.goto("/o/friends");
   await page.getByRole("button", { name: /owner/ }).click();
   await page.getByRole("menuitem", { name: "Instance settings" }).click();
   await expect(page).toHaveURL(/\/settings$/);
   await expect(page.getByRole("heading", { name: "Instance settings" })).toBeVisible();
-  await expect(page.locator("main").getByRole("heading", { level: 2 })).toHaveText(["Updates", "Sign-in", "CurseForge", "Accent"]);
+  await expect(page.locator("main").getByRole("heading", { level: 2 })).toHaveText(["Updates", "Sign-in", "Deleted snapshots", "CurseForge", "Accent"]);
+  // How long a deleted snapshot is kept, for every organization: a week unless changed.
+  await expect(page.getByRole("region", { name: "Deleted snapshots" }).getByRole("button", { name: "Keep deleted snapshots for" })).toHaveText("7 days");
 
   await expect(page.getByRole("region", { name: "Updates" })).toContainText("This is avSYS v0.1.0.");
   await expect(page.getByRole("switch", { name: "Install fixes by itself" })).toBeVisible();

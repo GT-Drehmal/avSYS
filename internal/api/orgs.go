@@ -113,6 +113,12 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request, u *store.User
 		return &Error{Status: http.StatusConflict, Code: "has_snapshots",
 			Message: fmt.Sprintf("This organization still has snapshots (%s). Deleting the organization deletes them too; confirm with ?snapshots=delete.", how)}
 	}
+	// Deleted snapshots are kept a while, and deleting the organization
+	// would remove them at once: not by anyone but the panel's
+	// administrator.
+	if err := s.orgKeepsSnapshots(r.Context(), u, a.Org.Slug); err != nil {
+		return err
+	}
 	// The repository goes first. If it cannot be removed the organization
 	// stays, name included: a later organization of the same name would
 	// otherwise find itself holding this one's snapshots and their password.

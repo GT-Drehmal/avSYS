@@ -6,7 +6,7 @@ import { newFrom } from "../lib/origin";
 import { api, ApiError, serverPath, snapshotIcon, type Operation, type Server, type Snapshot, type SnapshotColor, type SnapshotDetail } from "../lib/api";
 import { accents } from "../lib/look";
 import { ago, bytes, softwareWords } from "../lib/format";
-import { keys, useAction, useOffsite, usePlayerLists, useServers } from "../lib/queries";
+import { keys, useAction, useMeta, useOffsite, usePlayerLists, useServers } from "../lib/queries";
 import { toGigabytes } from "../lib/software";
 import { ContentList, packTitle } from "./Content";
 import type { Selection } from "../lib/selection";
@@ -89,6 +89,13 @@ export const triggerLabel = (s: Snapshot) => {
   return s.by ? `By ${s.by}` : "Manual";
 };
 
+/** Where deleted snapshots go, and for how long, in a sentence: "They stay in Recently deleted for 7 days." */
+export function keptWords(days: number | undefined, many: boolean) {
+  if (!days) return many ? "They are removed for good." : "It is removed for good.";
+  const span = days === 1 ? "1 day" : `${days} days`;
+  return `${many ? "They stay" : "It stays"} in Recently deleted for ${span}.`;
+}
+
 /** "Paper 1.21.4", from what a snapshot recorded about its server. */
 export const software = (s: Snapshot) => softwareWords(s.loader, s.version);
 
@@ -164,6 +171,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
   const [saving, setSaving] = useState<Snapshot | null>(null);
   const [naming, setNaming] = useState<Snapshot | null>(null);
   const servers = useServers(org);
+  const binDays = useMeta().data?.binDays;
   const remove = useAction((id: string) => api.del(`/orgs/${org}/snapshots/${id}`), [keys.snapshots(org)]);
   return (
     <>
@@ -329,7 +337,7 @@ export function SnapshotRows({ org, snapshots, canAdmin, canSaveWorld = canAdmin
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
         title="Delete this snapshot?"
-        description={deleting ? `The snapshot of ${deleting.server} from ${new Date(deleting.time).toLocaleString()}${deleting.name ? `, “${deleting.name}”,` : ""} is removed for good.` : ""}
+        description={deleting ? `The snapshot of ${deleting.server} from ${new Date(deleting.time).toLocaleString()}${deleting.name ? `, “${deleting.name}”` : ""}. ${keptWords(binDays, false)}` : ""}
         action="Delete snapshot"
         loading={remove.isPending}
         onConfirm={() => deleting && remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}
@@ -493,6 +501,7 @@ const atOnce = 500;
  */
 export function SnapshotSelectionBar({ org, snapshots, selection }: { org: string; snapshots: Snapshot[]; selection: Selection }) {
   const [confirming, setConfirming] = useState(false);
+  const binDays = useMeta().data?.binDays;
   const chosen = snapshots.filter((s) => selection.has(s.id));
   // One request takes so many; more than that go in as many requests as it
   // takes, one after another. If one is refused, those before it are gone
@@ -525,7 +534,7 @@ export function SnapshotSelectionBar({ org, snapshots, selection }: { org: strin
         open={confirming}
         onOpenChange={(open) => !remove.isPending && setConfirming(open)}
         title={`Delete ${many}?`}
-        description={`${breakdown}. They are removed for good.`}
+        description={`${breakdown}. ${keptWords(binDays, true)}`}
         action={`Delete ${many}`}
         loading={remove.isPending}
         onConfirm={() =>

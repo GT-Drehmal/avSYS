@@ -42,6 +42,12 @@ export function didWhat(a: Activity): string {
       return "restored a snapshot";
     case "snapshot.delete":
       return "deleted a snapshot";
+    case "snapshot.put-back":
+      return "put back a deleted snapshot";
+    case "snapshot.empty":
+      return "removed a deleted snapshot for good";
+    case "snapshot.expire":
+      return "removed a deleted snapshot for good";
     case "snapshot.name":
       return "named a snapshot";
     case "console.command":
@@ -59,4 +65,5 @@ export function didWhat(a: Activity): string {
   }
 }
 
-export const whoDid = (a: Activity) => a.user?.name ?? "Someone";
+/** Who did it; what nobody did, the panel did itself. */
+export const whoDid = (a: Activity) => a.user?.name ?? (a.action === "snapshot.expire" ? "avSYS" : "Someone");

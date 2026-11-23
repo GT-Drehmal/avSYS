@@ -234,7 +234,10 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 			return err
 		}
 	}
-	return http.Serve(ln, srv.Handler())
+	mux := http.NewServeMux()
+	mux.Handle("/", srv.Handler())
+	mux.Handle("POST /uitest/snapshots", seedOrgSnapshots(dir))
+	return http.Serve(ln, mux)
 }
 
 // populate fills the panel with people, organizations, servers and
@@ -368,7 +371,9 @@ func populate(ctx context.Context, srv *api.Server, cluster client.Client, dir s
 
 // resticStandIn is what the panel runs as restic here. It answers the
 // questions the panel asks of a repository out of files beside it, and
-// agrees to everything else. Its arguments are as the panel gives them:
+// agrees to everything else. A repository with a snapshots folder (see
+// seedOrgSnapshots) has a file there for each snapshot, which a forget
+// removes. Its arguments are as the panel gives them:
 // --repo DIR, then --password-file FILE --no-cache --retry-lock TIME for its
 // own repositories or --cache-dir DIR for the offsite ones, then COMMAND ...
 const resticStandIn = `#!/bin/sh
@@ -382,10 +387,21 @@ while :; do
   esac
 done
 case "$1" in
-  snapshots) cat "$repo/snapshots.json" 2>/dev/null || echo '[]' ;;
+  snapshots)
+    if [ -d "$repo/snapshots" ]; then
+      printf '['; sep=
+      for f in "$repo"/snapshots/*; do [ -f "$f" ] || continue; printf '%s' "$sep"; cat "$f"; sep=,; done
+      printf ']'
+    else
+      cat "$repo/snapshots.json" 2>/dev/null || echo '[]'
+    fi ;;
   stats) echo '{"total_size": 734003200, "snapshots_count": 6}' ;;
   dump) cat "$repo/record-$3.json" 2>/dev/null || exit 1 ;;
-  forget) cat "$repo/forget.json" 2>/dev/null ;;
+  forget)
+    case " $* " in
+      *" --dry-run "*) cat "$repo/forget.json" 2>/dev/null ;;
+      *) for id in "$@"; do case "$id" in *[!0-9a-f]*) ;; *) rm -f "$repo/snapshots/$id" ;; esac; done ;;
+    esac ;;
 esac
 `
 

@@ -227,6 +227,47 @@ test("backups", async ({ page }) => {
   await shot(page, "backups");
 });
 
+test("recently deleted", async ({ page }) => {
+  // A snapshot deleted this morning, kept in Recently deleted: answered
+  // here, as deleting one in the test panel would change it for the tests.
+  const hour = 60 * 60 * 1000;
+  const deletedAt = new Date(Date.now() - 5 * hour);
+  await page.route("**/api/v1/orgs/friends/bin", (route) =>
+    route.fulfill({
+      json: {
+        available: true,
+        days: 7,
+        canEmpty: true,
+        snapshots: [
+          {
+            id: "7f3e9a1c".repeat(8),
+            time: new Date(Date.now() - 30 * hour).toISOString(),
+            server: "creative",
+            trigger: "manual",
+            by: "admin",
+            version: "1.21.4",
+            loader: "fabric",
+            size: 350 << 20,
+            added: 6 << 20,
+            files: 625,
+            deletedAt: deletedAt.toISOString(),
+            deletedBy: "admin",
+            until: new Date(deletedAt.getTime() + 7 * 24 * hour).toISOString(),
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/o/friends/backups");
+  await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
+  const bin = page.getByRole("region", { name: "Recently deleted" });
+  await bin.getByRole("button", { name: /Recently deleted/ }).click();
+  await expect(bin.getByRole("listitem")).toHaveCount(1);
+  await page.waitForLoadState("networkidle").catch(() => {});
+  // The part of the page it is, not the page around it.
+  await bin.screenshot({ path: "../docs/images/recently-deleted.png", animations: "disabled", caret: "hide" });
+});
+
 test("sign-in", async ({ page, context }) => {
   // Signed out, on a panel that offers every kind of sign-in.
   await context.setExtraHTTPHeaders({});

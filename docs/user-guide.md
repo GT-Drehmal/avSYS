@@ -140,7 +140,9 @@ Owners can change the name and picture under **Settings**. The short name
 cannot be changed. **Domains** are set by the panel's administrator:
 addresses under them can only be used by this organization's servers.
 **Delete organization** needs its servers deleted first, and deletes its
-snapshots too.
+snapshots too. While deleted snapshots are kept (see
+[Recently deleted](#recently-deleted)), delete its snapshots first and wait
+until they are gone; the panel's administrator can delete it at once.
 
 ## Making a server
 
@@ -332,7 +334,7 @@ pack's version under **Content** instead.
 **Deleting a server.** **Settings → Delete server**. Type its name to
 confirm. A last snapshot is taken first, so it can be brought back; you can
 switch that off. Its snapshots stay on the **Backups** page until someone
-deletes them.
+deletes them, and then wait in **Recently deleted** for a while.
 
 **Pictures.** A server's picture is the icon players see in their server
 list. Upload any picture and it is cropped square; players see a new one
@@ -353,8 +355,8 @@ panel, never in game, and nothing about the server changes with them.
 - A copy of a server, a server made from a snapshot or a template, and a
   template made from a server start with the original's notes. Change them
   on the form before you make it.
-- A deleted server keeps its notes while it has snapshots: bringing it back
-  brings them back.
+- A deleted server keeps its notes while it has snapshots, in
+  **Recently deleted** too: bringing it back brings them back.
 
 ## Content: mods, plugins, datapacks, resource packs
 
@@ -600,7 +602,8 @@ own time and how many to keep.
 
 **What is never removed for you.** Snapshots taken by hand, the ones taken
 before a restore or a delete, named ones, and every snapshot of a deleted
-server stay until someone deletes them.
+server stay until someone deletes them. What the schedule lets go of is
+removed at once: it does not go to **Recently deleted**.
 
 **Names and colours.** An admin can name a snapshot, such as *Before the
 1.22 update*, and mark it with a colour: the tag button on its row, or
@@ -622,7 +625,33 @@ is a copy, and the original is not touched.
 
 **The Backups page** lists every snapshot of the organization's servers,
 deleted ones included, by server or by time, with search and filters. A
-failed or missing snapshot shows on the server list.
+failed or missing snapshot shows on the server list. Its storage figure is
+the whole of it: snapshots, templates, library worlds and **Recently
+deleted**.
+
+### Recently deleted
+
+**Delete** on a snapshot (admins and up), or on several at once, moves it to
+**Recently deleted**, at the bottom of the **Backups** page. It is hidden
+everywhere else: it cannot be restored, copied, or made a server of. It is
+kept for 7 days, with who deleted it and how long it has left, and then
+removed for good. Until then it still uses storage.
+
+![Recently deleted, at the bottom of the Backups page: a snapshot with who deleted it and the days it has left](images/recently-deleted.png)
+
+- **Put back** (admins and up) returns it to the list as it was, name and
+  all. A deleted server's snapshots can be put back and the server brought
+  back from one with **New server**, as from any other. While a deleted
+  server has snapshots here, its name stays its own.
+- **Removing it sooner**: only the panel's administrator can, one at a time
+  or **Empty** for all of them. It cannot be undone.
+- **How long** is set in [Instance settings](#instance-settings), for every
+  organization; there, **Not kept** removes deleted snapshots at once.
+- Only deleting does this. What the schedule lets go of is removed at once,
+  and a snapshot in **Recently deleted** waits out its days whatever the
+  schedule says.
+- The activity log of a server says who deleted, put back or removed its
+  snapshots.
 
 **Offsite copy.** Where the panel has a second place to keep snapshots,
 the **Backups** page says whether the copy is up to date. If this cluster's
@@ -711,6 +740,10 @@ Instance settings**, under **Nodes**.
   two-factor up at their next sign-in or page; a panel from before this
   setting has **Admins and owners** where its old switch, **Require
   two-factor for administrators**, was on, and **Nobody** where it was off.
+- **Deleted snapshots**: how long a deleted snapshot waits in
+  [Recently deleted](#recently-deleted) before it is removed for good, from
+  1 to 90 days (7 unless you change it), or **Not kept**, which removes it
+  at once. Only you can remove them sooner.
 - **CurseForge**: the API key that lets people add content and modpacks
   from CurseForge. It is never shown again once saved; **Replace** or
   **Remove** it.

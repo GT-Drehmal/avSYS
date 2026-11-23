@@ -6,6 +6,7 @@ import { backupConcern, BackupSchedule, scheduleOf } from "../components/BackupS
 import { ListBar } from "../components/ListBar";
 import { OffsiteCopy } from "../components/OffsiteCopy";
 import { Picture } from "../components/Picture";
+import { RecentlyDeleted } from "../components/RecentlyDeleted";
 import { useOrg } from "../components/Shell";
 import { colorName, OperationRow, RestoreDialog, SnapshotRows, SnapshotSelectionBar, software, triggerLabel, type RowsProps } from "../components/Snapshots";
 import { Button, Chip, cx, Empty, Loading, Notice, PageHeader } from "../components/ui";
@@ -248,6 +249,7 @@ export function Backups() {
             )}
           </div>
         )}
+        <RecentlyDeleted org={org} canAdmin={canAdmin} servers={servers.data} />
       </div>
       {canAdmin && <SnapshotSelectionBar org={org} snapshots={snapshots} selection={selection} />}
       {restoring && byName.get(restoring.server) && <RestoreDialog server={byName.get(restoring.server) as Server} snapshot={restoring} onClose={() => setRestoring(null)} />}
