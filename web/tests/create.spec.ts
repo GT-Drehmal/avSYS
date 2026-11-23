@@ -15,6 +15,8 @@ test("a new server is made from the form", async ({ page, as, org, api }) => {
   await expect(page.getByLabel("Short name")).toHaveValue("weekend-world");
   await page.getByLabel("Game version").selectOption("1.21.4");
   await page.getByLabel("Difficulty").selectOption("hard");
+  // With a whitelist, whoever is taken off it is kicked, unless said otherwise.
+  await expect(page.getByRole("checkbox", { name: "Kick players taken off the whitelist" })).toBeChecked();
   await page.getByRole("button", { name: "Create server" }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/s/weekend-world$`));
 
@@ -1069,6 +1071,71 @@ test("what is typed in a server's settings while a save is on its way is kept", 
   await expect(page.getByText("Settings saved")).toBeVisible();
   await expect(page.getByLabel("Message of the day")).toHaveValue("Second");
   await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
+});
+
+test("kicking players taken off the whitelist is a box under the whitelist, shown while it is on", async ({ page, as, org, api }) => {
+  const slug = await org([]);
+  const make = (name: string, properties: Record<string, string>) =>
+    api("owner").post(`/orgs/${slug}/servers`, {
+      name,
+      spec: { eula: true, loader: "paper", version: "1.21.4", state: "Stopped", resources: { memory: "2Gi" }, storage: { size: "2Gi" }, properties },
+    });
+  await make("kicks", { "white-list": "true", "enforce-whitelist": "TRUE", "view-distance": "8" });
+  await make("keeps", { "white-list": "true" });
+  await as("owner");
+  const kick = page.getByRole("checkbox", { name: "Kick players taken off the whitelist" });
+  const saved = async (name: string) => (await api("owner").get(`/orgs/${slug}/servers/${name}`)).spec.properties;
+
+  // TRUE is on, as the game reads it; it is not in the other properties too.
+  await page.goto(`/o/${slug}/s/kicks/settings`);
+  await expect(kick).toBeChecked();
+  await expect(page.getByLabel("Other properties")).toHaveValue("view-distance=8");
+  await kick.uncheck();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(async () => (await saved("kicks"))["enforce-whitelist"]).toBe("false");
+  expect((await saved("kicks"))["view-distance"]).toBe("8");
+
+  // Not set is off.
+  await page.goto(`/o/${slug}/s/keeps/settings`);
+  await expect(kick).not.toBeChecked();
+  await kick.check();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(async () => (await saved("keeps"))["enforce-whitelist"]).toBe("true");
+
+  // Only with the whitelist on.
+  await page.getByLabel("Whitelist", { exact: true }).selectOption("false");
+  await expect(kick).toHaveCount(0);
+  await page.getByLabel("Whitelist", { exact: true }).selectOption("true");
+  await expect(kick).toBeChecked();
+});
+
+test("a copy of a server that does not kick players taken off its whitelist does not either, unless ticked", async ({ page, as }) => {
+  await as("owner");
+  const sent: { spec: { properties?: Record<string, string | null> } }[] = [];
+  await page.route("**/api/v1/orgs/friends/servers", async (route) => {
+    if (route.request().method() === "POST") {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "test", message: "Not sent by the test." }) });
+    }
+    const list = await (await route.fetch()).json();
+    return route.fulfill({ json: list.map((s: { name: string; spec: object }) => (s.name === "survival" ? { ...s, spec: { ...s.spec, properties: { "white-list": "true" } } } : s)) });
+  });
+  await page.goto("/o/friends/new?from=server:survival");
+  await expect(page.getByLabel("Who can join")).toHaveValue("list");
+  const kick = page.getByRole("checkbox", { name: "Kick players taken off the whitelist" });
+  await expect(kick).not.toBeChecked();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].spec.properties ?? {}).not.toHaveProperty("enforce-whitelist");
+
+  await kick.check();
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(sent[1].spec.properties).toEqual({ "enforce-whitelist": "true" });
+
+  // Open to anyone, there is no whitelist to be taken off.
+  await page.getByLabel("Who can join").selectOption("anyone");
+  await expect(kick).toHaveCount(0);
 });
 
 test("a server's whitelist is turned off only once that is confirmed", async ({ page, as, org, api }) => {

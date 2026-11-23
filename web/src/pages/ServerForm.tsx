@@ -12,7 +12,7 @@ import { CurseForgeOff, ModrinthSearch } from "../components/ModrinthSearch";
 import { StartPicker, type StartKind, WorldPicker } from "../components/StartPicker";
 import { Picture, PictureChange, pictureForRequest } from "../components/Picture";
 import { SavedListsField } from "../components/PlayerLists";
-import { autoOpOptions, exposeOptions, joinHint, joinOptions, LaunchFlags, lines, More, NodeChoice, openWarning, playersExample, propertiesDocs, type Join } from "../components/ServerFields";
+import { autoOpOptions, enforcesWhitelist, exposeOptions, joinHint, joinOptions, KickOffWhitelist, LaunchFlags, lines, More, NodeChoice, openWarning, playersExample, propertiesDocs, type Join } from "../components/ServerFields";
 import { BottomBar, Button, Checked, Chip, Confirm, cx, Field, Input, Notice, PageHeader, Section, Select, Textarea, Toggle } from "../components/ui";
 import { cancelled } from "../components/Uploading";
 import { NotesField } from "../components/Notes";
@@ -327,6 +327,8 @@ interface Values {
   pvp: string;
   otherProperties: string;
   join: Join;
+  /** Whether players taken off the whitelist are put out: its enforce-whitelist. */
+  enforceWhitelist: boolean;
   autoOp: string;
   /** Players named by hand, one a line: on the whitelist, and operators. */
   whitelist: string;
@@ -388,6 +390,7 @@ const fresh: Values = {
   otherProperties: "",
   // Who may join. A new server is its organization's own unless said otherwise.
   join: "viewer",
+  enforceWhitelist: true,
   autoOp: "operator",
   whitelist: "",
   ops: "",
@@ -445,6 +448,7 @@ function valuesOf(source: Source, name: string, copying: boolean, leastStorage: 
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
     join: p["white-list"]?.toLowerCase() !== "true" ? "anyone" : (byRole ?? "list"),
+    enforceWhitelist: enforcesWhitelist(p),
     // Not set is the same as "operator".
     autoOp: spec.autoOp || "operator",
     whitelist: (spec.whitelist ?? []).join("\n"),
@@ -508,8 +512,7 @@ function propertiesOf(v: Values): Record<string, string> {
     properties["white-list"] = "false";
   } else {
     properties["white-list"] = "true";
-    // Whoever is taken off the whitelist is put out, not only kept out.
-    properties["enforce-whitelist"] = "true";
+    properties["enforce-whitelist"] = String(v.enforceWhitelist);
   }
   return properties;
 }
@@ -961,6 +964,7 @@ export function ServerForm({
         maxPlayers: p["max-players"] ?? "",
         pvp: p.pvp ?? "",
         join: p["white-list"]?.toLowerCase() === "true" ? "list" : "anyone",
+        enforceWhitelist: enforcesWhitelist(p),
         // Its own lists, to see and change here.
         whitelist: f.whitelist.join("\n"),
         ops: f.ops.join("\n"),
@@ -2168,6 +2172,7 @@ export function ServerForm({
             )}
           </Field>
         </div>
+        {v.join !== "anyone" && <KickOffWhitelist checked={v.enforceWhitelist} onChange={(on) => set("enforceWhitelist", on)} />}
         <SavedListsField
           org={org}
           title="Whitelist from saved lists"

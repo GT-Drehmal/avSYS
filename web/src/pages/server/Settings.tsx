@@ -12,7 +12,7 @@ import { toast } from "../../lib/toast";
 import { onPreview, PreviewsToggle, previewWarning, VersionOptions } from "../../components/VersionOptions";
 import { PicturePicker } from "../../components/Picture";
 import { foundRefs, PackFit } from "../../components/Content";
-import { autoOpOptions, exposeOptions, GameplayFields, imageDocs, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, playersExample, propertiesDocs, triState } from "../../components/ServerFields";
+import { autoOpOptions, enforcesWhitelist, exposeOptions, GameplayFields, imageDocs, KickOffWhitelist, LaunchFlags, lines, MemberLists, memberRoleOptions, openWarning, type Picks, playersExample, propertiesDocs, triState } from "../../components/ServerFields";
 import { ExtraPorts, type PortDraft, portDrafts, portsOf } from "../../components/ExtraPorts";
 import { NodeMove } from "../../components/NodeMove";
 import { LoaderBuildField } from "../../components/LoaderBuild";
@@ -26,7 +26,7 @@ import { useServerContext } from "./ServerPage";
 
 // server.properties entries with their own control. Anything else is edited
 // as plain key=value lines.
-const typedProperties = ["motd", "difficulty", "gamemode", "max-players", "pvp", "online-mode", "white-list"] as const;
+const typedProperties = ["motd", "difficulty", "gamemode", "max-players", "pvp", "online-mode", "white-list", "enforce-whitelist"] as const;
 
 interface Draft {
   displayName: string;
@@ -51,6 +51,8 @@ interface Draft {
   pvp: string;
   onlineMode: string;
   whitelistOn: string;
+  /** Its enforce-whitelist, "true" or "false". */
+  enforceWhitelist: string;
   otherProperties: string;
   ops: string;
   autoOp: string;
@@ -99,6 +101,7 @@ function toDraft(spec: ServerSpec, notes: string): Draft {
     onlineMode: p["online-mode"] ?? "",
     // The game takes TRUE as well as true.
     whitelistOn: (p["white-list"] ?? "").toLowerCase(),
+    enforceWhitelist: String(enforcesWhitelist(p)),
     otherProperties: Object.entries(p)
       .filter(([k]) => !typed.has(k))
       .map(([k, v]) => `${k}=${v}`)
@@ -137,6 +140,8 @@ function toPatch(d: Draft, current: ServerSpec, latest: string | undefined): Spe
     pvp: d.pvp,
     "online-mode": d.onlineMode,
     "white-list": d.whitelistOn,
+    // Said only while the whitelist is on, where the box is shown.
+    "enforce-whitelist": d.whitelistOn === "true" ? d.enforceWhitelist : (current.properties?.["enforce-whitelist"] ?? ""),
   };
   for (const [k, v] of Object.entries(typed)) if (v !== "") properties[k] = v;
   Object.assign(properties, parseProperties(d.otherProperties));
@@ -377,6 +382,7 @@ export function Settings() {
             )}
           </Field>
         </div>
+        {draft.whitelistOn === "true" && <KickOffWhitelist checked={draft.enforceWhitelist === "true"} onChange={(on) => set("enforceWhitelist", String(on))} />}
         <SavedListsField
           org={server.org}
           title="Whitelist from saved lists"
