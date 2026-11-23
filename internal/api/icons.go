@@ -11,7 +11,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
-	_ "image/gif" // pictures may be given as GIF, JPEG or PNG
+	_ "image/gif" // pictures may be given as GIF, JPEG, PNG or WebP
 	_ "image/jpeg"
 	"image/png"
 	"io"
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	_ "golang.org/x/image/webp"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -48,7 +49,7 @@ const (
 	serverIconPath = dataRoot + "/server-icon.png"
 )
 
-var errNotAPicture = errBadRequest("Use a PNG, JPEG or GIF of up to 4 MB.")
+var errNotAPicture = errBadRequest("Use a PNG, JPEG, GIF or WebP of up to 4 MB.")
 
 // decoding lets a few pictures be unpacked at a time. One of the largest
 // accepted takes some tens of megabytes while it is, and anyone signed in

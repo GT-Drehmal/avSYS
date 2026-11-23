@@ -305,8 +305,8 @@ test("a copy keeps the picture its files bring, or is given its own, or none", a
   expect(typeof own).toBe("string");
   const png = Buffer.from(own as string, "base64");
   expect(png.subarray(1, 4).toString()).toBe("PNG");
-  // 256 pixels on its longer side.
-  expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([256, 128]);
+  // The middle of it, square, 256 pixels a side.
+  expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([256, 256]);
 
   // Taken away, it is asked to have none.
   await page.getByRole("button", { name: "Remove", exact: true }).click();
