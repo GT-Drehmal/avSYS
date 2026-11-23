@@ -343,7 +343,40 @@ function PanelAccent({ panel }: { panel: PanelInfo }) {
   );
 }
 
-/** What is set for the whole panel, by its administrator: updates, sign-in, CurseForge and its accent. */
+/** How many days a deleted snapshot may be kept, as offered. */
+const keptDays = [0, 1, 3, 7, 14, 30, 90];
+const daysWord = (n: number) => (n === 0 ? "Not kept" : n === 1 ? "1 day" : `${n} days`);
+
+/**
+ * How long a deleted snapshot waits in Recently deleted before it is
+ * removed for good: for every organization, as only the panel's
+ * administrator can empty it sooner.
+ */
+function DeletedSnapshots({ panel }: { panel: PanelInfo }) {
+  const qc = useQueryClient();
+  const save = async (days: number) => {
+    qc.setQueryData<PanelState>(keys.panel, (d) => (d ? { ...d, panel: { ...d.panel, binDays: days } } : d));
+    try {
+      await api.patch("/panel", { binDays: days });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not change this.");
+    }
+    // Pages that say how long a deleted snapshot is kept ask again.
+    await Promise.all([qc.invalidateQueries({ queryKey: keys.panel }), qc.invalidateQueries({ queryKey: keys.meta }), qc.invalidateQueries({ queryKey: ["snapshots"] })]);
+  };
+  // One set through the API to a number not offered is shown too.
+  const offered = keptDays.includes(panel.binDays) ? keptDays : [...keptDays, panel.binDays].sort((a, b) => a - b);
+  const choices: Choice<string>[] = offered.map((n) => ({ value: String(n), label: daysWord(n), description: n === 0 ? "Deleted at once, for good." : `Can be put back for ${daysWord(n)}.` }));
+  return (
+    <Section title="Deleted snapshots" region description="Kept in Recently deleted, then removed for good. Only you can remove them sooner.">
+      <Field label="Keep for">
+        {(id) => <SelectMenu id={id} value={String(panel.binDays)} choices={choices} onChange={(v) => void save(Number(v))} className="w-48" aria-label="Keep deleted snapshots for" />}
+      </Field>
+    </Section>
+  );
+}
+
+/** What is set for the whole panel, by its administrator: updates, sign-in, deleted snapshots, CurseForge and its accent. */
 export function InstanceSettings() {
   const me = useMe().data;
   const meta = useMeta().data;
@@ -356,6 +389,7 @@ export function InstanceSettings() {
       <PageHeader title="Instance settings" description="For the whole panel." />
       <Updates state={state.data} />
       {meta && <SignIn meta={meta} />}
+      {meta?.snapshots && <DeletedSnapshots panel={state.data.panel} />}
       <CurseForge panel={state.data.panel} />
       <PanelAccent panel={state.data.panel} />
     </>

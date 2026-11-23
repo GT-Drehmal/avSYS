@@ -1,6 +1,6 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api, ApiError, serverPath, type Activity, type BackupPolicy, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type PanelState, type PlayerList, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
+import { api, ApiError, serverPath, type Activity, type BackupPolicy, type BinList, type Cluster, type LibraryWorld, type Me, type Meta, type Offsite, type Operation, type OperationDone, type PanelState, type PlayerList, type Server, type SnapshotList, type SpecPatch, type Template } from "./api";
 import { presenceKey, tab, tellAgain, type Present } from "./presence";
 import { toast } from "./toast";
 
@@ -27,6 +27,8 @@ export const keys = {
   invites: (org: string) => ["invites", org] as const,
   snapshots: (org: string) => ["snapshots", org] as const,
   serverSnapshots: (org: string, server: string) => ["snapshots", org, server] as const,
+  /** Recently deleted: under the organization's snapshots, and refetched with them. Not a name, which a server could have. */
+  bin: (org: string) => ["snapshots", org, { bin: true }] as const,
   /** What is being done to a server's snapshots now, as the event stream says, or null. */
   running: (org: string, server: string) => ["running", org, server] as const,
   backupPolicy: (org: string) => ["backup-policy", org] as const,
@@ -136,7 +138,7 @@ export function useLiveServers() {
       askAgain(["running"]);
       // Lists kept from a page left earlier are not asked for again until
       // it is opened; what they say is running may have finished too.
-      qc.setQueriesData<SnapshotList>({ queryKey: ["snapshots"] }, (list) => list && { ...list, operations: [] });
+      qc.setQueriesData<SnapshotList>({ queryKey: ["snapshots"] }, (list) => (list?.operations ? { ...list, operations: [] } : list));
       // A snapshot taken or deleted, and so one to copy offsite, or not.
       askAgain(["snapshots"]);
       askAgain(["offsite"]);
@@ -274,6 +276,9 @@ export const usePlayerLists = (org: string, enabled = true) => useQuery({ queryK
 
 export const useOrgSnapshots = (org: string) =>
   useQuery({ queryKey: keys.snapshots(org), queryFn: () => api.get<SnapshotList>(`/orgs/${org}/snapshots`) });
+
+/** An organization's recently deleted snapshots. */
+export const useBin = (org: string, enabled = true) => useQuery({ queryKey: keys.bin(org), queryFn: () => api.get<BinList>(`/orgs/${org}/bin`), enabled });
 
 export const useBackupPolicy = (org: string) =>
   useQuery({ queryKey: keys.backupPolicy(org), queryFn: () => api.get<BackupPolicy>(`/orgs/${org}/backup-policy`) });

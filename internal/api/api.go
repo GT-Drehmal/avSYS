@@ -395,7 +395,11 @@ func (s *Server) org(r *http.Request, u *store.User, min store.Role) (*access, e
 }
 
 func (s *Server) audit(ctx context.Context, u *store.User, org *store.Org, action, target, detail string) {
-	e := store.AuditEntry{UserID: u.ID, Action: action, Target: target, Detail: detail}
+	e := store.AuditEntry{Action: action, Target: target, Detail: detail}
+	// Without anyone, the panel did it itself.
+	if u != nil {
+		e.UserID = u.ID
+	}
 	if org != nil {
 		e.OrgID = org.ID
 	}
@@ -505,6 +509,10 @@ func (s *Server) Handler() http.Handler {
 	api("DELETE /orgs/{org}/snapshots", s.authed(s.deleteSnapshots))
 	api("PATCH /orgs/{org}/snapshots/{id}", s.authed(s.nameSnapshot))
 	api("DELETE /orgs/{org}/snapshots/{id}", s.authed(s.deleteSnapshot))
+	api("GET /orgs/{org}/bin", s.authed(s.listBin))
+	api("POST /orgs/{org}/bin/{id}/put-back", s.authed(s.putBackSnapshot))
+	api("DELETE /orgs/{org}/bin/{id}", s.authed(s.emptyBinSnapshot))
+	api("DELETE /orgs/{org}/bin", s.authed(s.emptyBinAll))
 
 	api("GET /orgs/{org}/domains", s.authed(s.getDomains))
 	api("PUT /orgs/{org}/domains", s.authed(s.putDomains))

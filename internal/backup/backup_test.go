@@ -707,6 +707,46 @@ func TestScheduledSnapshotsSkipWhatHasNotChanged(t *testing.T) {
 	}
 }
 
+// A snapshot in the bin is not one anyone has: the files are measured against
+// the newest that is not, and with all of them in the bin a snapshot is taken
+// whatever changed. Otherwise emptying the bin would leave nothing of the
+// files as they are, or a copy made from an older state.
+func TestUnchangedLooksPastTheBin(t *testing.T) {
+	ws, m := workspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	sh(t, ws, `mkdir -p /data/world && echo one > /data/world/level.dat`)
+	record := map[string]any{"server": "probe"}
+	scheduled := Meta{Server: "probe", Trigger: TriggerScheduled, Record: record, SkipUnchanged: true}
+	one, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh(t, ws, `echo two > /data/world/level.dat`)
+	two, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The files are as the second has them, which someone deleted.
+	if _, err := m.Bin(ctx, "alpha", []string{two.ID}, "steve", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	three, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil)
+	if err != nil {
+		t.Fatalf("with the newest in the bin and the files as it has them: %v, want a snapshot", err)
+	}
+	if _, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil); !errors.Is(err, ErrUnchanged) {
+		t.Errorf("straight after: %v, want ErrUnchanged", err)
+	}
+	// All of them in the bin: one is taken, unchanged or not.
+	if _, err := m.Bin(ctx, "alpha", []string{one.ID, three.ID}, "steve", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Snapshot(ctx, "alpha", ws, scheduled, nil); err != nil {
+		t.Errorf("with every one in the bin: %v, want a snapshot", err)
+	}
+}
+
 // Retention removes scheduled snapshots of one server that have outlived the
 // policy, and nothing else: not what someone took by hand, not an undo point,
 // not another server's.
@@ -1074,14 +1114,19 @@ func TestKeepFile(t *testing.T) {
 // Someone else reading the repository with restic holds a lock on it while
 // they do. One taken just as the panel removes snapshots, after it cleared
 // what was left, is waited for: the removal still happens. So it is for
-// giving back the space.
+// giving back the space, and for emptying the bin.
 func TestRemovingWaitsForSomeoneReading(t *testing.T) {
 	real, err := exec.LookPath("restic")
 	if err != nil {
 		t.Skip("restic is not installed")
 	}
-	for _, step := range []string{"forget", "prune"} {
+	for _, step := range []string{"forget", "prune", "empty"} {
 		t.Run(step, func(t *testing.T) {
+			// Emptying the bin is a forget.
+			word := step
+			if step == "empty" {
+				word = "forget"
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			m := &Manager{Dir: t.TempDir(), Restic: "restic", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -1096,7 +1141,7 @@ func TestRemovingWaitsForSomeoneReading(t *testing.T) {
 			stand := filepath.Join(t.TempDir(), "restic")
 			script := `#!/bin/sh
 case " $* " in
-*" ` + step + ` "*)
+*" ` + word + ` "*)
   if mkdir ` + quote(held) + ` 2>/dev/null; then
     { sleep 3; } </dev/null 2>/dev/null | ` + quote(real) + ` --repo "$2" --password-file "$4" --no-cache backup --stdin --stdin-filename read --host someone-else >/dev/null 2>&1 &
     for _ in $(seq 1 100); do [ -n "$(ls "$2/locks")" ] && break; sleep 0.1; done
@@ -1108,10 +1153,15 @@ exec ` + quote(real) + ` "$@"
 				t.Fatal(err)
 			}
 			m.Restic = stand
-			if step == "forget" {
+			switch step {
+			case "forget":
 				err = m.Delete(ctx, "alpha", kept.ID)
-			} else {
+			case "prune":
 				err = m.Prune(ctx, "alpha")
+			case "empty":
+				if _, err = m.Bin(ctx, "alpha", []string{kept.ID}, "steve", time.Now()); err == nil {
+					_, err = m.EmptyBin(ctx, "alpha", []string{kept.ID}, nil)
+				}
 			}
 			if err != nil {
 				t.Fatalf("%s with someone reading: %v", step, err)
@@ -1119,9 +1169,10 @@ exec ` + quote(real) + ` "$@"
 			if _, err := os.Stat(held); err != nil {
 				t.Fatalf("no one was reading: %v", err)
 			}
-			if step == "forget" {
-				if _, err := m.Get(ctx, "alpha", kept.ID); !errors.Is(err, ErrNotFound) {
-					t.Errorf("the snapshot is still there: %v", err)
+			if step != "prune" {
+				// The reader's own is there; the one removed is not.
+				if all, err := m.listAll(ctx, "alpha"); err != nil || slices.ContainsFunc(all, func(s Snapshot) bool { return s.ID == kept.ID }) {
+					t.Errorf("the snapshot is still there: %+v, %v", all, err)
 				}
 			}
 		})

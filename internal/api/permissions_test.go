@@ -300,6 +300,13 @@ func TestOrganizationRoutes(t *testing.T) {
 		{"PATCH /orgs/{org}/snapshots/{id}", "", `{"name":"Before the update","color":"teal"}`, store.RoleAdmin, 503},
 		{"DELETE /orgs/{org}/snapshots/{id}", "", "", store.RoleAdmin, 503},
 		{"DELETE /orgs/{org}/snapshots", "", `{"ids":["aaaa1111"]}`, store.RoleAdmin, 503},
+		// Recently deleted: seen by everyone who sees the snapshots, put
+		// back by those who can restore one. Emptied early, in rootOnly, by
+		// the panel's administrator alone.
+		{"GET /orgs/{org}/bin", "", "", store.RoleViewer, 200},
+		{"POST /orgs/{org}/bin/{id}/put-back", "", "", store.RoleAdmin, 503},
+		{"DELETE /orgs/{org}/bin/{id}", "", "", store.RoleViewer, 503},
+		{"DELETE /orgs/{org}/bin", "", "", store.RoleViewer, 503},
 
 		{"GET /orgs/{org}/servers", "", "", store.RoleViewer, 200},
 		{"POST /orgs/{org}/servers", "", `{"name":"by-{who}","spec":{"eula":true,"version":"1.21.4"}}`, store.RoleAdmin, 201},
@@ -384,7 +391,8 @@ func TestOrganizationRoutes(t *testing.T) {
 	// rootOnly are for those who run the install: members get 403 whatever
 	// their role. What is offsite under an organization's name may be a
 	// deleted organization's, so it is not its members' to list or take.
-	rootOnly := map[string]bool{"GET /orgs/{org}/offsite/snapshots": true, "POST /orgs/{org}/offsite/fetch": true, "PUT /orgs/{org}/domains": true}
+	rootOnly := map[string]bool{"GET /orgs/{org}/offsite/snapshots": true, "POST /orgs/{org}/offsite/fetch": true, "PUT /orgs/{org}/domains": true,
+		"DELETE /orgs/{org}/bin/{id}": true, "DELETE /orgs/{org}/bin": true}
 
 	p := newPanel(t)
 	for _, who := range everyone {

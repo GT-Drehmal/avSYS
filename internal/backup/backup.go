@@ -128,6 +128,8 @@ type Manager struct {
 	// rejectedMu holds the files of rejected snapshots to one change at a
 	// time; see reject.
 	rejectedMu sync.Mutex
+	// binMu holds the files of the bin to one change at a time; see bin.go.
+	binMu sync.Mutex
 	// changed is when an organization's snapshots last changed, as far as
 	// this process has seen.
 	changed map[string]time.Time
@@ -324,9 +326,14 @@ func (m *Manager) lock(org string) *sync.RWMutex {
 // the panel cannot read, a repository it has no restic for, or one that has
 // lost its configuration. Callers deciding whether it is safe to delete must
 // treat that as "some".
+//
+// Snapshots in the bin count: they are still there, and can be put back.
 func (m *Manager) Holds(ctx context.Context, org string) (count int, known bool) {
 	if m.exists(org) {
-		list, err := m.List(ctx, org)
+		lock := m.lock(org)
+		lock.RLock()
+		defer lock.RUnlock()
+		list, err := m.present(ctx, org)
 		return len(list), err == nil
 	}
 	// No usable repository. That is only "none" if nothing is there at all.
@@ -512,10 +519,57 @@ func (m *Manager) List(ctx context.Context, org string) ([]Snapshot, error) {
 	return m.list(ctx, org)
 }
 
+// Inventory is List, and with it every snapshot the repository holds, those
+// in the bin among them: both from one reading of the repository, so that a
+// snapshot put in the bin or back meanwhile is in one or the other.
+func (m *Manager) Inventory(ctx context.Context, org string) (listed, held []Snapshot, err error) {
+	lock := m.lock(org)
+	lock.RLock()
+	defer lock.RUnlock()
+	held, err = m.present(ctx, org)
+	if err != nil {
+		return nil, nil, err
+	}
+	binned, err := m.binned(org)
+	if err != nil {
+		return nil, nil, err
+	}
+	return notBinned(held, binned), held, nil
+}
+
 // list is List for callers that already hold the repository's lock. Taking a
 // read lock twice deadlocks as soon as a writer is waiting in between.
-// Rejected snapshots are left out, and those with a copy offsite say so.
+// Rejected snapshots and those in the bin are left out, and those with a
+// copy offsite say so.
 func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
+	present, err := m.present(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	binned, err := m.binned(org)
+	if err != nil {
+		return nil, err
+	}
+	return notBinned(present, binned), nil
+}
+
+// notBinned is a list without those in the bin.
+func notBinned(present []Snapshot, binned map[string]BinEntry) []Snapshot {
+	if len(binned) == 0 {
+		return present
+	}
+	out := present[:0:0]
+	for _, s := range present {
+		if _, in := binned[s.ID]; !in {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// present is list with the snapshots in the bin too: everything the
+// repository holds and will go on holding for now.
+func (m *Manager) present(ctx context.Context, org string) ([]Snapshot, error) {
 	all, err := m.listAll(ctx, org)
 	if err != nil {
 		return nil, err
@@ -535,7 +589,7 @@ func (m *Manager) list(ctx context.Context, org string) ([]Snapshot, error) {
 	return out, nil
 }
 
-// listAll is list with the rejected snapshots too.
+// listAll is present with the rejected snapshots too.
 func (m *Manager) listAll(ctx context.Context, org string) ([]Snapshot, error) {
 	if !m.exists(org) {
 		return []Snapshot{}, nil
@@ -654,7 +708,7 @@ func (m *Manager) copyAs(ctx context.Context, org, id, host, by string, only []s
 	// What is there already, so that the one made is told apart from them:
 	// src itself may be under host, and so may a copy of it left by one
 	// that was cut short.
-	before, err := m.list(ctx, org)
+	before, err := m.present(ctx, org)
 	if err != nil {
 		return nil, err
 	}
@@ -1198,6 +1252,12 @@ func (m *Manager) DeleteMany(ctx context.Context, org string, ids []string) erro
 	lock := m.lock(org)
 	lock.Lock()
 	defer lock.Unlock()
+	return m.deleteMany(ctx, org, ids)
+}
+
+// deleteMany is DeleteMany with the lock held alone. Snapshots in the bin
+// are removed as any other.
+func (m *Manager) deleteMany(ctx context.Context, org string, ids []string) error {
 	// Rejected ones too, which are only ever removed.
 	list, err := m.listAll(ctx, org)
 	if err != nil {
@@ -1243,9 +1303,12 @@ func (m *Manager) DeleteMany(ctx context.Context, org string, ids []string) erro
 // ID: those are kept besides what the policy keeps. Which are spared is
 // asked once the repository is held, so that one spared through Held
 // meanwhile is not missed. The space is not given back until Prune.
+//
+// Those in the bin are not weighed at all: the policy is applied as if they
+// were not there, so that one deleted never takes the place of one that was
+// not, and they wait out their time there whatever the policy says.
 func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spare func() (map[string]bool, error)) (int, error) {
-	args, err := forgetArgs(server, keep)
-	if err != nil {
+	if err := checkPolicy(server, keep); err != nil {
 		return 0, err
 	}
 	if !m.exists(org) {
@@ -1266,13 +1329,14 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spa
 	if _, err := m.restic(ctx, org, "unlock", "--remove-all"); err != nil {
 		return 0, err
 	}
-	// Asked first what it would remove, so that it can be noted before it
-	// is gone. Nothing else touches the repository in between: the lock is
-	// held alone.
-	found, err := m.forgetting(ctx, org, append(args, "--dry-run")...)
+	// What it removes is worked out first, so that it can be noted before
+	// it is gone. Nothing else removes anything in between: the lock is held
+	// alone.
+	list, err := m.list(ctx, org)
 	if err != nil {
 		return 0, err
 	}
+	_, found := applyPolicy(scheduledOf(list, server), keep)
 	spared := map[string]bool{}
 	if spare != nil && len(found) > 0 {
 		if spared, err = spare(); err != nil {
@@ -1284,7 +1348,7 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spa
 	for _, r := range found {
 		if !spared[r.ID] {
 			ids = append(ids, r.ID)
-			lineages = append(lineages, r.snapshot().Lineage)
+			lineages = append(lineages, r.Lineage)
 		}
 	}
 	if len(ids) == 0 {
@@ -1299,95 +1363,97 @@ func (m *Manager) Forget(ctx context.Context, org, server string, keep Keep, spa
 	return len(ids), nil
 }
 
-// forgetArgs is the forget that applies a policy to one server's scheduled
-// snapshots, and to nothing else.
-func forgetArgs(server string, keep Keep) ([]string, error) {
+// checkPolicy refuses a policy for a server that could name no snapshot, and
+// one that would keep nothing, which would let go of all of them.
+func checkPolicy(server string, keep Keep) error {
 	if !tagPattern.MatchString(server) {
-		return nil, fmt.Errorf("%q cannot name a snapshot", server)
+		return fmt.Errorf("%q cannot name a snapshot", server)
 	}
-	// With nothing to keep restic would be asked to forget all of them.
 	if keep.Daily+keep.Weekly+keep.Monthly+keep.Yearly <= 0 {
-		return nil, errors.New("a retention policy has to keep something")
+		return errors.New("a retention policy has to keep something")
 	}
-	args := []string{"forget", "--json", "--host", server, "--tag", "trigger=" + TriggerScheduled, "--group-by", "host"}
-	for flag, n := range map[string]int{"--keep-daily": keep.Daily, "--keep-weekly": keep.Weekly, "--keep-monthly": keep.Monthly, "--keep-yearly": keep.Yearly} {
-		if n > 0 {
-			args = append(args, flag, fmt.Sprint(n))
+	return nil
+}
+
+// scheduledOf is one server's scheduled snapshots out of a list: what a
+// policy is applied to.
+func scheduledOf(list []Snapshot, server string) []Snapshot {
+	var out []Snapshot
+	for _, s := range list {
+		if s.Server == server && s.Trigger == TriggerScheduled {
+			out = append(out, s)
 		}
 	}
-	return args, nil
+	return out
+}
+
+// applyPolicy applies a retention policy to snapshots as restic's forget
+// does (ApplyPolicy in restic 0.19, for the rules avSYS sets), and says,
+// for each it keeps, which rules keep it, and which it lets go of. It is
+// done here rather than by restic so that it is applied to the snapshots
+// asked, those in the bin left out, which restic cannot be told.
+//
+// Newest first, each rule keeps the newest of each day, week, month or year
+// until it has kept as many as it says. One that still has some to keep
+// also keeps the oldest snapshot of all, to keep the history as long as it
+// can. A week is an ISO week. Each is told in the time zone its snapshot
+// was taken in, as restic tells it.
+func applyPolicy(list []Snapshot, keep Keep) (kept map[string][]string, remove []Snapshot) {
+	list = slices.Clone(list)
+	sort.SliceStable(list, func(i, j int) bool { return list[i].Time.After(list[j].Time) })
+	rules := []struct {
+		count int
+		of    func(time.Time) int
+		last  int
+		name  string
+	}{
+		{keep.Daily, func(t time.Time) int { return t.Year()*10000 + int(t.Month())*100 + t.Day() }, -1, "daily"},
+		{keep.Weekly, func(t time.Time) int { y, w := t.ISOWeek(); return y*100 + w }, -1, "weekly"},
+		{keep.Monthly, func(t time.Time) int { return t.Year()*100 + int(t.Month()) }, -1, "monthly"},
+		{keep.Yearly, func(t time.Time) int { return t.Year() }, -1, "yearly"},
+	}
+	kept = map[string][]string{}
+	for nr, s := range list {
+		var why []string
+		for i := range rules {
+			r := &rules[i]
+			if r.count <= 0 {
+				continue
+			}
+			if v := r.of(s.Time); v != r.last || nr == len(list)-1 {
+				r.last = v
+				r.count--
+				why = append(why, r.name)
+			}
+		}
+		if len(why) > 0 {
+			kept[s.ID] = why
+		} else {
+			remove = append(remove, s)
+		}
+	}
+	return kept, remove
 }
 
 // Kept says, for each of a server's scheduled snapshots that the policy
 // keeps, which of its rules keep it: "daily", "weekly", "monthly", "yearly".
 // One that is not in the answer would be removed the next time the policy is
 // applied. Nothing is changed.
+//
+// Those in the bin are left out, as Forget leaves them out.
 func (m *Manager) Kept(ctx context.Context, org, server string, keep Keep) (map[string][]string, error) {
-	args, err := forgetArgs(server, keep)
-	if err != nil {
+	if err := checkPolicy(server, keep); err != nil {
 		return nil, err
 	}
-	kept := map[string][]string{}
 	if !m.exists(org) {
-		return kept, nil
+		return map[string][]string{}, nil
 	}
-	lock := m.lock(org)
-	lock.RLock()
-	defer lock.RUnlock()
-	// Only asked what it would do, which needs no lock on the repository
-	// and so does not wait for, or hold up, a snapshot being taken.
-	out, err := m.restic(ctx, org, append(args, "--dry-run", "--no-lock")...)
+	list, err := m.List(ctx, org)
 	if err != nil {
 		return nil, err
 	}
-	// restic prints nothing at all when no snapshot matched.
-	if len(bytes.TrimSpace(out)) == 0 {
-		return kept, nil
-	}
-	var groups []struct {
-		Reasons []struct {
-			Snapshot resticSnapshot `json:"snapshot"`
-			Matches  []string       `json:"matches"`
-		} `json:"reasons"`
-	}
-	if err := json.Unmarshal(out, &groups); err != nil {
-		return nil, fmt.Errorf("reading what the policy keeps: %w", err)
-	}
-	for _, g := range groups {
-		for _, r := range g.Reasons {
-			rules := []string{}
-			for _, match := range r.Matches {
-				// "daily snapshot", "weekly snapshot", ...
-				rules = append(rules, strings.TrimSuffix(match, " snapshot"))
-			}
-			kept[r.Snapshot.ID] = rules
-		}
-	}
+	kept, _ := applyPolicy(scheduledOf(list, server), keep)
 	return kept, nil
-}
-
-// forgetting runs a forget and returns what it removed, or with --dry-run
-// would remove.
-func (m *Manager) forgetting(ctx context.Context, org string, args ...string) ([]resticSnapshot, error) {
-	out, err := m.restic(ctx, org, args...)
-	if err != nil {
-		return nil, err
-	}
-	var groups []struct {
-		Remove []resticSnapshot `json:"remove"`
-	}
-	// restic prints nothing at all when no snapshot matched.
-	if len(bytes.TrimSpace(out)) == 0 {
-		return nil, nil
-	}
-	if err := json.Unmarshal(out, &groups); err != nil {
-		return nil, fmt.Errorf("reading what was forgotten: %w", err)
-	}
-	var found []resticSnapshot
-	for _, g := range groups {
-		found = append(found, g.Remove...)
-	}
-	return found, nil
 }
 
 // Held runs fn with one snapshot, by its full ID or an unambiguous prefix,
@@ -1437,7 +1503,7 @@ func (m *Manager) Destroy(org string) error {
 		return err
 	}
 	// The offsite copy is left as it is: nothing here says to remove it.
-	for _, file := range []string{m.removedFile(org), m.statusFile(org), m.copiesFile(org)} {
+	for _, file := range []string{m.removedFile(org), m.statusFile(org), m.copiesFile(org), m.binFile(org), m.rejectedFile(org)} {
 		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -1670,7 +1736,16 @@ func (m *Manager) snapshot(ctx context.Context, org string, ws *ssh.Client, meta
 		args = append(args, "--exclude", dataDir+path)
 	}
 	if meta.SkipUnchanged {
-		args = append(args, "--skip-if-unchanged")
+		parent, skip, err := m.unchangedFrom(ctx, org, meta.Server)
+		if err != nil {
+			return nil, nil, err
+		}
+		if skip {
+			args = append(args, "--skip-if-unchanged")
+		}
+		if parent != "" {
+			args = append(args, "--parent", parent)
+		}
 	}
 	f := &follow{progress: progress}
 	stderr, err := runCtx(ctx, ws, resticIn(socket, args...), strings.NewReader(secret+"\n"), f.line)

@@ -5,7 +5,7 @@ import { PicturePicker, PictureZoom } from "../components/Picture";
 import { useOrg } from "../components/Shell";
 import { Button, Confirm, Field, Input, Notice, PageHeader, Section, Textarea } from "../components/ui";
 import { api, atLeast, orgIcon } from "../lib/api";
-import { keys, useAction, useOrgSnapshots } from "../lib/queries";
+import { keys, useAction, useBin, useMe, useOrgSnapshots } from "../lib/queries";
 import { toast } from "../lib/toast";
 
 export function OrgSettings() {
@@ -20,7 +20,15 @@ export function OrgSettings() {
   // the name there is the confirmation the API asks for. That holds when the
   // snapshots could not be counted, too: the API then assumes there are some.
   const listed = useOrgSnapshots(org);
-  const snapshots = listed.data?.available ? listed.data.snapshots.length : undefined;
+  const bin = useBin(org);
+  const binned = bin.data?.available ? bin.data.snapshots.length : 0;
+  const snapshots = listed.data?.available ? listed.data.snapshots.length + binned : undefined;
+  // Deleted snapshots are kept a while, which deleting the organization
+  // would cut short: its owners delete its snapshots first, and wait. The
+  // panel's administrator need not.
+  const days = bin.data?.available ? bin.data.days : 0;
+  const waits = !useMe().data?.user.isAdmin && days > 0 && (snapshots === undefined || snapshots > 0);
+  const kept = days === 1 ? "1 day" : `${days} days`;
   const remove = useAction(() => api.del(`/orgs/${org}?snapshots=delete`), [keys.me]);
   const qc = useQueryClient();
   if (!membership) return null;
@@ -54,9 +62,16 @@ export function OrgSettings() {
         </form>
       </Section>
       <Domains org={org} />
-      <Section title="Delete organization" description="Delete the organization's servers first. Their snapshots are deleted too.">
+      <Section title="Delete organization" description={waits ? "Delete its servers and their snapshots first." : "Delete the organization's servers first. Their snapshots are deleted too."}>
+        {waits && (
+          <Notice>
+            {snapshots === binned
+              ? `Its deleted snapshots are kept for ${kept}. It can be deleted once they are gone.`
+              : `Deleted snapshots are kept for ${kept}. It can be deleted once they are gone.`}
+          </Notice>
+        )}
         <div>
-          <Button variant="danger" onClick={() => setDeleting(true)}>
+          <Button variant="danger" disabled={waits} onClick={() => setDeleting(true)}>
             Delete {membership.name}
           </Button>
         </div>

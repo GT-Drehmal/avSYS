@@ -443,9 +443,15 @@ func TestDeletingAnOrganizationWithAnUnreadableRepository(t *testing.T) {
 		t.Fatalf("the organization is gone after a refused delete: %d", got)
 	}
 
-	// Asked for by name, it goes, repository and all, and the name is free
-	// with nothing left under it.
-	if got, code := p.do("outsider", "DELETE", "/orgs/beta?snapshots=delete", ""); got != 204 {
+	// Asked for by name, it is still not deleted by its owner: what cannot
+	// be counted may be in Recently deleted, which deleting the organization
+	// would cut short.
+	if got, code := p.do("outsider", "DELETE", "/orgs/beta?snapshots=delete", ""); got != 409 || code != "has_snapshots" {
+		t.Fatalf("confirmed delete by its owner: got %d %q, want 409 has_snapshots", got, code)
+	}
+	// By the panel's administrator it goes, repository and all, and the name
+	// is free with nothing left under it.
+	if got, code := p.do("root", "DELETE", "/orgs/beta?snapshots=delete", ""); got != 204 {
 		t.Fatalf("confirmed delete: got %d %q, want 204", got, code)
 	}
 	if _, err := os.Stat(repository); !os.IsNotExist(err) {
@@ -464,7 +470,11 @@ func TestAnOrganizationOutlivesARepositoryThatCannotBeRemoved(t *testing.T) {
 	}
 	p.srv.Backups.Dir = filepath.Join(blocked, "under-a-file")
 
-	if got, _ := p.do("outsider", "DELETE", "/orgs/beta?snapshots=delete", ""); got != 500 {
+	// Its owner is refused before that, as what is there cannot be counted.
+	if got, _ := p.do("outsider", "DELETE", "/orgs/beta?snapshots=delete", ""); got != 409 {
+		t.Fatalf("delete by its owner: got %d, want 409", got)
+	}
+	if got, _ := p.do("root", "DELETE", "/orgs/beta?snapshots=delete", ""); got != 500 {
 		t.Fatalf("delete with an unremovable repository: got %d, want 500", got)
 	}
 	if got, _ := p.do("outsider", "GET", "/orgs/beta", ""); got != 200 {

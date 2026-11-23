@@ -525,13 +525,47 @@ A snapshot is taken **inside the server's workspace**, which has the files:
 
 Through that channel a server can add to its organization's repository and
 read from it, but not delete or overwrite anything. Only the panel removes
-snapshots, with `restic forget` and `prune`, as retention or a person
-says. Retention asks restic what the policy would remove (`--dry-run`),
-leaves out snapshots that have a name in the panel (read while it holds
-the repository, which naming a snapshot holds too), and forgets the rest
-by ID. A snapshot's name goes when it does; any left for a snapshot the
-repository no longer lists are dropped the next time the organization's
-snapshots are listed.
+snapshots, with `restic forget` and `prune`, as retention says, or once a
+snapshot a person deleted has waited out its days (see Recently deleted
+below). Retention works out what the policy would remove itself, as
+restic's `forget --keep-*` does (a test holds the two to the same answer),
+over the server's scheduled snapshots that are neither rejected nor in the
+bin, which restic cannot be told to leave out. It leaves out snapshots that
+have a name in the panel (read while it holds the repository, which naming
+a snapshot holds too), and forgets the rest by ID. A snapshot's name goes
+when it does; any left for a snapshot the repository no longer holds are
+dropped the next time the organization's snapshots are listed, read in the
+same pass as the list.
+
+**Recently deleted.** A snapshot someone deletes is not forgotten at once.
+The panel notes it in `/backups/<org>.bin`, beside the repository, with
+when and by whom, and leaves it in the repository whole, under its own ID. Every list and lookup
+of the repository leaves out what that file names, as it does rejected
+snapshots (`<org>.rejected`), so nothing can restore it, copy it or make a
+server of it; its name in the panel and its server's notes are kept for
+when it is put back. **Put back** takes it off the file. Once its days are
+up (`binDays`, a setting of the panel, 7 unless changed; 0 forgets at once
+as before), the panel's bin loop, which looks once a minute at each file
+alone, forgets and prunes what is due in one `restic forget --prune`, with
+the repository held alone and the same lock handling as any removal
+(`unlock --remove-all`, `--retry-lock`), and only then takes it off the
+file. Only the instance admin can do that sooner, and deleting an
+organization, which removes the repository and the file, is refused to its
+owners while anything is there to remove, also when restic cannot be run to
+count it.
+
+Retention never goes through the bin: what the policy lets go of is
+forgotten at once. The policy is applied as if what is in the bin were not
+there: a deleted snapshot never takes the place of one that was not, and
+waits out its days whatever the policy says. A snapshot taken only if
+something changed (the daily
+one, the final one, the one a copy is made from) is compared with the
+newest of its server's that is not in the bin (`--parent`), or taken
+whatever changed if all of them are: otherwise emptying the bin would leave
+no copy of the files as they are. A deleted server's name stays reserved
+while it has snapshots in the bin. The repository is what counts: losing
+the file only brings what was in the bin back into the lists, and the
+offsite copy keeps a snapshot in the bin until it is removed for good here.
 
 **Restore** takes a snapshot first, stops the server, restores the files
 with `restic restore --delete` inside the workspace, and puts the

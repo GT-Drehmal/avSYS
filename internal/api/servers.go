@@ -709,6 +709,17 @@ func (s *Server) nameIsFree(ctx context.Context, a *access, name string) error {
 			return errNameHasHistory(name)
 		}
 	}
+	// Nor while they are in the bin, from which they can be put back.
+	binned, err := s.Backups.BinList(ctx, a.Org.Slug)
+	if err != nil {
+		s.Log.Warn("could not list deleted snapshots to see whether a name has history", "org", a.Org.Slug, "name", name, "error", err)
+		return nil
+	}
+	for _, b := range binned {
+		if b.Server == name && !isTemplate(&b.Snapshot) {
+			return &Error{Status: http.StatusConflict, Code: "name_has_history", Message: fmt.Sprintf("A deleted server named %s has snapshots in Recently deleted. Put them back and bring that server back, or choose another name.", name)}
+		}
+	}
 	return nil
 }
 

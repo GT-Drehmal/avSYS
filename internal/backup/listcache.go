@@ -64,7 +64,8 @@ func (m *Manager) Present(org string) (ids map[string]bool, known bool) {
 }
 
 // there says whether a snapshot, by its full ID, is in an organization's
-// repository and not rejected, where that can be told without restic.
+// repository and neither rejected nor in the bin, where that can be told
+// without restic.
 func (m *Manager) there(org, id string) bool {
 	if len(id) != 64 || !idPattern.MatchString(id) {
 		return false
@@ -74,7 +75,12 @@ func (m *Manager) there(org, id string) bool {
 		return false
 	}
 	rejected, err := m.rejected(org)
-	return err == nil && !rejected[id]
+	if err != nil || rejected[id] {
+		return false
+	}
+	binned, err := m.binned(org)
+	_, in := binned[id]
+	return err == nil && !in
 }
 
 // kept is what is kept of a repository in the state given, if that is the

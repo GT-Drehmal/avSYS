@@ -89,6 +89,15 @@ func (s *Server) forgetNotesOfGone(ctx context.Context, a *access, names ...stri
 		if err != nil {
 			return
 		}
+		// Those in the bin can be put back, and the server brought back
+		// from them.
+		binned, err := s.Backups.BinList(ctx, a.Org.Slug)
+		if err != nil {
+			return
+		}
+		for _, b := range binned {
+			list = append(list, b.Snapshot)
+		}
 		for _, snap := range list {
 			if !isTemplate(&snap) {
 				gone = slices.DeleteFunc(gone, func(name string) bool { return name == snap.Server })

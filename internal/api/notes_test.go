@@ -216,13 +216,26 @@ func TestSnapshotNames(t *testing.T) {
 		t.Errorf("unnamed, still kept: %v", names)
 	}
 
-	// Deleted, its name goes with it, and so do the notes of its server,
-	// which can no longer be brought back.
+	// Deleted, it keeps its name and its server's notes while it can be
+	// put back. Once it is gone for good, its name goes with it, and so do
+	// the notes of its server, which can no longer be brought back.
 	if code, _ := p.call("admin", "PATCH", path, `{"name":"Last"}`); code != 200 {
 		t.Fatal(code)
 	}
 	if code, _ := p.call("admin", "DELETE", path, ""); code != http.StatusNoContent {
 		t.Fatalf("deleting: %d", code)
+	}
+	if code, _ := p.call("viewer", "GET", "/orgs/alpha/snapshots", ""); code != 200 {
+		t.Fatal(code)
+	}
+	if names, _ := p.srv.Store.SnapshotNames(ctx, org.ID); names[l.src].Name != "Last" {
+		t.Errorf("one in the bin lost its name: %v", names)
+	}
+	if notes, _ := p.srv.Store.ServerNotes(ctx, org.ID, "survival"); notes != "Our first world." {
+		t.Errorf("the notes of a server that can still be brought back went: %q", notes)
+	}
+	if code, _ := p.call("root", "DELETE", "/orgs/alpha/bin/"+short, ""); code != http.StatusOK {
+		t.Fatalf("emptying: %d", code)
 	}
 	if names, _ := p.srv.Store.SnapshotNames(ctx, org.ID); len(names) != 0 {
 		t.Errorf("a deleted snapshot's name stayed: %v", names)

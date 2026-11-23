@@ -54,6 +54,9 @@ type panelView struct {
 	CurseForge string `json:"curseforge"`
 	// Accent is the panel's: that of anyone who has not picked their own.
 	Accent string `json:"accent"`
+	// BinDays is how many days a deleted snapshot is kept before it is
+	// removed for good; 0 removes it at once.
+	BinDays int `json:"binDays"`
 }
 
 // selfDeployment is the panel's own Deployment and the index of the panel's
@@ -86,7 +89,7 @@ func (s *Server) autoUpdate(ctx context.Context) bool {
 
 // panelOf is what the instance administrator is shown of the panel.
 func (s *Server) panelOf(ctx context.Context) panelView {
-	v := panelView{Version: s.Config.Version, AutoUpdate: s.autoUpdate(ctx), CurseForge: s.curseForgeKeyFrom(ctx), Accent: s.panelAccent(ctx)}
+	v := panelView{Version: s.Config.Version, AutoUpdate: s.autoUpdate(ctx), CurseForge: s.curseForgeKeyFrom(ctx), Accent: s.panelAccent(ctx), BinDays: s.binDays(ctx)}
 	// Only a release that looks for newer ones has somewhere to go.
 	if s.Updates == nil || !release.IsRelease(s.Config.Version) {
 		return v
@@ -179,7 +182,8 @@ func (s *Server) getPanel(w http.ResponseWriter, r *http.Request, u *store.User)
 }
 
 // setPanel sets whether the panel takes fix releases by itself, its
-// CurseForge API key ("" removes the one entered in it), and its accent.
+// CurseForge API key ("" removes the one entered in it), its accent, and
+// how many days deleted snapshots are kept.
 func (s *Server) setPanel(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	if !u.IsAdmin {
 		return errForbidden
@@ -188,12 +192,18 @@ func (s *Server) setPanel(w http.ResponseWriter, r *http.Request, u *store.User)
 		AutoUpdate    *bool   `json:"autoUpdate"`
 		CurseForgeKey *string `json:"curseforgeKey"`
 		Accent        *string `json:"accent"`
+		BinDays       *int    `json:"binDays"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	if in.AutoUpdate == nil && in.CurseForgeKey == nil && in.Accent == nil {
+	if in.AutoUpdate == nil && in.CurseForgeKey == nil && in.Accent == nil && in.BinDays == nil {
 		return errBadRequest("Say what to change.")
+	}
+	if in.BinDays != nil {
+		if err := s.setBinDays(r.Context(), u, *in.BinDays); err != nil {
+			return err
+		}
 	}
 	if in.Accent != nil {
 		if err := s.setPanelAccent(r.Context(), u, *in.Accent); err != nil {

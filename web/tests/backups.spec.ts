@@ -34,7 +34,8 @@ test("a server is opened to see its snapshots, and one of them to see what it ho
   await snapshots.first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Snapshot of survival" })).toBeVisible();
-  await expect(dialog).toContainText("Kept by the schedule, as the newest of its day.");
+  // The newest scheduled one, which each of the organization's rules keeps.
+  await expect(dialog).toContainText("Kept by the schedule, as the newest of its day, week, month and year.");
   await expect(dialog).toContainText("Paper 1.21.4");
   await expect(dialog).toContainText("difficulty=hard");
   await expect(dialog.getByText("LuckPerms", { exact: true })).toBeVisible();

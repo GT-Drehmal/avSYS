@@ -262,6 +262,8 @@ func snapshotError(err error) error {
 	switch {
 	case errors.Is(err, backup.ErrNotFound):
 		return errNoSuchSnapshot
+	case errors.Is(err, backup.ErrNotBinned):
+		return &Error{Status: http.StatusNotFound, Code: "not_found", Message: "That snapshot is not in Recently deleted."}
 	case errors.Is(err, backup.ErrUnavailable):
 		return errNoBackups
 	}
@@ -434,12 +436,14 @@ func (s *Server) listOrgSnapshots(w http.ResponseWriter, r *http.Request, u *sto
 		return nil
 	}
 	listed := time.Now()
-	all, err := s.Backups.List(r.Context(), a.Org.Slug)
+	// The names of those no longer there go. What is held is the whole of
+	// it, those in the bin with theirs kept for when they are put back, read
+	// with the list: one put in the bin or back meanwhile is in it.
+	all, held, err := s.Backups.Inventory(r.Context(), a.Org.Slug)
 	if err != nil {
 		return err
 	}
-	// The names of those no longer there go: this is the whole list.
-	s.forgetGoneNames(context.WithoutCancel(r.Context()), a, all, listed)
+	s.forgetGoneNames(context.WithoutCancel(r.Context()), a, held, listed)
 	// Templates' are on their own page.
 	for _, snap := range s.named(r.Context(), a, all) {
 		if !isTemplate(&snap.Snapshot) {
@@ -1324,8 +1328,7 @@ func (s *Server) deleteSnapshots(w http.ResponseWriter, r *http.Request, u *stor
 			snaps = append(snaps, snap)
 		}
 	}
-	ids := make([]string, len(snaps))
-	for i, snap := range snaps {
+	for _, snap := range snaps {
 		release, ok := s.ops.remove(a.Namespace, snap.ID)
 		if !ok {
 			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("The snapshot of %s from %s is being restored. Nothing was deleted.", snap.Server, snap.Time.Format("2 Jan 15:04"))}
@@ -1336,32 +1339,18 @@ func (s *Server) deleteSnapshots(w http.ResponseWriter, r *http.Request, u *stor
 		} else if held != "" {
 			return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s still needs the snapshot of %s from %s. Nothing was deleted. Restore it first.", held, snap.Server, snap.Time.Format("2 Jan 15:04"))}
 		}
-		ids[i] = snap.ID
 	}
-	if err := s.Backups.DeleteMany(context.WithoutCancel(r.Context()), a.Org.Slug, ids); err != nil {
-		return snapshotError(err)
+	// Kept a while in the bin, unless the panel keeps none.
+	days, err := s.binSnapshots(context.WithoutCancel(r.Context()), a, u, snaps)
+	if err != nil {
+		return err
 	}
-	ctx := context.WithoutCancel(r.Context())
-	if err := s.Store.DeleteSnapshotNames(ctx, a.Org.ID, ids...); err != nil {
-		s.Log.Warn("could not forget the names of deleted snapshots", "org", a.Org.Slug, "error", err)
-	}
-	servers := map[string]bool{}
-	var names []string
-	for _, snap := range snaps {
-		s.audit(r.Context(), u, a.Org, "snapshot.delete", snap.Server, snap.ID)
-		if !servers[snap.Server] {
-			servers[snap.Server] = true
-			names = append(names, snap.Server)
-			s.Events.Publish(Event{Type: "operation.done", Namespace: a.Namespace, Data: operationDone{Kind: "delete", Org: a.Org.Slug, Server: snap.Server}})
-		}
-	}
-	// A deleted server with no snapshots left cannot be brought back.
-	s.forgetNotesOfGone(ctx, a, names...)
-	writeJSON(w, http.StatusOK, map[string]int{"deleted": len(snaps)})
+	writeJSON(w, http.StatusOK, map[string]int{"deleted": len(snaps), "keptDays": days})
 	return nil
 }
 
-// deleteSnapshot removes one snapshot for good. Nothing else ever removes a
+// deleteSnapshot deletes one snapshot: into the bin, for as long as the panel
+// keeps deleted ones, and then for good. Nothing else ever removes a
 // snapshot of a server that has been deleted.
 func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store.User) error {
 	a, err := s.org(r, u, store.RoleAdmin)
@@ -1388,16 +1377,10 @@ func (s *Server) deleteSnapshot(w http.ResponseWriter, r *http.Request, u *store
 	} else if held != "" {
 		return &Error{Status: http.StatusConflict, Code: "in_use", Message: fmt.Sprintf("%s still needs this snapshot. Restore it first.", held)}
 	}
-	if err := s.Backups.Delete(context.WithoutCancel(r.Context()), a.Org.Slug, snap.ID); err != nil {
-		return snapshotError(err)
+	// Kept a while in the bin, unless the panel keeps none.
+	if _, err := s.binSnapshots(context.WithoutCancel(r.Context()), a, u, []*backup.Snapshot{snap}); err != nil {
+		return err
 	}
-	ctx := context.WithoutCancel(r.Context())
-	if err := s.Store.DeleteSnapshotNames(ctx, a.Org.ID, snap.ID); err != nil {
-		s.Log.Warn("could not forget the name of a deleted snapshot", "org", a.Org.Slug, "snapshot", snap.ID, "error", err)
-	}
-	s.audit(r.Context(), u, a.Org, "snapshot.delete", snap.Server, snap.ID)
-	s.Events.Publish(Event{Type: "operation.done", Namespace: a.Namespace, Data: operationDone{Kind: "delete", Org: a.Org.Slug, Server: snap.Server}})
-	s.forgetNotesOfGone(ctx, a, snap.Server)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
