@@ -656,7 +656,8 @@ removed for good. Until then it still uses storage.
 **Offsite copy.** Where the panel has a second place to keep snapshots,
 the **Backups** page says whether the copy is up to date. If this cluster's
 copy is lost, the panel's administrator can bring them all back from
-there.
+there. A snapshot in [Recently deleted](#recently-deleted) stays in the
+offsite copy until it is removed for good here.
 
 ## Templates
 

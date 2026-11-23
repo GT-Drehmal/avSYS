@@ -2,13 +2,16 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -322,5 +325,129 @@ func TestDestroyTakesTheBin(t *testing.T) {
 	}
 	if _, err := os.Stat(b.m.binFile("alpha")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the bin outlived its repository: %v", err)
+	}
+}
+
+// Retention is applied as if what is in the bin were not there: one deleted
+// never takes the place of one that was not. Keeping one day, a deleted
+// snapshot of Tuesday leaves Monday's kept, as the newest there is, rather
+// than letting it go for Tuesday's, which then waits out its own time.
+func TestRetentionWeighsNothingInTheBin(t *testing.T) {
+	b := newBinRepo(t)
+	ctx := t.Context()
+	m := b.m
+	monday := b.take("probe", TriggerScheduled, "2026-09-07 04:00:00")
+	tuesday := b.take("probe", TriggerScheduled, "2026-09-08 04:00:00")
+	if _, err := m.Bin(ctx, "alpha", []string{tuesday.ID}, "steve", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := m.Kept(ctx, "alpha", "probe", Keep{Daily: 1})
+	if err != nil || !slices.Equal(kept[monday.ID], []string{"daily"}) || kept[tuesday.ID] != nil {
+		t.Errorf("kept: %v, %v; want Monday's alone, as the newest day", kept, err)
+	}
+	removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 1}, nil)
+	if err != nil || removed != 0 {
+		t.Fatalf("retention removed %d, %v; want nothing", removed, err)
+	}
+	all, err := m.listAll(ctx, "alpha")
+	if err != nil || !slices.Equal(ids(all), sorted(monday.ID, tuesday.ID)) {
+		t.Errorf("left: %v, %v; want both", ids(all), err)
+	}
+	// Put back, Tuesday's is the newest day, and Monday's goes.
+	if _, err := m.PutBack(ctx, "alpha", []string{tuesday.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := m.Forget(ctx, "alpha", "probe", Keep{Daily: 1}, nil); err != nil || removed != 1 {
+		t.Fatalf("once put back, retention removed %d, %v; want Monday's", removed, err)
+	}
+	if all, _ := m.listAll(ctx, "alpha"); !slices.Equal(ids(all), []string{tuesday.ID}) {
+		t.Errorf("left: %v; want Tuesday's", ids(all))
+	}
+}
+
+// The policy is applied as restic's own forget applies it, which it was
+// before the bin needed it worked out here: the same kept, for the same
+// rules, and the same let go of, over days with several snapshots, weeks,
+// months and a year that end, and rules with more to keep than there is.
+func TestPolicyAsResticAppliesIt(t *testing.T) {
+	b := newBinRepo(t)
+	ctx := t.Context()
+	for _, when := range []string{
+		"2025-12-28 04:00:00", "2025-12-29 04:00:00", "2025-12-31 23:30:00", "2026-01-01 00:30:00",
+		"2026-01-01 04:00:00", "2026-01-04 04:00:00", "2026-01-05 04:00:00", "2026-01-05 16:00:00",
+		"2026-01-11 04:00:00", "2026-01-12 04:00:00", "2026-01-31 04:00:00", "2026-02-01 04:00:00",
+		"2026-02-14 04:00:00", "2026-02-28 04:00:00", "2026-03-01 04:00:00", "2026-03-02 04:00:00",
+		"2026-03-02 12:00:00", "2026-03-03 04:00:00",
+	} {
+		b.take("probe", TriggerScheduled, when)
+	}
+	b.take("probe", TriggerManual, "2026-03-04 04:00:00")
+	b.take("other", TriggerScheduled, "2026-03-04 04:00:00")
+	list, err := b.m.List(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []Keep{
+		{Daily: 1}, {Daily: 3}, {Daily: 7, Weekly: 4, Monthly: 12, Yearly: 2}, {Daily: 2, Weekly: 2},
+		{Weekly: 1, Monthly: 2}, {Monthly: 1}, {Yearly: 5}, {Daily: 40}, {Weekly: 3, Yearly: 1},
+	} {
+		args := []string{"forget", "--json", "--dry-run", "--no-lock", "--host", "probe", "--tag", "trigger=" + TriggerScheduled, "--group-by", "host"}
+		for flag, n := range map[string]int{"--keep-daily": keep.Daily, "--keep-weekly": keep.Weekly, "--keep-monthly": keep.Monthly, "--keep-yearly": keep.Yearly} {
+			if n > 0 {
+				args = append(args, flag, strconv.Itoa(n))
+			}
+		}
+		out, err := b.m.restic(ctx, "alpha", args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var groups []struct {
+			Remove  []resticSnapshot `json:"remove"`
+			Reasons []struct {
+				Snapshot resticSnapshot `json:"snapshot"`
+				Matches  []string       `json:"matches"`
+			} `json:"reasons"`
+		}
+		if err := json.Unmarshal(out, &groups); err != nil {
+			t.Fatal(err)
+		}
+		wantKept, wantRemoved := map[string][]string{}, []string{}
+		for _, g := range groups {
+			for _, r := range g.Reasons {
+				for _, m := range r.Matches {
+					// "daily snapshot", "oldest daily snapshot", ...
+					wantKept[r.Snapshot.ID] = append(wantKept[r.Snapshot.ID], strings.TrimSuffix(strings.TrimPrefix(m, "oldest "), " snapshot"))
+				}
+			}
+			for _, r := range g.Remove {
+				wantRemoved = append(wantRemoved, r.ID)
+			}
+		}
+		kept, removed := applyPolicy(scheduledOf(list, "probe"), keep)
+		if !reflect.DeepEqual(kept, wantKept) {
+			t.Errorf("%+v kept:\n %v\nrestic keeps:\n %v", keep, kept, wantKept)
+		}
+		if got := ids(removed); !slices.Equal(got, sorted(wantRemoved...)) {
+			t.Errorf("%+v lets go of:\n %v\nrestic lets go of:\n %v", keep, got, sorted(wantRemoved...))
+		}
+	}
+}
+
+// Inventory reads the list and all that is held together: one in the bin is
+// held, not listed.
+func TestInventory(t *testing.T) {
+	b := newBinRepo(t)
+	ctx := t.Context()
+	one := b.take("probe", TriggerManual, "")
+	two := b.take("probe", TriggerManual, "")
+	if _, err := b.m.Bin(ctx, "alpha", []string{two.ID}, "steve", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	listed, held, err := b.m.Inventory(ctx, "alpha")
+	if err != nil || !slices.Equal(ids(listed), []string{one.ID}) || !slices.Equal(ids(held), sorted(one.ID, two.ID)) {
+		t.Errorf("inventory: listed %v, held %v, %v", ids(listed), ids(held), err)
+	}
+	if listed, held, err := (&Manager{Dir: t.TempDir(), Restic: "restic"}).Inventory(ctx, "alpha"); err != nil || len(listed)+len(held) != 0 {
+		t.Errorf("with no repository: %v %v %v", listed, held, err)
 	}
 }

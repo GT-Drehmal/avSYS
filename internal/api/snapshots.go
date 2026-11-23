@@ -436,19 +436,14 @@ func (s *Server) listOrgSnapshots(w http.ResponseWriter, r *http.Request, u *sto
 		return nil
 	}
 	listed := time.Now()
-	all, err := s.Backups.List(r.Context(), a.Org.Slug)
+	// The names of those no longer there go. What is held is the whole of
+	// it, those in the bin with theirs kept for when they are put back, read
+	// with the list: one put in the bin or back meanwhile is in it.
+	all, held, err := s.Backups.Inventory(r.Context(), a.Org.Slug)
 	if err != nil {
 		return err
 	}
-	// The names of those no longer there go: this is the whole list, with
-	// those in the bin, which keep theirs for when they are put back.
-	if binned, err := s.Backups.BinList(r.Context(), a.Org.Slug); err == nil {
-		every := slices.Clone(all)
-		for _, b := range binned {
-			every = append(every, b.Snapshot)
-		}
-		s.forgetGoneNames(context.WithoutCancel(r.Context()), a, every, listed)
-	}
+	s.forgetGoneNames(context.WithoutCancel(r.Context()), a, held, listed)
 	// Templates' are on their own page.
 	for _, snap := range s.named(r.Context(), a, all) {
 		if !isTemplate(&snap.Snapshot) {

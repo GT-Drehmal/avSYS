@@ -397,11 +397,7 @@ case "$1" in
     fi ;;
   stats) echo '{"total_size": 734003200, "snapshots_count": 6}' ;;
   dump) cat "$repo/record-$3.json" 2>/dev/null || exit 1 ;;
-  forget)
-    case " $* " in
-      *" --dry-run "*) cat "$repo/forget.json" 2>/dev/null ;;
-      *) for id in "$@"; do case "$id" in *[!0-9a-f]*) ;; *) rm -f "$repo/snapshots/$id" ;; esac; done ;;
-    esac ;;
+  forget) for id in "$@"; do case "$id" in *[!0-9a-f]*) ;; *) rm -f "$repo/snapshots/$id" ;; esac; done ;;
 esac
 `
 
@@ -436,10 +432,6 @@ func seedSnapshots(dir string, offsite bool, world string) error {
 		Tags     []string  `json:"tags"`
 		Summary  summary   `json:"summary"`
 	}
-	type reason struct {
-		Snapshot snapshot `json:"snapshot"`
-		Matches  []string `json:"matches"`
-	}
 	now := time.Now().UTC()
 	id := func(n int) string { return fmt.Sprintf("%02x", n) + strings.Repeat("a1b2c3d4", 8)[2:] }
 	taken := []struct {
@@ -454,7 +446,6 @@ func seedSnapshots(dir string, offsite bool, world string) error {
 		{"oldworld", "final", "owner", 240 * time.Hour},
 	}
 	var list []snapshot
-	var reasons []reason
 	for i, t := range taken {
 		tags := []string{"avsys", "trigger=" + t.trigger, "loader=paper", "version=1.21.4"}
 		if t.by != "" {
@@ -462,10 +453,6 @@ func seedSnapshots(dir string, offsite bool, world string) error {
 		}
 		snap := snapshot{ID: id(i + 1), Time: now.Add(-t.ago), Hostname: t.server, Tags: tags, Summary: summary{Bytes: 350 << 20, Files: 625, Added: int64(4+i) << 20}}
 		list = append(list, snap)
-		// The schedule keeps the newest of each day, so all three of these.
-		if t.server == "survival" && t.trigger == "scheduled" {
-			reasons = append(reasons, reason{Snapshot: snap, Matches: []string{"daily snapshot"}})
-		}
 		record, err := json.Marshal(map[string]any{"format": 1, "org": "friends", "server": t.server, "spec": avsysv1.MinecraftServerSpec{
 			EULA: true, DisplayName: t.server, Version: "1.21.4", Loader: avsysv1.LoaderPaper,
 			Resources:  avsysv1.ResourcesSpec{Memory: resource.MustParse("4Gi")},
@@ -491,9 +478,6 @@ func seedSnapshots(dir string, offsite bool, world string) error {
 	list = append(list, snapshot{ID: id(len(taken) + 1), Time: now.Add(-time.Hour), Hostname: "world-" + world,
 		Tags: []string{"avsys", "trigger=template", "form=folders", "by=owner"}, Summary: summary{Bytes: 1_610_612_736, Files: 9_000, Added: 900 << 20}})
 	if err := write("snapshots.json", list); err != nil {
-		return err
-	}
-	if err := write("forget.json", []map[string]any{{"reasons": reasons}}); err != nil {
 		return err
 	}
 	if !offsite {

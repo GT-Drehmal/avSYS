@@ -497,6 +497,8 @@ While deleted snapshots are kept (`binDays` above 0), anyone but the
 instance admin is refused while its servers have snapshots listed
 (`409 has_snapshots`) or in [Recently deleted](#recently-deleted)
 (`409 snapshots_kept`): they are deleted first and wait out their days.
+Where they cannot be counted, as when the panel has no restic, it is
+refused too (`409 has_snapshots`) unless there is no repository at all.
 Templates and library worlds go with it. An offsite copy is left alone.
 Returns `204`.
 
@@ -606,7 +608,8 @@ Copy now. **Admin.** Returns `202` with the status; with `?wait=true`,
 ### `GET /orgs/{org}/offsite/snapshots`
 
 What the offsite copy holds that could be brought back. **Instance admin.**
-Returns `{snapshots}`.
+Returns `{snapshots}`. Those in [Recently deleted](#recently-deleted) are
+among them until they are removed for good here.
 
 ### `POST /orgs/{org}/offsite/fetch`
 

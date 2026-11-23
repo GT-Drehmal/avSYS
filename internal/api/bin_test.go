@@ -14,6 +14,7 @@ import (
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
 // binOfAlpha is alpha's bin as the API lists it, to whoever asks.
@@ -426,5 +427,85 @@ func TestAnOrganizationKeepsItsDeletedSnapshots(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(l.dir, "alpha")); !os.IsNotExist(err) {
 		t.Errorf("the repository is still there: %v", err)
+	}
+}
+
+// Without restic the snapshots cannot be counted, in the bin or not, but
+// deleting the organization would remove them all the same: its owner is
+// refused unless there is nothing at all, and the panel's administrator is
+// not.
+func TestAnOrganizationKeepsItsSnapshotsWithoutRestic(t *testing.T) {
+	l := newLibraryPanel(t, nil)
+	p := l.p
+	ctx := context.Background()
+	if code, _ := p.call("admin", "DELETE", "/orgs/alpha/servers/world?snapshot=false", ""); code != http.StatusNoContent {
+		t.Fatal(code)
+	}
+	if code, _ := p.call("owner", "DELETE", "/orgs/alpha/snapshots/"+l.src, ""); code != http.StatusNoContent {
+		t.Fatal(code)
+	}
+	p.srv.Backups.Restic = filepath.Join(t.TempDir(), "no-restic")
+	if got, code := p.do("owner", "DELETE", "/orgs/alpha?snapshots=delete", ""); got != http.StatusConflict || code != "has_snapshots" {
+		t.Errorf("by its owner: %d %s, want 409 has_snapshots", got, code)
+	}
+	if _, err := os.Stat(filepath.Join(l.dir, "alpha", "config")); err != nil {
+		t.Fatalf("the repository went: %v", err)
+	}
+	// One with nothing here is deleted as ever.
+	if err := p.srv.Store.CreateOrg(ctx, &store.Org{Name: "Gamma", Slug: "gamma"}, p.users["owner"].ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, code := p.do("owner", "DELETE", "/orgs/gamma?snapshots=delete", ""); got != http.StatusNoContent {
+		t.Errorf("one with nothing: %d %s", got, code)
+	}
+	if got, code := p.do("root", "DELETE", "/orgs/alpha?snapshots=delete", ""); got != http.StatusNoContent {
+		t.Errorf("by the panel's administrator: %d %s", got, code)
+	}
+	if _, err := os.Stat(filepath.Join(l.dir, "alpha")); !os.IsNotExist(err) {
+		t.Errorf("the repository is still there: %v", err)
+	}
+}
+
+// A snapshot put in the bin and back while the list is read keeps its name:
+// it is in the repository all along, whichever of the two it was in.
+func TestANameSurvivesPuttingBackWhileListed(t *testing.T) {
+	l := newLibraryPanel(t, nil)
+	p := l.p
+	ctx := context.Background()
+	org, _ := p.srv.Store.OrgBySlug(ctx, "alpha")
+	if code, _ := p.call("admin", "PATCH", "/orgs/alpha/snapshots/"+l.src[:8], `{"name":"First","color":"teal"}`); code != 200 {
+		t.Fatal(code)
+	}
+	stop := make(chan struct{})
+	done := make(chan error)
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := p.srv.Backups.Bin(ctx, "alpha", []string{l.src}, "admin", time.Now()); err != nil {
+				done <- err
+				return
+			}
+			if _, err := p.srv.Backups.PutBack(ctx, "alpha", []string{l.src}); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	for range 40 {
+		if code, raw := l.call("viewer", "GET", "/orgs/alpha/snapshots", ""); code != http.StatusOK {
+			t.Fatalf("listing: %d %s", code, raw)
+		}
+	}
+	close(stop)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if names, _ := p.srv.Store.SnapshotNames(ctx, org.ID); names[l.src].Name != "First" || names[l.src].Color != "teal" {
+		t.Errorf("its name: %+v", names[l.src])
 	}
 }

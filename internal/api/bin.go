@@ -302,7 +302,15 @@ func (s *Server) serverSnapshotsIn(ctx context.Context, slug string) (listed, bi
 // may delete such an organization at once.
 func (s *Server) orgKeepsSnapshots(ctx context.Context, u *store.User, slug string) error {
 	days := s.binDays(ctx)
-	if u.IsAdmin || days == 0 || !s.Backups.Available() {
+	if u.IsAdmin || days == 0 {
+		return nil
+	}
+	// Without restic they cannot be told apart, but would go all the same:
+	// only an organization with nothing at all here is deleted.
+	if !s.Backups.Available() {
+		if n, known := s.Backups.Holds(ctx, slug); !known || n > 0 {
+			return &Error{Status: http.StatusConflict, Code: "has_snapshots", Message: "This organization's snapshots could not be counted, so it was not deleted. Only the panel's administrator can delete it now."}
+		}
 		return nil
 	}
 	listed, binned, err := s.serverSnapshotsIn(ctx, slug)

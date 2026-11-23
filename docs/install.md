@@ -462,9 +462,12 @@ offsite:
   them. Put it in a password manager as well as the Secret. The panel does
   not start with a repository and no password.
 - **What is copied**: everything, a couple of minutes after it changes and
-  once after each start. A snapshot removed here, by retention or by
-  someone once it has left [Recently deleted](#recently-deleted), is
-  removed there with the next copy. Nothing is removed there
+  once after each start. A snapshot in
+  [Recently deleted](#recently-deleted) is still copied and kept there, so
+  that it can be put back: the offsite copy never removes a deleted
+  snapshot sooner than Recently deleted does. A snapshot removed here, by
+  retention or once it has left Recently deleted, is removed there with the
+  next copy. Nothing is removed there
   merely because it is missing here, so a cluster that loses its storage,
   or a fresh install, leaves the copy whole. A failed copy is tried again
   every hour and whenever there is something new.

@@ -1655,8 +1655,14 @@ if [ "$(call "$OFFSITE" | field "d['configured']")" = True ]; then
   copy_offsite >/dev/null
   expect "and is then there too" "$(there)" "$(here)"
   expect "a snapshot can be deleted" "$(call -o /dev/null -w '%{http_code}' -X DELETE "$API/orgs/$ORG/snapshots/$extra?wait=true")" 204
+  # Deleted, it waits in Recently deleted, where it can still be put back:
+  # the offsite copy keeps it until it is removed for good here.
+  expect "it waits in Recently deleted" "$(call "$API/orgs/$ORG/bin" | field "'$extra' in [s['id'] for s in d['snapshots']]")" True
   copy_offsite >/dev/null
-  expect "one deleted here is removed there" "$(there)" "$(here)"
+  expect "and is kept there meanwhile" "$(there)" "$(( $(here) + 1 ))"
+  expect "it can be removed for good at once by the panel's administrator" "$(call -X DELETE "$API/orgs/$ORG/bin/$extra" | field "d['removed']")" 1
+  copy_offsite >/dev/null
+  expect "one removed for good here is removed there" "$(there)" "$(here)"
   expect "snapshots are only brought back into an organization that has none" "$(call -X POST "$OFFSITE/fetch" | field "d['code']")" has_snapshots
 else
   echo "skipped: this panel copies snapshots nowhere else"
