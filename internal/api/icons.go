@@ -22,11 +22,13 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	avsysv1 "github.com/GT-Drehmal/avSYS/api/v1alpha1"
 	"github.com/GT-Drehmal/avSYS/internal/backup"
+	"github.com/GT-Drehmal/avSYS/internal/controller"
 	"github.com/GT-Drehmal/avSYS/internal/store"
 )
 
@@ -775,6 +777,7 @@ func (s *Server) putServerIcon(w http.ResponseWriter, r *http.Request, u *store.
 		if err := writeServerIcon(sc, data); err != nil {
 			return err
 		}
+		s.notePictureChanged(context.WithoutCancel(r.Context()), mc)
 	} else {
 		// From here on it no longer matters whether whoever asked is still
 		// there: the picture is in hand, and the server is waiting on this.
@@ -924,6 +927,36 @@ func (s *Server) deleteServerIcon(w http.ResponseWriter, r *http.Request, u *sto
 		return fileError(err)
 	}
 	s.serverIcons.forget(a.Namespace + "/" + mc.Name)
+	s.notePictureChanged(context.WithoutCancel(r.Context()), mc)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+// notePictureChanged notes, on a server whose game is up, that its picture
+// changed under that game, which read the one before as it started: the
+// server then says it waits for a restart (status.pendingPicture) until
+// the game starts again. A game that is not up reads the new one as it
+// starts, and nothing is noted. The picture is in place either way, so a
+// failure here is only logged.
+func (s *Server) notePictureChanged(ctx context.Context, mc *avsysv1.MinecraftServer) {
+	key := client.ObjectKeyFromObject(mc)
+	pod := &corev1.Pod{}
+	if err := s.Client.Get(ctx, key, pod); err != nil {
+		if !apierrors.IsNotFound(err) {
+			s.Log.Warn("could not tell whether a server's game is up for its new picture", "server", key.String(), "error", err)
+		}
+		return
+	}
+	game := controller.GameUp(pod)
+	if game == "" || !controller.WantsMinecraft(mc) || mc.Annotations[avsysv1.AnnotationPictureChanged] == game {
+		return
+	}
+	orig := mc.DeepCopy()
+	if mc.Annotations == nil {
+		mc.Annotations = map[string]string{}
+	}
+	mc.Annotations[avsysv1.AnnotationPictureChanged] = game
+	if err := s.Client.Patch(ctx, mc, client.MergeFrom(orig)); err != nil {
+		s.Log.Warn("could not note a server's new picture", "server", key.String(), "error", err)
+	}
 }

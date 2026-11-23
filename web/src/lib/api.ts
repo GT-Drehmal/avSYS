@@ -519,6 +519,8 @@ export interface ServerStatus {
   lastActive?: string;
   restarts?: number;
   pendingRestart?: boolean;
+  /** Its picture changed while the game was up; pendingRestart is then true too. */
+  pendingPicture?: boolean;
   /** The cluster node the server runs on. */
   node?: string;
   /** Written by the panel after each snapshot or restore. */

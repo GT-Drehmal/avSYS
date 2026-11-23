@@ -642,6 +642,28 @@ func notReadyFor(pod *corev1.Pod) time.Duration {
 	return 0
 }
 
+// GameUp names the game a pod runs while it is up, as "<pod UID>/<restart
+// count>": the pod is not going away and the game in it is ready. It is ""
+// otherwise. A game restarted in its container is another game.
+func GameUp(pod *corev1.Pod) string {
+	if pod == nil || !pod.DeletionTimestamp.IsZero() {
+		return ""
+	}
+	cs := containerStatus(pod, MinecraftContainer)
+	if cs == nil || !cs.Ready {
+		return ""
+	}
+	return string(pod.UID) + "/" + strconv.FormatInt(int64(cs.RestartCount), 10)
+}
+
+// pictureWaits says whether the server's picture changed under the game its
+// pod runs now, which read the one before as it started. Any start after
+// the change, in place or in a new pod, reads the new one.
+func pictureWaits(mc *avsysv1.MinecraftServer, pod *corev1.Pod) bool {
+	changed := mc.Annotations[avsysv1.AnnotationPictureChanged]
+	return changed != "" && WantsMinecraft(mc) && changed == GameUp(pod)
+}
+
 func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServer, pod *corev1.Pod, svc *corev1.Service, ports []avsysv1.PortStatus, pending bool) error {
 	orig := mc.DeepCopy()
 	st := &mc.Status
@@ -659,6 +681,7 @@ func (r *Reconciler) updateStatus(ctx context.Context, mc *avsysv1.MinecraftServ
 	st.Address = addressFor(mc, svc, r.Config)
 	st.Ports = ports
 	st.PendingRestart = pending
+	st.PendingPicture = pictureWaits(mc, pod)
 	st.ObservedGeneration = mc.Generation
 	st.Restarts = 0
 	st.Node = mc.Annotations[avsysv1.AnnotationNode]

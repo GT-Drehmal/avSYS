@@ -76,6 +76,9 @@ func (s *Server) view(role store.Role, mc *avsysv1.MinecraftServer) serverView {
 	org, _ := s.orgOfNamespace(mc.Namespace)
 	v := serverView{Org: org, Name: mc.Name, CreatedAt: mc.CreationTimestamp.Time, Revision: mc.ResourceVersion, Generation: mc.Generation, Spec: mc.Spec, Status: mc.Status}
 	v.Java.Game, v.Java.Effective = controller.JavaOf(&mc.Spec)
+	// A picture that waits for the game to start again is shown as any
+	// other change that does, though a restart in place is enough for it.
+	v.Status.PendingRestart = mc.Status.PendingRestart || mc.Status.PendingPicture
 	v = v.forRole(role)
 	var why *Error
 	if errors.As(unfinished(mc), &why) {
@@ -1130,7 +1133,8 @@ func (s *Server) serverAction(w http.ResponseWriter, r *http.Request, u *store.U
 // when the controller has seen the server's latest settings and found
 // nothing new in them: a change made a moment ago, such as content taken
 // off, would otherwise be started without, and the old settings put back
-// what was removed.
+// what was removed. A picture changed since the game started is no such
+// change: the file is in place already.
 func restartsInPlace(mc *avsysv1.MinecraftServer) bool {
 	return mc.Status.Phase == avsysv1.PhaseRunning && !mc.Status.PendingRestart && mc.Status.ObservedGeneration == mc.Generation
 }

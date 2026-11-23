@@ -302,8 +302,9 @@ Its [notes](#notes) are under them. The buttons:
   (**Wake** while asleep).
 
 Below: the address, software and Java, players, and memory and node.
-**Restart to apply pending changes** shows when settings were changed while
-it ran.
+**Restart to apply pending changes** shows when settings or its picture were
+changed while it ran. For a new picture the game only has to start again,
+so **Restart now** keeps open terminals and editors.
 
 The tabs:
 

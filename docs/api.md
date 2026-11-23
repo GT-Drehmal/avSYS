@@ -1079,8 +1079,11 @@ server made before the panel kept this, or outside it, has none.
 `Sleeping` or `Error`), `message`, `address` (what players type),
 `ports` (where each extra port is reached), `version` (as the running game
 says), `players: {online, max, names}`, `maxPlayers`, `node`,
-`lastActive`, `restarts`, `pendingRestart`, `snapshots` (the last one, and
-the last error) and `observedGeneration`.
+`lastActive`, `restarts`, `pendingRestart`, `pendingPicture`, `snapshots`
+(the last one, and the last error) and `observedGeneration`.
+`pendingPicture` is true when the picture was set or removed while the game
+was up, which shows it only once it starts again; `pendingRestart` is then
+true too, and a restart is made in place.
 
 ## A server's content
 
@@ -1399,6 +1402,9 @@ Returns `204`.
 ### `DELETE /orgs/{org}/servers/{server}/icon`
 
 Remove it. **Admin.** Returns `204`.
+
+The game reads its picture only as it starts: either change, made while
+the game is up, sets `status.pendingPicture` until it starts again.
 
 ### `PUT /orgs/{org}/servers/{server}/resource-pack`
 

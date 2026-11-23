@@ -26,6 +26,12 @@ func TestRestartsInPlace(t *testing.T) {
 		// Changed a moment ago: the status is of the settings before.
 		{"running, changed since it was seen", server(avsysv1.PhaseRunning, false, 2), false},
 		{"starting", server(avsysv1.PhaseStarting, false, 3), false},
+		// The file is in place: the game only has to start again.
+		{"running, only its picture waiting", func() *avsysv1.MinecraftServer {
+			mc := server(avsysv1.PhaseRunning, false, 3)
+			mc.Status.PendingPicture = true
+			return mc
+		}(), true},
 	} {
 		if got := restartsInPlace(c.mc); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
