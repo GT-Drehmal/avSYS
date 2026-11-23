@@ -119,7 +119,16 @@ interface PickerProps extends Pick<PictureProps, "name" | "shape"> {
   large?: boolean;
 }
 
-type Change = { kind: "upload"; file: File } | { kind: "remove" };
+/** Files chosen, dropped or pasted, the picture among them still to be read; or none. */
+type Change = { kind: "upload"; files: File[] } | { kind: "remove" };
+
+/**
+ * The pictures being changed, by path: taken before anything is waited for,
+ * a picture being read included, and given back once it is sent. What the
+ * page shows as busy is drawn a moment later, and does not stop a second
+ * change made in between.
+ */
+const changing = new Set<string>();
 
 /**
  * What the file dialog offers. Whatever is chosen is drawn anew as a PNG
@@ -220,26 +229,39 @@ export function PicturePicker({ name, shape, path, has, url, onChange, hint, lar
   const exists = has ?? found;
   // One change at a time for each picture, whichever of its pickers it was
   // started from: the one on the page and the one in its dialog share it.
+  // A picture being read counts: read, it would land after a change made
+  // meanwhile, and undo it.
   const mutationKey = ["picture", path];
-  const change = useMutation({ mutationKey, mutationFn: (c: Change) => (c.kind === "upload" ? api.putRaw(path, c.file) : api.del(path)) });
+  const change = useMutation({
+    mutationKey,
+    mutationFn: async (c: Change) => {
+      if (c.kind === "remove") return api.del(path).then(() => true);
+      const file = await readPicture(c.files);
+      if (!file) return false;
+      await api.putRaw(path, file);
+      return true;
+    },
+  });
   const busy = useMutationState({ filters: { mutationKey, status: "pending" }, select: (m) => (m.state.variables as Change).kind })[0] ?? null;
 
   const run = async (c: Change) => {
-    if (busy) return;
+    if (changing.has(path)) return;
+    changing.add(path);
     try {
-      await change.mutateAsync(c);
+      if (!(await change.mutateAsync(c))) return;
       qc.setQueryData(versionKey, Date.now());
       if (c.kind === "remove") setFound(false);
       onChange?.();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not change the picture.");
+    } finally {
+      changing.delete(path);
     }
   };
   // Chosen, dropped or pasted, it is the same picture.
-  const take = async (files: ArrayLike<File> | null | undefined) => {
-    if (busy) return;
-    const file = await readPicture(files);
-    if (file) run({ kind: "upload", file });
+  const take = (files: ArrayLike<File> | null | undefined) => {
+    const list = Array.from(files ?? []);
+    if (list.length > 0) run({ kind: "upload", files: list });
   };
   const drop = usePictureDrop(take, busy !== null);
 
@@ -352,9 +374,17 @@ export function PictureChange({ name, current, value, onChange, optional = "Opti
             ? "Could not show the picture."
             : optional
           : kept;
+  // Each choice counts up, so that a picture still being read when another
+  // is chosen, or this one is taken away, is not used when it is read.
+  const latest = useRef(0);
+  const set = (change: PictureChange) => {
+    latest.current++;
+    onChange(change);
+  };
   const take = async (files: ArrayLike<File> | null | undefined) => {
+    const asked = ++latest.current;
     const chosen = await readPicture(files);
-    if (chosen) onChange({ kind: "file", file: chosen });
+    if (chosen && asked === latest.current) onChange({ kind: "file", file: chosen });
   };
   const drop = usePictureDrop(take);
   return (
@@ -368,12 +398,12 @@ export function PictureChange({ name, current, value, onChange, optional = "Opti
           </Button>
           {/* Asking for none is safe whatever the files bring; that one could not be shown is not proof that there is none. */}
           {(value.kind === "file" || (value.kind === "keep" && current)) && (
-            <Button size="sm" variant="ghost" onClick={() => onChange({ kind: "none" })}>
+            <Button size="sm" variant="ghost" onClick={() => set({ kind: "none" })}>
               Remove
             </Button>
           )}
           {value.kind !== "keep" && current && (
-            <Button size="sm" variant="ghost" onClick={() => onChange({ kind: "keep" })}>
+            <Button size="sm" variant="ghost" onClick={() => set({ kind: "keep" })}>
               Keep the one it has
             </Button>
           )}
