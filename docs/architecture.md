@@ -363,7 +363,38 @@ Content is settled when it is added, not when the server starts.
    are kept in the server's own files under `.avsys/content` and named the
    same way.
 4. At each start the image downloads what is listed and removes what is
-   not. Required dependencies are fetched by the image and are not pinned.
+   not. What Modrinth content needs is listed with it (below); on a server
+   made before that, it is fetched by the image and not pinned.
+
+**What content needs** (`internal/api/dependencies.go`). The image fetches
+a project's required dependencies by Modrinth project, and so cannot tell
+that a server has one already as a fork, a renamed jar or a mod inside
+another; it also takes a dependency that is a modpack. So on the servers
+it makes (`spec.dependenciesListed`, which copies and restores take from
+their original), the panel lists them itself and tells the image
+`MODRINTH_DOWNLOAD_DEPENDENCIES=none`, unless the server's own `env` says
+otherwise or it runs a modpack:
+
+- Only when someone adds a Modrinth entry, or gives it another version:
+  through the Content page, the new-server form, an import or the API.
+  Never at a start, nor in a look at the server's folders.
+- For each required dependency of the version: nothing is added if the
+  list has that project, or if any jar on the list or found in the
+  server's folders gives its mod ID. The IDs are read from each file as it
+  is added (`modmeta.go`): `fabric.mod.json` and `quilt.mod.json` (`id`,
+  `provides`), `mods.toml` (`modId`), `plugin.yml` (`name`), and the jars
+  nested in it, kept as the entry's `provides`.
+- Otherwise it is added as an entry with `dependency` and `neededBy`, at
+  the version Modrinth names if that is for the server's game version and
+  loader, else the newest that is, and its own needs are worked out the
+  same way. A project that is not a mod, plugin or datapack (a modpack, a
+  resource pack, a shader) is left out, and said once in the log.
+- Modrinth is asked up to three times; with no answer the change is
+  refused and nothing is changed. A version on the list is never changed.
+- An entry the panel added goes when nothing that someone added needs it
+  any more, and when a file someone adds gives its mod ID (an import's
+  fork, uploaded after the server is made with its Modrinth entries).
+  It cannot be taken off on its own while it is needed.
 
 A restart never changes what is installed. Changing the game version or
 loader pins each entry again for the new one. A file of the server's own

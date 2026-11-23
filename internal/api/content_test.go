@@ -331,7 +331,7 @@ func TestDatapackFileIsRecordedByThePanel(t *testing.T) {
 		{Source: avsysv1.SourceUpload, Kind: avsysv1.KindDatapack, Project: "ours.zip", File: "server.properties"},
 		{Source: avsysv1.SourceModrinth, Kind: avsysv1.KindDatapack, Project: "veinminer", Version: "abc", Title: "Veinminer", IconURL: "x", File: "server.properties"},
 	}}
-	if err := (&Server{}).resolveContent(context.Background(), spec, previous); err != nil {
+	if err := (&Server{}).resolveContent(context.Background(), spec, previous, nil); err != nil {
 		t.Fatal(err)
 	}
 	for i, want := range []string{"old-1.0.zip", "pack-v2.zip", "pack-v2.zip", "", "Veinminer-1.2.4.zip"} {

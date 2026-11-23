@@ -385,6 +385,21 @@ and NeoForge; plugins for Paper, Purpur and Folia; datapacks for all.
 - Some CurseForge authors allow downloads only on CurseForge. Those are
   marked: download the file there, then add it with **Upload**.
 
+**What a mod needs.** Adding something from Modrinth also adds what it
+needs to run, and what that needs, unless the server has it already:
+
+- Already there means that project, or any file on the server that is
+  the same mod: a fork, a renamed file, or a mod with it inside.
+- Each one added says **Needed by** and what needs it. It can't be
+  removed while that is on the server, and goes with it.
+- Uploading a file that is the same mod replaces the one that was added.
+- Only mods, plugins and datapacks are added, never a modpack or a
+  resource pack.
+- If Modrinth doesn't answer, nothing is added and the page says so. Try
+  again in a moment.
+- Servers made before this version don't do this: the server downloads
+  what its mods need as it starts.
+
 **Content already on the server.** Mods, plugins and datapacks that are in
 the server's folders but were not added here join the list by themselves,
 like anything added here: files put in `mods`, `plugins` or the world's

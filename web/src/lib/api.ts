@@ -349,6 +349,11 @@ export interface ContentRef {
   description?: string;
   /** For a datapack from a URL, the name it is saved under; for an upload found in the server's files, where it is kept. */
   file?: string;
+  /** The mod IDs its file gives the server, as the panel read them. */
+  provides?: string[];
+  /** Added by the panel because the entries in neededBy (by project) need it. */
+  dependency?: boolean;
+  neededBy?: string[];
 }
 
 export interface Modpack {
@@ -420,6 +425,8 @@ export interface ServerSpec {
   loaderVersion?: string;
   modpack?: Modpack | null;
   mods?: ContentRef[];
+  /** What its Modrinth content needs is on its list, added by the panel. */
+  dependenciesListed?: boolean;
   resourcePack?: ResourcePack | null;
   properties?: Record<string, string>;
   ops?: string[];

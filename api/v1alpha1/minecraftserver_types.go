@@ -162,6 +162,15 @@ type ContentRef struct {
 	// Description is what an uploaded datapack says of itself, in its
 	// pack.mcmeta, recorded when the entry was added.
 	Description string `json:"description,omitempty"`
+	// Provides are the mod IDs a mod's file gives the server (its own, what
+	// it says it provides, and those of jars inside it), or a plugin's
+	// name, read by the panel when the entry was added.
+	Provides []string `json:"provides,omitempty"`
+	// Dependency says the panel added the entry because other Modrinth
+	// content needs it, and NeededBy (by their Project) what needs it. It
+	// goes once nothing on the list does.
+	Dependency bool     `json:"dependency,omitempty"`
+	NeededBy   []string `json:"neededBy,omitempty"`
 }
 
 // MemberPicks are members put on a list, or left off it, whatever their role.
@@ -511,9 +520,15 @@ type MinecraftServerSpec struct {
 	// +kubebuilder:validation:Maximum=99
 	GameJava int32 `json:"gameJava,omitempty"`
 
-	Modpack      *ModpackSpec      `json:"modpack,omitempty"`
-	Mods         []ContentRef      `json:"mods,omitempty"`
-	ResourcePack *ResourcePackSpec `json:"resourcePack,omitempty"`
+	Modpack *ModpackSpec `json:"modpack,omitempty"`
+	Mods    []ContentRef `json:"mods,omitempty"`
+	// DependenciesListed says what Modrinth entries in Mods need is listed
+	// in Mods too, added by the panel as they are added, so the image is
+	// told not to download dependencies itself. The panel sets it on the
+	// servers it makes; one made before, or outside it, has the image
+	// download them as before.
+	DependenciesListed bool              `json:"dependenciesListed,omitempty"`
+	ResourcePack       *ResourcePackSpec `json:"resourcePack,omitempty"`
 
 	// Properties are server.properties entries managed by avSYS. Keys not listed
 	// here are left as they are in the file, so hand edits survive.

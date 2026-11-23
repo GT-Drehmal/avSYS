@@ -127,6 +127,14 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
+              dependenciesListed:
+                description: |-
+                  DependenciesListed says what Modrinth entries in Mods need is listed
+                  in Mods too, added by the panel as they are added, so the image is
+                  told not to download dependencies itself. The panel sets it on the
+                  servers it makes; one made before, or outside it, has the image
+                  download them as before.
+                type: boolean
               displayName:
                 type: string
               env:
@@ -425,6 +433,12 @@ spec:
                 items:
                   description: ContentRef is one installed mod, plugin or datapack.
                   properties:
+                    dependency:
+                      description: |-
+                        Dependency says the panel added the entry because other Modrinth
+                        content needs it, and NeededBy (by their Project) what needs it. It
+                        goes once nothing on the list does.
+                      type: boolean
                     description:
                       description: |-
                         Description is what an uploaded datapack says of itself, in its
@@ -454,11 +468,23 @@ spec:
                       - plugin
                       - datapack
                       type: string
+                    neededBy:
+                      items:
+                        type: string
+                      type: array
                     project:
                       description: |-
                         Project is the Modrinth/CurseForge slug or ID, the download URL for
                         source "url", or the file name for source "upload".
                       type: string
+                    provides:
+                      description: |-
+                        Provides are the mod IDs a mod's file gives the server (its own, what
+                        it says it provides, and those of jars inside it), or a plugin's
+                        name, read by the panel when the entry was added.
+                      items:
+                        type: string
+                      type: array
                     source:
                       description: ContentSource is where a mod, modpack or resource
                         pack comes from.

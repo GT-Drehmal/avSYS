@@ -162,6 +162,9 @@ type Server struct {
 	// Nil is the internet. The browser tests answer from files instead, so
 	// that they neither depend on those services nor load them.
 	Upstream http.RoundTripper
+	// Downloads is how the panel downloads files of content to read what
+	// they need and give. Nil is the internet, public addresses only.
+	Downloads http.RoundTripper
 	// Updates is whether a newer release is out, for the instance
 	// administrator. Nil never says so.
 	Updates *release.Checker

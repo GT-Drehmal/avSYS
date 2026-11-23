@@ -196,6 +196,8 @@ func fromSnapshot(requested, recorded *avsysv1.MinecraftServerSpec, given map[st
 		spec.GameJava = recorded.GameJava
 	}
 	spec.Modpack = recorded.Modpack
+	// What its content needs is listed, or not, as on the one it is of.
+	spec.DependenciesListed = recorded.DependenciesListed
 	if !said("mods") {
 		spec.Mods = recorded.Mods
 	}
@@ -422,7 +424,7 @@ func (s *Server) createFromSnapshot(w http.ResponseWriter, r *http.Request, u *s
 	// again for another, as when a server's own version is changed. Any the
 	// request added are pinned, as for any new server.
 	if _, said := given["mods"]; said || targetOf(&spec) != targetOf(&record.Spec) {
-		if err := s.resolveContent(ctx, &spec, &record.Spec); err != nil {
+		if err := s.resolveContent(ctx, &spec, &record.Spec, nil); err != nil {
 			return err
 		}
 	}
@@ -570,7 +572,7 @@ func (s *Server) createFromServer(w http.ResponseWriter, r *http.Request, u *sto
 		return err
 	}
 	if _, said := given["mods"]; said || targetOf(&spec) != targetOf(&mc.Spec) {
-		if err := s.resolveContent(ctx, &spec, &mc.Spec); err != nil {
+		if err := s.resolveContent(ctx, &spec, &mc.Spec, foundOf(mc)); err != nil {
 			return err
 		}
 	}

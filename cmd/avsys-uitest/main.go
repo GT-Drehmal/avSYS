@@ -148,6 +148,8 @@ func run(listen, webDir, upstreamDir, readyFile string, withMetrics, withOffsite
 		Backups:  &backup.Manager{Dir: filepath.Join(dir, "backups"), Restic: filepath.Join(dir, "restic"), Log: log},
 		Static:   os.DirFS(webDir),
 		Upstream: up,
+		// Files of content too, as Modrinth's CDN would give them.
+		Downloads: up,
 	}
 	gateway.Authz = srv
 	// Servers named bingo have files with content the panel did not add.

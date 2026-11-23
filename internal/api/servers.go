@@ -618,7 +618,9 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request, u *store.U
 		return err
 	}
 	s.resolveJava(r.Context(), &in.Spec)
-	if err := s.resolveContent(r.Context(), &in.Spec, nil); err != nil {
+	// What its Modrinth content needs is listed with it from now on.
+	in.Spec.DependenciesListed = true
+	if err := s.resolveContent(r.Context(), &in.Spec, nil, nil); err != nil {
 		return err
 	}
 	if err := s.nameIsFree(r.Context(), a, in.Name); err != nil {
@@ -874,6 +876,8 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	}
 	// Where its world came from changes only with its world.
 	spec.WorldOrigin = mc.Spec.WorldOrigin.DeepCopy()
+	// Whether the panel lists what its content needs is the panel's to say.
+	spec.DependenciesListed = mc.Spec.DependenciesListed
 	var named map[string]json.RawMessage
 	_ = json.Unmarshal(patch, &named)
 	// A loader build goes with the type and game version it is for.
@@ -938,7 +942,7 @@ func (s *Server) mergeSpec(ctx context.Context, a *access, mc *avsysv1.Minecraft
 	if err := checkPackFormats(spec.ResourcePack, previous.ResourcePack); err != nil {
 		return nil, err
 	}
-	if err := s.resolveContent(ctx, &spec, previous); err != nil {
+	if err := s.resolveContent(ctx, &spec, previous, foundOf(mc)); err != nil {
 		return nil, err
 	}
 	mc.Spec = spec

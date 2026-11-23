@@ -553,10 +553,17 @@ interface ContentListProps {
   /** Where an entry's own picture is served, for one without one from where it is from. */
   picture?: (mod: ContentRef) => string | undefined;
   onRemoveFound?: (f: FoundFile) => void;
+  /** The server's whole list, which says what needs an entry the panel added. */
+  all?: ContentRef[];
 }
 
-export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true, found = [], foundPicture, picture, onRemoveFound }: ContentListProps) {
+export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = true, found = [], foundPicture, picture, onRemoveFound, all = mods }: ContentListProps) {
   const row = "flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0";
+  // Added for what needs it, it stays while that does.
+  const neededBy = (m: ContentRef) => {
+    const by = m.dependency ? (m.neededBy ?? []).map((p) => all.find((o) => o.project === p)).filter((o) => !!o) : [];
+    return by.length > 0 ? `Needed by ${by.map(titleOf).join(", ")}` : undefined;
+  };
   return (
     <ul className="overflow-hidden rounded-lg border border-line bg-surface">
       {mods.map((m, i) => (
@@ -567,6 +574,7 @@ export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = 
               {titleOf(m)}
               {isCatalog(m.source) && <ProjectLink source={m.source} project={m.project} />}
             </p>
+            {neededBy(m) && <p className="truncate text-xs text-muted">{neededBy(m)}</p>}
             {(note?.(m, i) ?? sourceLine(m)) && <p className="truncate font-mono text-xs text-faint">{note?.(m, i) ?? sourceLine(m)}</p>}
           </div>
           {!!gameJava && !!m.java && m.java > gameJava && (
@@ -574,7 +582,7 @@ export function ContentList({ mods, gameJava, extra, note, onRemove, showKind = 
           )}
           {showKind && <Chip>{m.kind ?? "mod"}</Chip>}
           {extra?.(m, i)}
-          {onRemove && <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${titleOf(m)}`} onClick={() => onRemove(i)} />}
+          {onRemove && !neededBy(m) && <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`Remove ${titleOf(m)}`} onClick={() => onRemove(i)} />}
         </li>
       ))}
       {found.map((f) => (

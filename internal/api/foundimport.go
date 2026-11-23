@@ -224,7 +224,7 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 	)
 	for _, f := range found {
 		if c, ok := candidates[f.Project]; ok && c.Path == f.Path {
-			m := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: f.Kind, Project: f.Project, Version: f.VersionID, VersionName: f.Version, Title: f.Title, IconURL: f.IconURL, Java: f.Java}
+			m := avsysv1.ContentRef{Source: avsysv1.SourceModrinth, Kind: f.Kind, Project: f.Project, Version: f.VersionID, VersionName: f.Version, Title: f.Title, IconURL: f.IconURL, Java: f.Java, Provides: f.Provides}
 			ref := m.Project + ":" + m.Version
 			if f.Kind == avsysv1.KindDatapack {
 				m.File = f.Filename
@@ -273,7 +273,7 @@ func (s *Server) importFound(ctx context.Context, key client.ObjectKey, files Se
 // for the next look.
 func importAsUpload(f FoundFile) (avsysv1.ContentRef, bool) {
 	name := path.Base(f.Path)
-	m := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: f.Kind, Project: name, File: f.Path, Title: f.Title, VersionName: f.Version, Java: f.Java}
+	m := avsysv1.ContentRef{Source: avsysv1.SourceUpload, Kind: f.Kind, Project: name, File: f.Path, Title: f.Title, VersionName: f.Version, Java: f.Java, Provides: f.Provides}
 	if f.Kind == avsysv1.KindDatapack {
 		m.Description = f.About
 	}
