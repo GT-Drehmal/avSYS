@@ -11,14 +11,14 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/restic/rest-server v0.14.0
 	golang.org/x/crypto v0.59.0
-	golang.org/x/mod v0.42.0
+	golang.org/x/mod v0.43.0
 	golang.org/x/oauth2 v0.38.0
 	gopkg.in/evanphx/json-patch.v4 v4.13.0
 	k8s.io/api v0.37.2
 	k8s.io/apimachinery v0.37.2
 	k8s.io/client-go v0.37.2
 	modernc.org/sqlite v1.62.0
-	sigs.k8s.io/controller-runtime v0.25.2
+	sigs.k8s.io/controller-runtime v0.25.3
 	sigs.k8s.io/yaml v1.6.0
 )
 
